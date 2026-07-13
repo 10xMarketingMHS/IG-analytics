@@ -1,0 +1,26 @@
+# Render Blueprint — one service that builds the React app and serves it from
+# the Node/Express backend. Deploy via Render → New → Blueprint (point at this repo).
+services:
+  - type: web
+    name: pulse
+    runtime: node
+    plan: free
+    region: singapore # closest Render region to the Supabase (Sydney) database
+    buildCommand: npm run build
+    startCommand: npm start
+    healthCheckPath: /api/health
+    envVars:
+      - key: NODE_ENV
+        value: production
+      # The values below are secret — enter them in the Render dashboard when
+      # prompted (they are NOT stored in this file / git).
+      - key: DATABASE_URL
+        sync: false
+      - key: JWT_SECRET
+        sync: false
+      - key: ADMIN_EMAIL
+        sync: false
+      - key: ADMIN_PASSWORD
+        sync: false
+      - key: ADMIN_USER_ID
+        sync: false

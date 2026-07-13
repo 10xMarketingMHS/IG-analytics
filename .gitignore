@@ -1,0 +1,19 @@
+# Dependencies
+node_modules/
+
+# Build output
+pulse-app/dist/
+
+# Secrets & local env (NEVER commit these) — real DB password, JWT secret,
+# admin password live here. Render gets these as dashboard env vars instead.
+.env
+.env.local
+.env.*.local
+server/.env
+
+# .env.production is intentionally NOT ignored — it only holds VITE_API_URL=/api
+
+# OS / editor cruft
+.DS_Store
+*.log
+npm-debug.log*

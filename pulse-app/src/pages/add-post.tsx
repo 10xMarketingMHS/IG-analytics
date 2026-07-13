@@ -1,0 +1,383 @@
+import { useEffect, useMemo, useState, type FormEvent } from "react";
+import { useNavigate, useParams } from "react-router-dom";
+import { toast } from "sonner";
+import { useTaxonomy } from "@/lib/use-taxonomy";
+import { useEditors } from "@/lib/use-editors";
+import { api, ApiError } from "@/lib/api";
+import type { Post } from "@/lib/types";
+
+type Status = "planned" | "published";
+type Mode = "manual" | "ig";
+
+const METRIC_FIELDS = [
+  ["mViews", "Views"],
+  ["mLikes", "Likes"],
+  ["mComments", "Comments"],
+  ["mShares", "Shares"],
+  ["mSaves", "Saves"],
+  ["mReach", "Accounts Reached"],
+] as const;
+
+export function AddPostPage() {
+  const { taxonomy, loading } = useTaxonomy();
+  const { editors } = useEditors();
+  const navigate = useNavigate();
+  const { id } = useParams<{ id: string }>();
+  const editing = Boolean(id);
+
+  const [mode, setMode] = useState<Mode>("manual");
+  const [status, setStatus] = useState<Status>("planned");
+  const [pillarId, setPillarId] = useState("");
+  const [contentTypeId, setContentTypeId] = useState("");
+  const [formatId, setFormatId] = useState("");
+  const [postType, setPostType] = useState<"" | "reel" | "carousel">("");
+  const [avatarId, setAvatarId] = useState("");
+  const [editorId, setEditorId] = useState("");
+  const [date, setDate] = useState("2026-07-15");
+  const [title, setTitle] = useState("");
+  const [caption, setCaption] = useState("");
+  const [metrics, setMetrics] = useState<Record<string, string>>({});
+  const [submitError, setSubmitError] = useState<string | null>(null);
+  const [saving, setSaving] = useState(false);
+  const [deleting, setDeleting] = useState(false);
+  const [loadingPost, setLoadingPost] = useState(editing);
+
+  // Edit mode: load the existing post and prefill every field.
+  useEffect(() => {
+    if (!id) return;
+    let cancelled = false;
+    setLoadingPost(true);
+    api<{ post: Post }>(`/posts/${id}`)
+      .then(({ post }) => {
+        if (cancelled) return;
+        setDate(post.date);
+        setTitle(post.title);
+        setCaption(post.caption ?? "");
+        setPillarId(post.pillar_id);
+        setContentTypeId(post.content_type_id);
+        setFormatId(post.format_id);
+        setPostType(post.post_type);
+        setAvatarId(post.avatar_id);
+        setEditorId(post.editor_id ?? "");
+        setStatus(post.status);
+        setMetrics({
+          mViews: String(post.views ?? 0),
+          mLikes: String(post.likes ?? 0),
+          mComments: String(post.comments ?? 0),
+          mShares: String(post.shares ?? 0),
+          mSaves: String(post.saves ?? 0),
+          mReach: String(post.reach ?? 0),
+        });
+      })
+      .catch(() => {
+        if (!cancelled) toast.error("Could not load this post.");
+      })
+      .finally(() => {
+        if (!cancelled) setLoadingPost(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [id]);
+
+  const contentTypes = useMemo(
+    () => taxonomy?.contentTypes.filter((ct) => ct.pillar_id === pillarId) ?? [],
+    [taxonomy, pillarId],
+  );
+  const formats = useMemo(
+    () => taxonomy?.formats.filter((f) => f.pillar_id === pillarId) ?? [],
+    [taxonomy, pillarId],
+  );
+
+  function onFormatChange(v: string) {
+    setFormatId(v);
+    // Suggest the format's type as a default — still fully overridable.
+    const fmt = formats.find((f) => f.id === v);
+    if (fmt) setPostType(fmt.post_type);
+  }
+
+  const num = (id: string) => parseFloat(metrics[id] ?? "") || 0;
+  const engagement = num("mLikes") + num("mComments") + num("mShares") + num("mSaves");
+  const reach = num("mReach");
+  const rate = reach ? (engagement / reach) * 100 : null;
+  const warn = reach > 0 && engagement > reach;
+
+  function onPillarChange(v: string) {
+    setPillarId(v);
+    setContentTypeId("");
+    setFormatId("");
+  }
+
+  async function handleSubmit(e: FormEvent) {
+    e.preventDefault();
+    setSubmitError(null);
+    if (!date || !title || !pillarId || !contentTypeId || !formatId || !avatarId || !postType) {
+      setSubmitError("Fill in date, title, pillar, content type, format, post type and avatar.");
+      return;
+    }
+    setSaving(true);
+    const payload = {
+      date,
+      title,
+      caption,
+      pillarId,
+      contentTypeId,
+      formatId,
+      avatarId,
+      editorId,
+      postType,
+      status,
+      views: num("mViews"),
+      likes: num("mLikes"),
+      comments: num("mComments"),
+      shares: num("mShares"),
+      saves: num("mSaves"),
+      reach: num("mReach"),
+    };
+    try {
+      if (editing) {
+        await api(`/posts/${id}`, { method: "PATCH", body: JSON.stringify(payload) });
+        toast.success("Post updated.");
+      } else {
+        await api("/posts", { method: "POST", body: JSON.stringify(payload) });
+        toast.success(status === "planned" ? "Planned post saved." : "Post saved.");
+      }
+      navigate("/posts");
+    } catch (err) {
+      setSubmitError(err instanceof ApiError ? err.message : "Failed to save post.");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function handleDelete() {
+    if (!id) return;
+    if (!window.confirm(`Delete "${title || "this post"}"? This can't be undone.`)) return;
+    setDeleting(true);
+    try {
+      await api(`/posts/${id}`, { method: "DELETE" });
+      toast.success("Post deleted.");
+      navigate("/posts");
+    } catch (err) {
+      toast.error(err instanceof ApiError ? err.message : "Failed to delete post.");
+      setDeleting(false);
+    }
+  }
+
+  if (loading || !taxonomy || loadingPost) {
+    return <section className="screen"><div className="hint">Loading…</div></section>;
+  }
+
+  return (
+    <section className="screen">
+      {editing ? (
+        <div className="editing-flag" style={{ marginBottom: 16 }}>
+          ✏️ Editing — {title || "post"}
+        </div>
+      ) : (
+        <div className="seg">
+          <button className={mode === "manual" ? "on" : ""} onClick={() => setMode("manual")}>
+            ✍️ Manual entry
+          </button>
+          <button className={mode === "ig" ? "on" : ""} onClick={() => setMode("ig")}>
+            ⚡ Import from Instagram
+          </button>
+        </div>
+      )}
+
+      {mode === "manual" || editing ? (
+        <form className="card pad" style={{ maxWidth: 760 }} onSubmit={handleSubmit}>
+          <div className="grid g2">
+            <div className="field">
+              <label className="f">Date <span className="req">*</span></label>
+              <input className="t" type="date" value={date} onChange={(e) => setDate(e.target.value)} />
+            </div>
+            <div className="field">
+              <label className="f">Title <span className="req">*</span></label>
+              <input className="t" placeholder="e.g. Ingredient Glossary" value={title} onChange={(e) => setTitle(e.target.value)} />
+            </div>
+          </div>
+
+          <div className="field">
+            <label className="f">Caption</label>
+            <textarea className="t" placeholder="Post caption…" value={caption} onChange={(e) => setCaption(e.target.value)} />
+          </div>
+
+          <div className="grid g3">
+            <div className="field">
+              <label className="f">Content Pillar <span className="req">*</span></label>
+              <select className="t" value={pillarId} onChange={(e) => onPillarChange(e.target.value)}>
+                <option value="">Select pillar…</option>
+                {taxonomy.pillars.map((p) => (
+                  <option key={p.id} value={p.id}>{p.name}</option>
+                ))}
+              </select>
+            </div>
+            <div className="field">
+              <label className="f">Content Type <span className="req">*</span></label>
+              <select className="t" value={contentTypeId} disabled={!pillarId} onChange={(e) => setContentTypeId(e.target.value)}>
+                <option value="">{pillarId ? "Select type…" : "Pick a pillar first"}</option>
+                {contentTypes.map((ct) => (
+                  <option key={ct.id} value={ct.id}>{ct.name}</option>
+                ))}
+              </select>
+            </div>
+            <div className="field">
+              <label className="f">Format <span className="req">*</span></label>
+              <select className="t" value={formatId} disabled={!pillarId} onChange={(e) => onFormatChange(e.target.value)}>
+                <option value="">{pillarId ? "Select format…" : "Pick a pillar first"}</option>
+                {formats.map((f) => (
+                  <option key={f.id} value={f.id}>{f.name}</option>
+                ))}
+              </select>
+            </div>
+          </div>
+
+          <div className="grid g2">
+            <div className="field">
+              <label className="f">
+                Post Type <span className="req">*</span>{" "}
+                <span style={{ fontWeight: 500, color: "var(--faint)" }}>· defaults from format</span>
+              </label>
+              <select
+                className="t"
+                value={postType}
+                onChange={(e) => setPostType(e.target.value as "reel" | "carousel" | "")}
+              >
+                <option value="">Select post type…</option>
+                <option value="reel">🎬 Reel</option>
+                <option value="carousel">🖼️ Carousel</option>
+              </select>
+            </div>
+            <div className="field">
+              <label className="f">Audience Avatar <span className="req">*</span></label>
+              <select className="t" value={avatarId} onChange={(e) => setAvatarId(e.target.value)}>
+                <option value="">Select avatar…</option>
+                {taxonomy.avatars.map((a) => (
+                  <option key={a.id} value={a.id}>{a.name}</option>
+                ))}
+              </select>
+            </div>
+          </div>
+
+          <div className="field">
+            <label className="f">
+              Assigned Editor{" "}
+              <span style={{ fontWeight: 500, color: "var(--faint)" }}>· who edits this post</span>
+            </label>
+            <select className="t" value={editorId} onChange={(e) => setEditorId(e.target.value)}>
+              <option value="">Unassigned</option>
+              {(editors ?? []).map((ed) => (
+                <option key={ed.id} value={ed.id}>
+                  {ed.name}{ed.designation ? ` — ${ed.designation}` : ""}
+                </option>
+              ))}
+            </select>
+            {editors && editors.length === 0 && (
+              <div className="hint" style={{ marginTop: 5 }}>
+                No editors yet — add them in Settings → Editors.
+              </div>
+            )}
+          </div>
+
+          <div className="field" style={{ marginTop: 2 }}>
+            <label className="f">Publishing status</label>
+            <div className="statusseg">
+              <button type="button" className={status === "planned" ? "on" : ""} data-st="planned" onClick={() => setStatus("planned")}>
+                🕓 Planned / not published
+              </button>
+              <button type="button" className={status === "published" ? "on" : ""} data-st="published" onClick={() => setStatus("published")}>
+                ✅ Published
+              </button>
+            </div>
+            <div className="hint" style={{ marginTop: 7 }}>
+              {status === "planned"
+                ? "Create the record now. After you publish, switch this to Published and log the metrics."
+                : "Enter the latest metrics below — you can return and update them anytime as the post grows."}
+            </div>
+          </div>
+
+          <div className="sectitle"><span className="dot" />Performance metrics<span className="s">add after publishing · update anytime</span></div>
+
+          {status === "planned" ? (
+            <div className="metrics-planned">
+              <span style={{ fontSize: 18 }}>🕓</span>
+              <div>
+                <b>Not published yet.</b> Save this post now, publish on Instagram, then come back to log{" "}
+                <b>Views, Likes, Comments, Shares, Saves &amp; Accounts Reached</b> — and keep updating them over time as the post gains traction.
+              </div>
+            </div>
+          ) : (
+            <div>
+              <div className="metricgrid">
+                {METRIC_FIELDS.map(([id, label]) => (
+                  <div className="metricbox field" key={id}>
+                    <label className="f">{label}</label>
+                    <input
+                      className="t"
+                      type="number"
+                      min={0}
+                      placeholder="0"
+                      value={metrics[id] ?? ""}
+                      onChange={(e) => setMetrics((m) => ({ ...m, [id]: e.target.value }))}
+                    />
+                  </div>
+                ))}
+              </div>
+              <div className="liverate">
+                ⚡ Engagement rate: <b>{rate == null ? "—" : rate.toFixed(1) + "%"}</b>
+                <span style={{ fontWeight: 500, fontSize: 11.5, marginLeft: 6 }}>
+                  (likes + comments + shares + saves) ÷ reach · computed live
+                </span>
+              </div>
+              {warn && (
+                <div className="hint" style={{ color: "var(--amber)" }}>
+                  ⚠️ Reach looks lower than total engagement — double-check the numbers.
+                </div>
+              )}
+            </div>
+          )}
+
+          {submitError && <p className="login-err" style={{ marginTop: 12 }}>{submitError}</p>}
+
+          <div className="formfoot" style={{ justifyContent: editing ? "space-between" : "flex-end" }}>
+            {editing && (
+              <button
+                type="button"
+                className="btn"
+                style={{ color: "var(--rose)", borderColor: "var(--rose)" }}
+                onClick={handleDelete}
+                disabled={deleting || saving}
+              >
+                {deleting ? "Deleting…" : "🗑 Delete post"}
+              </button>
+            )}
+            <div style={{ display: "flex", gap: 10 }}>
+              <button type="button" className="btn" onClick={() => navigate("/posts")}>Cancel</button>
+              <button type="submit" className="btn btn-primary" disabled={saving}>
+                {saving ? "Saving…" : editing ? "Save changes" : status === "planned" ? "Save planned post" : "Save post"}
+              </button>
+            </div>
+          </div>
+        </form>
+      ) : (
+        <div className="card pad" style={{ maxWidth: 860 }}>
+          <div className="ig-connect">
+            <div className="ig-badge">📸</div>
+            <h3 style={{ margin: "0 0 6px" }}>Import directly from Instagram</h3>
+            <p style={{ color: "var(--muted)", fontSize: 13.5, maxWidth: 440, margin: "0 auto 18px" }}>
+              Connect your Instagram account once, then pull any post's metrics (views, likes, comments,
+              shares, saves, reach) automatically — no typing.
+            </p>
+            <button className="btn btn-primary" style={{ margin: "0 auto" }} disabled>
+              🔗 Connect Instagram account
+            </button>
+            <div className="hint" style={{ justifyContent: "center", marginTop: 12 }}>
+              Instagram import arrives in Phase 2 — manual entry always works.
+            </div>
+          </div>
+        </div>
+      )}
+    </section>
+  );
+}
