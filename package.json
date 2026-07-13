@@ -7,7 +7,7 @@
     "node": ">=20"
   },
   "scripts": {
-    "build": "npm --prefix pulse-app install && npm --prefix pulse-app run build && npm --prefix server install --omit=dev",
+    "build": "npm --prefix pulse-app install --include=dev && npm --prefix pulse-app run build && npm --prefix server install --omit=dev",
     "start": "npm --prefix server start"
   }
 }
