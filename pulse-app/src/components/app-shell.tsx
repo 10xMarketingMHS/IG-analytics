@@ -57,6 +57,12 @@ export function AppShell() {
                   key={item.href}
                   to={item.href}
                   end={item.href === "/posts"}
+                  // Add Post opens as a modal over the current page.
+                  state={
+                    item.href === "/posts/new"
+                      ? { backgroundLocation: location }
+                      : undefined
+                  }
                   onClick={() => setMenuOpen(false)}
                   className={({ isActive }) =>
                     "navitem" + (isActive ? " active" : "")
@@ -102,7 +108,10 @@ export function AppShell() {
           <button className="btn icon" title="Theme" onClick={toggle}>
             {theme === "dark" ? "☀️" : "🌙"}
           </button>
-          <button className="btn btn-primary add-post-btn" onClick={() => navigate("/posts/new")}>
+          <button
+            className="btn btn-primary add-post-btn"
+            onClick={() => navigate("/posts/new", { state: { backgroundLocation: location } })}
+          >
             <span className="ap-plus">＋</span>
             <span className="ap-text"> Add Post</span>
           </button>

@@ -18,12 +18,14 @@ const METRIC_FIELDS = [
   ["mReach", "Accounts Reached"],
 ] as const;
 
-export function AddPostPage() {
+export function AddPostPage({ onClose }: { onClose?: () => void } = {}) {
   const { taxonomy, loading } = useTaxonomy();
   const { editors } = useEditors();
   const navigate = useNavigate();
   const { id } = useParams<{ id: string }>();
   const editing = Boolean(id);
+  const modal = Boolean(onClose); // rendered inside the glass modal vs full page
+  const cancel = () => (onClose ? onClose() : navigate("/posts"));
 
   const [mode, setMode] = useState<Mode>("manual");
   const [status, setStatus] = useState<Status>("planned");
@@ -165,11 +167,12 @@ export function AddPostPage() {
   }
 
   if (loading || !taxonomy || loadingPost) {
-    return <section className="screen"><div className="hint">Loading…</div></section>;
+    const l = <div className="hint">Loading…</div>;
+    return modal ? l : <section className="screen">{l}</section>;
   }
 
-  return (
-    <section className="screen">
+  const body = (
+    <>
       {editing ? (
         <div className="editing-flag" style={{ marginBottom: 16 }}>
           ✏️ Editing — {title || "post"}
@@ -186,7 +189,11 @@ export function AddPostPage() {
       )}
 
       {mode === "manual" || editing ? (
-        <form className="card pad" style={{ maxWidth: 760 }} onSubmit={handleSubmit}>
+        <form
+          className={modal ? "" : "card pad"}
+          style={modal ? undefined : { maxWidth: 760 }}
+          onSubmit={handleSubmit}
+        >
           <div className="grid g2">
             <div className="field">
               <label className="f">Date <span className="req">*</span></label>
@@ -353,7 +360,7 @@ export function AddPostPage() {
               </button>
             )}
             <div style={{ display: "flex", gap: 10 }}>
-              <button type="button" className="btn" onClick={() => navigate("/posts")}>Cancel</button>
+              <button type="button" className="btn" onClick={cancel}>Cancel</button>
               <button type="submit" className="btn btn-primary" disabled={saving}>
                 {saving ? "Saving…" : editing ? "Save changes" : status === "planned" ? "Save planned post" : "Save post"}
               </button>
@@ -361,7 +368,7 @@ export function AddPostPage() {
           </div>
         </form>
       ) : (
-        <div className="card pad" style={{ maxWidth: 860 }}>
+        <div className={modal ? "" : "card pad"} style={modal ? undefined : { maxWidth: 860 }}>
           <div className="ig-connect">
             <div className="ig-badge">📸</div>
             <h3 style={{ margin: "0 0 6px" }}>Import directly from Instagram</h3>
@@ -378,6 +385,8 @@ export function AddPostPage() {
           </div>
         </div>
       )}
-    </section>
+    </>
   );
+
+  return modal ? body : <section className="screen">{body}</section>;
 }

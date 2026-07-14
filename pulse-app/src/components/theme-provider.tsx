@@ -19,7 +19,7 @@ const STORAGE_KEY = "pulse-theme";
 
 export function ThemeProvider({ children }: { children: ReactNode }) {
   const [theme, setTheme] = useState<Theme>(
-    () => (localStorage.getItem(STORAGE_KEY) as Theme | null) ?? "light",
+    () => (localStorage.getItem(STORAGE_KEY) as Theme | null) ?? "dark",
   );
 
   useEffect(() => {

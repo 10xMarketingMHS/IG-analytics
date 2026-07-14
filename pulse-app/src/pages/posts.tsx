@@ -1,5 +1,5 @@
 import { useMemo, useState } from "react";
-import { useNavigate } from "react-router-dom";
+import { useNavigate, useLocation } from "react-router-dom";
 import { toast } from "sonner";
 import { api, ApiError } from "@/lib/api";
 import { useTaxonomy } from "@/lib/use-taxonomy";
@@ -27,6 +27,7 @@ export function PostsPage() {
   const { editors } = useEditors();
   const { posts, refetch } = usePosts();
   const navigate = useNavigate();
+  const location = useLocation();
   const [filter, setFilter] = useState<Filter>("all");
   const [query, setQuery] = useState("");
 
@@ -120,7 +121,7 @@ export function PostsPage() {
               </td></tr>
             ) : (
               rows.map((p) => (
-                <tr key={p.id} className="clickrow" onClick={() => navigate(`/posts/${p.id}/edit`)}>
+                <tr key={p.id} className="clickrow" onClick={() => navigate(`/posts/${p.id}/edit`, { state: { backgroundLocation: location } })}>
                   <td>{p.date}</td>
                   <td>
                     <b style={{ fontWeight: 650 }}>{p.title}</b>
