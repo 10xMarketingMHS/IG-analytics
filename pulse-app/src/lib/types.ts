@@ -35,6 +35,25 @@ export type Editor = {
   active: boolean;
 };
 
+export type TaskStatus = "todo" | "in_progress" | "done";
+export type TaskPriority = "low" | "medium" | "high";
+
+export type Task = {
+  id: string;
+  title: string;
+  description: string | null;
+  editor_id: string | null;
+  channel_id: string | null;
+  status: TaskStatus;
+  priority: TaskPriority;
+  due_date: string | null;
+  created_at: string;
+  completed_at: string | null;
+  editor_name: string | null;
+  editor_image: string | null;
+  channel_name: string | null;
+};
+
 export type PostStatus = "planned" | "published";
 
 export type Post = {

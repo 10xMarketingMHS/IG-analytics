@@ -11,6 +11,9 @@ pulse-app/dist/
 .env.*.local
 server/.env
 
+# DB backups — contain real data (incl. password hashes). Never commit.
+server/backups/
+
 # .env.production is intentionally NOT ignored — it only holds VITE_API_URL=/api
 
 # OS / editor cruft

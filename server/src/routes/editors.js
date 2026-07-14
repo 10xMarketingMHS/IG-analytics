@@ -14,11 +14,13 @@ const EditorSchema = z.object({
 
 const EDITOR_COLUMNS = "id, name, designation, image_url, active";
 
+// Editors are the shared Media House team — scoped to the org, so every channel
+// sees the same people.
 editorsRouter.get("/editors", async (req, res, next) => {
   try {
     const { rows } = await pool.query(
-      `select ${EDITOR_COLUMNS} from editor where workspace_id = $1 order by name`,
-      [req.workspaceId],
+      `select ${EDITOR_COLUMNS} from editor where org_id = $1 order by name`,
+      [req.orgId],
     );
     res.json({ editors: rows });
   } catch (err) {
@@ -32,12 +34,15 @@ editorsRouter.post("/editors", requireAdmin, async (req, res, next) => {
     return res.status(400).json({ error: parsed.error.flatten().fieldErrors });
   }
   try {
+    // workspace_id stays populated (NOT NULL) with the active channel for
+    // history, but org_id is what scopes the shared team.
     const { rows } = await pool.query(
-      `insert into editor (workspace_id, name, designation, image_url)
-       values ($1, $2, $3, $4)
+      `insert into editor (workspace_id, org_id, name, designation, image_url)
+       values ($1, $2, $3, $4, $5)
        returning ${EDITOR_COLUMNS}`,
       [
         req.workspaceId,
+        req.orgId,
         parsed.data.name,
         parsed.data.designation ?? "",
         parsed.data.imageUrl || null,
@@ -55,7 +60,7 @@ editorsRouter.patch("/editors/:id", requireAdmin, async (req, res, next) => {
     return res.status(400).json({ error: parsed.error.flatten().fieldErrors });
   }
   const sets = [];
-  const params = [req.params.id, req.workspaceId];
+  const params = [req.params.id, req.orgId];
   for (const [key, col] of [["name", "name"], ["designation", "designation"], ["imageUrl", "image_url"]]) {
     if (parsed.data[key] === undefined) continue;
     params.push(key === "imageUrl" ? parsed.data[key] || null : parsed.data[key]);
@@ -65,7 +70,7 @@ editorsRouter.patch("/editors/:id", requireAdmin, async (req, res, next) => {
   try {
     const { rows } = await pool.query(
       `update editor set ${sets.join(", ")}
-       where id = $1 and workspace_id = $2
+       where id = $1 and org_id = $2
        returning ${EDITOR_COLUMNS}`,
       params,
     );
@@ -81,8 +86,8 @@ editorsRouter.patch("/editors/:id", requireAdmin, async (req, res, next) => {
 editorsRouter.delete("/editors/:id", requireAdmin, async (req, res, next) => {
   try {
     const { rowCount } = await pool.query(
-      "delete from editor where id = $1 and workspace_id = $2",
-      [req.params.id, req.workspaceId],
+      "delete from editor where id = $1 and org_id = $2",
+      [req.params.id, req.orgId],
     );
     if (!rowCount) return res.status(404).json({ error: "Editor not found" });
     res.status(204).end();

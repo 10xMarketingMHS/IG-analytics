@@ -94,6 +94,38 @@ main{min-width:0;display:flex;flex-direction:column}
   display:grid;place-items:center;transition:.15s}
 .modal-close:hover{background:var(--accent-weak);color:var(--accent-ink);border-color:transparent}
 
+/* ===== Task board (kanban) ===== */
+.task-board{display:grid;grid-template-columns:repeat(3,1fr);gap:16px;align-items:start}
+.task-col{background:var(--glass);border:1px solid var(--glass-brd);border-radius:16px;padding:12px;min-height:120px;
+  backdrop-filter:blur(16px) saturate(140%);-webkit-backdrop-filter:blur(16px) saturate(140%)}
+.task-colhead{display:flex;align-items:center;gap:8px;font-size:12.5px;font-weight:800;letter-spacing:.3px;
+  text-transform:uppercase;color:var(--muted);padding:4px 6px 12px}
+.task-colhead .tdot{width:9px;height:9px;border-radius:3px;background:var(--faint)}
+.task-colhead .tdot.todo{background:#94a3b8}.task-colhead .tdot.in_progress{background:#f59e0b}.task-colhead .tdot.done{background:var(--good)}
+.task-count{margin-left:auto;font-size:11px;font-weight:800;color:var(--accent-ink);background:var(--accent-weak);padding:1px 9px;border-radius:10px}
+.task-card{background:var(--panel);border:1px solid var(--border);border-radius:12px;padding:12px 13px;margin-bottom:10px;
+  cursor:pointer;transition:transform .18s,border-color .18s,box-shadow .18s}
+.task-card:hover{transform:translateY(-2px);border-color:var(--accent);box-shadow:0 12px 28px rgba(90,40,180,.22)}
+.task-top{display:flex;align-items:center;justify-content:space-between;margin-bottom:7px}
+.task-pri{font-size:10px;font-weight:800;text-transform:uppercase;letter-spacing:.4px;padding:2px 8px;border-radius:20px}
+.task-pri.low{background:rgba(100,116,139,.16);color:#94a3b8}
+.task-pri.medium{background:var(--accent-weak);color:var(--accent-ink)}
+.task-pri.high{background:rgba(225,29,72,.16);color:#fb7185}
+.task-x{border:0;background:transparent;cursor:pointer;font-size:12px;opacity:.55;padding:2px 4px;border-radius:6px}
+.task-x:hover{opacity:1;background:rgba(225,29,72,.14)}
+.task-title{font-size:13.5px;font-weight:700;line-height:1.35;margin-bottom:9px}
+.task-meta{display:flex;align-items:center;justify-content:space-between;gap:8px;flex-wrap:wrap;font-size:11.5px}
+.task-assignee{display:inline-flex;align-items:center;gap:6px;color:var(--muted);font-weight:600}
+.task-ava{width:20px;height:20px;border-radius:6px;object-fit:cover;background:var(--grad);color:#fff;
+  display:inline-grid;place-items:center;font-size:10px;font-weight:800}
+.task-unassigned{color:var(--faint);font-style:italic}
+.task-due{color:var(--muted);font-weight:600;white-space:nowrap}
+.task-due.over{color:#fb7185;font-weight:800}
+.task-actions{display:flex;gap:6px;margin-top:10px;padding-top:9px;border-top:1px solid var(--border2)}
+.task-actions .linkbtn{font-size:11px;padding:3px 7px}
+.task-empty{font-size:11.5px;color:var(--faint);text-align:center;padding:14px 0}
+@media screen and (max-width:768px){.task-board{grid-template-columns:1fr}}
+
 .grid{display:grid;gap:16px}
 .g2{grid-template-columns:1fr 1fr}.g3{grid-template-columns:repeat(3,1fr)}.g4{grid-template-columns:repeat(4,1fr)}
 .sectitle{display:flex;align-items:center;gap:9px;font-size:14px;font-weight:750;margin:24px 2px 12px}

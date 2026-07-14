@@ -30,7 +30,7 @@ export function AppShell() {
 
   const [title, sub] = metaFor(location.pathname);
   const initial = (user?.email ?? "?").charAt(0).toUpperCase();
-  const sections: Array<"Analyze" | "Manage"> = ["Analyze", "Manage"];
+  const sections: Array<"Analyze" | "Manage" | "Team"> = ["Analyze", "Manage", "Team"];
 
   async function handleSignOut() {
     await logout();

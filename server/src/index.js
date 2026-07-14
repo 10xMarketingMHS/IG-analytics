@@ -12,6 +12,7 @@ import { workspaceRouter } from "./routes/workspace.js";
 import { postsRouter } from "./routes/posts.js";
 import { taxonomyRouter } from "./routes/taxonomy.js";
 import { editorsRouter } from "./routes/editors.js";
+import { tasksRouter } from "./routes/tasks.js";
 import { usersRouter } from "./routes/users.js";
 
 const app = express();
@@ -38,6 +39,7 @@ app.use("/api", requireAuth, resolveWorkspace, workspaceRouter);
 app.use("/api", requireAuth, resolveWorkspace, postsRouter);
 app.use("/api", requireAuth, resolveWorkspace, taxonomyRouter);
 app.use("/api", requireAuth, resolveWorkspace, editorsRouter);
+app.use("/api", requireAuth, resolveWorkspace, tasksRouter);
 app.use("/api", requireAuth, resolveWorkspace, usersRouter);
 
 // In production this one service also serves the built React app, so the whole

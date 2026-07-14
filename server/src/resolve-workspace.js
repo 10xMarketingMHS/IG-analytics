@@ -18,6 +18,16 @@ export function clearMembershipCache() {
   membershipCache.clear();
 }
 
+// Which org a channel belongs to changes ~never, so cache it for the process.
+const wsOrgCache = new Map(); // wsId -> orgId
+async function orgForWorkspace(wsId) {
+  if (wsOrgCache.has(wsId)) return wsOrgCache.get(wsId);
+  const { rows } = await pool.query("select org_id from workspace where id = $1", [wsId]);
+  const orgId = rows[0]?.org_id ?? null;
+  wsOrgCache.set(wsId, orgId);
+  return orgId;
+}
+
 // Resolves the active workspace for a request. The client sends the chosen
 // workspace via the `X-Workspace-Id` header (the workspace switcher). We
 // verify the authenticated user is a member of it; otherwise fall back to
@@ -64,6 +74,8 @@ export async function resolveWorkspace(req, res, next) {
 
     req.workspaceId = workspaceId;
     req.role = role;
+    // Org context for shared-team resources (editors, tasks).
+    req.orgId = await orgForWorkspace(workspaceId);
     next();
   } catch (err) {
     next(err);

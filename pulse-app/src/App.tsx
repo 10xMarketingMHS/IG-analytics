@@ -20,6 +20,7 @@ import { DashboardPage } from "@/pages/dashboard";
 import { InsightsPage } from "@/pages/insights";
 import { ReportsPage } from "@/pages/reports";
 import { PostsPage } from "@/pages/posts";
+import { TasksPage } from "@/pages/tasks";
 import { AddPostPage } from "@/pages/add-post";
 import { SettingsPage } from "@/pages/settings";
 import { FormatAnalyticsPage } from "@/pages/format-analytics";
@@ -58,6 +59,7 @@ function AppRoutes() {
             <Route path="/leaderboard" element={<LeaderboardPage />} />
             <Route path="/reports" element={<ReportsPage />} />
             <Route path="/posts" element={<PostsPage />} />
+            <Route path="/tasks" element={<TasksPage />} />
             {/* Direct visits (no background) still render the form full-page. */}
             <Route path="/posts/new" element={<AddPostPage />} />
             <Route path="/posts/:id/edit" element={<AddPostPage />} />
