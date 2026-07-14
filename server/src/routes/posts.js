@@ -14,6 +14,7 @@ const CreatePostSchema = z.object({
   formatId: z.string().uuid(),
   avatarId: z.string().uuid(),
   editorId: z.string().uuid().optional().or(z.literal("")),
+  channelId: z.string().uuid().optional(), // which channel to create the post in
   postType: z.enum(["reel", "carousel"]).optional(),
   status: z.enum(["planned", "published"]).default("planned"),
   views: z.number().int().nonnegative().optional(),
@@ -36,19 +37,47 @@ const POST_COLUMNS = `
   created_at, updated_at
 `;
 
+// Prefixed column list for queries that join `workspace` (id/name collide).
+const P_COLS = POST_COLUMNS.split(",")
+  .map((c) => `p.${c.trim()}`)
+  .join(", ");
+
+// GET /posts
+//   ?channel=all         → every post across all channels in the org (dashboard)
+//   ?channel=<id>        → one specific channel (validated against the org)
+//   (no channel param)   → the active channel only (Posts page — unchanged)
+// The channel=all / specific responses also include channel_id + channel_name.
 postsRouter.get("/posts", async (req, res, next) => {
   try {
-    const { status } = req.query;
-    const params = [req.workspaceId];
-    let where = "workspace_id = $1 and deleted_at is null";
+    const { status, channel } = req.query;
+    const params = [];
+    let where;
+    let join = "";
+    let extraCols = "";
+
+    if (channel === "all") {
+      params.push(req.orgId);
+      join = "join workspace w on w.id = p.workspace_id";
+      extraCols = ", p.workspace_id as channel_id, w.name as channel_name";
+      where = `w.org_id = $${params.length} and p.deleted_at is null`;
+    } else if (channel) {
+      params.push(channel, req.orgId);
+      join = "join workspace w on w.id = p.workspace_id";
+      extraCols = ", p.workspace_id as channel_id, w.name as channel_name";
+      where = "p.workspace_id = $1 and w.org_id = $2 and p.deleted_at is null";
+    } else {
+      params.push(req.workspaceId);
+      where = "p.workspace_id = $1 and p.deleted_at is null";
+    }
 
     if (status === "planned" || status === "published") {
       params.push(status);
-      where += ` and status = $${params.length}`;
+      where += ` and p.status = $${params.length}`;
     }
 
     const { rows } = await pool.query(
-      `select ${POST_COLUMNS} from post where ${where} order by date desc, created_at desc`,
+      `select ${P_COLS}${extraCols} from post p ${join}
+       where ${where} order by p.date desc, p.created_at desc`,
       params,
     );
     res.json({ posts: rows });
@@ -79,6 +108,18 @@ postsRouter.post("/posts", requireEditor, async (req, res, next) => {
   const p = parsed.data;
 
   try {
+    // Target channel: the chosen one (validated to belong to the org) or the
+    // active channel. Prevents writing into a channel outside your org.
+    let targetWs = req.workspaceId;
+    if (p.channelId && p.channelId !== req.workspaceId) {
+      const { rows: ok } = await pool.query(
+        "select 1 from workspace where id = $1 and org_id = $2",
+        [p.channelId, req.orgId],
+      );
+      if (!ok.length) return res.status(400).json({ error: "Unknown channel" });
+      targetWs = p.channelId;
+    }
+
     const { rows } = await pool.query(
       `insert into post (
          workspace_id, date, title, caption, pillar_id, content_type_id,
@@ -87,7 +128,7 @@ postsRouter.post("/posts", requireEditor, async (req, res, next) => {
        ) values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21)
        returning ${POST_COLUMNS}`,
       [
-        req.workspaceId,
+        targetWs,
         p.date,
         p.title,
         p.caption ?? null,

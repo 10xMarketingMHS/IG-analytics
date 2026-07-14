@@ -5,7 +5,6 @@ import { useAuth } from "@/lib/auth-context";
 import { useWorkspaces } from "@/lib/workspaces-context";
 import { usePosts } from "@/lib/use-posts";
 import { useTheme } from "@/components/theme-provider";
-import { WorkspaceSwitcher } from "@/components/workspace-switcher";
 
 function metaFor(pathname: string): [string, string] {
   if (PAGE_META[pathname]) return PAGE_META[pathname];
@@ -104,7 +103,6 @@ export function AppShell() {
             <div className="sub">{sub}</div>
           </div>
           <div className="spacer" />
-          <WorkspaceSwitcher />
           <button className="btn icon" title="Theme" onClick={toggle}>
             {theme === "dark" ? "☀️" : "🌙"}
           </button>

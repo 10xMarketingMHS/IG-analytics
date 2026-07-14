@@ -3,6 +3,7 @@ import { useNavigate, useParams } from "react-router-dom";
 import { toast } from "sonner";
 import { useTaxonomy } from "@/lib/use-taxonomy";
 import { useEditors } from "@/lib/use-editors";
+import { useWorkspaces } from "@/lib/workspaces-context";
 import { api, ApiError } from "@/lib/api";
 import type { Post } from "@/lib/types";
 
@@ -21,6 +22,7 @@ const METRIC_FIELDS = [
 export function AddPostPage({ onClose }: { onClose?: () => void } = {}) {
   const { taxonomy, loading } = useTaxonomy();
   const { editors } = useEditors();
+  const { workspaces, active } = useWorkspaces();
   const navigate = useNavigate();
   const { id } = useParams<{ id: string }>();
   const editing = Boolean(id);
@@ -35,6 +37,7 @@ export function AddPostPage({ onClose }: { onClose?: () => void } = {}) {
   const [postType, setPostType] = useState<"" | "reel" | "carousel">("");
   const [avatarId, setAvatarId] = useState("");
   const [editorId, setEditorId] = useState("");
+  const [channelId, setChannelId] = useState("");
   const [date, setDate] = useState("2026-07-15");
   const [title, setTitle] = useState("");
   const [caption, setCaption] = useState("");
@@ -82,6 +85,11 @@ export function AddPostPage({ onClose }: { onClose?: () => void } = {}) {
     };
   }, [id]);
 
+  // New posts default to the first/active channel until the user picks another.
+  useEffect(() => {
+    if (!editing && !channelId && active) setChannelId(active.id);
+  }, [editing, channelId, active]);
+
   const contentTypes = useMemo(
     () => taxonomy?.contentTypes.filter((ct) => ct.pillar_id === pillarId) ?? [],
     [taxonomy, pillarId],
@@ -127,6 +135,7 @@ export function AddPostPage({ onClose }: { onClose?: () => void } = {}) {
       formatId,
       avatarId,
       editorId,
+      channelId: channelId || undefined,
       postType,
       status,
       views: num("mViews"),
@@ -194,6 +203,20 @@ export function AddPostPage({ onClose }: { onClose?: () => void } = {}) {
           style={modal ? undefined : { maxWidth: 760 }}
           onSubmit={handleSubmit}
         >
+          {!editing && workspaces.length > 0 && (
+            <div className="field">
+              <label className="f">
+                Channel <span className="req">*</span>{" "}
+                <span style={{ fontWeight: 500, color: "var(--faint)" }}>· which account this post is for</span>
+              </label>
+              <select className="t" value={channelId} onChange={(e) => setChannelId(e.target.value)}>
+                {workspaces.map((w) => (
+                  <option key={w.id} value={w.id}>{w.name}</option>
+                ))}
+              </select>
+            </div>
+          )}
+
           <div className="grid g2">
             <div className="field">
               <label className="f">Date <span className="req">*</span></label>

@@ -1,7 +1,8 @@
 import { useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { useTaxonomy } from "@/lib/use-taxonomy";
-import { usePosts } from "@/lib/use-posts";
+import { useResource } from "@/lib/use-resource";
+import { useWorkspaces } from "@/lib/workspaces-context";
 import type { Post } from "@/lib/types";
 import {
   RANGE_PRESETS, rangeFor, previousRange, inRange, labelFor, compactNum,
@@ -16,7 +17,12 @@ function engagementOf(p: Post) {
 export function DashboardPage() {
   const { taxonomy } = useTaxonomy();
   const navigate = useNavigate();
-  const { posts } = usePosts();
+  const { workspaces } = useWorkspaces();
+  // Channel scope: "all" aggregates every channel in the Media House, or a
+  // specific channel id. Drives the cross-channel analytics.
+  const [channel, setChannel] = useState<string>("all");
+  const { data: postData } = useResource<{ posts: Post[] }>(`/posts?channel=${channel}`);
+  const posts = postData?.posts ?? null;
   const [range, setRange] = useState<RangeKey>("all");
   const [custom, setCustom] = useState<{ from: string; to: string } | null>(null);
   const [popOpen, setPopOpen] = useState(false);
@@ -103,10 +109,23 @@ export function DashboardPage() {
 
   return (
     <section className="screen">
-      <div className="toolbar" style={{ justifyContent: "space-between", alignItems: "center" }}>
+      <div className="toolbar" style={{ alignItems: "center" }}>
+        <select
+          className="t chan-sel"
+          style={{ maxWidth: 220 }}
+          value={channel}
+          onChange={(e) => setChannel(e.target.value)}
+          title="Choose a channel"
+        >
+          <option value="all">🌐 All Channels</option>
+          {workspaces.map((w) => (
+            <option key={w.id} value={w.id}>{w.name}</option>
+          ))}
+        </select>
         <div className="hint" style={{ margin: 0 }}>
           Showing <b style={{ color: "var(--text)" }}>{rangeLabel}</b> · {scoped.length} post{scoped.length === 1 ? "" : "s"}
         </div>
+        <div className="spacer" />
         <div style={{ position: "relative" }}>
           <button className="rangebtn" onClick={() => setPopOpen((o) => !o)}>
             <span>🗓️ {rangeLabel}</span><span className="cv">▾</span>

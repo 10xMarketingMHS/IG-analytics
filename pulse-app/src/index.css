@@ -303,6 +303,12 @@ select.mini{font-family:inherit;font-size:12.5px;font-weight:700;color:var(--tex
 .lb-hero h2{margin:0 0 7px;font-size:23px;letter-spacing:-.4px}
 .lb-hero p{margin:0;color:var(--muted);font-size:13.5px;line-height:1.55;max-width:640px}
 .lb-hero p b{color:var(--accent-ink)}
+.lb-tabs{display:inline-flex;background:var(--glass);border:1px solid var(--glass-brd);border-radius:14px;padding:5px;gap:5px;margin:0 0 20px;
+  backdrop-filter:blur(14px);-webkit-backdrop-filter:blur(14px)}
+.lb-tabs button{border:0;background:transparent;color:var(--muted);font-weight:700;font-size:13.5px;padding:10px 18px;border-radius:10px;
+  font-family:inherit;cursor:pointer;transition:.15s;white-space:nowrap}
+.lb-tabs button.on{background:var(--grad);color:#fff;box-shadow:0 8px 20px rgba(124,58,237,.35)}
+.lb-head-house,.lb-row-house{grid-template-columns:110px 1fr 124px 104px}
 .lb-statbar{display:flex;align-items:center;gap:16px;margin:0 0 16px}
 .lb-statbar h3{margin:0;font-size:20px;letter-spacing:-.3px}
 .lb-toggle{display:inline-flex;background:var(--panel2);border:1px solid var(--border);border-radius:12px;padding:4px;gap:4px}
@@ -416,6 +422,7 @@ img.lb-ava{object-fit:cover}
   .g2{grid-template-columns:1fr}
   /* Leaderboard list: drop reels/carousels + views columns */
   .lb-head,.lb-row{grid-template-columns:84px 1fr 104px}
+  .lb-head-house,.lb-row-house{grid-template-columns:84px 1fr 104px}
   .lb-hidesm{display:none}
   .lb-hero{padding:18px 20px}
   .lb-hero .trophy{font-size:52px}
