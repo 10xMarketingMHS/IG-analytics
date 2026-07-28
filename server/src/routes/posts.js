@@ -2,6 +2,7 @@ import { Router } from "express";
 import { z } from "zod";
 import { pool } from "../db.js";
 import { requireEditor } from "../resolve-workspace.js";
+import { logActivity } from "../activity.js";
 
 export const postsRouter = Router();
 
@@ -197,6 +198,15 @@ postsRouter.post("/posts", requireEditor, async (req, res, next) => {
     );
     // Auto-create a Task Management task for the assigned editor.
     await syncPostTask(rows[0].id, req.orgId);
+    await logActivity({
+      orgId: req.orgId,
+      actorId: req.user.sub,
+      verb: rows[0].status === "published" ? "published" : "created",
+      entityType: "post",
+      entityId: rows[0].id,
+      channelId: targetWs,
+      summary: rows[0].status === "published" ? `Published “${rows[0].title}”` : `Added post “${rows[0].title}”`,
+    });
     res.status(201).json({ post: rows[0] });
   } catch (err) {
     next(err);
@@ -249,6 +259,12 @@ postsRouter.patch("/posts/:id", requireEditor, async (req, res, next) => {
   }
 
   try {
+    // Capture prior status/stage so we log only genuine transitions.
+    const prior = (await pool.query(
+      "select status, edit_stage, workspace_id from post where id = $1 and workspace_id = $2 and deleted_at is null",
+      [req.params.id, req.workspaceId],
+    )).rows[0];
+
     const { rows } = await pool.query(
       `update post set ${sets.join(", ")}
        where id = $1 and workspace_id = $2 and deleted_at is null
@@ -258,7 +274,22 @@ postsRouter.patch("/posts/:id", requireEditor, async (req, res, next) => {
     if (rows.length === 0) return res.status(404).json({ error: "Post not found" });
     // Keep the linked task in sync (e.g. editor assigned/changed on edit).
     await syncPostTask(req.params.id, req.orgId);
-    res.json({ post: rows[0] });
+
+    const post = rows[0];
+    if (prior && prior.status !== "published" && post.status === "published") {
+      await logActivity({
+        orgId: req.orgId, actorId: req.user.sub, verb: "published",
+        entityType: "post", entityId: post.id, channelId: post.workspace_id ?? prior.workspace_id,
+        summary: `Published “${post.title}”`,
+      });
+    } else if (prior && prior.edit_stage !== "completed" && post.edit_stage === "completed") {
+      await logActivity({
+        orgId: req.orgId, actorId: req.user.sub, verb: "stage_completed",
+        entityType: "post", entityId: post.id, channelId: post.workspace_id ?? prior.workspace_id,
+        summary: `Marked “${post.title}” editing complete`,
+      });
+    }
+    res.json({ post });
   } catch (err) {
     next(err);
   }

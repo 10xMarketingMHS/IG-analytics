@@ -1,10 +1,32 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { NavLink, Outlet, useLocation, useNavigate } from "react-router-dom";
 import { NAV_ITEMS, NAV_SECTIONS, PAGE_META } from "@/lib/nav";
 import { useAuth } from "@/lib/auth-context";
 import { useWorkspaces } from "@/lib/workspaces-context";
 import { usePosts } from "@/lib/use-posts";
+import { useResource } from "@/lib/use-resource";
+import { getActivitySeen, onActivitySeenChange } from "@/lib/activity-seen";
 import { useTheme } from "@/components/theme-provider";
+import type { Activity } from "@/lib/types";
+
+// Unread = activity newer than the last timestamp the user saw on /activity.
+// Polls lightly so the badge stays fresh while the shell stays mounted.
+function useUnreadActivity() {
+  const { data, refetch } = useResource<{ activity: Activity[] }>("/activity?limit=40");
+  const [seen, setSeen] = useState(getActivitySeen());
+
+  useEffect(() => onActivitySeenChange(() => setSeen(getActivitySeen())), []);
+  useEffect(() => {
+    const id = setInterval(() => refetch().catch(() => {}), 45_000);
+    return () => clearInterval(id);
+  }, [refetch]);
+
+  return useMemo(() => {
+    const items = data?.activity ?? [];
+    if (!seen) return Math.min(items.length, 9);
+    return items.filter((a) => a.created_at > seen).length;
+  }, [data, seen]);
+}
 
 function metaFor(pathname: string): [string, string] {
   if (PAGE_META[pathname]) return PAGE_META[pathname];
@@ -20,6 +42,7 @@ export function AppShell() {
   const navigate = useNavigate();
   const { posts } = usePosts();
   const postCount = posts?.length ?? null;
+  const unread = useUnreadActivity();
   const [menuOpen, setMenuOpen] = useState(false);
 
   // Close the mobile drawer whenever the route changes.
@@ -102,6 +125,15 @@ export function AppShell() {
             <div className="sub">{sub}</div>
           </div>
           <div className="spacer" />
+          <button
+            className="btn icon bell-btn"
+            title="Activity"
+            aria-label="Activity"
+            onClick={() => navigate("/activity")}
+          >
+            🔔
+            {unread > 0 && <span className="bell-dot">{unread > 9 ? "9+" : unread}</span>}
+          </button>
           <button className="btn icon" title="Theme" onClick={toggle}>
             {theme === "dark" ? "☀️" : "🌙"}
           </button>

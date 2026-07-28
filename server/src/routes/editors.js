@@ -2,6 +2,7 @@ import { Router } from "express";
 import { z } from "zod";
 import { pool } from "../db.js";
 import { requireAdmin } from "../resolve-workspace.js";
+import { logActivity } from "../activity.js";
 
 export const editorsRouter = Router();
 
@@ -48,6 +49,11 @@ editorsRouter.post("/editors", requireAdmin, async (req, res, next) => {
         parsed.data.imageUrl || null,
       ],
     );
+    await logActivity({
+      orgId: req.orgId, actorId: req.user.sub, verb: "editor_added",
+      entityType: "editor", entityId: rows[0].id, channelId: req.workspaceId,
+      summary: `Added ${rows[0].name} to the team`,
+    });
     res.status(201).json({ editor: rows[0] });
   } catch (err) {
     next(err);

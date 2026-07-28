@@ -2,6 +2,7 @@ import { Router } from "express";
 import { z } from "zod";
 import { pool } from "../db.js";
 import { createWorkspace } from "../bootstrap.js";
+import { logActivity } from "../activity.js";
 
 export const workspacesRouter = Router();
 
@@ -59,6 +60,13 @@ workspacesRouter.post("/workspaces", async (req, res, next) => {
       }
     }
     await client.query("COMMIT");
+    if (orgId) {
+      await logActivity({
+        orgId, actorId: req.user.sub, verb: "channel_added",
+        entityType: "channel", entityId: workspace.id, channelId: workspace.id,
+        summary: `Added channel “${workspace.name}”`,
+      });
+    }
     res.status(201).json({ workspace });
   } catch (err) {
     await client.query("ROLLBACK");

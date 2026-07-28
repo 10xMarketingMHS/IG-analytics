@@ -66,7 +66,30 @@ export type Task = {
   editor_name: string | null;
   editor_image: string | null;
   channel_name: string | null;
+  subtask_total: number;
+  subtask_done: number;
+  recurrence: "none" | "daily" | "weekly";
 };
+
+export type ActivityVerb =
+  | "created" | "completed" | "assigned" | "commented" | "published"
+  | "stage_completed" | "channel_added" | "editor_added";
+
+export type Activity = {
+  id: string;
+  verb: ActivityVerb;
+  entity_type: "task" | "post" | "comment" | "channel" | "editor";
+  entity_id: string | null;
+  channel_id: string | null;
+  summary: string;
+  meta: Record<string, unknown>;
+  created_at: string;
+  actor_name: string | null;
+  channel_name: string | null;
+};
+
+export type Subtask = { id: string; title: string; done: boolean; sort_order: number };
+export type TaskComment = { id: string; body: string; created_at: string; author_id: string | null; author_name: string | null };
 
 export type PostStatus = "planned" | "published";
 export type EditStage = "not_started" | "in_progress" | "in_review" | "pending" | "completed";
