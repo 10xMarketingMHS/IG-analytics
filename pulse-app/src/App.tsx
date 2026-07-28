@@ -16,12 +16,16 @@ import { AppShell } from "@/components/app-shell";
 import { Modal } from "@/components/modal";
 import { Toaster } from "@/components/ui/sonner";
 import { LoginPage } from "@/pages/login";
+import { HomePage } from "@/pages/home";
 import { DashboardPage } from "@/pages/dashboard";
 import { InsightsPage } from "@/pages/insights";
+import { MetricsPage } from "@/pages/metrics";
 import { ReportsPage } from "@/pages/reports";
 import { PostsPage } from "@/pages/posts";
+import { ChannelsPage } from "@/pages/channels";
 import { TasksPage } from "@/pages/tasks";
 import { AddPostPage } from "@/pages/add-post";
+import { BulkAddPostPage } from "@/pages/bulk-add-post";
 import { SettingsPage } from "@/pages/settings";
 import { FormatAnalyticsPage } from "@/pages/format-analytics";
 import { LeaderboardPage } from "@/pages/leaderboard";
@@ -33,11 +37,15 @@ function PostFormModal() {
   const navigate = useNavigate();
   const { id } = useParams();
   const close = () => navigate(-1);
-  return (
-    <Modal onClose={close} title={id ? "Edit Post" : "Add Post"}>
-      <AddPostPage onClose={close} />
-    </Modal>
-  );
+  // Editing one post = single form; adding = the bulk multi-post table.
+  if (id) {
+    return (
+      <Modal onClose={close} title="Edit Post">
+        <AddPostPage onClose={close} />
+      </Modal>
+    );
+  }
+  return <BulkAddPostPage onClose={close} />;
 }
 
 function AppRoutes() {
@@ -54,22 +62,25 @@ function AppRoutes() {
 
         <Route element={<ProtectedRoute />}>
           <Route element={<AppShell />}>
+            <Route path="/home" element={<HomePage />} />
             <Route path="/dashboard" element={<DashboardPage />} />
+            <Route path="/metrics" element={<MetricsPage />} />
             <Route path="/insights" element={<InsightsPage />} />
             <Route path="/leaderboard" element={<LeaderboardPage />} />
             <Route path="/reports" element={<ReportsPage />} />
             <Route path="/posts" element={<PostsPage />} />
+            <Route path="/channels" element={<ChannelsPage />} />
             <Route path="/tasks" element={<TasksPage />} />
-            {/* Direct visits (no background) still render the form full-page. */}
-            <Route path="/posts/new" element={<AddPostPage />} />
+            {/* Direct visits (no background) still render the form. */}
+            <Route path="/posts/new" element={<BulkAddPostPage />} />
             <Route path="/posts/:id/edit" element={<AddPostPage />} />
             <Route path="/analytics/:type" element={<FormatAnalyticsPage />} />
             <Route path="/settings" element={<SettingsPage />} />
           </Route>
         </Route>
 
-        <Route path="/" element={<Navigate to="/dashboard" replace />} />
-        <Route path="*" element={<Navigate to="/dashboard" replace />} />
+        <Route path="/" element={<Navigate to="/home" replace />} />
+        <Route path="*" element={<Navigate to="/home" replace />} />
       </Routes>
 
       {background && (

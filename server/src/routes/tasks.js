@@ -20,7 +20,7 @@ const TaskSchema = z.object({
 
 // Returned shape: task fields + assignee name/image + channel name for the UI.
 const SELECT = `
-  select t.id, t.title, t.description, t.editor_id, t.channel_id,
+  select t.id, t.title, t.description, t.editor_id, t.channel_id, t.post_id,
          t.status, t.priority, t.due_date, t.created_at, t.completed_at,
          e.name as editor_name, e.image_url as editor_image,
          w.name as channel_name

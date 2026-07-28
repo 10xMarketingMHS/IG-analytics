@@ -1,9 +1,18 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { useTaxonomy } from "@/lib/use-taxonomy";
 import { useResource } from "@/lib/use-resource";
 import { useWorkspaces } from "@/lib/workspaces-context";
-import type { Post } from "@/lib/types";
+import type { Post, Platform, Account } from "@/lib/types";
+
+const PLATFORM_ICON: Record<string, string> = {
+  instagram: "📸", facebook: "👍", youtube: "▶️",
+};
+const PLATFORM_GRAD: Record<string, string> = {
+  instagram: "linear-gradient(135deg,#f9737d,#c13584,#833ab4)",
+  facebook: "linear-gradient(135deg,#1877f2,#0a5bd3)",
+  youtube: "linear-gradient(135deg,#ff4e45,#c4302b)",
+};
 import {
   RANGE_PRESETS, rangeFor, previousRange, inRange, labelFor, compactNum,
   type RangeKey,
@@ -22,8 +31,32 @@ export function DashboardPage() {
   // specific channel id. Drives the cross-channel analytics.
   const [channel, setChannel] = useState<string>("all");
   const { data: postData } = useResource<{ posts: Post[] }>(`/posts?channel=${channel}`);
-  const posts = postData?.posts ?? null;
+  const allPosts = postData?.posts ?? null;
+  // Which platforms exist for the selected channel scope (drives the cards).
+  const { data: acctData } = useResource<{ accounts: Account[] }>(`/accounts?channel=${channel}`);
+  const { data: platData } = useResource<{ platforms: Platform[] }>("/platforms");
+  const [platformId, setPlatformId] = useState<string>("");
   const [range, setRange] = useState<RangeKey>("all");
+
+  const channelPlatforms = useMemo<Platform[]>(() => {
+    const ids = new Set((acctData?.accounts ?? []).map((a) => a.platform_id));
+    return (platData?.platforms ?? []).filter((p) => ids.has(p.id));
+  }, [acctData, platData]);
+
+  // Auto-select the first available platform; re-select when the channel change
+  // makes the current platform unavailable.
+  useEffect(() => {
+    if (channelPlatforms.length && !channelPlatforms.find((p) => p.id === platformId)) {
+      setPlatformId(channelPlatforms[0].id);
+    }
+  }, [channelPlatforms, platformId]);
+
+  // Everything below analyzes the selected platform only.
+  const posts = useMemo<Post[] | null>(
+    () => (allPosts === null ? null : allPosts.filter((p) => p.platform_id === platformId)),
+    [allPosts, platformId],
+  );
+  const activePlatform = channelPlatforms.find((p) => p.id === platformId);
   const [custom, setCustom] = useState<{ from: string; to: string } | null>(null);
   const [popOpen, setPopOpen] = useState(false);
   const [fromInput, setFromInput] = useState("2026-06-01");
@@ -40,6 +73,20 @@ export function DashboardPage() {
     () => published.filter((p) => inRange(p.date, bounds.from, bounds.to)),
     [published, bounds.from, bounds.to],
   );
+
+  // Per-platform post/view totals for the cards (same channel scope + range).
+  const platformSummary = useMemo(() => {
+    const m = new Map<string, { posts: number; views: number }>();
+    for (const p of allPosts ?? []) {
+      if (p.status !== "published" || !inRange(p.date, bounds.from, bounds.to)) continue;
+      const key = p.platform_id ?? "";
+      const cur = m.get(key) ?? { posts: 0, views: 0 };
+      cur.posts += 1;
+      cur.views += p.views;
+      m.set(key, cur);
+    }
+    return m;
+  }, [allPosts, bounds.from, bounds.to]);
 
   const sum = (arr: Post[], f: (p: Post) => number) => arr.reduce((a, p) => a + f(p), 0);
   const views = sum(scoped, (p) => p.views);
@@ -153,6 +200,38 @@ export function DashboardPage() {
             </div>
           </div>
         </div>
+      </div>
+
+      <div className="sectitle" style={{ marginTop: 6 }}>
+        <span className="dot" />Platforms<span className="s">click a platform to see its analytics</span>
+      </div>
+      {channelPlatforms.length === 0 ? (
+        <div className="card pad" style={{ color: "var(--muted)", fontSize: 13 }}>
+          No platforms set up for this channel yet.
+        </div>
+      ) : (
+        <div className="plat-cards">
+          {channelPlatforms.map((pf) => {
+            const sum = platformSummary.get(pf.id) ?? { posts: 0, views: 0 };
+            const on = pf.id === platformId;
+            return (
+              <button key={pf.id} className={"plat-card" + (on ? " on" : "")} onClick={() => setPlatformId(pf.id)}>
+                <div className="plat-ic" style={{ background: PLATFORM_GRAD[pf.key] ?? "var(--grad)" }}>
+                  {PLATFORM_ICON[pf.key] ?? "📱"}
+                </div>
+                <div className="plat-name">{pf.name}</div>
+                <div className="plat-sum">{sum.posts} post{sum.posts === 1 ? "" : "s"} · {compactNum(sum.views)} views</div>
+                <div className="plat-go">{on ? "Viewing ▾" : "View analytics →"}</div>
+              </button>
+            );
+          })}
+        </div>
+      )}
+
+      <div className="sectitle">
+        <span className="dot" />
+        {activePlatform ? `${activePlatform.name} analytics` : "Analytics"}
+        <span className="s">{rangeLabel} · {scoped.length} post{scoped.length === 1 ? "" : "s"}</span>
       </div>
 
       <div className="grid g4">

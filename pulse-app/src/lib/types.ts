@@ -35,6 +35,19 @@ export type Editor = {
   active: boolean;
 };
 
+export type Platform = { id: string; key: string; name: string; sort_order: number };
+
+export type Account = {
+  id: string;
+  channel_id: string;
+  channel_name: string;
+  platform_id: string;
+  platform_key: string;
+  platform_name: string;
+  sort_order: number;
+  handle: string | null;
+};
+
 export type TaskStatus = "todo" | "in_progress" | "done";
 export type TaskPriority = "low" | "medium" | "high";
 
@@ -44,6 +57,7 @@ export type Task = {
   description: string | null;
   editor_id: string | null;
   channel_id: string | null;
+  post_id: string | null;
   status: TaskStatus;
   priority: TaskPriority;
   due_date: string | null;
@@ -55,6 +69,7 @@ export type Task = {
 };
 
 export type PostStatus = "planned" | "published";
+export type EditStage = "not_started" | "in_progress" | "in_review" | "pending" | "completed";
 
 export type Post = {
   id: string;
@@ -66,8 +81,11 @@ export type Post = {
   format_id: string;
   avatar_id: string;
   editor_id: string | null;
+  platform_id: string | null;
+  collab_channel_id: string | null;
   post_type: "reel" | "carousel";
   status: PostStatus;
+  edit_stage: EditStage;
   published_at: string | null;
   views: number;
   likes: number;

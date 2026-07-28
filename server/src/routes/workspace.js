@@ -17,7 +17,16 @@ workspaceRouter.get("/workspace", async (req, res, next) => {
 
 workspaceRouter.get("/taxonomy", async (req, res, next) => {
   try {
-    const workspaceId = req.workspaceId;
+    // Bulk entry needs each row's channel taxonomy: ?channel=<id> (validated to
+    // the org) overrides the active channel.
+    let workspaceId = req.workspaceId;
+    if (req.query.channel && req.query.channel !== req.workspaceId) {
+      const ok = await pool.query(
+        "select 1 from workspace where id = $1 and org_id = $2",
+        [req.query.channel, req.orgId],
+      );
+      if (ok.rows.length) workspaceId = req.query.channel;
+    }
     const [pillars, avatars, contentTypes, formats] = await Promise.all([
       pool.query(
         "select id, name, sort_order, active from pillar where workspace_id = $1 order by sort_order",

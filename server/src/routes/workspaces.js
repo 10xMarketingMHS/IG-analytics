@@ -33,7 +33,31 @@ workspacesRouter.post("/workspaces", async (req, res, next) => {
   const client = await pool.connect();
   try {
     await client.query("BEGIN");
-    const workspace = await createWorkspace(client, parsed.data.name, req.user.sub);
+    // Resolve the caller's org + an existing channel to copy taxonomy from.
+    const ctx = await client.query(
+      `select w.id as ws_id, w.org_id from workspace w
+       join membership m on m.workspace_id = w.id
+       where m.user_id = $1 and w.org_id is not null
+       order by w.created_at asc limit 1`,
+      [req.user.sub],
+    );
+    let orgId = ctx.rows[0]?.org_id ?? null;
+    const sourceWorkspaceId = ctx.rows[0]?.ws_id ?? null;
+    if (!orgId) orgId = (await client.query("select id from org order by created_at limit 1")).rows[0]?.id ?? null;
+
+    const workspace = await createWorkspace(client, parsed.data.name, req.user.sub, { orgId, sourceWorkspaceId });
+
+    // Enable Instagram by default so the new channel is immediately usable.
+    if (orgId) {
+      const ig = await client.query("select id from platform where key = 'instagram'");
+      if (ig.rows[0]) {
+        await client.query(
+          `insert into account (org_id, workspace_id, platform_id, handle)
+           values ($1,$2,$3,$4) on conflict (workspace_id, platform_id) do nothing`,
+          [orgId, workspace.id, ig.rows[0].id, "@" + parsed.data.name],
+        );
+      }
+    }
     await client.query("COMMIT");
     res.status(201).json({ workspace });
   } catch (err) {

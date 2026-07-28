@@ -15,8 +15,12 @@ const CreatePostSchema = z.object({
   avatarId: z.string().uuid(),
   editorId: z.string().uuid().optional().or(z.literal("")),
   channelId: z.string().uuid().optional(), // which channel to create the post in
+  platformId: z.string().uuid().optional(), // which platform (IG/FB/YT)
+  collabChannelId: z.string().uuid().nullable().optional(), // collab with another channel
+  link: z.string().url().optional().or(z.literal("")), // published post URL (→ permalink)
   postType: z.enum(["reel", "carousel"]).optional(),
   status: z.enum(["planned", "published"]).default("planned"),
+  editStage: z.enum(["not_started", "in_progress", "in_review", "pending", "completed"]).optional(),
   views: z.number().int().nonnegative().optional(),
   likes: z.number().int().nonnegative().optional(),
   comments: z.number().int().nonnegative().optional(),
@@ -32,10 +36,42 @@ const UpdatePostSchema = CreatePostSchema.partial();
 
 const POST_COLUMNS = `
   id, date, title, caption, pillar_id, content_type_id, format_id, avatar_id,
-  editor_id, post_type, status, published_at, views, likes, comments, shares,
+  editor_id, platform_id, collab_channel_id, post_type, status, edit_stage, published_at, views, likes, comments, shares,
   saves, reach, metrics_updated_at, permalink, thumbnail_url, notes, source,
   created_at, updated_at
 `;
+
+const EDIT_STAGES = ["not_started", "in_progress", "in_review", "pending", "completed"];
+
+// Keep a Task Management task in sync with a post's assigned editor. Creates the
+// task when a post has an editor and none exists yet; updates it (reassign /
+// retitle / re-date) otherwise. No-op when the post has no editor.
+async function syncPostTask(postId, orgId) {
+  try {
+    const { rows } = await pool.query(
+      "select id, editor_id, title, date, workspace_id from post where id = $1 and deleted_at is null",
+      [postId],
+    );
+    const post = rows[0];
+    if (!post || !post.editor_id) return;
+    const existing = await pool.query("select id from task where post_id = $1", [postId]);
+    if (existing.rows.length) {
+      await pool.query(
+        "update task set editor_id = $1, title = $2, due_date = $3, channel_id = $4 where post_id = $5",
+        [post.editor_id, post.title, post.date, post.workspace_id, postId],
+      );
+    } else {
+      await pool.query(
+        `insert into task (org_id, post_id, editor_id, channel_id, title, due_date, status, priority)
+         values ($1, $2, $3, $4, $5, $6, 'todo', 'medium')`,
+        [orgId, postId, post.editor_id, post.workspace_id, post.title, post.date],
+      );
+    }
+  } catch (err) {
+    // A task-sync failure must never break the post write.
+    console.error("syncPostTask failed:", err.message);
+  }
+}
 
 // Prefixed column list for queries that join `workspace` (id/name collide).
 const P_COLS = POST_COLUMNS.split(",")
@@ -73,6 +109,11 @@ postsRouter.get("/posts", async (req, res, next) => {
     if (status === "planned" || status === "published") {
       params.push(status);
       where += ` and p.status = $${params.length}`;
+    }
+    // Platform drill-down (dashboard platform cards).
+    if (req.query.platform) {
+      params.push(req.query.platform);
+      where += ` and p.platform_id = $${params.length}`;
     }
 
     const { rows } = await pool.query(
@@ -124,8 +165,8 @@ postsRouter.post("/posts", requireEditor, async (req, res, next) => {
       `insert into post (
          workspace_id, date, title, caption, pillar_id, content_type_id,
          format_id, avatar_id, editor_id, post_type, status, views, likes, comments, shares,
-         saves, reach, permalink, thumbnail_url, notes, created_by
-       ) values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21)
+         saves, reach, permalink, thumbnail_url, notes, created_by, platform_id, collab_channel_id, edit_stage
+       ) values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24)
        returning ${POST_COLUMNS}`,
       [
         targetWs,
@@ -145,12 +186,17 @@ postsRouter.post("/posts", requireEditor, async (req, res, next) => {
         p.shares ?? 0,
         p.saves ?? 0,
         p.reach ?? 0,
-        p.permalink || null,
+        p.link || p.permalink || null,
         p.thumbnailUrl || null,
         p.notes ?? null,
         req.user.sub,
+        p.platformId ?? null,
+        p.collabChannelId ?? null,
+        p.editStage ?? "not_started",
       ],
     );
+    // Auto-create a Task Management task for the assigned editor.
+    await syncPostTask(rows[0].id, req.orgId);
     res.status(201).json({ post: rows[0] });
   } catch (err) {
     next(err);
@@ -173,8 +219,12 @@ postsRouter.patch("/posts/:id", requireEditor, async (req, res, next) => {
     formatId: "format_id",
     avatarId: "avatar_id",
     editorId: "editor_id",
+    platformId: "platform_id",
+    collabChannelId: "collab_channel_id",
+    link: "permalink",
     postType: "post_type",
     status: "status",
+    editStage: "edit_stage",
     views: "views",
     likes: "likes",
     comments: "comments",
@@ -206,6 +256,8 @@ postsRouter.patch("/posts/:id", requireEditor, async (req, res, next) => {
       params,
     );
     if (rows.length === 0) return res.status(404).json({ error: "Post not found" });
+    // Keep the linked task in sync (e.g. editor assigned/changed on edit).
+    await syncPostTask(req.params.id, req.orgId);
     res.json({ post: rows[0] });
   } catch (err) {
     next(err);

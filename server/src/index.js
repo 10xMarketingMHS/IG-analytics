@@ -12,6 +12,7 @@ import { workspaceRouter } from "./routes/workspace.js";
 import { postsRouter } from "./routes/posts.js";
 import { taxonomyRouter } from "./routes/taxonomy.js";
 import { editorsRouter } from "./routes/editors.js";
+import { platformsRouter } from "./routes/platforms.js";
 import { tasksRouter } from "./routes/tasks.js";
 import { usersRouter } from "./routes/users.js";
 
@@ -22,7 +23,9 @@ const app = express();
 // session cookies to be set.
 app.set("trust proxy", 1);
 
-app.use(cors({ origin: config.CORS_ORIGIN, credentials: true }));
+// In dev the frontend port can vary (auto-assigned), so reflect any origin.
+// In production the frontend is same-origin, so CORS is effectively a no-op.
+app.use(cors({ origin: config.NODE_ENV === "production" ? config.CORS_ORIGIN : true, credentials: true }));
 app.use(express.json({ limit: "3mb" })); // headroom for editor image data URLs
 app.use(cookieParser());
 
@@ -39,6 +42,7 @@ app.use("/api", requireAuth, resolveWorkspace, workspaceRouter);
 app.use("/api", requireAuth, resolveWorkspace, postsRouter);
 app.use("/api", requireAuth, resolveWorkspace, taxonomyRouter);
 app.use("/api", requireAuth, resolveWorkspace, editorsRouter);
+app.use("/api", requireAuth, resolveWorkspace, platformsRouter);
 app.use("/api", requireAuth, resolveWorkspace, tasksRouter);
 app.use("/api", requireAuth, resolveWorkspace, usersRouter);
 

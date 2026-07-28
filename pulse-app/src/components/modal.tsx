@@ -10,10 +10,12 @@ export function Modal({
   onClose,
   title,
   children,
+  wide,
 }: {
   onClose: () => void;
   title?: string;
   children: ReactNode;
+  wide?: boolean;
 }) {
   // Close on Escape.
   useEffect(() => {
@@ -36,7 +38,7 @@ export function Modal({
   return createPortal(
     <div className="modal-overlay" onMouseDown={onClose}>
       <div
-        className="modal-card"
+        className={"modal-card" + (wide ? " wide" : "")}
         role="dialog"
         aria-modal="true"
         aria-label={title}

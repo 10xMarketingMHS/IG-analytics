@@ -88,7 +88,7 @@ async function main() {
   );
 
   // Dump each present table to JSON
-  const stamp = "backup"; // fixed name; Date.* unavailable in this env
+  const stamp = process.argv[2] || "backup";
   const dump = {};
   for (const t of present) {
     dump[t] = await q(`select * from ${t}`);

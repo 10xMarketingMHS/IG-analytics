@@ -4,8 +4,9 @@ import { toast } from "sonner";
 import { useTaxonomy } from "@/lib/use-taxonomy";
 import { useEditors } from "@/lib/use-editors";
 import { useWorkspaces } from "@/lib/workspaces-context";
+import { useResource } from "@/lib/use-resource";
 import { api, ApiError } from "@/lib/api";
-import type { Post } from "@/lib/types";
+import type { Post, Platform, Account } from "@/lib/types";
 
 type Status = "planned" | "published";
 type Mode = "manual" | "ig";
@@ -38,9 +39,21 @@ export function AddPostPage({ onClose }: { onClose?: () => void } = {}) {
   const [avatarId, setAvatarId] = useState("");
   const [editorId, setEditorId] = useState("");
   const [channelId, setChannelId] = useState("");
+  const [platformId, setPlatformId] = useState("");
+  const [collabChannelId, setCollabChannelId] = useState("");
+
+  // Platforms available for the chosen channel (its accounts).
+  const { data: platData } = useResource<{ platforms: Platform[] }>("/platforms");
+  const { data: acctData } = useResource<{ accounts: Account[] }>(
+    channelId ? `/accounts?channel=${channelId}` : "/accounts?channel=all",
+  );
+  const channelPlatforms = useMemo<Platform[]>(() => {
+    const ids = new Set((acctData?.accounts ?? []).map((a) => a.platform_id));
+    return (platData?.platforms ?? []).filter((p) => ids.has(p.id));
+  }, [acctData, platData]);
   const [date, setDate] = useState("2026-07-15");
   const [title, setTitle] = useState("");
-  const [caption, setCaption] = useState("");
+  const [link, setLink] = useState("");
   const [metrics, setMetrics] = useState<Record<string, string>>({});
   const [submitError, setSubmitError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
@@ -57,13 +70,15 @@ export function AddPostPage({ onClose }: { onClose?: () => void } = {}) {
         if (cancelled) return;
         setDate(post.date);
         setTitle(post.title);
-        setCaption(post.caption ?? "");
+        setLink(post.permalink ?? "");
+        setCollabChannelId(post.collab_channel_id ?? "");
         setPillarId(post.pillar_id);
         setContentTypeId(post.content_type_id);
         setFormatId(post.format_id);
         setPostType(post.post_type);
         setAvatarId(post.avatar_id);
         setEditorId(post.editor_id ?? "");
+        setPlatformId(post.platform_id ?? "");
         setStatus(post.status);
         setMetrics({
           mViews: String(post.views ?? 0),
@@ -89,6 +104,14 @@ export function AddPostPage({ onClose }: { onClose?: () => void } = {}) {
   useEffect(() => {
     if (!editing && !channelId && active) setChannelId(active.id);
   }, [editing, channelId, active]);
+
+  // Default the platform to the first one available for the chosen channel;
+  // re-pick if a channel change makes the current platform unavailable.
+  useEffect(() => {
+    if (!editing && channelPlatforms.length && !channelPlatforms.find((p) => p.id === platformId)) {
+      setPlatformId(channelPlatforms[0].id);
+    }
+  }, [editing, channelPlatforms, platformId]);
 
   const contentTypes = useMemo(
     () => taxonomy?.contentTypes.filter((ct) => ct.pillar_id === pillarId) ?? [],
@@ -129,13 +152,15 @@ export function AddPostPage({ onClose }: { onClose?: () => void } = {}) {
     const payload = {
       date,
       title,
-      caption,
+      link: link || undefined,
+      collabChannelId: collabChannelId || null,
       pillarId,
       contentTypeId,
       formatId,
       avatarId,
       editorId,
       channelId: channelId || undefined,
+      platformId: platformId || undefined,
       postType,
       status,
       views: num("mViews"),
@@ -204,16 +229,27 @@ export function AddPostPage({ onClose }: { onClose?: () => void } = {}) {
           onSubmit={handleSubmit}
         >
           {!editing && workspaces.length > 0 && (
-            <div className="field">
-              <label className="f">
-                Channel <span className="req">*</span>{" "}
-                <span style={{ fontWeight: 500, color: "var(--faint)" }}>· which account this post is for</span>
-              </label>
-              <select className="t" value={channelId} onChange={(e) => setChannelId(e.target.value)}>
-                {workspaces.map((w) => (
-                  <option key={w.id} value={w.id}>{w.name}</option>
-                ))}
-              </select>
+            <div className="grid g2">
+              <div className="field">
+                <label className="f">
+                  Channel <span className="req">*</span>{" "}
+                  <span style={{ fontWeight: 500, color: "var(--faint)" }}>· the brand account</span>
+                </label>
+                <select className="t" value={channelId} onChange={(e) => setChannelId(e.target.value)}>
+                  {workspaces.map((w) => (
+                    <option key={w.id} value={w.id}>{w.name}</option>
+                  ))}
+                </select>
+              </div>
+              <div className="field">
+                <label className="f">Platform <span className="req">*</span></label>
+                <select className="t" value={platformId} onChange={(e) => setPlatformId(e.target.value)}>
+                  {channelPlatforms.length === 0 && <option value="">No platforms</option>}
+                  {channelPlatforms.map((p) => (
+                    <option key={p.id} value={p.id}>{p.name}</option>
+                  ))}
+                </select>
+              </div>
             </div>
           )}
 
@@ -228,9 +264,20 @@ export function AddPostPage({ onClose }: { onClose?: () => void } = {}) {
             </div>
           </div>
 
-          <div className="field">
-            <label className="f">Caption</label>
-            <textarea className="t" placeholder="Post caption…" value={caption} onChange={(e) => setCaption(e.target.value)} />
+          <div className="grid g2">
+            <div className="field">
+              <label className="f">Link <span style={{ fontWeight: 500, color: "var(--faint)" }}>· published post URL</span></label>
+              <input className="t" placeholder="https://…" value={link} onChange={(e) => setLink(e.target.value)} />
+            </div>
+            <div className="field">
+              <label className="f">Collab <span style={{ fontWeight: 500, color: "var(--faint)" }}>· partner channel</span></label>
+              <select className="t" value={collabChannelId} onChange={(e) => setCollabChannelId(e.target.value)}>
+                <option value="">None</option>
+                {workspaces.filter((w) => w.id !== channelId).map((w) => (
+                  <option key={w.id} value={w.id}>{w.name}</option>
+                ))}
+              </select>
+            </div>
           </div>
 
           <div className="grid g3">

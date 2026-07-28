@@ -113,7 +113,10 @@ export function TasksPage() {
                   return (
                     <div className="task-card" key={t.id} onClick={() => { setEditing(t); setModalOpen(true); }}>
                       <div className="task-top">
-                        <span className={"task-pri " + t.priority}>{PRI_LABEL[t.priority]}</span>
+                        <span style={{ display: "inline-flex", gap: 6, alignItems: "center" }}>
+                          <span className={"task-pri " + t.priority}>{PRI_LABEL[t.priority]}</span>
+                          {t.post_id && <span className="task-postbadge" title="Auto-created from a post">📄 Post</span>}
+                        </span>
                         <button
                           className="task-x"
                           title="Delete"

@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { NavLink, Outlet, useLocation, useNavigate } from "react-router-dom";
-import { NAV_ITEMS, PAGE_META } from "@/lib/nav";
+import { NAV_ITEMS, NAV_SECTIONS, PAGE_META } from "@/lib/nav";
 import { useAuth } from "@/lib/auth-context";
 import { useWorkspaces } from "@/lib/workspaces-context";
 import { usePosts } from "@/lib/use-posts";
@@ -29,7 +29,6 @@ export function AppShell() {
 
   const [title, sub] = metaFor(location.pathname);
   const initial = (user?.email ?? "?").charAt(0).toUpperCase();
-  const sections: Array<"Analyze" | "Manage" | "Team"> = ["Analyze", "Manage", "Team"];
 
   async function handleSignOut() {
     await logout();
@@ -48,10 +47,10 @@ export function AppShell() {
           </div>
         </div>
         <nav className="side">
-          {sections.map((section) => (
-            <div key={section}>
-              <div className="navsec">{section}</div>
-              {NAV_ITEMS.filter((i) => i.section === section).map((item) => (
+          {NAV_SECTIONS.map((section) => (
+            <div key={section.key}>
+              {section.label && <div className="navsec">{section.label}</div>}
+              {NAV_ITEMS.filter((i) => i.section === section.key).map((item) => (
                 <NavLink
                   key={item.href}
                   to={item.href}

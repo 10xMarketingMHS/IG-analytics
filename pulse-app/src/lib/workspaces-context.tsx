@@ -28,6 +28,7 @@ type WorkspacesContextValue = {
   switchTo: (id: string) => void;
   createWorkspace: (name: string) => Promise<void>;
   renameWorkspace: (id: string, name: string) => Promise<void>;
+  refresh: () => Promise<Workspace[]>;
 };
 
 const WorkspacesContext = createContext<WorkspacesContextValue | undefined>(undefined);
@@ -103,7 +104,7 @@ export function WorkspacesProvider({ children }: { children: ReactNode }) {
 
   return (
     <WorkspacesContext.Provider
-      value={{ workspaces, active, isAdmin, loading, switchTo, createWorkspace, renameWorkspace }}
+      value={{ workspaces, active, isAdmin, loading, switchTo, createWorkspace, renameWorkspace, refresh: load }}
     >
       {children}
     </WorkspacesContext.Provider>

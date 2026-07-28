@@ -14,12 +14,16 @@ const DEFAULT_SCORING_WEIGHTS = {
   carousel: { views: 0.1, like_rate: 0.1, comment_rate: 0.2, share_rate: 0.3, save_rate: 0.3 },
 };
 
-// Creates a workspace owned by `ownerId` (who becomes its admin) and seeds
-// default scoring weights + starter pillars & avatars. Runs in a transaction.
-export async function createWorkspace(client, name, ownerId) {
+// Creates a channel (workspace) owned by `ownerId` (its admin), tags it to the
+// org, and seeds scoring + taxonomy. When `sourceWorkspaceId` is given it copies
+// that channel's full taxonomy (pillars, avatars, content types, formats) so a
+// new channel is immediately usable and consistent with the rest; otherwise it
+// seeds the built-in defaults. Runs inside the caller's transaction.
+export async function createWorkspace(client, name, ownerId, opts = {}) {
+  const { orgId = null, sourceWorkspaceId = null } = opts;
   const { rows } = await client.query(
-    "insert into workspace (name) values ($1) returning id, name, logo_url, brand_colors",
-    [name],
+    "insert into workspace (name, org_id) values ($1, $2) returning id, name, logo_url, brand_colors",
+    [name, orgId],
   );
   const workspace = rows[0];
 
@@ -36,17 +40,24 @@ export async function createWorkspace(client, name, ownerId) {
       [workspace.id, postType, weights],
     );
   }
-  for (const [i, pName] of DEFAULT_PILLARS.entries()) {
-    await client.query(
-      "insert into pillar (workspace_id, name, sort_order) values ($1, $2, $3)",
-      [workspace.id, pName, i + 1],
-    );
-  }
-  for (const [i, aName] of DEFAULT_AVATARS.entries()) {
-    await client.query(
-      "insert into avatar (workspace_id, name, sort_order) values ($1, $2, $3)",
-      [workspace.id, aName, i + 1],
-    );
+
+  if (sourceWorkspaceId) {
+    const sp = (await client.query("select id, name, sort_order from pillar where workspace_id=$1", [sourceWorkspaceId])).rows;
+    const sa = (await client.query("select name, sort_order from avatar where workspace_id=$1", [sourceWorkspaceId])).rows;
+    const sct = (await client.query("select pillar_id, name from content_type where workspace_id=$1", [sourceWorkspaceId])).rows;
+    const sf = (await client.query("select pillar_id, name, post_type from format where workspace_id=$1", [sourceWorkspaceId])).rows;
+    const pillarName = new Map(sp.map((p) => [p.id, p.name]));
+    const newPillar = new Map();
+    for (const p of sp) {
+      const r = await client.query("insert into pillar (workspace_id, name, sort_order) values ($1,$2,$3) returning id", [workspace.id, p.name, p.sort_order]);
+      newPillar.set(p.name, r.rows[0].id);
+    }
+    for (const a of sa) await client.query("insert into avatar (workspace_id, name, sort_order) values ($1,$2,$3)", [workspace.id, a.name, a.sort_order]);
+    for (const ct of sct) { const pid = newPillar.get(pillarName.get(ct.pillar_id)); if (pid) await client.query("insert into content_type (workspace_id, pillar_id, name) values ($1,$2,$3)", [workspace.id, pid, ct.name]); }
+    for (const f of sf) { const pid = newPillar.get(pillarName.get(f.pillar_id)); if (pid) await client.query("insert into format (workspace_id, pillar_id, name, post_type) values ($1,$2,$3,$4)", [workspace.id, pid, f.name, f.post_type]); }
+  } else {
+    for (const [i, pName] of DEFAULT_PILLARS.entries()) await client.query("insert into pillar (workspace_id, name, sort_order) values ($1, $2, $3)", [workspace.id, pName, i + 1]);
+    for (const [i, aName] of DEFAULT_AVATARS.entries()) await client.query("insert into avatar (workspace_id, name, sort_order) values ($1, $2, $3)", [workspace.id, aName, i + 1]);
   }
 
   return workspace;
