@@ -19,11 +19,15 @@ types.setTypeParser(20, (value) => parseInt(value, 10));
 export const pool = new Pool({
   connectionString: config.DATABASE_URL,
   ssl: { rejectUnauthorized: false },
-  max: 10,
-  // Never close idle connections on our side — establishing a fresh one to the
-  // remote (Sydney) pooler costs ~2.4s (TLS + auth over the long link). We keep
-  // them and rely on TCP keepalive + a heartbeat to hold them open.
-  idleTimeoutMillis: 0,
+  // Supabase's session-mode pooler caps the whole project at 15 clients. Render
+  // does rolling deploys (old + new instance overlap briefly), so a single
+  // instance must stay well under half of that — otherwise the new instance
+  // can't get a connection and the deploy crashes with EMAXCONNSESSION.
+  // Configurable via DB_POOL_MAX; default 5 → 2 overlapping instances = 10 < 15.
+  max: Number(process.env.DB_POOL_MAX) || 5,
+  // Release idle connections after a while so overlapping deploys / local dev
+  // don't permanently hoard slots against the 15-client cap.
+  idleTimeoutMillis: 60_000,
   keepAlive: true,
   connectionTimeoutMillis: 15000,
 });
