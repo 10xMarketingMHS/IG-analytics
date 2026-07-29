@@ -31,6 +31,7 @@ export const NAV_ITEMS: NavItem[] = [
   { title: "Add Post", href: "/posts/new", icon: "➕", section: "Manage" },
   { title: "Posts", href: "/posts", icon: "🗂️", section: "Manage", showBadge: true },
   { title: "Channels", href: "/channels", icon: "🌐", section: "Manage" },
+  { title: "Integrations", href: "/integrations", icon: "🔌", section: "Manage" },
   { title: "Settings", href: "/settings", icon: "⚙️", section: "Manage" },
 ];
 
@@ -46,6 +47,7 @@ export const PAGE_META: Record<string, [string, string]> = {
   "/posts/new": ["Add Post", "Create the post record now — log its metrics after you publish"],
   "/posts": ["Posts", "Your content database — replaces the Manual Entry sheet"],
   "/channels": ["Channels & Platforms", "Add brand channels and choose which platforms each is on"],
+  "/integrations": ["Integrations", "Connect Instagram and pull live metrics onto your posts"],
   "/tasks": ["Task Management", "Assign and track your team's daily tasks"],
   "/activity": ["Activity", "Everything happening across Media House, newest first"],
   "/settings": ["Settings", "Taxonomy, scoring weights, and team"],

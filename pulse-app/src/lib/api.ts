@@ -1,5 +1,9 @@
 const API_URL = import.meta.env.VITE_API_URL ?? "http://localhost:4000/api";
 
+// Absolute API base — needed for full-page navigations like the OAuth connect
+// flow (where the browser, not fetch, hits the backend so cookies ride along).
+export const API_BASE = API_URL;
+
 export const ACTIVE_WORKSPACE_KEY = "pulse-workspace";
 
 export function getActiveWorkspaceId(): string | null {

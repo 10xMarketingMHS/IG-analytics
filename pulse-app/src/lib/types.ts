@@ -48,6 +48,32 @@ export type Account = {
   handle: string | null;
 };
 
+export type PlatformConnection = {
+  id: string;
+  provider: "instagram" | "facebook" | "youtube";
+  external_id: string;
+  external_name: string | null;
+  token_expires_at: string | null;
+  connected_at: string;
+  last_synced_at: string | null;
+  last_sync_status: string | null;
+  account_id: string;
+  channel_id: string;
+  channel_name: string;
+  platform_key: string;
+  platform_name: string;
+};
+
+export type IntegrationStatus = {
+  instagram: {
+    configured: boolean;
+    encryption: boolean;
+    systemToken: boolean;
+    method: "system" | "oauth" | null;
+    ready: boolean;
+  };
+};
+
 export type TaskStatus = "todo" | "in_progress" | "done";
 export type TaskPriority = "low" | "medium" | "high";
 

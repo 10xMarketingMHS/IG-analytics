@@ -688,6 +688,28 @@ img.lb-ava{object-fit:cover}
 .tr-barfill{height:100%;border-radius:6px;transition:width .4s}
 
 /* ============================================================
+   INTEGRATIONS (live platform sync)
+   ============================================================ */
+.int-setup{display:flex;gap:14px;align-items:flex-start;border:1px solid color-mix(in srgb,var(--amber,#f59e0b) 40%,var(--border))}
+.int-setup-ic{font-size:24px;flex:none;line-height:1.2}
+.int-setup>div:last-child{flex:1;min-width:0}
+.int-setup .hint{display:block;font-size:12.5px;line-height:1.55}
+.int-setup code{background:var(--panel2);padding:1px 6px;border-radius:6px;font-size:12px;color:var(--accent-ink);white-space:nowrap}
+.int-list{display:flex;flex-direction:column;gap:12px}
+.int-card{display:flex;align-items:center;gap:16px;padding:16px 18px}
+.int-logo{width:46px;height:46px;border-radius:13px;display:grid;place-items:center;font-size:22px;flex:none;color:#fff}
+.int-logo.ig{background:linear-gradient(135deg,#f9737d,#c13584,#833ab4)}
+.int-main{flex:1;min-width:0}
+.int-title{font-weight:800;font-size:15px;display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+.int-handle{font-weight:600;font-size:12.5px;color:var(--accent-ink);background:var(--accent-weak);padding:2px 9px;border-radius:999px}
+.int-meta{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-top:5px;font-size:12.5px;color:var(--muted)}
+.int-badge{font-weight:700;font-size:12px}
+.int-badge.ok{color:var(--emerald,#10b981)}
+.int-badge.off{color:var(--muted)}
+.int-actions{display:flex;gap:8px;flex:none}
+.int-actions .btn:disabled{opacity:.5;cursor:not-allowed}
+
+/* ============================================================
    RESPONSIVE — small devices (≤576px)
    ============================================================ */
 @media screen and (max-width:576px){

@@ -26,6 +26,7 @@ import { MetricsPage } from "@/pages/metrics";
 import { ReportsPage } from "@/pages/reports";
 import { PostsPage } from "@/pages/posts";
 import { ChannelsPage } from "@/pages/channels";
+import { IntegrationsPage } from "@/pages/integrations";
 import { TasksPage } from "@/pages/tasks";
 import { ActivityPage } from "@/pages/activity";
 import { AddPostPage } from "@/pages/add-post";
@@ -82,6 +83,7 @@ function AppRoutes() {
             <Route path="/reports" element={<ReportsPage />} />
             <Route path="/posts" element={<PostsPage />} />
             <Route path="/channels" element={<ChannelsPage />} />
+            <Route path="/integrations" element={<IntegrationsPage />} />
             <Route path="/tasks" element={<TasksPage />} />
             <Route path="/activity" element={<ActivityPage />} />
             {/* Direct visits (no background) still render the form. */}
