@@ -69,6 +69,7 @@ export type IntegrationStatus = {
     configured: boolean;
     encryption: boolean;
     systemToken: boolean;
+    pasteToken: boolean;
     method: "system" | "oauth" | null;
     ready: boolean;
   };

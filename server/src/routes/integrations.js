@@ -22,15 +22,19 @@ function backToIntegrations(res, query) {
 // Two ways to connect: a System User token (one click, never expires) or the
 // OAuth app flow. System token wins when both are present.
 integrationsRouter.get("/integrations/status", (_req, res) => {
+  const encryption = encryptionReady();
   const systemToken = ig.systemTokenConfigured();
-  const oauth = ig.metaConfigured() && encryptionReady();
+  const oauth = ig.metaConfigured() && encryption;
+  // Per-account tokens can be pasted & stored whenever encryption is available.
+  const pasteToken = encryption;
   res.json({
     instagram: {
       configured: ig.metaConfigured(),
-      encryption: encryptionReady(),
+      encryption,
       systemToken,
+      pasteToken,
       method: systemToken ? "system" : oauth ? "oauth" : null,
-      ready: systemToken || oauth,
+      ready: systemToken || oauth || pasteToken,
     },
   });
 });
@@ -178,6 +182,65 @@ integrationsRouter.post("/integrations/instagram/connect-system", requireAdmin, 
          access_token_enc = 'SYSTEM', token_expires_at = null, scope = excluded.scope,
          connected_by = excluded.connected_by, connected_at = now()`,
       [req.orgId, acct.id, chosen.igId, "@" + chosen.igUsername, ig.SCOPES.join(","), req.user.sub],
+    );
+    await logActivity({
+      orgId: req.orgId, actorId: req.user.sub, verb: "channel_added",
+      entityType: "channel", entityId: acct.workspace_id, channelId: acct.workspace_id,
+      summary: `Connected Instagram @${chosen.igUsername}`,
+    });
+    res.status(201).json({ ok: true, handle: "@" + chosen.igUsername });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// Per-account token: the admin pastes a token for THIS specific account (e.g. a
+// second brand under a different system user). Validated, then stored ENCRYPTED
+// in the DB — so every account can carry its own token, no shared env var.
+const ConnectTokenSchema = z.object({ accountId: z.string().uuid(), token: z.string().min(20) });
+integrationsRouter.post("/integrations/instagram/connect-token", requireAdmin, async (req, res, next) => {
+  const parsed = ConnectTokenSchema.safeParse(req.body);
+  if (!parsed.success) return res.status(400).json({ error: "accountId and a token are required" });
+  if (!encryptionReady()) {
+    return res.status(400).json({ error: "Server encryption key isn't set (APP_ENCRYPTION_KEY) — can't store a token securely." });
+  }
+  try {
+    const acct = (await pool.query(
+      `select a.id, a.handle, a.workspace_id from account a
+       join platform p on p.id = a.platform_id
+       where a.id = $1 and a.org_id = $2 and p.key = 'instagram'`,
+      [parsed.data.accountId, req.orgId],
+    )).rows[0];
+    if (!acct) return res.status(400).json({ error: "Unknown Instagram account" });
+
+    let accounts;
+    try {
+      accounts = await ig.listIgAccounts(parsed.data.token);
+    } catch (err) {
+      return res.status(502).json({ error: `Meta token error: ${err.message}` });
+    }
+    if (!accounts.length) {
+      return res.status(400).json({ error: "This token can't see any Instagram Business accounts. Check its assigned assets & permissions." });
+    }
+
+    const handle = (acct.handle || "").replace(/^@/, "").toLowerCase();
+    const chosen = accounts.find((a) => a.igUsername?.toLowerCase() === handle)
+      || (accounts.length === 1 ? accounts[0] : null);
+    if (!chosen) {
+      return res.status(409).json({
+        error: `This token sees ${accounts.length} IG accounts (${accounts.map((a) => "@" + a.igUsername).join(", ")}). Set this channel's handle to match one, then retry.`,
+      });
+    }
+
+    await pool.query(
+      `insert into platform_connection
+         (org_id, account_id, provider, external_id, external_name, access_token_enc, token_expires_at, scope, connected_by)
+       values ($1,$2,'instagram',$3,$4,$5,null,$6,$7)
+       on conflict (account_id, provider) do update set
+         external_id = excluded.external_id, external_name = excluded.external_name,
+         access_token_enc = excluded.access_token_enc, token_expires_at = null,
+         scope = excluded.scope, connected_by = excluded.connected_by, connected_at = now()`,
+      [req.orgId, acct.id, chosen.igId, "@" + chosen.igUsername, encryptToken(parsed.data.token), ig.SCOPES.join(","), req.user.sub],
     );
     await logActivity({
       orgId: req.orgId, actorId: req.user.sub, verb: "channel_added",

@@ -4,6 +4,7 @@ import { toast } from "sonner";
 import { api, API_BASE } from "@/lib/api";
 import { useResource } from "@/lib/use-resource";
 import { useWorkspaces } from "@/lib/workspaces-context";
+import { Modal } from "@/components/modal";
 import type { Account, PlatformConnection, IntegrationStatus } from "@/lib/types";
 
 const CALLBACK_ERRORS: Record<string, string> = {
@@ -36,9 +37,11 @@ export function IntegrationsPage() {
   const { data: connData, refetch: refetchConns } = useResource<{ connections: PlatformConnection[] }>("/integrations/connections");
   const [syncing, setSyncing] = useState<string | null>(null);
 
-  const igReady = statusData?.instagram.ready ?? false;
-  const igMethod = statusData?.instagram.method ?? null;
+  const igStatus = statusData?.instagram;
+  const igReady = igStatus?.ready ?? false;
   const [connecting, setConnecting] = useState<string | null>(null);
+  const [connectFor, setConnectFor] = useState<Account | null>(null);
+  const [tokenInput, setTokenInput] = useState("");
   const igAccounts = useMemo(
     () => (acctData?.accounts ?? []).filter((a) => a.platform_key === "instagram"),
     [acctData],
@@ -65,26 +68,25 @@ export function IntegrationsPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [connectedParam, errorParam]);
 
-  async function connect(accountId: string) {
-    // System-token path: one API call, no redirect. OAuth path: full-page nav
-    // so the auth cookie rides along to the backend.
-    if (igMethod === "system") {
-      setConnecting(accountId);
-      try {
-        const r = await api<{ handle: string }>("/integrations/instagram/connect-system", {
-          method: "POST",
-          body: JSON.stringify({ accountId }),
-        });
-        toast.success(`Connected ${r.handle}. Hit “Sync now” to pull metrics.`);
-        refetchConns();
-      } catch (e) {
-        toast.error(e instanceof Error ? e.message : "Couldn't connect.");
-      } finally {
-        setConnecting(null);
-      }
-      return;
+  function closeConnect() {
+    setConnectFor(null);
+    setTokenInput("");
+  }
+
+  // Connect via a POST endpoint (system token or per-account pasted token).
+  async function connectVia(path: string, body: Record<string, unknown>) {
+    if (!connectFor) return;
+    setConnecting(connectFor.id);
+    try {
+      const r = await api<{ handle: string }>(path, { method: "POST", body: JSON.stringify(body) });
+      toast.success(`Connected ${r.handle}. Hit “Sync now” to pull metrics.`);
+      closeConnect();
+      refetchConns();
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Couldn't connect.");
+    } finally {
+      setConnecting(null);
     }
-    window.location.href = `${API_BASE}/integrations/instagram/connect?accountId=${accountId}`;
   }
 
   async function sync(accountId: string) {
@@ -123,12 +125,10 @@ export function IntegrationsPage() {
           <div>
             <b>Instagram sync isn't switched on yet.</b>
             <div className="hint" style={{ margin: "4px 0 0" }}>
-              Simplest: set a <code>META_SYSTEM_TOKEN</code> (a long-lived Meta System User
-              token) on the server — then connect with one click, no expiry.
-              Alternatively use the OAuth app route (<code>META_APP_ID</code>, <code>META_APP_SECRET</code>,
-              <code>APP_BASE_URL</code>, <code>APP_ENCRYPTION_KEY</code>).
+              Set <code>APP_ENCRYPTION_KEY</code> on the server to paste a token per account,
+              and/or a shared <code>META_SYSTEM_TOKEN</code> for one-click connect.
               {statusData && (
-                <> Status: system token {statusData.instagram.systemToken ? "✅" : "❌"} · OAuth app {statusData.instagram.configured ? "✅" : "❌"} · encryption {statusData.instagram.encryption ? "✅" : "❌"}.</>
+                <> Status: per-account tokens {statusData.instagram.pasteToken ? "✅" : "❌"} · system token {statusData.instagram.systemToken ? "✅" : "❌"} · encryption {statusData.instagram.encryption ? "✅" : "❌"}.</>
               )}{" "}
               Add the env var(s) in Render, then reload.
             </div>
@@ -178,9 +178,9 @@ export function IntegrationsPage() {
                       {isAdmin && <button className="btn" onClick={() => disconnect(conn.id)}>Disconnect</button>}
                     </>
                   ) : (
-                    <button className="btn btn-primary" disabled={!igReady || !isAdmin || connecting === a.id} onClick={() => connect(a.id)}
+                    <button className="btn btn-primary" disabled={!igReady || !isAdmin || connecting === a.id} onClick={() => setConnectFor(a)}
                       title={!isAdmin ? "Admins only" : !igReady ? "Server not configured" : "Connect this account"}>
-                      {connecting === a.id ? "Connecting…" : "Connect Instagram"}
+                      Connect Instagram
                     </button>
                   )}
                 </div>
@@ -194,6 +194,59 @@ export function IntegrationsPage() {
         ↪ Syncing matches each post to its real Instagram post by the <b>Link</b> you paste in, then refreshes
         views, reach, likes, comments, shares &amp; saves. Posts without a Link are skipped. Facebook &amp; YouTube are next.
       </div>
+
+      {connectFor && (
+        <Modal onClose={closeConnect} title={`Connect ${connectFor.channel_name} to Instagram`}>
+          <div className="int-modal">
+            {igStatus?.systemToken && (
+              <button
+                className="btn btn-primary int-block"
+                disabled={connecting === connectFor.id}
+                onClick={() => connectVia("/integrations/instagram/connect-system", { accountId: connectFor.id })}
+              >
+                {connecting === connectFor.id ? "Connecting…" : "⚡ Use server system token (one click)"}
+              </button>
+            )}
+
+            {igStatus?.pasteToken ? (
+              <>
+                {igStatus?.systemToken && <div className="int-or">or paste this account's own token</div>}
+                <label className="f">Instagram access token</label>
+                <textarea
+                  className="t"
+                  rows={4}
+                  placeholder="Paste the System User / access token for this account…"
+                  value={tokenInput}
+                  onChange={(e) => setTokenInput(e.target.value)}
+                  style={{ resize: "vertical", wordBreak: "break-all" }}
+                />
+                <div className="hint" style={{ display: "block", marginTop: 6 }}>
+                  Stored <b>encrypted</b> on the server. Use a token whose assigned assets include this account's
+                  Page + Instagram. If the token sees several accounts, set this channel's handle to match first.
+                </div>
+                <button
+                  className="btn btn-primary int-block"
+                  style={{ marginTop: 12 }}
+                  disabled={connecting === connectFor.id || tokenInput.trim().length < 20}
+                  onClick={() => connectVia("/integrations/instagram/connect-token", { accountId: connectFor.id, token: tokenInput.trim() })}
+                >
+                  {connecting === connectFor.id ? "Connecting…" : "Connect with this token"}
+                </button>
+              </>
+            ) : (
+              <div className="hint" style={{ display: "block" }}>
+                To paste a per-account token, set <code>APP_ENCRYPTION_KEY</code> on the server (Render → Environment), then reload.
+              </div>
+            )}
+
+            {igStatus?.configured && igStatus?.encryption && (
+              <button className="btn int-block" style={{ marginTop: 14 }} onClick={() => { window.location.href = `${API_BASE}/integrations/instagram/connect?accountId=${connectFor.id}`; }}>
+                Connect via Facebook instead
+              </button>
+            )}
+          </div>
+        </Modal>
+      )}
     </section>
   );
 }

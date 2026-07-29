@@ -708,6 +708,18 @@ img.lb-ava{object-fit:cover}
 .int-badge.off{color:var(--muted)}
 .int-actions{display:flex;gap:8px;flex:none}
 .int-actions .btn:disabled{opacity:.5;cursor:not-allowed}
+/* connect modal */
+.int-modal{display:flex;flex-direction:column}
+.int-block{width:100%;justify-content:center}
+.int-block:disabled{opacity:.5;cursor:not-allowed}
+.int-or{display:flex;align-items:center;gap:10px;color:var(--muted);font-size:12px;font-weight:700;margin:16px 0 12px;text-transform:uppercase;letter-spacing:.03em}
+.int-or::before,.int-or::after{content:"";flex:1;height:1px;background:var(--border)}
+.int-modal textarea.t{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:12px}
+.int-modal code{background:var(--panel2);padding:1px 6px;border-radius:6px;font-size:12px;color:var(--accent-ink)}
+/* read-only performance metric value (fetched from Instagram, not editable) */
+.metric-ro{width:100%;padding:10px 12px;border:1px solid var(--border);border-radius:10px;
+  background:var(--panel2);color:var(--text);font-size:15px;font-weight:800;font-variant-numeric:tabular-nums;
+  min-height:41px;display:flex;align-items:center;cursor:default;opacity:.92}
 
 /* ============================================================
    RESPONSIVE — small devices (≤576px)

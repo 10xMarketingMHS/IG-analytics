@@ -133,7 +133,7 @@ export function AddPostPage({ onClose }: { onClose?: () => void } = {}) {
   const engagement = num("mLikes") + num("mComments") + num("mShares") + num("mSaves");
   const reach = num("mReach");
   const rate = reach ? (engagement / reach) * 100 : null;
-  const warn = reach > 0 && engagement > reach;
+  const hasMetrics = engagement > 0 || reach > 0 || num("mViews") > 0;
 
   function onPillarChange(v: string) {
     setPillarId(v);
@@ -163,12 +163,8 @@ export function AddPostPage({ onClose }: { onClose?: () => void } = {}) {
       platformId: platformId || undefined,
       postType,
       status,
-      views: num("mViews"),
-      likes: num("mLikes"),
-      comments: num("mComments"),
-      shares: num("mShares"),
-      saves: num("mSaves"),
-      reach: num("mReach"),
+      // Performance metrics are owned by the Instagram sync — never written from
+      // this form, so a manual save can't overwrite fetched numbers.
     };
     try {
       if (editing) {
@@ -369,51 +365,36 @@ export function AddPostPage({ onClose }: { onClose?: () => void } = {}) {
             </div>
             <div className="hint" style={{ marginTop: 7 }}>
               {status === "planned"
-                ? "Create the record now. After you publish, switch this to Published and log the metrics."
-                : "Enter the latest metrics below — you can return and update them anytime as the post grows."}
+                ? "Create the record now and add its Link. Once it's live on Instagram, Sync pulls the metrics in automatically."
+                : "Metrics are fetched from Instagram via Sync — no manual entry needed."}
             </div>
           </div>
 
-          <div className="sectitle"><span className="dot" />Performance metrics<span className="s">add after publishing · update anytime</span></div>
+          <div className="sectitle"><span className="dot" />Performance metrics<span className="s">fetched from Instagram · read-only</span></div>
 
-          {status === "planned" ? (
-            <div className="metrics-planned">
-              <span style={{ fontSize: 18 }}>🕓</span>
-              <div>
-                <b>Not published yet.</b> Save this post now, publish on Instagram, then come back to log{" "}
-                <b>Views, Likes, Comments, Shares, Saves &amp; Accounts Reached</b> — and keep updating them over time as the post gains traction.
-              </div>
-            </div>
-          ) : (
-            <div>
-              <div className="metricgrid">
-                {METRIC_FIELDS.map(([id, label]) => (
-                  <div className="metricbox field" key={id}>
-                    <label className="f">{label}</label>
-                    <input
-                      className="t"
-                      type="number"
-                      min={0}
-                      placeholder="0"
-                      value={metrics[id] ?? ""}
-                      onChange={(e) => setMetrics((m) => ({ ...m, [id]: e.target.value }))}
-                    />
-                  </div>
-                ))}
-              </div>
-              <div className="liverate">
-                ⚡ Engagement rate: <b>{rate == null ? "—" : rate.toFixed(1) + "%"}</b>
-                <span style={{ fontWeight: 500, fontSize: 11.5, marginLeft: 6 }}>
-                  (likes + comments + shares + saves) ÷ reach · computed live
-                </span>
-              </div>
-              {warn && (
-                <div className="hint" style={{ color: "var(--amber)" }}>
-                  ⚠️ Reach looks lower than total engagement — double-check the numbers.
+          <div className="metricgrid">
+            {METRIC_FIELDS.map(([id, label]) => (
+              <div className="metricbox field" key={id}>
+                <label className="f">{label}</label>
+                <div className="metric-ro" title="Fetched from Instagram — not editable">
+                  {hasMetrics ? Number(num(id)).toLocaleString() : "—"}
                 </div>
-              )}
+              </div>
+            ))}
+          </div>
+          {hasMetrics && (
+            <div className="liverate">
+              ⚡ Engagement rate: <b>{rate == null ? "—" : rate.toFixed(1) + "%"}</b>
+              <span style={{ fontWeight: 500, fontSize: 11.5, marginLeft: 6 }}>
+                (likes + comments + shares + saves) ÷ reach
+              </span>
             </div>
           )}
+          <div className="hint" style={{ marginTop: 8 }}>
+            {hasMetrics
+              ? "📸 Pulled live from Instagram. Re-run Sync on the Integrations page to refresh."
+              : "📸 No Instagram data yet — make sure this post's Link is filled in, then run Sync on the Integrations page."}
+          </div>
 
           {submitError && <p className="login-err" style={{ marginTop: 12 }}>{submitError}</p>}
 
