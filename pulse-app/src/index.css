@@ -654,6 +654,39 @@ img.lb-ava{object-fit:cover}
 .act-time{font-size:12px;color:var(--muted)}
 
 /* ============================================================
+   TOP PERFORMERS (per-platform best content)
+   ============================================================ */
+.tp-section{margin-top:26px}
+.tp-section:first-of-type{margin-top:8px}
+.tp-head{display:flex;align-items:center;gap:12px;margin:0 2px 14px}
+.tp-logo{width:38px;height:38px;border-radius:11px;display:grid;place-items:center;font-size:19px;color:#fff;flex:none}
+.tp-head h3{font-size:18px;font-weight:800;margin:0}
+.tp-count{font-size:12.5px;color:var(--muted);font-weight:600;margin-left:auto}
+.tp-none{color:var(--muted);font-weight:500;font-size:13px}
+.tp-leaders{display:grid;grid-template-columns:repeat(5,1fr);gap:12px;margin-top:16px}
+.tp-leader{background:var(--panel);border:1px solid var(--border);border-radius:14px;padding:13px 14px;min-width:0}
+.tp-leader-top{display:flex;align-items:center;gap:6px;font-size:11px;font-weight:800;letter-spacing:.02em;text-transform:uppercase;color:var(--muted)}
+.tp-lic{font-size:13px}
+.tp-leader-val{font-size:20px;font-weight:800;margin:8px 0 3px}
+.tp-leader-val.muted{color:var(--muted)}
+.tp-leader-title{font-size:12px;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.tp-rankhead{font-size:12px;font-weight:800;letter-spacing:.03em;text-transform:uppercase;color:var(--muted);margin:20px 2px 10px}
+.tp-rank{padding:6px 6px}
+.tp-row{display:flex;align-items:center;gap:14px;padding:12px 12px;border-radius:12px}
+.tp-row+.tp-row{border-top:1px solid var(--border)}
+.tp-row:hover{background:var(--panel2)}
+.tp-rank-n{width:26px;height:26px;border-radius:8px;display:grid;place-items:center;font-weight:800;font-size:13px;flex:none;background:var(--panel2);color:var(--muted)}
+.tp-rank-n.r1{background:linear-gradient(135deg,#fde68a,#f59e0b);color:#3a2500}
+.tp-rank-n.r2{background:linear-gradient(135deg,#e5e7eb,#9ca3af);color:#1f2430}
+.tp-rank-n.r3{background:linear-gradient(135deg,#fdba74,#c2703c);color:#2e1600}
+.tp-row-main{flex:1;min-width:0}
+.tp-row-title{font-weight:700;font-size:14px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.tp-row-meta{font-size:12px;color:var(--muted);display:flex;gap:6px;margin-top:2px}
+.tp-type{font-weight:700;color:var(--accent-ink);background:var(--accent-weak);padding:1px 8px;border-radius:999px;font-size:11px}
+.tp-row-stats{display:flex;gap:14px;align-items:center;font-size:12.5px;color:var(--muted);flex:none}
+.tp-score{font-weight:800;color:var(--text)}
+
+/* ============================================================
    TRENDS (Phase 4 analytics)
    ============================================================ */
 .tr-kpi .l{font-size:12px;font-weight:700;color:var(--muted)}
@@ -740,6 +773,9 @@ img.lb-ava{object-fit:cover}
   .toolbar{gap:8px}
   .seg{width:100%}
   .seg button{flex:1;justify-content:center;padding:9px 8px}
+  .tp-leaders{grid-template-columns:1fr 1fr}
+  .tp-row-stats{gap:10px}
+  .tp-row-stats span:not(.tp-score){display:none}
   .statusseg{width:100%}
   .lb-hero{flex-direction:column;text-align:center;gap:12px}
   .lb-statbar{flex-wrap:wrap}

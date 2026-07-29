@@ -22,6 +22,7 @@ import { lazy, Suspense } from "react";
 import { InsightsPage } from "@/pages/insights";
 // Trends pulls in Recharts (heavy) — load it only when visited.
 const TrendsPage = lazy(() => import("@/pages/trends").then((m) => ({ default: m.TrendsPage })));
+import { TopPerformersPage } from "@/pages/top-performers";
 import { MetricsPage } from "@/pages/metrics";
 import { ReportsPage } from "@/pages/reports";
 import { PostsPage } from "@/pages/posts";
@@ -80,6 +81,7 @@ function AppRoutes() {
               }
             />
             <Route path="/leaderboard" element={<LeaderboardPage />} />
+            <Route path="/top" element={<TopPerformersPage />} />
             <Route path="/reports" element={<ReportsPage />} />
             <Route path="/posts" element={<PostsPage />} />
             <Route path="/channels" element={<ChannelsPage />} />
