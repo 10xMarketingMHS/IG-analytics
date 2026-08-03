@@ -120,6 +120,30 @@ main{min-width:0;display:flex;flex-direction:column}
 .bulk-add:hover{background:var(--accent-weak);border-style:solid}
 .bulk-note{margin-top:14px;padding:12px 14px;border-radius:12px;background:var(--accent-weak);color:var(--accent-ink);
   font-size:12px;line-height:1.55}
+/* channel-grouped cards */
+.bulk-tbl-card{min-width:1060px}
+.bulk-empty{border:1px dashed var(--glass-brd);border-radius:16px;padding:34px 20px;text-align:center}
+.bulk-empty-h{font-size:15px;font-weight:800;margin-bottom:16px}
+.bulk-pick{display:flex;gap:10px;justify-content:center;flex-wrap:wrap}
+.bulk-pick .t{max-width:260px}
+.bulk-card{border:1px solid var(--glass-brd);border-radius:16px;padding:14px;margin-bottom:16px;background:var(--glass);
+  backdrop-filter:blur(14px) saturate(140%);-webkit-backdrop-filter:blur(14px) saturate(140%)}
+.bulk-card-head{display:flex;align-items:center;gap:11px;margin-bottom:12px}
+.bulk-card-ic{width:32px;height:32px;border-radius:10px;display:grid;place-items:center;font-size:16px;flex:none;
+  background:var(--grad,linear-gradient(135deg,#a855f7,#7c3aed));color:#fff}
+.bulk-card-head h4{font-size:15px;font-weight:800;margin:0}
+.bulk-card-count{font-size:11.5px;font-weight:700;color:var(--accent-ink);background:var(--accent-weak);padding:2px 9px;border-radius:999px}
+.bulk-card-del{margin-left:auto;border:1px solid var(--border);background:var(--panel2);color:var(--muted);
+  border-radius:9px;padding:6px 12px;font-size:12px;font-weight:700;cursor:pointer}
+.bulk-card-del:hover{border-color:var(--rose,#f43f5e);color:var(--rose,#f43f5e)}
+.bulk-add-row{margin-top:10px;border:1px dashed var(--glass-brd);border-radius:10px;background:transparent;
+  color:var(--accent-ink);font-weight:700;font-size:12.5px;cursor:pointer;padding:8px 14px;transition:.15s}
+.bulk-add-row:hover{background:var(--accent-weak);border-style:solid}
+.bulk-addchan{display:flex;align-items:center;gap:10px;flex-wrap:wrap;padding:14px;border:1px dashed var(--glass-brd);
+  border-radius:14px;margin-top:4px}
+.bulk-addchan-l{font-size:13px;font-weight:700;color:var(--muted)}
+.bulk-addchan .t{max-width:220px}
+.bulk-na{display:block;text-align:center;color:var(--faint,var(--muted));font-weight:700}
 
 /* ===== Task board (kanban) ===== */
 .task-board{display:grid;grid-template-columns:repeat(3,1fr);gap:16px;align-items:start}
@@ -386,6 +410,51 @@ html[data-theme="dark"] .st-planned{background:#3f2f0a;color:#fbbf24}
 .search input{border:0;background:transparent;color:var(--text);font-size:13px;width:100%;outline:none;font-family:inherit}
 .chip{font-size:12px;font-weight:650;color:var(--muted);background:var(--panel);border:1px solid var(--border);padding:7px 12px;border-radius:9px;cursor:pointer}
 .chip.on{background:var(--accent-weak);color:var(--accent-ink);border-color:transparent}
+.chip-n{display:inline-block;margin-left:7px;font-size:10.5px;font-weight:800;opacity:.7}
+.chip.on .chip-n{opacity:.9}
+/* combinable filter bar */
+.filterbar{display:flex;flex-wrap:wrap;gap:10px 18px;padding:14px 16px;margin-bottom:14px;align-items:center}
+.fg{display:flex;align-items:center;gap:7px;flex-wrap:wrap}
+.fg-l{font-size:10.5px;font-weight:800;letter-spacing:.05em;text-transform:uppercase;color:var(--muted);margin-right:2px}
+.fg + .fg{border-left:1px solid var(--border);padding-left:18px}
+.ch-cell{display:inline-flex;align-items:center;gap:7px;font-weight:600}
+.ch-ic{font-size:13px}
+.collab-badge{margin-left:6px;font-size:12px;cursor:help}
+/* dropdown-style filters */
+.filterbar-d{display:flex;flex-wrap:wrap;gap:10px;margin-bottom:14px;align-items:center}
+.msel{position:relative}
+.msel-btn{display:inline-flex;align-items:center;gap:8px;font-size:12.5px;font-weight:700;color:var(--text);
+  background:var(--panel);border:1px solid var(--border);padding:9px 14px;border-radius:11px;cursor:pointer;transition:.15s}
+.msel-btn:hover{border-color:var(--accent)}
+.msel-btn.on{background:var(--accent-weak);color:var(--accent-ink);border-color:transparent}
+.msel-cv{font-size:10px;opacity:.7}
+.msel-count{min-width:18px;height:18px;padding:0 5px;border-radius:9px;background:var(--accent);color:#fff;
+  font-size:11px;font-weight:800;display:inline-grid;place-items:center}
+.msel-btn.on .msel-count{background:var(--accent-ink)}
+.msel-menu{position:absolute;top:calc(100% + 6px);left:0;z-index:60;min-width:214px;max-width:calc(100vw - 40px);
+  max-height:330px;overflow:auto;background:var(--panel);border:1px solid var(--border);border-radius:12px;
+  box-shadow:var(--shadow);padding:6px}
+.msel-opt{display:flex;align-items:center;gap:10px;padding:9px 10px;border-radius:9px;cursor:pointer;font-size:13px;color:var(--text)}
+.msel-opt:hover{background:var(--panel2)}
+.msel-opt.sel{background:var(--accent-weak)}
+.msel-opt input{width:15px;height:15px;accent-color:var(--accent);cursor:pointer;flex:none}
+.msel-opt-l{flex:1;min-width:0;white-space:nowrap}
+.msel-opt-n{font-size:11px;font-weight:800;color:var(--muted)}
+.msel-empty{padding:12px;color:var(--muted);font-size:12.5px;text-align:center}
+/* customize columns menu */
+.cols-menu{left:auto;right:0;min-width:256px;padding:8px}
+.cols-head{display:flex;align-items:center;justify-content:space-between;padding:4px 8px 9px;border-bottom:1px solid var(--border);margin-bottom:6px;font-size:12.5px}
+.cols-reset{border:0;background:transparent;color:var(--accent-ink);font-weight:800;font-size:12px;cursor:pointer}
+.cols-row{display:flex;align-items:center;gap:8px;padding:6px 8px;border-radius:9px}
+.cols-row:hover{background:var(--panel2)}
+.cols-check{display:flex;align-items:center;gap:10px;flex:1;cursor:pointer;font-size:13px;color:var(--text)}
+.cols-check input{width:15px;height:15px;accent-color:var(--accent);cursor:pointer;flex:none}
+.cols-move{display:flex;gap:4px;flex:none}
+.cols-move button{width:24px;height:24px;border:1px solid var(--border);background:var(--panel2);border-radius:7px;cursor:pointer;color:var(--muted);font-size:12px;line-height:1;display:grid;place-items:center}
+.cols-move button:hover:not(:disabled){border-color:var(--accent);color:var(--accent-ink)}
+.cols-move button:disabled{opacity:.35;cursor:not-allowed}
+.tlink{color:var(--accent-ink);text-decoration:none;font-weight:800;font-size:12px}
+.tlink:hover{text-decoration:underline}
 .tbl{width:100%;border-collapse:collapse;font-size:13px}
 .tbl th{text-align:left;padding:11px 13px;font-size:11px;text-transform:uppercase;letter-spacing:.4px;color:var(--muted);font-weight:700;border-bottom:1px solid var(--border);white-space:nowrap}
 .tbl td{padding:11px 13px;border-bottom:1px solid var(--border2);white-space:nowrap}
