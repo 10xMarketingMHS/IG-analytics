@@ -63,7 +63,7 @@ main{min-width:0;display:flex;flex-direction:column}
 .btn-primary{background:var(--grad);border-color:transparent;color:#fff;box-shadow:0 8px 20px rgba(124,58,237,.40)}
 .btn-primary:hover{filter:brightness(1.08);color:#fff;box-shadow:0 10px 26px rgba(124,58,237,.52)}
 .btn:disabled{opacity:.6;cursor:not-allowed}
-.content{padding:24px 26px 60px;max-width:1160px}
+.content{padding:24px 26px 60px;max-width:1600px}
 .demo-note{font-size:11.5px;color:var(--muted);background:var(--panel2);border:1px dashed var(--border);border-radius:9px;padding:7px 12px;display:inline-flex;gap:7px;align-items:center;margin-bottom:18px}
 
 .card{background:var(--glass);border:1px solid var(--glass-brd);border-radius:var(--radius);box-shadow:var(--shadow);
