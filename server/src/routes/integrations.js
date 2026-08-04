@@ -14,8 +14,9 @@ export const integrationsRouter = Router();
 function frontendBase() {
   return config.NODE_ENV === "production" ? config.APP_BASE_URL : config.CORS_ORIGIN;
 }
+// Integrations UI now lives inside the Channels page — send OAuth callbacks there.
 function backToIntegrations(res, query) {
-  res.redirect(`${frontendBase()}/integrations?${new URLSearchParams(query).toString()}`);
+  res.redirect(`${frontendBase()}/channels?${new URLSearchParams(query).toString()}`);
 }
 
 // Setup readiness — drives the Integrations page's "what to do next" state.

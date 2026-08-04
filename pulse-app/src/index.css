@@ -287,6 +287,14 @@ main{min-width:0;display:flex;flex-direction:column}
 .chan-chip.on{color:#fff;border-color:transparent;box-shadow:0 6px 16px rgba(0,0,0,.22)}
 .chan-chip .chan-mark{font-weight:900;opacity:.9;margin-left:1px}
 .chan-chip:disabled{cursor:default;opacity:.85}
+/* Instagram integration row inside a channel card */
+.chan-int{margin-top:14px;padding-top:14px;border-top:1px solid var(--border);display:flex;align-items:center;gap:11px;flex-wrap:wrap}
+.chan-int-logo{width:30px;height:30px;border-radius:9px;display:grid;place-items:center;font-size:15px;color:#fff;flex:none;
+  background:linear-gradient(135deg,#f9737d,#c13584,#833ab4)}
+.chan-int-info{flex:1;min-width:120px;display:flex;flex-direction:column;gap:2px}
+.chan-int-sub{font-size:11.5px;color:var(--muted)}
+.chan-int-act{display:flex;gap:6px;flex:none}
+.btn-sm{padding:6px 12px;font-size:12px}
 
 /* ===== Home / command center ===== */
 .home-hero{display:flex;align-items:center;justify-content:space-between;gap:16px;flex-wrap:wrap;margin-bottom:20px}
@@ -571,6 +579,15 @@ select.mini{font-family:inherit;font-size:12.5px;font-weight:700;color:var(--tex
 .lb-tabs button{border:0;background:transparent;color:var(--muted);font-weight:700;font-size:13.5px;padding:10px 18px;border-radius:10px;
   font-family:inherit;cursor:pointer;transition:.15s;white-space:nowrap}
 .lb-tabs button.on{background:var(--grad);color:#fff;box-shadow:0 8px 20px rgba(124,58,237,.35)}
+.lb-tabs{flex-wrap:wrap}
+/* Progress path (bump chart) */
+.pp-wrap{overflow-x:auto;margin-top:14px;padding-bottom:4px}
+.pp-svg{width:100%;min-width:680px;height:auto;display:block}
+.pp-grid{stroke:var(--border);stroke-dasharray:2 6}
+.pp-rank{fill:var(--muted);font-size:13px;font-weight:800}
+.pp-date{fill:var(--muted);font-size:10.5px;font-weight:600;opacity:.75}
+.pp-name{fill:var(--text);font-size:12.5px;font-weight:800}
+.pp-pts{fill:var(--muted);font-size:10.5px;font-weight:600}
 .lb-head-house,.lb-row-house{grid-template-columns:110px 1fr 124px 104px}
 .lb-statbar{display:flex;align-items:center;gap:16px;margin:0 0 16px}
 .lb-statbar h3{margin:0;font-size:20px;letter-spacing:-.3px}

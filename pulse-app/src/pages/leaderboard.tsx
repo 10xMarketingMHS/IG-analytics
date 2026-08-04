@@ -7,7 +7,7 @@ import { rangeFor, inRange, compactNum } from "@/lib/date-range";
 import type { Post, Editor } from "@/lib/types";
 
 type Period = "month" | "all";
-type Tab = "social" | "house";
+type Tab = "social" | "house" | "path";
 
 type Row = { editor: Editor; reels: number; carousels: number; views: number; points: number };
 type HouseRow = { editor: Editor; assigned: number; completed: number; rate: number };
@@ -40,6 +40,101 @@ function Avatar({ editor }: { editor: Editor }) {
 // Weighted engagement across an editor's reels & carousels.
 function pointsOf(p: Post) {
   return p.likes + 2 * p.comments + 3 * p.shares + 3 * p.saves;
+}
+
+// ---- Progress Path (rank-over-time bump chart, last 30 days) ----
+const PATH_COLORS = ["#ef4444", "#3b82f6", "#10b981", "#f59e0b", "#8b5cf6", "#ec4899", "#06b6d4", "#84cc16", "#f97316", "#6366f1", "#14b8a6", "#e11d48"];
+const CP = 7; // checkpoints across the 30-day window
+const MON = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+function ymd(d: Date) {
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+}
+
+function ProgressPath({ editors, posts }: { editors: Editor[]; posts: Post[] }) {
+  const N = editors.length;
+  const series = useMemo(() => {
+    const now = new Date();
+    const day = 86400000;
+    const windowStart = ymd(new Date(now.getTime() - 30 * day));
+    const cps = Array.from({ length: CP }, (_, i) => new Date(now.getTime() - (CP - 1 - i) * (30 / (CP - 1)) * day));
+    const cpYmd = cps.map(ymd);
+    const pub = posts.filter((p) => p.status === "published" && p.editor_id && p.date >= windowStart);
+    // Cumulative points per editor at each checkpoint, then rank (1 = best).
+    const ranks = new Map<string, number[]>();
+    const cumuAt = cpYmd.map((D) => {
+      const m: Record<string, number> = {};
+      for (const e of editors) m[e.id] = 0;
+      for (const p of pub) if (p.date <= D) m[p.editor_id!] = (m[p.editor_id!] ?? 0) + pointsOf(p);
+      return m;
+    });
+    for (let i = 0; i < CP; i++) {
+      const m = cumuAt[i];
+      [...editors].sort((a, b) => (m[b.id] - m[a.id]) || a.name.localeCompare(b.name)).forEach((e, idx) => {
+        const arr = ranks.get(e.id) ?? [];
+        arr[i] = idx + 1;
+        ranks.set(e.id, arr);
+      });
+    }
+    return { cps, ranks, finalCumu: cumuAt[CP - 1] };
+  }, [editors, posts]);
+
+  const rowH = 40, padTop = 30, padBot = 36, padLeft = 44, padRight = 190, W = 760;
+  const H = padTop + N * rowH + padBot;
+  const plotLeft = padLeft, plotRight = W - padRight;
+  const yFor = (rank: number) => padTop + (rank - 0.5) * rowH;
+  const xFor = (i: number) => plotLeft + (i / (CP - 1)) * (plotRight - plotLeft);
+  const colorOf = (id: string) => PATH_COLORS[editors.findIndex((x) => x.id === id) % PATH_COLORS.length];
+
+  return (
+    <div className="pp-wrap">
+      <svg viewBox={`0 0 ${W} ${H}`} className="pp-svg" role="img" aria-label="Editor performance over the last 30 days">
+        {Array.from({ length: N }, (_, r) => (
+          <g key={r}>
+            <line x1={plotLeft} y1={yFor(r + 1)} x2={plotRight} y2={yFor(r + 1)} className="pp-grid" />
+            <text x={plotLeft - 16} y={yFor(r + 1) + 4} className="pp-rank" textAnchor="middle">{r + 1}</text>
+          </g>
+        ))}
+        {series.cps.map((d, i) => (
+          <text key={i} x={xFor(i)} y={H - 12} className="pp-date" textAnchor="middle">{`${MON[d.getMonth()]} ${d.getDate()}`}</text>
+        ))}
+        {editors.map((e) => {
+          const r = series.ranks.get(e.id) ?? [];
+          const pts = r.map((rk, i) => `${xFor(i)},${yFor(rk)}`).join(" ");
+          const color = colorOf(e.id);
+          return (
+            <g key={e.id}>
+              <polyline points={pts} fill="none" stroke={color} strokeWidth="2.4" strokeLinejoin="round" strokeLinecap="round" opacity="0.92" />
+              {r.map((rk, i) => <circle key={i} cx={xFor(i)} cy={yFor(rk)} r="2.6" fill={color} />)}
+            </g>
+          );
+        })}
+        {editors.map((e) => {
+          const r = series.ranks.get(e.id) ?? [];
+          const fr = r[CP - 1] ?? N;
+          const cy = yFor(fr);
+          const cx = plotRight + 26;
+          const color = colorOf(e.id);
+          return (
+            <g key={e.id}>
+              <line x1={plotRight} y1={cy} x2={cx - 14} y2={cy} stroke={color} strokeWidth="2.4" opacity="0.92" />
+              <circle cx={cx} cy={cy} r="14" fill="var(--panel)" stroke={color} strokeWidth="2.5" />
+              {e.image_url ? (
+                <>
+                  <clipPath id={`ppc-${e.id}`}><circle cx={cx} cy={cy} r="12.5" /></clipPath>
+                  <image href={e.image_url} x={cx - 12.5} y={cy - 12.5} width="25" height="25" clipPath={`url(#ppc-${e.id})`} preserveAspectRatio="xMidYMid slice" />
+                </>
+              ) : (
+                <text x={cx} y={cy + 4} textAnchor="middle" fontSize="12" fontWeight="800" fill={color}>{e.name.charAt(0).toUpperCase()}</text>
+              )}
+              <text x={cx + 24} y={cy - 1} className="pp-name">{e.name}</text>
+              <text x={cx + 24} y={cy + 12} className="pp-pts">{(series.finalCumu[e.id] || 0).toLocaleString()} pts · #{fr}</text>
+              <title>{`${e.name} — rank #${fr}, ${(series.finalCumu[e.id] || 0).toLocaleString()} pts`}</title>
+            </g>
+          );
+        })}
+      </svg>
+    </div>
+  );
 }
 
 const MEDAL_VARIANT = ["gold", "silver", "bronze"] as const;
@@ -140,6 +235,9 @@ export function LeaderboardPage() {
         <button className={tab === "house" ? "on" : ""} onClick={() => setTab("house")}>
           🏆 Media House Leaders
         </button>
+        <button className={tab === "path" ? "on" : ""} onClick={() => setTab("path")}>
+          📈 Progress Path
+        </button>
       </div>
 
       {loading ? (
@@ -202,6 +300,20 @@ export function LeaderboardPage() {
             )}
           </div>
           <FeaturedSocial champion={socialRanked[0]} period={period} />
+        </div>
+      ) : tab === "path" ? (
+        <div className="card pad">
+          <div className="lb-statbar">
+            <h3>Progress path · last 30 days</h3>
+            <div className="hint" style={{ margin: 0 }}>Editors climb as their published Reels &amp; Carousels earn points</div>
+          </div>
+          {posts && posts.filter((p) => p.status === "published" && p.editor_id).length > 0 ? (
+            <ProgressPath editors={editors} posts={posts} />
+          ) : (
+            <div className="hint" style={{ marginTop: 12 }}>
+              No published posts with an assigned editor in the last 30 days yet — the path fills in as content ships.
+            </div>
+          )}
         </div>
       ) : (
         <div className="lb-layout">
