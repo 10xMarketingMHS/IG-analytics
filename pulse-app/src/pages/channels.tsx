@@ -36,7 +36,7 @@ function relTime(iso: string | null) {
 }
 
 export function ChannelsPage() {
-  const { workspaces, isAdmin, refresh } = useWorkspaces();
+  const { workspaces, active, isAdmin, refresh, switchTo } = useWorkspaces();
   const [params, setParams] = useSearchParams();
   const { data: platData } = useResource<{ platforms: Platform[] }>("/platforms");
   const { data: acctData, refetch } = useResource<{ accounts: Account[] }>("/accounts?channel=all");
@@ -113,6 +113,26 @@ export function ChannelsPage() {
       await refetch();
     } catch (e) {
       toast.error(e instanceof ApiError ? e.message : "Could not update platform.");
+    }
+  }
+
+  async function deleteChannel(id: string, name: string) {
+    if (!window.confirm(
+      `Delete channel “${name}”?\n\nThis permanently removes its posts, platform links, and Instagram connection. Your team and other channels are kept, and tasks stay (just un-linked from this channel).\n\nThis can't be undone.`,
+    )) return;
+    try {
+      await api(`/workspaces/${id}`, { method: "DELETE" });
+      toast.success(`Channel “${name}” deleted.`);
+      // If we just deleted the active channel, switch to another (reloads).
+      if (active?.id === id) {
+        const other = workspaces.find((w) => w.id !== id);
+        if (other) { switchTo(other.id); return; }
+      }
+      await refresh();
+      await refetch();
+      refetchConns();
+    } catch (e) {
+      toast.error(e instanceof ApiError ? e.message : "Could not delete channel.");
     }
   }
 
@@ -227,6 +247,9 @@ export function ChannelsPage() {
                   onKeyDown={(e) => { if (e.key === "Enter") (e.target as HTMLInputElement).blur(); }}
                 />
                 <span className="chan-count">{enabledCount} platform{enabledCount === 1 ? "" : "s"}</span>
+                {isAdmin && workspaces.length > 1 && (
+                  <button className="chan-del" title="Delete channel" onClick={() => deleteChannel(w.id, w.name)}>🗑</button>
+                )}
               </div>
               <div className="chan-plats">
                 {platforms.map((p) => {
