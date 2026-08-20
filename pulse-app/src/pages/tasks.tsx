@@ -28,6 +28,15 @@ function today() {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
 }
 
+// Whole days a due date is past today. Both inputs are YYYY-MM-DD; compared via
+// Date.UTC so the delta is a clean integer, DST-proof. Returns >= 1 for an
+// overdue task (due-today is not overdue — matches the Progress Path < boundary).
+function daysOverdue(due: string): number {
+  const [dy, dm, dd] = due.split("-").map(Number);
+  const [ty, tm, td] = today().split("-").map(Number);
+  return Math.round((Date.UTC(ty, tm - 1, td) - Date.UTC(dy, dm - 1, dd)) / 86400000);
+}
+
 function Assignee({ name, image }: { name: string | null; image: string | null }) {
   if (!name) return <span className="task-unassigned">Unassigned</span>;
   return (
@@ -130,8 +139,13 @@ export function TasksPage() {
                   return (
                     <div className="task-card" key={t.id} onClick={() => { setEditing(t); setModalOpen(true); }}>
                       <div className="task-top">
-                        <span style={{ display: "inline-flex", gap: 6, alignItems: "center" }}>
+                        <span style={{ display: "inline-flex", gap: 6, alignItems: "center", flexWrap: "wrap" }}>
                           <span className={"task-pri " + t.priority}>{PRI_LABEL[t.priority]}</span>
+                          {overdue && (
+                            <span className="task-overdue" title={`Due ${t.due_date}, still ${t.status.replace("_", " ")}`}>
+                              {(() => { const n = daysOverdue(t.due_date!); return `${n} ${n === 1 ? "day" : "days"} overdue`; })()}
+                            </span>
+                          )}
                           {t.post_id && <span className="task-postbadge" title="Auto-created from a post">📄 Post</span>}
                           {t.recurrence !== "none" && <span className="task-recur" title={`Repeats ${t.recurrence}`}>🔁</span>}
                         </span>
