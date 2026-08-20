@@ -247,8 +247,9 @@ export function ChannelsPage() {
             className="t"
             placeholder="New channel name — e.g. My New Brand"
             value={newName}
+            disabled={busy}
             onChange={(e) => setNewName(e.target.value)}
-            onKeyDown={(e) => { if (e.key === "Enter") addChannel(); }}
+            onKeyDown={(e) => { if (e.key === "Enter" && !busy) addChannel(); }}
           />
           <button className="btn btn-primary" onClick={addChannel} disabled={busy || !newName.trim()}>
             {busy ? "Adding…" : "＋ Add Channel"}
