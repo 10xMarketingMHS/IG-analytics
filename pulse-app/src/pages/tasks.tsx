@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState, type FormEvent } from "react";
 import { useTasks } from "@/lib/use-tasks";
 import { useEditors } from "@/lib/use-editors";
+import { useWorkspaces } from "@/lib/workspaces-context";
 import { api, ApiError } from "@/lib/api";
 import { Modal } from "@/components/modal";
 import { toast } from "sonner";
@@ -54,6 +55,10 @@ function Assignee({ name, image }: { name: string | null; image: string | null }
 export function TasksPage() {
   const { tasks, refetch } = useTasks();
   const { editors } = useEditors();
+  const { active } = useWorkspaces();
+  // Viewers are read-only (the backend already 403s their writes); hide the
+  // status-move controls from them so the affordance matches the permission.
+  const canWrite = active?.role !== "viewer";
   const [filterEditor, setFilterEditor] = useState("");
   const [view, setView] = useState<"board" | "calendar">("board");
   const [modalOpen, setModalOpen] = useState(false);
@@ -169,18 +174,20 @@ export function TasksPage() {
                           </span>
                         )}
                       </div>
-                      <div className="task-actions" onClick={(e) => e.stopPropagation()}>
-                        {ci > 0 && (
-                          <button className="linkbtn" onClick={() => move(t, COLUMNS[ci - 1].key)}>
-                            ← {COLUMNS[ci - 1].label}
-                          </button>
-                        )}
-                        {ci < COLUMNS.length - 1 && (
-                          <button className="linkbtn" onClick={() => move(t, COLUMNS[ci + 1].key)}>
-                            {COLUMNS[ci + 1].label} →
-                          </button>
-                        )}
-                      </div>
+                      {canWrite && (
+                        <div className="task-actions" onClick={(e) => e.stopPropagation()}>
+                          {ci > 0 && (
+                            <button className="linkbtn" onClick={() => move(t, COLUMNS[ci - 1].key)}>
+                              ← {COLUMNS[ci - 1].label}
+                            </button>
+                          )}
+                          {ci < COLUMNS.length - 1 && (
+                            <button className="linkbtn" onClick={() => move(t, COLUMNS[ci + 1].key)}>
+                              {COLUMNS[ci + 1].label} →
+                            </button>
+                          )}
+                        </div>
+                      )}
                     </div>
                   );
                 })}
