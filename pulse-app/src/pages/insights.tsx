@@ -10,7 +10,7 @@ export function InsightsPage() {
 
   const insights = useMemo<Insight[]>(() => {
     if (!posts || !taxonomy) return [];
-    const pub = posts.filter((p) => p.status === "published" && p.reach > 0);
+    const pub = posts.filter((p) => p.status === "published" && p.reach > 0 && !p.is_collab_mirror);
     if (pub.length < 3) return [];
     const out: Insight[] = [];
 

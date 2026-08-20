@@ -280,9 +280,13 @@ integrationsRouter.post("/integrations/instagram/sync", requireEditor, async (re
       token = decryptToken(conn.access_token_enc);
     }
     // Every post on this channel × platform that has a Link to match against.
+    // Collab mirrors are skipped here — the collab media lives on the OWNER's
+    // account (not this one), so it wouldn't match anyway; its metrics are
+    // copied from the owner below.
     const posts = (await pool.query(
-      `select id, permalink from post
-        where workspace_id = $1 and platform_id = $2 and deleted_at is null and permalink is not null`,
+      `select id, permalink, collab_group_id from post
+        where workspace_id = $1 and platform_id = $2 and deleted_at is null
+          and permalink is not null and is_collab_mirror = false`,
       [conn.workspace_id, conn.platform_id],
     )).rows;
 
@@ -302,6 +306,17 @@ integrationsRouter.post("/integrations/instagram/sync", requireEditor, async (re
       if (!media) continue;
       matched += 1;
       const m = await ig.getMediaMetrics(media, token);
+      // Copy the same numbers onto any collab mirror(s) of this post so the
+      // collaborating channel can display them (they never count toward
+      // performance aggregates — the mirror flag excludes them client-side).
+      if (post.collab_group_id) {
+        await pool.query(
+          `update post set views=$2, reach=$3, likes=$4, comments=$5, shares=$6, saves=$7,
+                  last_synced_at=now(), metrics_updated_at=now()
+            where collab_group_id=$1 and is_collab_mirror = true and deleted_at is null`,
+          [post.collab_group_id, m.views, m.reach, m.likes, m.comments, m.shares, m.saves],
+        );
+      }
       await pool.query(
         `update post set views=$2, reach=$3, likes=$4, comments=$5, shares=$6, saves=$7,
                 external_id=$8, last_synced_at=now(), metrics_updated_at=now()

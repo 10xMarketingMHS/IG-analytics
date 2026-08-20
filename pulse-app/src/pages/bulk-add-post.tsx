@@ -22,14 +22,24 @@ type Row = {
   avatarId: string;
   editorId: string;
   status: "planned" | "published";
+  // Collab linkage (owner + mirror share collabGroupId).
+  collabGroupId?: string;
+  isMirror?: boolean;          // this row is the collaborating channel's mirror
+  overrides?: Set<string>;     // mirror fields the user edited (skip propagation)
 };
 
 // A card groups several posts under one channel — the channel is the card
 // header, so rows no longer carry a channel column.
-type Card = { id: string; channelId: string; rows: Row[] };
+type Card = { id: string; channelId: string; rows: Row[]; viaCollab?: boolean };
+
+// Fields that propagate owner → mirror (until the mirror overrides them).
+const MIRROR_DIRECT = ["date", "title", "link", "postType"] as const;
+const MIRROR_TAXONOMY = ["pillarId", "contentTypeId", "formatId", "avatarId"] as const;
 
 let seq = 0;
 const newKey = () => `r${seq++}`;
+const newGroup = () =>
+  (typeof crypto !== "undefined" && crypto.randomUUID ? crypto.randomUUID() : `g${seq++}-${Date.now()}`);
 function today() {
   const d = new Date();
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
@@ -54,8 +64,8 @@ export function BulkAddPostPage({ onClose }: { onClose?: () => void } = {}) {
   const platforms = platData?.platforms ?? [];
   const accounts = acctData?.accounts ?? [];
   const defaultChannel = active?.id ?? workspaces[0]?.id ?? "";
+  const igPlatformId = platforms.find((p) => p.key === "instagram")?.id ?? "";
 
-  // Taxonomy for every channel (each row shows its channel's pillars/formats).
   const [taxByChannel, setTaxByChannel] = useState<Record<string, Taxonomy>>({});
   useEffect(() => {
     let cancel = false;
@@ -81,17 +91,18 @@ export function BulkAddPostPage({ onClose }: { onClose?: () => void } = {}) {
     const ids = new Set(accounts.filter((a) => a.channel_id === channelId).map((a) => a.platform_id));
     return platforms.filter((p) => ids.has(p.id));
   };
-  // Collab is an Instagram-only concept.
   const isInstagram = (platformId: string) => platforms.find((p) => p.id === platformId)?.key === "instagram";
+  const channelHasInstagram = (channelId: string) =>
+    accounts.some((a) => a.channel_id === channelId && a.platform_key === "instagram");
+  // Channels offered as collab partners: other channels that are on Instagram.
+  const collabOptions = (fromChannel: string) =>
+    workspaces.filter((w) => w.id !== fromChannel && channelHasInstagram(w.id));
 
-  // Default the channel picker once workspaces load.
   useEffect(() => {
     if (!pickChannel && defaultChannel) setPickChannel(defaultChannel);
   }, [defaultChannel, pickChannel]);
 
-  // Once accounts/platforms load, backfill any row missing a default platform.
-  // Return the SAME cards reference when nothing changes so React bails out —
-  // otherwise this re-renders forever (the data arrays are fresh each render).
+  // Backfill a default platform for rows once accounts/platforms load.
   useEffect(() => {
     setCards((cs) => {
       let changed = false;
@@ -101,8 +112,7 @@ export function BulkAddPostPage({ onClose }: { onClose?: () => void } = {}) {
         let rowChanged = false;
         const rows = c.rows.map((r) => {
           if (r.platformId) return r;
-          rowChanged = true;
-          changed = true;
+          rowChanged = true; changed = true;
           return { ...r, platformId: pfs[0].id };
         });
         return rowChanged ? { ...c, rows } : c;
@@ -111,6 +121,101 @@ export function BulkAddPostPage({ onClose }: { onClose?: () => void } = {}) {
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [acctData, platData]);
+
+  // ---- Collab taxonomy mapping (ids differ per channel — match by name) ----
+  function mapTaxonomy(srcChannelId: string, tgtChannelId: string, src: Row) {
+    const s = taxByChannel[srcChannelId], t = taxByChannel[tgtChannelId];
+    if (!s || !t) return { pillarId: "", contentTypeId: "", formatId: "", avatarId: "" };
+    const sp = s.pillars.find((p) => p.id === src.pillarId);
+    const tp = sp ? t.pillars.find((p) => p.name === sp.name) : undefined;
+    const sct = s.contentTypes.find((c) => c.id === src.contentTypeId);
+    const tct = sct && tp ? t.contentTypes.find((c) => c.name === sct.name && c.pillar_id === tp.id) : undefined;
+    // Format is flat now — map by name across channels, independent of pillar.
+    const sf = s.formats.find((f) => f.id === src.formatId);
+    const tf = sf ? t.formats.find((f) => f.name === sf.name) : undefined;
+    const sa = s.avatars.find((a) => a.id === src.avatarId);
+    const ta = sa ? t.avatars.find((a) => a.name === sa.name) : undefined;
+    return { pillarId: tp?.id ?? "", contentTypeId: tct?.id ?? "", formatId: tf?.id ?? "", avatarId: ta?.id ?? "" };
+  }
+
+  function buildMirror(srcChannelId: string, tgtChannelId: string, src: Row, groupId: string): Row {
+    const tax = mapTaxonomy(srcChannelId, tgtChannelId, src);
+    return {
+      ...blankRow(igPlatformId),
+      date: src.date, title: src.title, link: src.link, postType: src.postType, status: src.status,
+      ...tax,
+      editorId: "",
+      collabChannelId: srcChannelId, // reciprocal — points back to the source channel
+      collabGroupId: groupId,
+      isMirror: true,
+      overrides: new Set<string>(),
+    };
+  }
+
+  // Remove a group's mirror row; drop the card too if it was auto-created & empty.
+  function stripMirror(cs: Card[], groupId: string): Card[] {
+    return cs
+      .map((c) => ({ ...c, rows: c.rows.filter((r) => !(r.collabGroupId === groupId && r.isMirror)) }))
+      .filter((c) => !(c.rows.length === 0 && c.viaCollab));
+  }
+
+  // Push owner edits onto the mirror, skipping fields the mirror overrode.
+  function propagate(cs: Card[], groupId: string, srcRow: Row, srcChannelId: string): Card[] {
+    return cs.map((c) => {
+      const idx = c.rows.findIndex((r) => r.collabGroupId === groupId && r.isMirror);
+      if (idx < 0) return c;
+      const mirror = c.rows[idx];
+      const ov = mirror.overrides ?? new Set<string>();
+      const tax = mapTaxonomy(srcChannelId, c.channelId, srcRow);
+      const patch: Partial<Row> = {};
+      for (const f of MIRROR_DIRECT) if (!ov.has(f)) (patch as Record<string, unknown>)[f] = srcRow[f];
+      for (const f of MIRROR_TAXONOMY) if (!ov.has(f)) (patch as Record<string, unknown>)[f] = tax[f];
+      const rows = [...c.rows];
+      rows[idx] = { ...mirror, ...patch };
+      return { ...c, rows };
+    });
+  }
+
+  // Collab dropdown changed on a source row → create / move / remove the mirror.
+  function changeCollab(cardId: string, key: string, newTarget: string) {
+    const srcCard = cards.find((c) => c.id === cardId);
+    const srcRow = srcCard?.rows.find((r) => r.key === key);
+    if (!srcCard || !srcRow) return;
+    const oldGroup = srcRow.collabGroupId;
+
+    // If an existing mirror was hand-edited, don't silently drop it — confirm.
+    if (oldGroup && newTarget !== srcRow.collabChannelId) {
+      const mirror = cards.flatMap((c) => c.rows).find((r) => r.collabGroupId === oldGroup && r.isMirror);
+      if (mirror && (mirror.overrides?.size ?? 0) > 0) {
+        const ok = window.confirm(
+          `The mirrored post on “${channelName(mirror.collabChannelId)}” has your edits. Change the collab and remove it?`,
+        );
+        if (!ok) return; // abort — dropdown reverts to its current value
+      }
+    }
+
+    setCards((cs) => {
+      let next = oldGroup ? stripMirror(cs, oldGroup) : cs;
+      if (!newTarget) {
+        return patchRow(next, cardId, key, { collabChannelId: "", collabGroupId: undefined });
+      }
+      const groupId = newGroup();
+      next = patchRow(next, cardId, key, { collabChannelId: newTarget, collabGroupId: groupId, isMirror: false });
+      const updatedSrc = { ...srcRow, collabChannelId: newTarget, collabGroupId: groupId };
+      const mirrorRow = buildMirror(srcCard.channelId, newTarget, updatedSrc, groupId);
+      const tgt = next.find((c) => c.channelId === newTarget);
+      if (tgt) {
+        next = next.map((c) => (c.id === tgt.id ? { ...c, rows: [...c.rows, mirrorRow] } : c));
+      } else {
+        next = [...next, { id: `c${seq++}`, channelId: newTarget, viaCollab: true, rows: [mirrorRow] }];
+      }
+      return next;
+    });
+  }
+
+  function patchRow(cs: Card[], cardId: string, key: string, patch: Partial<Row>): Card[] {
+    return cs.map((c) => (c.id === cardId ? { ...c, rows: c.rows.map((r) => (r.key === key ? { ...r, ...patch } : r)) } : c));
+  }
 
   function addCard(channelId: string) {
     if (!channelId) return;
@@ -122,45 +227,76 @@ export function BulkAddPostPage({ onClose }: { onClose?: () => void } = {}) {
     setCards((cs) => cs.filter((c) => c.id !== id));
   }
   function addRow(cardId: string) {
-    setCards((cs) =>
-      cs.map((c) => (c.id === cardId ? { ...c, rows: [...c.rows, blankRow(platformsFor(c.channelId)[0]?.id ?? "")] } : c)),
-    );
+    setCards((cs) => cs.map((c) => (c.id === cardId ? { ...c, rows: [...c.rows, blankRow(platformsFor(c.channelId)[0]?.id ?? "")] } : c)));
   }
-  function dupRow(cardId: string, key: string) {
-    setCards((cs) =>
-      cs.map((c) => {
-        if (c.id !== cardId) return c;
-        const i = c.rows.findIndex((r) => r.key === key);
-        return { ...c, rows: [...c.rows.slice(0, i + 1), { ...c.rows[i], key: newKey() }, ...c.rows.slice(i + 1)] };
-      }),
-    );
-  }
+  // Delete a row, cleaning up any collab link it participates in.
   function delRow(cardId: string, key: string) {
-    setCards((cs) =>
-      cs.map((c) => (c.id === cardId && c.rows.length > 1 ? { ...c, rows: c.rows.filter((r) => r.key !== key) } : c)),
-    );
+    const card = cards.find((c) => c.id === cardId);
+    const row = card?.rows.find((r) => r.key === key);
+    if (!row) return;
+    setCards((cs) => {
+      // Deleting the source → also remove its mirror.
+      if (row.collabGroupId && !row.isMirror) {
+        let next = stripMirror(cs, row.collabGroupId);
+        next = next.map((c) => (c.id === cardId ? { ...c, rows: c.rows.filter((r) => r.key !== key) } : c));
+        return next.filter((c) => !(c.rows.length === 0 && c.viaCollab));
+      }
+      // Deleting the mirror → unlink its source's collab.
+      if (row.collabGroupId && row.isMirror) {
+        let next = cs.map((c) => (c.id === cardId ? { ...c, rows: c.rows.filter((r) => r.key !== key) } : c));
+        next = next.map((c) => ({
+          ...c,
+          rows: c.rows.map((r) => (r.collabGroupId === row.collabGroupId && !r.isMirror ? { ...r, collabChannelId: "", collabGroupId: undefined } : r)),
+        }));
+        return next.filter((c) => !(c.rows.length === 0 && c.viaCollab));
+      }
+      // Plain row — keep at least one per card.
+      return cs.map((c) => (c.id === cardId && c.rows.length > 1 ? { ...c, rows: c.rows.filter((r) => r.key !== key) } : c));
+    });
   }
+
   function update(cardId: string, key: string, patch: Partial<Row>) {
-    setCards((cs) =>
-      cs.map((c) => {
-        if (c.id !== cardId) return c;
-        return {
+    if ("collabChannelId" in patch) { changeCollab(cardId, key, patch.collabChannelId ?? ""); return; }
+    setCards((cs) => {
+      const card = cs.find((c) => c.id === cardId);
+      const before = card?.rows.find((r) => r.key === key);
+      if (!before) return cs;
+
+      const apply = (r: Row, channelId: string): Row => {
+        let n = { ...r, ...patch };
+        if (patch.platformId !== undefined && !isInstagram(patch.platformId)) n.collabChannelId = "";
+        if (patch.pillarId !== undefined && patch.pillarId !== r.pillarId) n = { ...n, contentTypeId: "", formatId: "" };
+        if (patch.formatId !== undefined && patch.formatId !== r.formatId) {
+          const fmt = taxByChannel[channelId]?.formats.find((f) => f.id === patch.formatId);
+          if (fmt) n.postType = fmt.post_type;
+        }
+        return n;
+      };
+
+      let next = cs.map((c) => (c.id !== cardId ? c : { ...c, rows: c.rows.map((r) => (r.key === key ? apply(r, c.channelId) : r)) }));
+
+      // Editing a mirror marks those fields overridden (pillar also freezes ct/format).
+      if (before.isMirror) {
+        const fields = Object.keys(patch);
+        next = next.map((c) => (c.id !== cardId ? c : {
           ...c,
           rows: c.rows.map((r) => {
             if (r.key !== key) return r;
-            let n = { ...r, ...patch };
-            // Collab only applies to Instagram — clear it on any other platform.
-            if (patch.platformId !== undefined && !isInstagram(patch.platformId)) n.collabChannelId = "";
-            if (patch.pillarId !== undefined && patch.pillarId !== r.pillarId) n = { ...n, contentTypeId: "", formatId: "" };
-            if (patch.formatId !== undefined && patch.formatId !== r.formatId) {
-              const fmt = taxByChannel[c.channelId]?.formats.find((f) => f.id === patch.formatId);
-              if (fmt) n.postType = fmt.post_type;
-            }
-            return n;
+            const ov = new Set(r.overrides ?? []);
+            fields.forEach((f) => ov.add(f));
+            if (fields.includes("pillarId")) { ov.add("contentTypeId"); ov.add("formatId"); }
+            return { ...r, overrides: ov };
           }),
-        };
-      }),
-    );
+        }));
+      }
+
+      // Editing a linked source propagates to its mirror.
+      if (before.collabGroupId && !before.isMirror) {
+        const updatedSrc = next.find((c) => c.id === cardId)!.rows.find((r) => r.key === key)!;
+        next = propagate(next, before.collabGroupId, updatedSrc, card!.channelId);
+      }
+      return next;
+    });
   }
 
   const validRow = (r: Row) =>
@@ -182,6 +318,7 @@ export function BulkAddPostPage({ onClose }: { onClose?: () => void } = {}) {
           body: JSON.stringify({
             channelId, platformId: r.platformId, date: r.date, title: r.title.trim(),
             link: r.link || undefined, collabChannelId: r.collabChannelId || null,
+            collabGroupId: r.collabGroupId || null, isCollabMirror: !!r.isMirror,
             pillarId: r.pillarId, contentTypeId: r.contentTypeId, formatId: r.formatId,
             postType: r.postType, avatarId: r.avatarId, editorId: r.editorId || undefined, status: r.status,
           }),
@@ -196,7 +333,7 @@ export function BulkAddPostPage({ onClose }: { onClose?: () => void } = {}) {
 
   return (
     <Modal onClose={close} title="Add Multiple Posts" wide>
-      <div className="bulk-sub">Pick a channel, then add its posts. Each channel gets its own card.</div>
+      <div className="bulk-sub">Pick a channel, then add its posts. Setting a Collab mirrors the post onto that channel.</div>
 
       {cards.length === 0 ? (
         <div className="bulk-empty">
@@ -216,6 +353,7 @@ export function BulkAddPostPage({ onClose }: { onClose?: () => void } = {}) {
                 <span className="bulk-card-ic">🌐</span>
                 <h4>{channelName(card.channelId)}</h4>
                 <span className="bulk-card-count">{card.rows.length} post{card.rows.length === 1 ? "" : "s"}</span>
+                {card.viaCollab && <span className="bulk-viacollab" title="Auto-created from a collab">🤝 via collab</span>}
                 <button className="bulk-card-del" title="Remove this channel card" onClick={() => delCard(card.id)}>Remove</button>
               </div>
               <div className="bulk-scroll">
@@ -232,12 +370,12 @@ export function BulkAddPostPage({ onClose }: { onClose?: () => void } = {}) {
                       const tax = taxByChannel[card.channelId];
                       const pfs = platformsFor(card.channelId);
                       const cts = tax?.contentTypes.filter((c) => c.pillar_id === r.pillarId) ?? [];
-                      const fmts = tax?.formats.filter((f) => f.pillar_id === r.pillarId) ?? [];
+                      const fmts = tax?.formats ?? []; // flat: channel-wide, never gated by pillar
                       return (
-                        <tr key={r.key}>
-                          <td className="bulk-num">{i + 1}</td>
+                        <tr key={r.key} className={r.isMirror ? "bulk-mirror-row" : undefined}>
+                          <td className="bulk-num">{i + 1}{r.isMirror && <div className="bulk-mtag">collab</div>}</td>
                           <td>
-                            <select value={r.platformId} onChange={(e) => update(card.id, r.key, { platformId: e.target.value })}>
+                            <select value={r.platformId} disabled={r.isMirror} onChange={(e) => update(card.id, r.key, { platformId: e.target.value })}>
                               {pfs.length === 0 && <option value="">—</option>}
                               {pfs.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
                             </select>
@@ -246,10 +384,12 @@ export function BulkAddPostPage({ onClose }: { onClose?: () => void } = {}) {
                           <td className="bulk-title"><input placeholder="Post title" value={r.title} onChange={(e) => update(card.id, r.key, { title: e.target.value })} /></td>
                           <td><input placeholder="https://…" value={r.link} onChange={(e) => update(card.id, r.key, { link: e.target.value })} /></td>
                           <td>
-                            {isInstagram(r.platformId) ? (
+                            {r.isMirror ? (
+                              <span className="bulk-collab-recip" title="Mirrored from a collab">↔ {channelName(r.collabChannelId)}</span>
+                            ) : isInstagram(r.platformId) ? (
                               <select value={r.collabChannelId} onChange={(e) => update(card.id, r.key, { collabChannelId: e.target.value })}>
                                 <option value="">None</option>
-                                {workspaces.filter((w) => w.id !== card.channelId).map((w) => <option key={w.id} value={w.id}>{w.name}</option>)}
+                                {collabOptions(card.channelId).map((w) => <option key={w.id} value={w.id}>{w.name}</option>)}
                               </select>
                             ) : (
                               <span className="bulk-na" title="Collab is Instagram-only">—</span>
@@ -258,19 +398,19 @@ export function BulkAddPostPage({ onClose }: { onClose?: () => void } = {}) {
                           <td>
                             <select value={r.pillarId} onChange={(e) => update(card.id, r.key, { pillarId: e.target.value })}>
                               <option value="">Select…</option>
-                              {(tax?.pillars ?? []).map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
+                              {(tax?.pillars ?? []).map((p) => <option key={p.id} value={p.id}>P{p.serial} — {p.name}</option>)}
                             </select>
                           </td>
                           <td>
                             <select value={r.contentTypeId} disabled={!r.pillarId} onChange={(e) => update(card.id, r.key, { contentTypeId: e.target.value })}>
                               <option value="">{r.pillarId ? "Select…" : "Pillar first"}</option>
-                              {cts.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
+                              {cts.map((c) => <option key={c.id} value={c.id}>T{c.serial} — {c.name}</option>)}
                             </select>
                           </td>
                           <td>
-                            <select value={r.formatId} disabled={!r.pillarId} onChange={(e) => update(card.id, r.key, { formatId: e.target.value })}>
-                              <option value="">{r.pillarId ? "Select…" : "Pillar first"}</option>
-                              {fmts.map((f) => <option key={f.id} value={f.id}>{f.name}</option>)}
+                            <select value={r.formatId} onChange={(e) => update(card.id, r.key, { formatId: e.target.value })}>
+                              <option value="">Select…</option>
+                              {fmts.map((f) => <option key={f.id} value={f.id}>F{f.serial} — {f.name}</option>)}
                             </select>
                           </td>
                           <td>
@@ -287,7 +427,7 @@ export function BulkAddPostPage({ onClose }: { onClose?: () => void } = {}) {
                             </select>
                           </td>
                           <td>
-                            <select value={r.editorId} onChange={(e) => update(card.id, r.key, { editorId: e.target.value })}>
+                            <select value={r.editorId} disabled={r.isMirror} title={r.isMirror ? "Mirror has no editor — one task lives on the owner post" : undefined} onChange={(e) => update(card.id, r.key, { editorId: e.target.value })}>
                               <option value="">Unassigned</option>
                               {(editors ?? []).map((ed) => <option key={ed.id} value={ed.id}>{ed.name}</option>)}
                             </select>
@@ -299,8 +439,7 @@ export function BulkAddPostPage({ onClose }: { onClose?: () => void } = {}) {
                             </select>
                           </td>
                           <td className="bulk-actions">
-                            <button title="Duplicate row" onClick={() => dupRow(card.id, r.key)}>⧉</button>
-                            <button title="Delete row" onClick={() => delRow(card.id, r.key)} disabled={card.rows.length === 1}>🗑</button>
+                            <button title="Delete row" onClick={() => delRow(card.id, r.key)} disabled={card.rows.length === 1 && !r.isMirror}>🗑</button>
                           </td>
                         </tr>
                       );
@@ -326,7 +465,8 @@ export function BulkAddPostPage({ onClose }: { onClose?: () => void } = {}) {
 
       <div className="bulk-note">
         <b>ℹ️ Performance metrics</b> — posts are saved as <b>Planned</b>. After publishing, log Views, Likes,
-        Comments, Shares, Saves &amp; Accounts Reached on each post (or sync from Instagram).
+        Comments, Shares, Saves &amp; Accounts Reached on each post (or sync from Instagram). Collab mirrors don't
+        count toward views/score anywhere, and never toward org-wide totals.
       </div>
       <div className="formfoot">
         <span style={{ marginRight: "auto", color: "var(--muted)", fontSize: 13, fontWeight: 700 }}>

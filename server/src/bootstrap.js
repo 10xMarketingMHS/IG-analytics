@@ -41,22 +41,31 @@ export async function createWorkspace(client, name, ownerId, opts = {}) {
     );
   }
 
+  // Permanent per-scope serials via the DB counter (auto-seeds taxonomy_seq).
+  const nextSerial = async (kind, parentId = null) =>
+    (await client.query("select public.next_taxonomy_serial($1,$2,$3) as s", [workspace.id, kind, parentId])).rows[0].s;
+
   if (sourceWorkspaceId) {
-    const sp = (await client.query("select id, name, sort_order from pillar where workspace_id=$1", [sourceWorkspaceId])).rows;
-    const sa = (await client.query("select name, sort_order from avatar where workspace_id=$1", [sourceWorkspaceId])).rows;
-    const sct = (await client.query("select pillar_id, name from content_type where workspace_id=$1", [sourceWorkspaceId])).rows;
-    const sf = (await client.query("select pillar_id, name, post_type from format where workspace_id=$1", [sourceWorkspaceId])).rows;
+    const sp = (await client.query("select id, name from pillar where workspace_id=$1 order by serial", [sourceWorkspaceId])).rows;
+    const sa = (await client.query("select name, sort_order from avatar where workspace_id=$1 order by sort_order", [sourceWorkspaceId])).rows;
+    const sct = (await client.query("select pillar_id, name from content_type where workspace_id=$1 order by pillar_id, serial", [sourceWorkspaceId])).rows;
+    // Format is flat now — copy channel-wide (source is already deduped).
+    const sf = (await client.query("select name, post_type from format where workspace_id=$1 order by serial", [sourceWorkspaceId])).rows;
     const pillarName = new Map(sp.map((p) => [p.id, p.name]));
     const newPillar = new Map();
     for (const p of sp) {
-      const r = await client.query("insert into pillar (workspace_id, name, sort_order) values ($1,$2,$3) returning id", [workspace.id, p.name, p.sort_order]);
+      const serial = await nextSerial("pillar");
+      const r = await client.query("insert into pillar (workspace_id, name, sort_order, serial) values ($1,$2,$3,$3) returning id", [workspace.id, p.name, serial]);
       newPillar.set(p.name, r.rows[0].id);
     }
     for (const a of sa) await client.query("insert into avatar (workspace_id, name, sort_order) values ($1,$2,$3)", [workspace.id, a.name, a.sort_order]);
-    for (const ct of sct) { const pid = newPillar.get(pillarName.get(ct.pillar_id)); if (pid) await client.query("insert into content_type (workspace_id, pillar_id, name) values ($1,$2,$3)", [workspace.id, pid, ct.name]); }
-    for (const f of sf) { const pid = newPillar.get(pillarName.get(f.pillar_id)); if (pid) await client.query("insert into format (workspace_id, pillar_id, name, post_type) values ($1,$2,$3,$4)", [workspace.id, pid, f.name, f.post_type]); }
+    for (const ct of sct) {
+      const pid = newPillar.get(pillarName.get(ct.pillar_id));
+      if (pid) await client.query("insert into content_type (workspace_id, pillar_id, name, serial) values ($1,$2,$3,$4)", [workspace.id, pid, ct.name, await nextSerial("type", pid)]);
+    }
+    for (const f of sf) await client.query("insert into format (workspace_id, name, post_type, serial) values ($1,$2,$3,$4)", [workspace.id, f.name, f.post_type, await nextSerial("format")]);
   } else {
-    for (const [i, pName] of DEFAULT_PILLARS.entries()) await client.query("insert into pillar (workspace_id, name, sort_order) values ($1, $2, $3)", [workspace.id, pName, i + 1]);
+    for (const pName of DEFAULT_PILLARS) await client.query("insert into pillar (workspace_id, name, sort_order, serial) values ($1, $2, $3, $3)", [workspace.id, pName, await nextSerial("pillar")]);
     for (const [i, aName] of DEFAULT_AVATARS.entries()) await client.query("insert into avatar (workspace_id, name, sort_order) values ($1, $2, $3)", [workspace.id, aName, i + 1]);
   }
 

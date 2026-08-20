@@ -117,10 +117,8 @@ export function AddPostPage({ onClose }: { onClose?: () => void } = {}) {
     () => taxonomy?.contentTypes.filter((ct) => ct.pillar_id === pillarId) ?? [],
     [taxonomy, pillarId],
   );
-  const formats = useMemo(
-    () => taxonomy?.formats.filter((f) => f.pillar_id === pillarId) ?? [],
-    [taxonomy, pillarId],
-  );
+  // Format is flat (channel-wide) — never gated by pillar.
+  const formats = useMemo(() => taxonomy?.formats ?? [], [taxonomy]);
 
   function onFormatChange(v: string) {
     setFormatId(v);
@@ -282,7 +280,7 @@ export function AddPostPage({ onClose }: { onClose?: () => void } = {}) {
               <select className="t" value={pillarId} onChange={(e) => onPillarChange(e.target.value)}>
                 <option value="">Select pillar…</option>
                 {taxonomy.pillars.map((p) => (
-                  <option key={p.id} value={p.id}>{p.name}</option>
+                  <option key={p.id} value={p.id}>P{p.serial} — {p.name}</option>
                 ))}
               </select>
             </div>
@@ -291,16 +289,16 @@ export function AddPostPage({ onClose }: { onClose?: () => void } = {}) {
               <select className="t" value={contentTypeId} disabled={!pillarId} onChange={(e) => setContentTypeId(e.target.value)}>
                 <option value="">{pillarId ? "Select type…" : "Pick a pillar first"}</option>
                 {contentTypes.map((ct) => (
-                  <option key={ct.id} value={ct.id}>{ct.name}</option>
+                  <option key={ct.id} value={ct.id}>T{ct.serial} — {ct.name}</option>
                 ))}
               </select>
             </div>
             <div className="field">
               <label className="f">Format <span className="req">*</span></label>
-              <select className="t" value={formatId} disabled={!pillarId} onChange={(e) => onFormatChange(e.target.value)}>
-                <option value="">{pillarId ? "Select format…" : "Pick a pillar first"}</option>
+              <select className="t" value={formatId} onChange={(e) => onFormatChange(e.target.value)}>
+                <option value="">Select format…</option>
                 {formats.map((f) => (
-                  <option key={f.id} value={f.id}>{f.name}</option>
+                  <option key={f.id} value={f.id}>F{f.serial} — {f.name}</option>
                 ))}
               </select>
             </div>

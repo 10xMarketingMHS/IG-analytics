@@ -1,11 +1,13 @@
-export type Pillar = { id: string; name: string; sort_order: number; active: boolean };
+// serial = permanent per-scope display number (P#, T#, F#). Numeric — sort by it.
+export type Pillar = { id: string; name: string; sort_order: number; serial: number; active: boolean };
 export type Avatar = { id: string; name: string; sort_order: number; active: boolean };
-export type ContentType = { id: string; pillar_id: string; name: string; active: boolean };
+export type ContentType = { id: string; pillar_id: string; name: string; serial: number; active: boolean };
+// Format is flat (channel-wide) — no pillar_id. post_type is its own attribute.
 export type Format = {
   id: string;
-  pillar_id: string;
   name: string;
   post_type: "reel" | "carousel";
+  serial: number;
   active: boolean;
 };
 
@@ -133,6 +135,8 @@ export type Post = {
   editor_id: string | null;
   platform_id: string | null;
   collab_channel_id: string | null;
+  collab_group_id: string | null;
+  is_collab_mirror: boolean;
   post_type: "reel" | "carousel";
   status: PostStatus;
   edit_stage: EditStage;
