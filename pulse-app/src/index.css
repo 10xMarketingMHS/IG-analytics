@@ -162,6 +162,12 @@ main{min-width:0;display:flex;flex-direction:column}
 .task-card{background:var(--panel);border:1px solid var(--border);border-radius:12px;padding:12px 13px;margin-bottom:10px;
   cursor:pointer;transition:transform .18s,border-color .18s,box-shadow .18s}
 .task-card:hover{transform:translateY(-2px);border-color:var(--accent);box-shadow:0 12px 28px rgba(90,40,180,.22)}
+/* Drag-and-drop: grab affordance, column drop-target highlight, floating overlay */
+.dnd-card{cursor:grab}
+.dnd-card:active{cursor:grabbing}
+.task-col.dnd-over{border-color:var(--accent);background:var(--accent-weak)}
+.task-card.dnd-overlay{cursor:grabbing;margin:0;width:290px;max-width:80vw;box-shadow:0 20px 44px rgba(0,0,0,.4);
+  border-color:var(--accent);transform:rotate(2deg)}
 .task-top{display:flex;align-items:center;justify-content:space-between;margin-bottom:7px}
 .task-pri{font-size:10px;font-weight:800;text-transform:uppercase;letter-spacing:.4px;padding:2px 8px;border-radius:20px}
 .task-pri.low{background:rgba(100,116,139,.16);color:#94a3b8}
