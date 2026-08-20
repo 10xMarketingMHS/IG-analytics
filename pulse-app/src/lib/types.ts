@@ -48,6 +48,14 @@ export type Account = {
   platform_name: string;
   sort_order: number;
   handle: string | null;
+  // True when this channel×platform has posts — deleting the account is blocked
+  // (server 409), so the platform pill is locked from being toggled off.
+  has_posts: boolean;
+  // YouTube Tier 1 sync state (stored on the account; null for other platforms).
+  last_synced_at: string | null;
+  last_sync_status: string | null;
+  subscriber_count: number | null;
+  external_name: string | null;
 };
 
 export type PlatformConnection = {
@@ -73,6 +81,10 @@ export type IntegrationStatus = {
     systemToken: boolean;
     pasteToken: boolean;
     method: "system" | "oauth" | null;
+    ready: boolean;
+  };
+  youtube?: {
+    configured: boolean;
     ready: boolean;
   };
 };

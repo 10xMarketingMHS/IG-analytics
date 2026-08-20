@@ -5,6 +5,7 @@ import { useResource } from "@/lib/use-resource";
 import { api, ApiError, API_BASE } from "@/lib/api";
 import { toast } from "sonner";
 import { Modal } from "@/components/modal";
+import { compactNum } from "@/lib/date-range";
 import type { Platform, Account, PlatformConnection, IntegrationStatus } from "@/lib/types";
 
 const BRAND: Record<string, { bg: string; label: string; icon: string }> = {
@@ -54,17 +55,24 @@ export function ChannelsPage() {
   const [tokenInput, setTokenInput] = useState("");
   const igStatus = statusData?.instagram;
   const igReady = igStatus?.ready ?? false;
+  const ytStatus = statusData?.youtube;
 
-  // channelId -> platformId -> accountId
+  // channelId -> platformId -> the full account row (so a pill can read has_posts).
   const acctMap = useMemo(() => {
-    const m: Record<string, Record<string, string>> = {};
-    for (const a of accounts) (m[a.channel_id] ||= {})[a.platform_id] = a.id;
+    const m: Record<string, Record<string, Account>> = {};
+    for (const a of accounts) (m[a.channel_id] ||= {})[a.platform_id] = a;
     return m;
   }, [accounts]);
   // channelId -> the channel's Instagram account (the syncable one).
   const igAccountByChannel = useMemo(() => {
     const m = new Map<string, Account>();
     for (const a of accounts) if (a.platform_key === "instagram") m.set(a.channel_id, a);
+    return m;
+  }, [accounts]);
+  // channelId -> the channel's YouTube account.
+  const ytAccountByChannel = useMemo(() => {
+    const m = new Map<string, Account>();
+    for (const a of accounts) if (a.platform_key === "youtube") m.set(a.channel_id, a);
     return m;
   }, [accounts]);
   const connByAccount = useMemo(() => {
@@ -106,7 +114,7 @@ export function ChannelsPage() {
   }
 
   async function toggle(channelId: string, p: Platform) {
-    const existing = acctMap[channelId]?.[p.id];
+    const existing = acctMap[channelId]?.[p.id]?.id;
     try {
       if (existing) await api(`/accounts/${existing}`, { method: "DELETE" });
       else await api("/accounts", { method: "POST", body: JSON.stringify({ channelId, platformId: p.id }) });
@@ -181,6 +189,23 @@ export function ChannelsPage() {
     }
   }
 
+  // YouTube Tier 1 sync — no connect step; pulls public stats via the org key.
+  async function syncYoutube(accountId: string) {
+    setSyncing(accountId);
+    try {
+      const r = await api<{ updated: number; total: number; unmatched: number }>(
+        "/integrations/youtube/sync",
+        { method: "POST", body: JSON.stringify({ accountId }) },
+      );
+      toast.success(`Synced ${r.updated} of ${r.total} video${r.total === 1 ? "" : "s"}${r.unmatched ? ` · ${r.unmatched} not matched to a Link` : ""}.`);
+      await refetch();
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Sync failed.");
+    } finally {
+      setSyncing(null);
+    }
+  }
+
   async function disconnect(id: string) {
     if (!confirm("Disconnect this Instagram account? Your posts keep their metrics.")) return;
     try {
@@ -236,6 +261,7 @@ export function ChannelsPage() {
           const enabledCount = platforms.filter((p) => acctMap[w.id]?.[p.id]).length;
           const igAcc = igAccountByChannel.get(w.id);
           const conn = igAcc ? connByAccount.get(igAcc.id) : undefined;
+          const ytAcc = ytAccountByChannel.get(w.id);
           return (
             <div className="chan-card" key={w.id}>
               <div className="chan-top">
@@ -253,20 +279,30 @@ export function ChannelsPage() {
               </div>
               <div className="chan-plats">
                 {platforms.map((p) => {
-                  const on = !!acctMap[w.id]?.[p.id];
+                  const acct = acctMap[w.id]?.[p.id];
+                  const on = !!acct;
+                  // A platform that already has posts can't be turned off (server
+                  // 409s the delete) — lock the pill so that's visible up front.
+                  const locked = on && !!acct?.has_posts;
                   const brand = BRAND[p.key];
                   return (
                     <button
                       key={p.id}
-                      className={"chan-chip" + (on ? " on" : "")}
+                      className={"chan-chip" + (on ? " on" : "") + (locked ? " locked" : "")}
                       style={on ? { background: brand?.bg } : undefined}
-                      onClick={() => isAdmin && toggle(w.id, p)}
-                      disabled={!isAdmin}
-                      title={on ? `Disable ${brand?.label ?? p.name}` : `Enable ${brand?.label ?? p.name}`}
+                      onClick={() => isAdmin && !locked && toggle(w.id, p)}
+                      disabled={!isAdmin || locked}
+                      title={
+                        locked
+                          ? `${brand?.label ?? p.name} has posts on this channel — remove them before disabling`
+                          : on
+                            ? `Disable ${brand?.label ?? p.name}`
+                            : `Enable ${brand?.label ?? p.name}`
+                      }
                     >
                       <span>{brand?.icon ?? "📱"}</span>
                       {brand?.label ?? p.name}
-                      <span className="chan-mark">{on ? "✓" : "+"}</span>
+                      <span className="chan-mark">{locked ? "🔒" : on ? "✓" : "+"}</span>
                     </button>
                   );
                 })}
@@ -303,6 +339,42 @@ export function ChannelsPage() {
                       >
                         {connecting === igAcc.id ? "Connecting…" : "Connect"}
                       </button>
+                    </>
+                  )}
+                </div>
+              )}
+
+              {/* YouTube integration — Tier 1 public stats, sync-only (no connect) */}
+              {ytAcc && (
+                <div className="chan-int">
+                  <span className="chan-int-logo">▶️</span>
+                  {!ytStatus?.ready ? (
+                    <div className="chan-int-info">
+                      <span className="int-badge off">○ YouTube sync not configured</span>
+                      <span className="chan-int-sub">Set <code>YOUTUBE_API_KEY</code> on the server to pull public stats</span>
+                    </div>
+                  ) : (
+                    <>
+                      <div className="chan-int-info">
+                        {ytAcc.last_synced_at ? (
+                          <span className="int-badge ok">
+                            ● {ytAcc.external_name ?? "YouTube"}
+                            {ytAcc.subscriber_count != null ? ` · ${compactNum(ytAcc.subscriber_count)} subs` : ""}
+                          </span>
+                        ) : (
+                          <span className="int-badge off">○ YouTube not synced yet</span>
+                        )}
+                        <span className="chan-int-sub">
+                          {ytAcc.last_synced_at
+                            ? `Synced ${relTime(ytAcc.last_synced_at)}${ytAcc.last_sync_status ? ` · ${ytAcc.last_sync_status}` : ""}`
+                            : "Public view / like / comment counts — hit Sync to pull them onto this channel's posts"}
+                        </span>
+                      </div>
+                      <div className="chan-int-act">
+                        <button className="btn btn-primary btn-sm" disabled={syncing === ytAcc.id} onClick={() => syncYoutube(ytAcc.id)}>
+                          {syncing === ytAcc.id ? "Syncing…" : "🔄 Sync"}
+                        </button>
+                      </div>
                     </>
                   )}
                 </div>

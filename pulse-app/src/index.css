@@ -300,6 +300,9 @@ main{min-width:0;display:flex;flex-direction:column}
   border:1px solid var(--border);background:var(--panel2);color:var(--muted);cursor:pointer;font-family:inherit;transition:.15s}
 .chan-chip:hover:not(:disabled){border-color:var(--accent);color:var(--text)}
 .chan-chip.on{color:#fff;border-color:transparent;box-shadow:0 6px 16px rgba(0,0,0,.22)}
+/* Locked = on and has posts: can't be toggled off. Dim + not-allowed cursor. */
+.chan-chip.locked{opacity:.62;filter:saturate(.7)}
+.chan-chip.locked,.chan-chip:disabled{cursor:not-allowed}
 .chan-chip .chan-mark{font-weight:900;opacity:.9;margin-left:1px}
 .chan-chip:disabled{cursor:default;opacity:.85}
 /* Instagram integration row inside a channel card */

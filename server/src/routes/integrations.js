@@ -6,6 +6,7 @@ import { requireAdmin, requireEditor } from "../resolve-workspace.js";
 import { encryptToken, decryptToken, encryptionReady, signState, verifyState } from "../crypto.js";
 import { logActivity } from "../activity.js";
 import * as ig from "../integrations/instagram.js";
+import * as yt from "../integrations/youtube.js";
 
 export const integrationsRouter = Router();
 
@@ -36,6 +37,12 @@ integrationsRouter.get("/integrations/status", (_req, res) => {
       pasteToken,
       method: systemToken ? "system" : oauth ? "oauth" : null,
       ready: systemToken || oauth || pasteToken,
+    },
+    // YouTube Tier 1 is ready as soon as the org-wide API key is set — there is
+    // no per-account connect step (public stats need no consent).
+    youtube: {
+      configured: yt.apiKeyConfigured(),
+      ready: yt.apiKeyConfigured(),
     },
   });
 });
@@ -335,6 +342,103 @@ integrationsRouter.post("/integrations/instagram/sync", requireEditor, async (re
     });
 
     res.json({ ok: true, total: posts.length, matched, updated, unmatched: posts.length - matched });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// YouTube Tier 1 sync: refresh public view/like/comment counts on this channel's
+// YouTube posts by matching the video id in each post's Link, plus the channel's
+// subscriber count. No connection/token — just the org-wide API key. Same
+// refresh-only, on-demand pattern as the Instagram sync above.
+integrationsRouter.post("/integrations/youtube/sync", requireEditor, async (req, res, next) => {
+  const parsed = SyncSchema.safeParse(req.body);
+  if (!parsed.success) return res.status(400).json({ error: "accountId is required" });
+  if (!yt.apiKeyConfigured()) {
+    return res.status(400).json({ error: "YouTube sync isn't configured — set YOUTUBE_API_KEY on the server." });
+  }
+  try {
+    const acc = (await pool.query(
+      `select a.id, a.workspace_id, a.platform_id
+         from account a join platform p on p.id = a.platform_id
+        where a.id = $1 and a.org_id = $2 and p.key = 'youtube'`,
+      [parsed.data.accountId, req.orgId],
+    )).rows[0];
+    if (!acc) return res.status(404).json({ error: "No YouTube account for this channel." });
+
+    const posts = (await pool.query(
+      `select id, permalink from post
+        where workspace_id = $1 and platform_id = $2 and deleted_at is null
+          and permalink is not null and is_collab_mirror = false`,
+      [acc.workspace_id, acc.platform_id],
+    )).rows;
+
+    // video id -> [post ids that link to it]
+    const idToPosts = new Map();
+    for (const p of posts) {
+      const vid = yt.extractVideoId(p.permalink);
+      if (!vid) continue;
+      if (!idToPosts.has(vid)) idToPosts.set(vid, []);
+      idToPosts.get(vid).push(p.id);
+    }
+    const videoIds = [...idToPosts.keys()];
+
+    let stats;
+    try {
+      stats = await yt.fetchVideoStats(videoIds);
+    } catch (err) {
+      await pool.query("update account set last_synced_at = now(), last_sync_status = $2 where id = $1",
+        [acc.id, `Failed: ${err.message.slice(0, 120)}`]);
+      return res.status(502).json({ error: `YouTube API error: ${err.message}` });
+    }
+
+    let updated = 0;
+    let matched = 0;
+    const channelIds = [];
+    for (const [vid, postIds] of idToPosts) {
+      const s = stats.get(vid);
+      if (!s) continue;
+      matched += postIds.length;
+      if (s.channelId) channelIds.push(s.channelId);
+      for (const pid of postIds) {
+        // Tier 1 exposes views/likes/comments only — leave reach/shares/saves
+        // untouched (YouTube has no public equivalent; don't zero them out).
+        await pool.query(
+          `update post set views = $2, likes = $3, comments = $4,
+                  last_synced_at = now(), metrics_updated_at = now()
+            where id = $1`,
+          [pid, s.views, s.likes, s.comments],
+        );
+        updated += 1;
+      }
+    }
+
+    // Subscriber count + channel title (best-effort; failure never fails the sync).
+    let subscribers = null;
+    let channelName = null;
+    if (channelIds.length) {
+      try {
+        const ch = await yt.fetchChannelStats(channelIds);
+        const first = ch.get(channelIds[0]);
+        if (first) { subscribers = first.subscribers; channelName = first.title; }
+      } catch { /* subscriber count is optional */ }
+    }
+
+    const status = `Synced ${updated}/${posts.length} video${posts.length === 1 ? "" : "s"}`;
+    await pool.query(
+      `update account set last_synced_at = now(), last_sync_status = $2,
+              subscriber_count = coalesce($3, subscriber_count),
+              external_name = coalesce($4, external_name)
+        where id = $1`,
+      [acc.id, status, subscribers, channelName],
+    );
+    await logActivity({
+      orgId: req.orgId, actorId: req.user.sub, verb: "published",
+      entityType: "channel", entityId: acc.workspace_id, channelId: acc.workspace_id,
+      summary: `Synced ${updated} video${updated === 1 ? "" : "s"} from YouTube`,
+    });
+
+    res.json({ ok: true, total: posts.length, matched, updated, unmatched: posts.length - matched, subscribers });
   } catch (err) {
     next(err);
   }
