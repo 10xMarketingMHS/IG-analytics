@@ -8,7 +8,7 @@ import {
 import { api, ApiError } from "@/lib/api";
 import { clearResourceCache } from "@/lib/use-resource";
 
-type AuthUser = { id: string; email: string };
+type AuthUser = { id: string; email: string; editorId: string | null };
 
 type AuthContextValue = {
   user: AuthUser | null;

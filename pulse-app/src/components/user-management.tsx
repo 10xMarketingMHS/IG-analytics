@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState, type FormEvent } from "react";
 import { toast } from "sonner";
 import { api, ApiError } from "@/lib/api";
 import { useWorkspaces } from "@/lib/workspaces-context";
+import { useEditors } from "@/lib/use-editors";
 import type { AppUser, Role } from "@/lib/types";
 
 const ROLE_LABEL: Record<Role, string> = {
@@ -29,6 +30,7 @@ function gradFor(seed: string) {
 
 export function UserManagement() {
   const { active, isAdmin } = useWorkspaces();
+  const { editors } = useEditors();
   const [users, setUsers] = useState<AppUser[] | null>(null);
   const [adding, setAdding] = useState(false);
 
@@ -63,6 +65,16 @@ export function UserManagement() {
     } catch (err) {
       toast.error(err instanceof ApiError ? err.message : "Failed to change role.");
       load();
+    }
+  }
+
+  async function setLinkedEditor(u: AppUser, editorId: string) {
+    try {
+      await api(`/users/${u.id}`, { method: "PATCH", body: JSON.stringify({ editorId: editorId || null }) });
+      toast.success(editorId ? "Linked to team member." : "Link removed.");
+      load();
+    } catch (err) {
+      toast.error(err instanceof ApiError ? err.message : "Failed to update link.");
     }
   }
 
@@ -132,6 +144,18 @@ export function UserManagement() {
                 <option value="admin">Admin</option>
                 <option value="editor">Editor</option>
                 <option value="viewer">Viewer</option>
+              </select>
+
+              <select
+                className="mini"
+                value={u.editor_id ?? ""}
+                title="Which team member this login is — powers their 'My Tasks' view."
+                onChange={(e) => setLinkedEditor(u, e.target.value)}
+              >
+                <option value="">Not linked</option>
+                {(editors ?? []).map((ed) => (
+                  <option key={ed.id} value={ed.id}>{ed.name}</option>
+                ))}
               </select>
 
               <button className="linkbtn" onClick={() => resetPassword(u)} title="Set a new password">

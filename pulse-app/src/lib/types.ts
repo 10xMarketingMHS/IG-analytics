@@ -25,6 +25,7 @@ export type AppUser = {
   active: boolean;
   role: Role;
   isSelf: boolean;
+  editor_id: string | null;
 };
 
 export type Editor = {
@@ -77,6 +78,12 @@ export type IntegrationStatus = {
 
 export type TaskStatus = "todo" | "in_progress" | "done";
 export type TaskPriority = "low" | "medium" | "high";
+// What kind of task it is — distinct from priority (how urgent). "content" is
+// reserved for auto-created (post-linked) tasks and isn't user-selectable.
+export type TaskType = "content" | "short_task" | "emergency" | "general";
+// A second, independent classifier: what production format the work is.
+// Optional — not every task (e.g. an emergency or general task) has one.
+export type ContentFormat = "video" | "image" | "shoot" | "other";
 
 export type Task = {
   id: string;
@@ -96,6 +103,29 @@ export type Task = {
   subtask_total: number;
   subtask_done: number;
   recurrence: "none" | "daily" | "weekly";
+  task_type: TaskType;
+  content_format: ContentFormat | null;
+  budget_hours: number | null;
+  budget_started_at: string | null;
+  // False when assigned by someone other than the assignee — the timer
+  // doesn't start until they accept (POST /tasks/:id/accept).
+  accepted: boolean;
+  // Social Media context — only set when post_id is set.
+  post_title: string | null;
+  post_permalink: string | null;
+  platform_key: "instagram" | "facebook" | "youtube" | string | null;
+  platform_name: string | null;
+};
+
+// Admin-configured time-budget rule (Phase 1) — org-wide default (editor_id
+// null) or a specific override for one editor, per content format.
+export type TaskTimeRule = {
+  id: string;
+  content_format: ContentFormat;
+  editor_id: string | null;
+  editor_name: string | null;
+  hours: number;
+  updated_at: string;
 };
 
 export type ActivityVerb =
