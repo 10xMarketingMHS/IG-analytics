@@ -35,6 +35,9 @@ const CreateSchema = z.object({
   name: z.string().trim().optional(),
   password: z.string().min(6).optional(),
   role: z.enum(["admin", "editor", "viewer"]),
+  // Link straight to a team-member (editor) record at creation — the Teams
+  // page's "add person with login" flow does this in one step.
+  editorId: z.string().uuid().nullable().optional(),
 });
 
 // Add a user to the workspace with a role. Creates the account if the email
@@ -44,7 +47,7 @@ usersRouter.post("/users", async (req, res, next) => {
   if (!parsed.success) {
     return res.status(400).json({ error: "Enter a valid email, role, and a password (6+ chars) for new users." });
   }
-  const { email, name, password, role } = parsed.data;
+  const { email, name, password, role, editorId } = parsed.data;
   const client = await pool.connect();
   try {
     await client.query("BEGIN");
@@ -66,6 +69,25 @@ usersRouter.post("/users", async (req, res, next) => {
         [email, name ?? null, hash],
       ));
       user = rows[0];
+    }
+
+    if (editorId) {
+      const { rows: erows } = await client.query(
+        "select 1 from editor where id = $1 and org_id = $2", [editorId, req.orgId],
+      );
+      if (!erows.length) {
+        await client.query("ROLLBACK");
+        return res.status(400).json({ error: "That team member wasn't found." });
+      }
+      const { rows: taken } = await client.query(
+        "select 1 from app_user where editor_id = $1 and id != $2", [editorId, user.id],
+      );
+      if (taken.length) {
+        await client.query("ROLLBACK");
+        return res.status(409).json({ error: "That team member already has a login linked." });
+      }
+      await client.query("update app_user set editor_id = $1 where id = $2", [editorId, user.id]);
+      user.editor_id = editorId;
     }
 
     await client.query(

@@ -2,11 +2,7 @@ import { useState } from "react";
 import { toast } from "sonner";
 import { api, ApiError } from "@/lib/api";
 import { useTaxonomy } from "@/lib/use-taxonomy";
-import { useEditors } from "@/lib/use-editors";
 import { useWorkspaces } from "@/lib/workspaces-context";
-import { UserManagement } from "@/components/user-management";
-import { EditorModal } from "@/pages/editor-modal";
-import type { Editor } from "@/lib/types";
 
 const REEL_WEIGHTS: [string, number][] = [
   ["Views", 20], ["Like rate", 15], ["Comment rate", 25], ["Share rate", 25], ["Save rate", 15],
@@ -17,11 +13,8 @@ const CAROUSEL_WEIGHTS: [string, number][] = [
 
 export function SettingsPage() {
   const { taxonomy, loading, refetch } = useTaxonomy();
-  const { editors, refetch: refetchEditors } = useEditors();
   const { isAdmin } = useWorkspaces();
   const [pillarId, setPillarId] = useState("");
-  // null = closed; { editor: null } = create; { editor } = edit
-  const [editorModal, setEditorModal] = useState<{ editor: Editor | null } | null>(null);
 
   async function add(path: string, body: object, label: string) {
     try {
@@ -41,17 +34,6 @@ export function SettingsPage() {
       toast.success(`${label} deleted.`);
     } catch (err) {
       toast.error(err instanceof ApiError ? err.message : "Failed to delete.");
-    }
-  }
-
-  async function removeEditor(ed: Editor) {
-    if (!window.confirm(`Remove editor "${ed.name}"? Their posts stay but become unassigned.`)) return;
-    try {
-      await api(`/editors/${ed.id}`, { method: "DELETE" });
-      await refetchEditors();
-      toast.success("Editor removed.");
-    } catch (err) {
-      toast.error(err instanceof ApiError ? err.message : "Failed to remove editor.");
     }
   }
 
@@ -156,53 +138,6 @@ export function SettingsPage() {
         </div>
       </div>
 
-      <div className="sectitle"><span className="dot" />Editors<span className="s">assignable to posts · ranked on the Leaderboard</span></div>
-      <div className="card pad">
-        <div className="taxrow">
-          {(editors ?? []).map((ed) => (
-            <span className="taxchip" key={ed.id}>
-              {ed.image_url ? (
-                <img
-                  src={ed.image_url}
-                  alt=""
-                  style={{ width: 22, height: 22, borderRadius: 6, objectFit: "cover" }}
-                />
-              ) : (
-                <span
-                  style={{
-                    width: 22, height: 22, borderRadius: 6, display: "grid", placeItems: "center",
-                    background: "linear-gradient(135deg,#6366f1,#8b5cf6)", color: "#fff",
-                    fontSize: 11, fontWeight: 800,
-                  }}
-                >
-                  {ed.name.charAt(0).toUpperCase()}
-                </span>
-              )}
-              <span
-                style={{ cursor: isAdmin ? "pointer" : "default" }}
-                onClick={() => isAdmin && setEditorModal({ editor: ed })}
-                title={isAdmin ? "Edit editor" : undefined}
-              >
-                {ed.name}
-              </span>
-              {ed.designation && (
-                <span className="ptbadge pt-reel" style={{ fontSize: 10 }}>{ed.designation}</span>
-              )}
-              {isAdmin && (
-                <span className="x" title="Remove editor" onClick={() => removeEditor(ed)}>×</span>
-              )}
-            </span>
-          ))}
-          {isAdmin && (
-            <button className="addchip" onClick={() => setEditorModal({ editor: null })}>＋ Add editor</button>
-          )}
-        </div>
-        <div className="hint" style={{ marginTop: 10 }}>
-          Add your editing team with a photo &amp; designation (Video Editor, Motion Designer, Graphic
-          Designer…). Click an editor to edit. Assign one to each post on the Add Post screen.
-        </div>
-      </div>
-
       <div className="sectitle"><span className="dot" />Scoring weights<span className="s">how the performance score is calculated</span></div>
       <div className="grid g2">
         <div className="card pad">
@@ -251,15 +186,6 @@ export function SettingsPage() {
         </div>
       </div>
 
-      <UserManagement />
-
-      {editorModal && (
-        <EditorModal
-          editor={editorModal.editor}
-          onClose={() => setEditorModal(null)}
-          onSaved={refetchEditors}
-        />
-      )}
     </section>
   );
 }

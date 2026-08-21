@@ -34,6 +34,7 @@ import { ActivityPage } from "@/pages/activity";
 import { AddPostPage } from "@/pages/add-post";
 import { BulkAddPostPage } from "@/pages/bulk-add-post";
 import { SettingsPage } from "@/pages/settings";
+import { TeamsPage } from "@/pages/teams";
 import { FormatAnalyticsPage } from "@/pages/format-analytics";
 import { LeaderboardPage } from "@/pages/leaderboard";
 
@@ -97,6 +98,7 @@ function AppRoutes() {
             <Route path="/posts/:id/edit" element={<AddPostPage />} />
             <Route path="/analytics/:type" element={<FormatAnalyticsPage />} />
             <Route path="/settings" element={<SettingsPage />} />
+            <Route path="/teams" element={<TeamsPage />} />
           </Route>
         </Route>
 

@@ -37,7 +37,12 @@ a{color:inherit}
 .logo{width:38px;height:38px;border-radius:11px;background:var(--grad);display:grid;place-items:center;color:#fff;font-size:18px;box-shadow:0 6px 18px rgba(124,58,237,.45)}
 .brand b{font-size:16px;letter-spacing:-.3px}
 .brand small{display:block;font-size:11px;color:var(--muted);font-weight:500}
-nav.side{padding:8px 12px;display:flex;flex-direction:column;gap:2px;flex:1}
+nav.side{padding:8px 12px 10px;display:flex;flex-direction:column;gap:2px;flex:1;min-height:0;overflow-y:auto;
+  scrollbar-width:thin;scrollbar-color:var(--border) transparent}
+nav.side::-webkit-scrollbar{width:6px}
+nav.side::-webkit-scrollbar-track{background:transparent}
+nav.side::-webkit-scrollbar-thumb{background:var(--border);border-radius:10px}
+nav.side::-webkit-scrollbar-thumb:hover{background:var(--faint)}
 .navsec{font-size:10.5px;text-transform:uppercase;letter-spacing:.6px;color:var(--faint);font-weight:700;padding:14px 10px 6px}
 .navitem{display:flex;align-items:center;gap:11px;padding:9px 11px;border-radius:10px;color:var(--muted);font-weight:600;font-size:13.5px;border:0;background:transparent;width:100%;text-align:left;transition:.14s;text-decoration:none}
 .navitem .ic{font-size:15px;width:18px;text-align:center}
@@ -547,6 +552,7 @@ html[data-theme="dark"] .tint-amber{background:#3f2f0a;color:#fbbf24} html[data-
 .taxserial{font-size:10px;font-weight:800;font-family:ui-monospace,Menlo,monospace;color:var(--accent-ink);background:var(--accent-weak);padding:1px 5px;border-radius:5px}
 .taxchip .x{color:var(--faint);font-weight:800;cursor:pointer}
 .addchip{font-size:12.5px;font-weight:700;color:var(--accent-ink);background:transparent;border:1px dashed var(--accent);border-radius:9px;padding:6px 11px}
+.teamlist{display:flex;flex-direction:column}
 .member{display:flex;align-items:center;gap:12px;padding:12px 0;border-bottom:1px solid var(--border2)}
 .member:last-child{border-bottom:0}
 .weightrow{display:flex;align-items:center;gap:12px;margin-bottom:10px;font-size:13px}
