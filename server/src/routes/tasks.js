@@ -140,7 +140,7 @@ tasksRouter.post("/tasks", requireEditor, async (req, res, next) => {
       `insert into task (org_id, editor_id, channel_id, title, description,
                          status, priority, due_date, recurrence, task_type, content_format,
                          budget_hours, accepted, budget_started_at, completed_at)
-       values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13, case when $12 is not null and $13 then now() else null end,
+       values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13, case when $12::numeric is not null and $13 then now() else null end,
                case when $6 = 'done' then now() else null end)
        returning id`,
       [
@@ -343,7 +343,7 @@ async function spawnNextOccurrence(taskId, recurrence) {
     const budgetHours = await resolveBudgetHours(t.org_id, t.editor_id, t.content_format);
     const { rows } = await pool.query(
       `insert into task (org_id, editor_id, channel_id, title, description, priority, due_date, recurrence, status, task_type, content_format, budget_hours, budget_started_at)
-       values ($1,$2,$3,$4,$5,$6, ${nextDue}, $8, 'todo', $9, $10, $11, case when $11 is not null then now() else null end) returning id`,
+       values ($1,$2,$3,$4,$5,$6, ${nextDue}, $8, 'todo', $9, $10, $11, case when $11::numeric is not null then now() else null end) returning id`,
       [t.org_id, t.editor_id, t.channel_id, t.title, t.description, t.priority, t.due_date, recurrence, t.task_type, t.content_format, budgetHours],
     );
     const newId = rows[0].id;

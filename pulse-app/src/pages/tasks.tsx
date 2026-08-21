@@ -293,6 +293,9 @@ export function TasksPage() {
       await api(`/tasks/${t.id}/accept`, { method: "POST", body: JSON.stringify({ startAt: startAt.toISOString() }) });
       toast.success(startAt.getTime() > Date.now() ? "Accepted — starts as scheduled." : "Accepted — timer started.");
       setAcceptPrompt(null);
+      // The 60s tick won't have caught up yet — without this, a task accepted
+      // "now" briefly (mis)renders as scheduled-for-later until it does.
+      setNowMs(Date.now());
       refetch();
     } catch (err) {
       toast.error(err instanceof ApiError ? err.message : "Could not accept this task.");

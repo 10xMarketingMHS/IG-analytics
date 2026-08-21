@@ -141,7 +141,14 @@ export async function ensureBootstrapped() {
     let workspaceId = rows[0]?.id;
 
     if (!workspaceId) {
-      const ws = await createWorkspace(client, "DF Foods", config.ADMIN_USER_ID);
+      // On a truly fresh database (no workspace yet) the single Media House
+      // org row already exists (seeded by its own migration) — link the
+      // bootstrap workspace to it, or every org-scoped query (editors,
+      // tasks, time rules...) silently returns nothing for it.
+      const { rows: orgRows } = await client.query(
+        "select id from org order by created_at asc limit 1",
+      );
+      const ws = await createWorkspace(client, "DF Foods", config.ADMIN_USER_ID, { orgId: orgRows[0]?.id ?? null });
       workspaceId = ws.id;
       console.log(`Bootstrapped default workspace ${workspaceId}`);
     } else {
