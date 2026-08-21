@@ -1,4 +1,9 @@
-import { useEffect, useMemo, useState, type FormEvent } from "react";
+import { useEffect, useMemo, useState, type FormEvent, type ReactNode } from "react";
+import {
+  DndContext, DragOverlay, MouseSensor, TouchSensor, KeyboardSensor,
+  useSensor, useSensors, useDraggable, useDroppable, closestCorners,
+  type DragStartEvent, type DragEndEvent,
+} from "@dnd-kit/core";
 import { useTasks } from "@/lib/use-tasks";
 import { useEditors } from "@/lib/use-editors";
 import { useAuth } from "@/lib/auth-context";
@@ -120,6 +125,15 @@ function nineAmTomorrow(from: Date) {
   return d;
 }
 
+// Whole days a due date is past today. Both inputs are YYYY-MM-DD; compared via
+// Date.UTC so the delta is a clean integer, DST-proof. Returns >= 1 for an
+// overdue task (due-today is not overdue — matches the Progress Path < boundary).
+function daysOverdue(due: string): number {
+  const [dy, dm, dd] = due.split("-").map(Number);
+  const [ty, tm, td] = today().split("-").map(Number);
+  return Math.round((Date.UTC(ty, tm - 1, td) - Date.UTC(dy, dm - 1, dd)) / 86400000);
+}
+
 function Assignee({ name, image }: { name: string | null; image: string | null }) {
   if (!name) return <span className="task-unassigned">Unassigned</span>;
   return (
@@ -134,17 +148,55 @@ function Assignee({ name, image }: { name: string | null; image: string | null }
   );
 }
 
+// A status column that accepts dropped cards; highlights while hovered.
+function DroppableColumn({ id, children }: { id: TaskStatus; children: ReactNode }) {
+  const { setNodeRef, isOver } = useDroppable({ id });
+  return <div ref={setNodeRef} className={"task-col" + (isOver ? " dnd-over" : "")}>{children}</div>;
+}
+
+// Wraps a card so it can be dragged. The drag listeners live on this wrapper;
+// the inner card keeps its own onClick (tap → open) because the sensors only
+// start a drag past a movement/hold threshold, so a plain tap still clicks.
+function DraggableCard({ id, children }: { id: string; children: ReactNode }) {
+  const { setNodeRef, listeners, attributes, isDragging } = useDraggable({ id });
+  return (
+    <div
+      ref={setNodeRef}
+      {...attributes}
+      {...listeners}
+      className="dnd-card"
+      style={{ opacity: isDragging ? 0.4 : 1, touchAction: "manipulation" }}
+    >
+      {children}
+    </div>
+  );
+}
+
 export function TasksPage() {
   const { tasks, refetch } = useTasks();
   const { editors } = useEditors();
   const { user } = useAuth();
   const { active } = useWorkspaces();
   const role = active?.role;
+  // Viewers are read-only (the backend already 403s their writes); hide the
+  // status-move controls from them so the affordance matches the permission.
+  const canWrite = active?.role !== "viewer";
 
   const [filterEditor, setFilterEditor] = useState("");
   const [filterType, setFilterType] = useState<TaskType | "">("");
   const [filterFormat, setFilterFormat] = useState<ContentFormat | "">("");
   const [dueTab, setDueTab] = useState<DueTab>("all");
+  // Optimistic status overrides (task id → status) applied while a move's PATCH
+  // is in flight, so a drop or a link-click moves the card immediately.
+  const [pending, setPending] = useState<Record<string, TaskStatus>>({});
+  const [activeId, setActiveId] = useState<string | null>(null);
+  const sensors = useSensors(
+    // Mouse: small drag threshold so clicks still open the card.
+    useSensor(MouseSensor, { activationConstraint: { distance: 8 } }),
+    // Touch: press-and-hold to drag, so tapping and vertical scrolling still work.
+    useSensor(TouchSensor, { activationConstraint: { delay: 200, tolerance: 8 } }),
+    useSensor(KeyboardSensor),
+  );
   const [view, setView] = useState<"board" | "calendar">("board");
   const [modalOpen, setModalOpen] = useState(false);
   const [editing, setEditing] = useState<Task | null>(null);
@@ -175,9 +227,15 @@ export function TasksPage() {
     const id = setInterval(() => setNowMs(Date.now()), 60_000);
     return () => clearInterval(id);
   }, []);
+  // Apply any in-flight optimistic status before filtering, so the board (and
+  // the per-column counts derived from it) reflect a drop immediately.
+  const effective = useMemo(
+    () => (tasks ?? []).map((t) => (pending[t.id] ? { ...t, status: pending[t.id] } : t)),
+    [tasks, pending],
+  );
   const filtered = useMemo(
     () =>
-      (tasks ?? []).filter((t) => {
+      effective.filter((t) => {
         if (scope === "mine" && t.editor_id !== user?.editorId) return false;
         if (filterEditor && t.editor_id !== filterEditor) return false;
         if (filterType && t.task_type !== filterType) return false;
@@ -185,18 +243,40 @@ export function TasksPage() {
         if (!matchesDueTab(t, dueTab, now)) return false;
         return true;
       }),
-    [tasks, scope, user?.editorId, filterEditor, filterType, filterFormat, dueTab, now],
+    [effective, scope, user?.editorId, filterEditor, filterType, filterFormat, dueTab, now],
   );
   const byStatus = (s: TaskStatus) => filtered.filter((t) => t.status === s);
 
+  // Both the ←/→ links and drag-and-drop call this — one PATCH path, so the
+  // backend side effects (completion timestamp, recurring spawn, activity log)
+  // are identical however the card is moved. Optimistic: the card moves now;
+  // on failure it reverts to its original column and an error is surfaced.
   async function move(t: Task, status: TaskStatus) {
+    if (t.status === status) return;
+    setPending((p) => ({ ...p, [t.id]: status }));
     try {
       await api(`/tasks/${t.id}`, { method: "PATCH", body: JSON.stringify({ status }) });
-      refetch();
+      await refetch();
     } catch (err) {
       toast.error(err instanceof ApiError ? err.message : "Could not update task.");
+    } finally {
+      setPending((p) => { const n = { ...p }; delete n[t.id]; return n; });
     }
   }
+
+  function onDragStart(e: DragStartEvent) {
+    setActiveId(String(e.active.id));
+  }
+  function onDragEnd(e: DragEndEvent) {
+    setActiveId(null);
+    const overId = e.over?.id;
+    if (!overId) return;
+    const status = overId as TaskStatus;
+    if (!COLUMNS.some((c) => c.key === status)) return;
+    const t = (tasks ?? []).find((x) => x.id === String(e.active.id));
+    if (t) move(t, status);
+  }
+  const activeTask = activeId ? effective.find((t) => t.id === activeId) : null;
   async function del(t: Task) {
     if (!window.confirm(`Delete "${t.title}"? This can't be undone.`)) return;
     try {
@@ -314,11 +394,18 @@ export function TasksPage() {
       ) : view === "calendar" ? (
         <TaskCalendar tasks={filtered} onOpen={openTask} />
       ) : (
+        <DndContext
+          sensors={sensors}
+          collisionDetection={closestCorners}
+          onDragStart={onDragStart}
+          onDragEnd={onDragEnd}
+          onDragCancel={() => setActiveId(null)}
+        >
         <div className="task-board">
           {COLUMNS.map((col, ci) => {
             const items = byStatus(col.key);
             return (
-              <div className="task-col" key={col.key}>
+              <DroppableColumn id={col.key} key={col.key}>
                 <div className="task-colhead">
                   <span className={"tdot " + col.key} /> {col.label}
                   <span className="task-count">{items.length}</span>
@@ -326,10 +413,10 @@ export function TasksPage() {
                 {items.map((t) => {
                   const overdue =
                     t.status !== "done" && t.due_date && t.due_date < today();
-                  return (
+                  const cardInner = (
                     <div className="task-card" key={t.id} onClick={() => { setEditing(t); setModalOpen(true); }}>
                       <div className="task-top">
-                        <span style={{ display: "inline-flex", gap: 6, alignItems: "center" }}>
+                        <span style={{ display: "inline-flex", gap: 6, alignItems: "center", flexWrap: "wrap" }}>
                           <span className={"task-pri " + t.priority}>{PRI_LABEL[t.priority]}</span>
                           <span className={"task-typebadge " + t.task_type} title={TYPE_LABEL[t.task_type]}>
                             {TYPE_ICON[t.task_type]} {TYPE_LABEL[t.task_type]}
@@ -337,6 +424,11 @@ export function TasksPage() {
                           {t.content_format && (
                             <span className="task-formatbadge" title={FORMAT_LABEL[t.content_format]}>
                               {FORMAT_ICON[t.content_format]} {FORMAT_LABEL[t.content_format]}
+                            </span>
+                          )}
+                          {overdue && (
+                            <span className="task-overdue" title={`Due ${t.due_date}, still ${t.status.replace("_", " ")}`}>
+                              {(() => { const n = daysOverdue(t.due_date!); return `${n} ${n === 1 ? "day" : "days"} overdue`; })()}
                             </span>
                           )}
                           {t.post_id && <span className="task-postbadge" title="Auto-created from a post">📄 Post</span>}
@@ -383,26 +475,42 @@ export function TasksPage() {
                           </span>
                         )}
                       </div>
-                      <div className="task-actions" onClick={(e) => e.stopPropagation()}>
-                        {ci > 0 && (
-                          <button className="linkbtn" onClick={() => move(t, COLUMNS[ci - 1].key)}>
-                            ← {COLUMNS[ci - 1].label}
-                          </button>
-                        )}
-                        {ci < COLUMNS.length - 1 && (
-                          <button className="linkbtn" onClick={() => move(t, COLUMNS[ci + 1].key)}>
-                            {COLUMNS[ci + 1].label} →
-                          </button>
-                        )}
-                      </div>
+                      {canWrite && (
+                        <div className="task-actions" onClick={(e) => e.stopPropagation()}>
+                          {ci > 0 && (
+                            <button className="linkbtn" onClick={() => move(t, COLUMNS[ci - 1].key)}>
+                              ← {COLUMNS[ci - 1].label}
+                            </button>
+                          )}
+                          {ci < COLUMNS.length - 1 && (
+                            <button className="linkbtn" onClick={() => move(t, COLUMNS[ci + 1].key)}>
+                              {COLUMNS[ci + 1].label} →
+                            </button>
+                          )}
+                        </div>
+                      )}
                     </div>
                   );
+                  return canWrite ? (
+                    <DraggableCard id={t.id} key={t.id}>{cardInner}</DraggableCard>
+                  ) : cardInner;
                 })}
                 {items.length === 0 && <div className="task-empty">Nothing here</div>}
-              </div>
+              </DroppableColumn>
             );
           })}
         </div>
+          <DragOverlay dropAnimation={null}>
+            {activeTask ? (
+              <div className="task-card dnd-overlay">
+                <div className="task-top">
+                  <span className={"task-pri " + activeTask.priority}>{PRI_LABEL[activeTask.priority]}</span>
+                </div>
+                <div className="task-title">{activeTask.title}</div>
+              </div>
+            ) : null}
+          </DragOverlay>
+        </DndContext>
       )}
 
       {modalOpen && (

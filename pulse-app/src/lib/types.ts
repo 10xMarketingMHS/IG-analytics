@@ -1,11 +1,13 @@
-export type Pillar = { id: string; name: string; sort_order: number; active: boolean };
+// serial = permanent per-scope display number (P#, T#, F#). Numeric — sort by it.
+export type Pillar = { id: string; name: string; sort_order: number; serial: number; active: boolean };
 export type Avatar = { id: string; name: string; sort_order: number; active: boolean };
-export type ContentType = { id: string; pillar_id: string; name: string; active: boolean };
+export type ContentType = { id: string; pillar_id: string; name: string; serial: number; active: boolean };
+// Format is flat (channel-wide) — no pillar_id. post_type is its own attribute.
 export type Format = {
   id: string;
-  pillar_id: string;
   name: string;
   post_type: "reel" | "carousel";
+  serial: number;
   active: boolean;
 };
 
@@ -47,6 +49,14 @@ export type Account = {
   platform_name: string;
   sort_order: number;
   handle: string | null;
+  // True when this channel×platform has posts — deleting the account is blocked
+  // (server 409), so the platform pill is locked from being toggled off.
+  has_posts: boolean;
+  // YouTube Tier 1 sync state (stored on the account; null for other platforms).
+  last_synced_at: string | null;
+  last_sync_status: string | null;
+  subscriber_count: number | null;
+  external_name: string | null;
 };
 
 export type PlatformConnection = {
@@ -58,6 +68,7 @@ export type PlatformConnection = {
   connected_at: string;
   last_synced_at: string | null;
   last_sync_status: string | null;
+  follower_count: number | null;
   account_id: string;
   channel_id: string;
   channel_name: string;
@@ -73,6 +84,18 @@ export type IntegrationStatus = {
     pasteToken: boolean;
     method: "system" | "oauth" | null;
     ready: boolean;
+  };
+  facebook?: {
+    configured: boolean;
+    encryption: boolean;
+    systemToken: boolean;
+    pasteToken: boolean;
+    ready: boolean;
+  };
+  youtube?: {
+    configured: boolean;
+    ready: boolean;
+    encryption?: boolean;
   };
 };
 
@@ -163,6 +186,8 @@ export type Post = {
   editor_id: string | null;
   platform_id: string | null;
   collab_channel_id: string | null;
+  collab_group_id: string | null;
+  is_collab_mirror: boolean;
   post_type: "reel" | "carousel";
   status: PostStatus;
   edit_stage: EditStage;

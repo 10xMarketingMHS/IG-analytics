@@ -74,6 +74,15 @@ export function DashboardPage() {
     [published, bounds.from, bounds.to],
   );
 
+  // Collab mirrors never count toward PERFORMANCE (views/reach/eng/score) — that
+  // would double-count the same audience. They DO count toward COUNT / content-
+  // mix, but only when viewing a single channel (its own copy); on "All
+  // Channels" a collab post is still one post, so mirrors are dropped there too.
+  const noMirror = (arr: Post[]) => arr.filter((p) => !p.is_collab_mirror);
+  const scopedPerf = useMemo(() => noMirror(scoped), [scoped]);
+  const publishedPerf = useMemo(() => noMirror(published), [published]);
+  const scopedCount = useMemo(() => (channel === "all" ? noMirror(scoped) : scoped), [scoped, channel]);
+
   // Per-platform post/view totals for the cards (same channel scope + range).
   const platformSummary = useMemo(() => {
     const m = new Map<string, { posts: number; views: number }>();
@@ -81,17 +90,17 @@ export function DashboardPage() {
       if (p.status !== "published" || !inRange(p.date, bounds.from, bounds.to)) continue;
       const key = p.platform_id ?? "";
       const cur = m.get(key) ?? { posts: 0, views: 0 };
-      cur.posts += 1;
-      cur.views += p.views;
+      if (!(p.is_collab_mirror && channel === "all")) cur.posts += 1; // count: mirror only on scoped
+      if (!p.is_collab_mirror) cur.views += p.views;                  // views: mirror never
       m.set(key, cur);
     }
     return m;
-  }, [allPosts, bounds.from, bounds.to]);
+  }, [allPosts, bounds.from, bounds.to, channel]);
 
   const sum = (arr: Post[], f: (p: Post) => number) => arr.reduce((a, p) => a + f(p), 0);
-  const views = sum(scoped, (p) => p.views);
-  const reach = sum(scoped, (p) => p.reach);
-  const eng = sum(scoped, engagementOf);
+  const views = sum(scopedPerf, (p) => p.views);
+  const reach = sum(scopedPerf, (p) => p.reach);
+  const eng = sum(scopedPerf, engagementOf);
   const engRate = reach ? ((eng / reach) * 100).toFixed(1) + "%" : "—";
 
   // Period-over-period growth for Views & Reach (PRD §10.4).
@@ -99,7 +108,7 @@ export function DashboardPage() {
   let reachDelta: number | null = null;
   if (bounds.from && bounds.to) {
     const prev = previousRange(bounds.from, bounds.to);
-    const prevScoped = published.filter((p) => inRange(p.date, prev.from, prev.to));
+    const prevScoped = publishedPerf.filter((p) => inRange(p.date, prev.from, prev.to));
     const pv = sum(prevScoped, (p) => p.views);
     const pr = sum(prevScoped, (p) => p.reach);
     viewsDelta = pv ? Math.round(((views - pv) / pv) * 100) : null;
@@ -108,7 +117,7 @@ export function DashboardPage() {
 
   const byGroup = (getId: (p: Post) => string, list?: { id: string; name: string }[]) => {
     const totals = new Map<string, number>();
-    for (const p of scoped) totals.set(getId(p), (totals.get(getId(p)) ?? 0) + p.views);
+    for (const p of scopedPerf) totals.set(getId(p), (totals.get(getId(p)) ?? 0) + p.views);
     const rows = (list ?? []).map((x) => ({ name: x.name, views: totals.get(x.id) ?? 0 }));
     return rows.filter((r) => r.views > 0).sort((a, b) => b.views - a.views).slice(0, 8);
   };
@@ -117,18 +126,17 @@ export function DashboardPage() {
   const maxPillar = Math.max(1, ...byPillar.map((r) => r.views));
   const maxAvatar = Math.max(1, ...byAvatar.map((r) => r.views));
 
-  const reelPosts = scoped.filter((p) => p.post_type === "reel");
-  const carouselPosts = scoped.filter((p) => p.post_type === "carousel");
-  const reels = reelPosts.length;
-  const carousels = carouselPosts.length;
-  const reelViews = sum(reelPosts, (p) => p.views);
-  const carouselViews = sum(carouselPosts, (p) => p.views);
+  // Content mix: counts are scope-conditional; views stay performance-only.
+  const reels = scopedCount.filter((p) => p.post_type === "reel").length;
+  const carousels = scopedCount.filter((p) => p.post_type === "carousel").length;
+  const reelViews = sum(scopedPerf.filter((p) => p.post_type === "reel"), (p) => p.views);
+  const carouselViews = sum(scopedPerf.filter((p) => p.post_type === "carousel"), (p) => p.views);
   const mixTotal = reels + carousels;
   const reelPct = mixTotal ? Math.round((reels / mixTotal) * 100) : 0;
 
   // Best performer = highest Performance Score (PRD scoring spec).
   const best = (type: "reel" | "carousel") =>
-    scoped
+    scopedPerf
       .filter((p) => p.post_type === type)
       .sort((a, b) => performanceScore(b) - performanceScore(a))[0];
   const bestReel = best("reel");
@@ -144,7 +152,7 @@ export function DashboardPage() {
   }
 
   const kpis: [string, string, string, string | null][] = [
-    ["📝", "Total Posts", String(scoped.length), null],
+    ["📝", "Total Posts", String(scopedCount.length), null],
     ["👁️", "Total Views", compactNum(views), viewsDelta == null ? null : (viewsDelta >= 0 ? "up" : "down")],
     ["📡", "Accounts Reached", compactNum(reach), reachDelta == null ? null : (reachDelta >= 0 ? "up" : "down")],
     ["⚡", "Engagement Rate", engRate, "flat"],
@@ -170,7 +178,7 @@ export function DashboardPage() {
           ))}
         </select>
         <div className="hint" style={{ margin: 0 }}>
-          Showing <b style={{ color: "var(--text)" }}>{rangeLabel}</b> · {scoped.length} post{scoped.length === 1 ? "" : "s"}
+          Showing <b style={{ color: "var(--text)" }}>{rangeLabel}</b> · {scopedCount.length} post{scopedCount.length === 1 ? "" : "s"}
         </div>
         <div className="spacer" />
         <div style={{ position: "relative" }}>
@@ -231,7 +239,7 @@ export function DashboardPage() {
       <div className="sectitle">
         <span className="dot" />
         {activePlatform ? `${activePlatform.name} analytics` : "Analytics"}
-        <span className="s">{rangeLabel} · {scoped.length} post{scoped.length === 1 ? "" : "s"}</span>
+        <span className="s">{rangeLabel} · {scopedCount.length} post{scopedCount.length === 1 ? "" : "s"}</span>
       </div>
 
       <div className="grid g4">
@@ -347,7 +355,7 @@ export function DashboardPage() {
             {eng > 0 ? (
               <div style={{ textAlign: "center" }}>
                 <div style={{ fontSize: 32, fontWeight: 800, color: "var(--text)" }}>{compactNum(eng)}</div>
-                total interactions across {scoped.length} post{scoped.length === 1 ? "" : "s"}
+                total interactions across {scopedCount.length} post{scopedCount.length === 1 ? "" : "s"}
               </div>
             ) : <EmptyChart />}
           </div>

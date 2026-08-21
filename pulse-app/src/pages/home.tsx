@@ -28,7 +28,8 @@ export function HomePage() {
   const location = useLocation();
   const { tasks } = useTasks();
   const { data: postData } = useResource<{ posts: (Post & { channel_name?: string })[] }>("/posts?channel=all");
-  const posts = postData?.posts ?? null;
+  // Home is org-wide — collab mirrors never count here (count or performance).
+  const posts = postData?.posts?.filter((p) => !p.is_collab_mirror) ?? null;
 
   const today = todayStr();
 

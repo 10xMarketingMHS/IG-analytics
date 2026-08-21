@@ -3,6 +3,7 @@ import { z } from "zod";
 import { pool } from "../db.js";
 import { createWorkspace } from "../bootstrap.js";
 import { logActivity } from "../activity.js";
+import { requireAdmin } from "../resolve-workspace.js";
 
 export const workspacesRouter = Router();
 
@@ -26,7 +27,7 @@ workspacesRouter.get("/workspaces", async (req, res, next) => {
 const NameSchema = z.object({ name: z.string().trim().min(1).max(80) });
 
 // Create a new workspace — the creator becomes its admin.
-workspacesRouter.post("/workspaces", async (req, res, next) => {
+workspacesRouter.post("/workspaces", requireAdmin, async (req, res, next) => {
   const parsed = NameSchema.safeParse(req.body);
   if (!parsed.success) {
     return res.status(400).json({ error: "Workspace name is required." });
@@ -77,7 +78,7 @@ workspacesRouter.post("/workspaces", async (req, res, next) => {
 });
 
 // Rename a workspace the user is an admin of.
-workspacesRouter.patch("/workspaces/:id", async (req, res, next) => {
+workspacesRouter.patch("/workspaces/:id", requireAdmin, async (req, res, next) => {
   const parsed = NameSchema.safeParse(req.body);
   if (!parsed.success) {
     return res.status(400).json({ error: "Workspace name is required." });
@@ -97,5 +98,46 @@ workspacesRouter.patch("/workspaces/:id", async (req, res, next) => {
     res.json({ workspace: rows[0] });
   } catch (err) {
     next(err);
+  }
+});
+
+// Delete a channel the user is an admin of. Cascades its posts, platform
+// accounts, taxonomy, memberships & Instagram connections; keeps the shared
+// team (editors are reassigned to another channel) and keeps tasks (their
+// channel link is just cleared). Refuses to delete the org's only channel.
+workspacesRouter.delete("/workspaces/:id", requireAdmin, async (req, res, next) => {
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+    const ws = (await client.query(
+      `select w.id, w.org_id from workspace w
+       join membership m on m.workspace_id = w.id
+       where w.id = $1 and m.user_id = $2 and m.role = 'admin'`,
+      [req.params.id, req.user.sub],
+    )).rows[0];
+    if (!ws) {
+      await client.query("ROLLBACK");
+      return res.status(404).json({ error: "Channel not found" });
+    }
+    // A landing spot for the shared team + a guard against deleting the last one.
+    const other = (await client.query(
+      "select id from workspace where org_id = $1 and id <> $2 order by created_at asc limit 1",
+      [ws.org_id, ws.id],
+    )).rows[0];
+    if (!other) {
+      await client.query("ROLLBACK");
+      return res.status(409).json({ error: "This is your only channel — you can't delete it." });
+    }
+    // Editors are the org's shared team (NOT NULL workspace_id cascades) — move
+    // them to another channel so they survive.
+    await client.query("update editor set workspace_id = $1 where workspace_id = $2", [other.id, ws.id]);
+    await client.query("delete from workspace where id = $1", [ws.id]);
+    await client.query("COMMIT");
+    res.status(204).end();
+  } catch (err) {
+    await client.query("ROLLBACK").catch(() => {});
+    next(err);
+  } finally {
+    client.release();
   }
 });

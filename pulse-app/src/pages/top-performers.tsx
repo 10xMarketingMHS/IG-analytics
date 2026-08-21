@@ -36,7 +36,8 @@ export function TopPerformersPage() {
 
   const bounds = rangeFor(range);
   const published = useMemo(
-    () => (postData?.posts ?? []).filter((p) => p.status === "published" && inRange(p.date, bounds.from, bounds.to)),
+    // Top Performers is a performance surface — collab mirrors are excluded entirely.
+    () => (postData?.posts ?? []).filter((p) => p.status === "published" && !p.is_collab_mirror && inRange(p.date, bounds.from, bounds.to)),
     [postData, bounds.from, bounds.to],
   );
 

@@ -11,11 +11,21 @@ const ContentTypeSchema = z.object({
   name: z.string().min(1),
   pillarId: z.string().uuid(),
 });
+// Format is now flat (channel-wide) — no pillarId. post_type stays (it's the
+// format's own reel/carousel attribute, independent of Post Type on the post).
 const FormatSchema = z.object({
   name: z.string().min(1),
-  pillarId: z.string().uuid(),
   postType: z.enum(["reel", "carousel"]),
 });
+
+// Next permanent serial for a numbering scope (P#/T#/F#). Never reused.
+async function nextSerial(workspaceId, kind, parentId = null) {
+  const { rows } = await pool.query(
+    "select public.next_taxonomy_serial($1, $2, $3) as serial",
+    [workspaceId, kind, parentId],
+  );
+  return rows[0].serial;
+}
 
 function validate(schema, body, res) {
   const parsed = schema.safeParse(body);
@@ -40,11 +50,12 @@ taxonomyRouter.post("/pillars", requireAdmin, async (req, res, next) => {
   const p = validate(PillarSchema, req.body, res);
   if (!p) return;
   try {
+    const serial = await nextSerial(req.workspaceId, "pillar"); // per channel
     const { rows } = await pool.query(
-      `insert into pillar (workspace_id, name, sort_order)
-       values ($1, $2, (select coalesce(max(sort_order), 0) + 1 from pillar where workspace_id = $1))
-       returning id, name, sort_order, active`,
-      [req.workspaceId, p.name],
+      `insert into pillar (workspace_id, name, sort_order, serial)
+       values ($1, $2, $3, $3)
+       returning id, name, sort_order, serial, active`,
+      [req.workspaceId, p.name, serial],
     );
     res.status(201).json({ pillar: rows[0] });
   } catch (err) {
@@ -98,11 +109,12 @@ taxonomyRouter.post("/content-types", requireAdmin, async (req, res, next) => {
   const p = validate(ContentTypeSchema, req.body, res);
   if (!p) return;
   try {
+    const serial = await nextSerial(req.workspaceId, "type", p.pillarId); // per pillar
     const { rows } = await pool.query(
-      `insert into content_type (workspace_id, pillar_id, name)
-       values ($1, $2, $3)
-       returning id, pillar_id, name, active`,
-      [req.workspaceId, p.pillarId, p.name],
+      `insert into content_type (workspace_id, pillar_id, name, serial)
+       values ($1, $2, $3, $4)
+       returning id, pillar_id, name, serial, active`,
+      [req.workspaceId, p.pillarId, p.name, serial],
     );
     res.status(201).json({ contentType: rows[0] });
   } catch (err) {
@@ -127,11 +139,12 @@ taxonomyRouter.post("/formats", requireAdmin, async (req, res, next) => {
   const p = validate(FormatSchema, req.body, res);
   if (!p) return;
   try {
+    const serial = await nextSerial(req.workspaceId, "format"); // channel-wide, flat
     const { rows } = await pool.query(
-      `insert into format (workspace_id, pillar_id, name, post_type)
+      `insert into format (workspace_id, name, post_type, serial)
        values ($1, $2, $3, $4)
-       returning id, pillar_id, name, post_type, active`,
-      [req.workspaceId, p.pillarId, p.name, p.postType],
+       returning id, name, post_type, serial, active`,
+      [req.workspaceId, p.name, p.postType, serial],
     );
     res.status(201).json({ format: rows[0] });
   } catch (err) {

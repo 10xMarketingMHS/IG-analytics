@@ -28,8 +28,9 @@ workspaceRouter.get("/taxonomy", async (req, res, next) => {
       if (ok.rows.length) workspaceId = req.query.channel;
     }
     const [pillars, avatars, contentTypes, formats] = await Promise.all([
+      // serial drives display + numeric ordering (P1, P2 … P10, never text-sorted).
       pool.query(
-        "select id, name, sort_order, active from pillar where workspace_id = $1 order by sort_order",
+        "select id, name, sort_order, serial, active from pillar where workspace_id = $1 order by serial",
         [workspaceId],
       ),
       pool.query(
@@ -37,11 +38,12 @@ workspaceRouter.get("/taxonomy", async (req, res, next) => {
         [workspaceId],
       ),
       pool.query(
-        "select id, pillar_id, name, active from content_type where workspace_id = $1 order by name",
+        "select id, pillar_id, name, serial, active from content_type where workspace_id = $1 order by pillar_id, serial",
         [workspaceId],
       ),
+      // Format is flat now — no pillar_id, numbered channel-wide.
       pool.query(
-        "select id, pillar_id, name, post_type, active from format where workspace_id = $1 order by name",
+        "select id, name, post_type, serial, active from format where workspace_id = $1 order by serial",
         [workspaceId],
       ),
     ]);

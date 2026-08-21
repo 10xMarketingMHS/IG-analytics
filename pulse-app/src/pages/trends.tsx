@@ -57,14 +57,17 @@ const PLATFORM_ICON: Record<string, string> = { instagram: "ðŸ“¸", facebook: "ðŸ
 
 const engOf = (p: Post) => p.likes + p.comments + p.shares + p.saves;
 
-// Aggregate a set of published posts into the metric numbers a bucket needs.
-function agg(posts: Post[]) {
-  const views = posts.reduce((a, p) => a + p.views, 0);
-  const reach = posts.reduce((a, p) => a + p.reach, 0);
-  const engagement = posts.reduce((a, p) => a + engOf(p), 0);
-  const scored = posts.filter((p) => p.reach > 0);
+// Aggregate a set of published posts. Performance always excludes collab
+// mirrors; the post COUNT includes them only when scoped to one channel.
+function agg(posts: Post[], countIncludesMirror: boolean) {
+  const perf = posts.filter((p) => !p.is_collab_mirror);
+  const views = perf.reduce((a, p) => a + p.views, 0);
+  const reach = perf.reduce((a, p) => a + p.reach, 0);
+  const engagement = perf.reduce((a, p) => a + engOf(p), 0);
+  const scored = perf.filter((p) => p.reach > 0);
   const score = scored.length ? scored.reduce((a, p) => a + performanceScore(p), 0) / scored.length : 0;
-  return { views, reach, engagement, posts: posts.length, score, engRate: reach ? (engagement / reach) * 100 : 0 };
+  const count = countIncludesMirror ? posts.length : perf.length;
+  return { views, reach, engagement, posts: count, score, engRate: reach ? (engagement / reach) * 100 : 0 };
 }
 
 function ChartTip({ active, payload, label, fmt }: any) {
@@ -101,13 +104,16 @@ export function TrendsPage() {
   const published = useMemo(() => posts.filter((p) => p.status === "published"), [posts]);
   const buckets = useMemo(() => buildBuckets(granularity), [granularity]);
 
+  // Post count includes a channel's own collab mirrors; "All Channels" doesn't.
+  const countMirror = channel !== "all";
+
   // Per-bucket aggregates.
   const series = useMemo(() => {
     return buckets.map((b) => {
       const inBucket = published.filter((p) => p.date >= b.from && p.date <= b.to);
-      return { ...b, ...agg(inBucket) };
+      return { ...b, ...agg(inBucket, countMirror) };
     });
-  }, [buckets, published]);
+  }, [buckets, published, countMirror]);
 
   const chartData = useMemo(
     () => series.map((s) => ({ label: s.label, value: s[metric] as number })),
@@ -127,11 +133,11 @@ export function TrendsPage() {
     return platforms
       .map((pf) => {
         const rows = scoped.filter((p) => p.platform_id === pf.id);
-        return { platform: pf, ...agg(rows) };
+        return { platform: pf, ...agg(rows, countMirror) };
       })
       .filter((r) => r.posts > 0)
       .sort((a, b) => b.views - a.views);
-  }, [platforms, published, windowFrom]);
+  }, [platforms, published, windowFrom, countMirror]);
   const maxPlatViews = Math.max(1, ...platformRows.map((r) => r.views));
 
   const hasData = published.length > 0;

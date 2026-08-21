@@ -18,6 +18,8 @@ const CreatePostSchema = z.object({
   channelId: z.string().uuid().optional(), // which channel to create the post in
   platformId: z.string().uuid().optional(), // which platform (IG/FB/YT)
   collabChannelId: z.string().uuid().nullable().optional(), // collab with another channel
+  collabGroupId: z.string().uuid().nullable().optional(), // links a collab owner+mirror pair
+  isCollabMirror: z.boolean().optional(), // this row is the collaborating channel's mirror
   link: z.string().url().optional().or(z.literal("")), // published post URL (→ permalink)
   postType: z.enum(["reel", "carousel"]).optional(),
   status: z.enum(["planned", "published"]).default("planned"),
@@ -37,7 +39,8 @@ const UpdatePostSchema = CreatePostSchema.partial();
 
 const POST_COLUMNS = `
   id, date, title, caption, pillar_id, content_type_id, format_id, avatar_id,
-  editor_id, platform_id, collab_channel_id, post_type, status, edit_stage, published_at, views, likes, comments, shares,
+  editor_id, platform_id, collab_channel_id, collab_group_id, is_collab_mirror,
+  post_type, status, edit_stage, published_at, views, likes, comments, shares,
   saves, reach, metrics_updated_at, permalink, thumbnail_url, notes, source,
   created_at, updated_at
 `;
@@ -53,11 +56,13 @@ const EDIT_STAGES = ["not_started", "in_progress", "in_review", "pending", "comp
 async function syncPostTask(postId, orgId, callerUserId) {
   try {
     const { rows } = await pool.query(
-      "select id, editor_id, title, date, workspace_id from post where id = $1 and deleted_at is null",
+      "select id, editor_id, title, date, workspace_id, is_collab_mirror from post where id = $1 and deleted_at is null",
       [postId],
     );
     const post = rows[0];
-    if (!post || !post.editor_id) return;
+    // A collab mirror represents the same physical work as its owner — never
+    // give it its own task (it also carries no editor by design).
+    if (!post || !post.editor_id || post.is_collab_mirror) return;
     let accepted = true;
     if (callerUserId) {
       const { rows: urows } = await pool.query("select editor_id from app_user where id = $1", [callerUserId]);
@@ -179,8 +184,9 @@ postsRouter.post("/posts", requireEditor, async (req, res, next) => {
       `insert into post (
          workspace_id, date, title, caption, pillar_id, content_type_id,
          format_id, avatar_id, editor_id, post_type, status, views, likes, comments, shares,
-         saves, reach, permalink, thumbnail_url, notes, created_by, platform_id, collab_channel_id, edit_stage
-       ) values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24)
+         saves, reach, permalink, thumbnail_url, notes, created_by, platform_id, collab_channel_id, edit_stage,
+         collab_group_id, is_collab_mirror
+       ) values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26)
        returning ${POST_COLUMNS}`,
       [
         targetWs,
@@ -207,6 +213,8 @@ postsRouter.post("/posts", requireEditor, async (req, res, next) => {
         p.platformId ?? null,
         p.collabChannelId ?? null,
         p.editStage ?? "not_started",
+        p.collabGroupId ?? null,
+        p.isCollabMirror ?? false,
       ],
     );
     // Auto-create a Task Management task for the assigned editor.

@@ -35,6 +35,11 @@ const EnvSchema = z.object({
   // with one click (no OAuth) and the token never expires — the simplest path
   // when you own the assets in a verified Business portfolio.
   META_SYSTEM_TOKEN: z.string().optional(),
+  // YouTube Data API v3 public API key (org-wide, Tier 1). Pulls public
+  // view/like/comment counts + subscriber count — no OAuth, no consent step.
+  // Restrict this key in Google Cloud Console (HTTP-referrer or IP restriction
+  // + API restriction limited to "YouTube Data API v3"); never leave it open.
+  YOUTUBE_API_KEY: z.string().optional(),
 });
 
 const parsed = EnvSchema.safeParse(process.env);

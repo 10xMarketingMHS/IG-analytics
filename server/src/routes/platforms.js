@@ -30,7 +30,12 @@ platformsRouter.get("/accounts", async (req, res, next) => {
     const { rows } = await pool.query(
       `select a.id, a.workspace_id as channel_id, w.name as channel_name,
               a.platform_id, p.key as platform_key, p.name as platform_name, p.sort_order,
-              a.handle
+              a.handle, a.last_synced_at, a.last_sync_status, a.subscriber_count, a.external_name,
+              exists(
+                select 1 from post po
+                 where po.workspace_id = a.workspace_id and po.platform_id = a.platform_id
+                   and po.deleted_at is null
+              ) as has_posts
          from account a
          join workspace w on w.id = a.workspace_id
          join platform p on p.id = a.platform_id

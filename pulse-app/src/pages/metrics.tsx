@@ -69,7 +69,9 @@ export function MetricsPage() {
   const { data: platData } = useResource<{ platforms: Platform[] }>("/platforms");
   const { editors } = useEditors();
   const { workspaces } = useWorkspaces();
-  const posts = postData?.posts ?? null;
+  // Editing Pipeline is per-post workflow — a collab mirror is the same edit
+  // job as its owner, so it never shows as its own pipeline card.
+  const posts = postData?.posts?.filter((p) => !p.is_collab_mirror) ?? null;
   const platformById = useMemo(() => new Map((platData?.platforms ?? []).map((p) => [p.id, p])), [platData]);
   const editorById = useMemo(() => new Map((editors ?? []).map((e) => [e.id, e])), [editors]);
 
