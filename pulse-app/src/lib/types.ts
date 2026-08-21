@@ -67,6 +67,7 @@ export type PlatformConnection = {
   connected_at: string;
   last_synced_at: string | null;
   last_sync_status: string | null;
+  follower_count: number | null;
   account_id: string;
   channel_id: string;
   channel_name: string;
@@ -83,9 +84,17 @@ export type IntegrationStatus = {
     method: "system" | "oauth" | null;
     ready: boolean;
   };
+  facebook?: {
+    configured: boolean;
+    encryption: boolean;
+    systemToken: boolean;
+    pasteToken: boolean;
+    ready: boolean;
+  };
   youtube?: {
     configured: boolean;
     ready: boolean;
+    encryption?: boolean;
   };
 };
 

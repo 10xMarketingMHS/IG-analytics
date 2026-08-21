@@ -312,6 +312,34 @@ main{min-width:0;display:flex;flex-direction:column}
 .chan-int-info{flex:1;min-width:120px;display:flex;flex-direction:column;gap:2px}
 .chan-int-sub{font-size:11.5px;color:var(--muted)}
 .chan-int-act{display:flex;gap:6px;flex:none}
+
+/* ===== Channels dense table (Direction B) ===== */
+.chan-toolbar{display:flex;align-items:center;gap:12px;margin-bottom:16px;flex-wrap:wrap}
+.chan-total{font-size:12.5px;font-weight:700;color:var(--muted);white-space:nowrap}
+.chan-add{margin:0 0 0 auto;max-width:360px}
+.chan-tablewrap{padding:6px 6px;overflow-x:auto}
+.chan-tbl{min-width:660px}
+.chan-tbl th .th-tag{font-weight:600;color:var(--muted);text-transform:none;letter-spacing:0;cursor:help}
+.chan-row td{font-size:13px}
+.chan-row.open td{background:var(--panel2)}
+.chan-tbl .chev{color:var(--muted);text-align:right;width:34px}
+.chan-emptyrow{text-align:center;padding:26px;color:var(--muted)}
+/* status cell chips */
+.st{font-size:12.5px;font-weight:700;white-space:nowrap}
+.st.ok{color:var(--good)}
+.st.off{color:var(--amber,#b45309)}
+.st.man,.st.dim{color:var(--muted)}
+.st.dim{font-weight:600;opacity:.7}
+/* expander row */
+.exp-row:hover td{background:var(--panel2)!important}
+.exp-cell{white-space:normal;padding:0!important;background:var(--panel2);border-bottom:1px solid var(--border)!important}
+.exp-inner{padding:15px 16px;display:flex;flex-direction:column;gap:14px}
+.exp-head{display:flex;align-items:center;gap:12px;flex-wrap:wrap}
+.exp-head .chan-name{flex:0 1 320px}
+.exp-plats{display:flex;gap:8px;flex-wrap:wrap}
+.exp-ints{display:flex;flex-direction:column;gap:0}
+.exp-ints .chan-int{margin-top:0;border-top:0;padding-top:0}
+.exp-ints .chan-int + .chan-int{border-top:1px solid var(--border);margin-top:12px;padding-top:12px}
 .btn-sm{padding:6px 12px;font-size:12px}
 
 /* ===== Home / command center ===== */
@@ -847,6 +875,7 @@ img.lb-ava{object-fit:cover}
 .int-badge{font-weight:700;font-size:12px}
 .int-badge.ok{color:var(--emerald,#10b981)}
 .int-badge.off{color:var(--muted)}
+.int-badge.man{color:var(--muted)}
 .int-actions{display:flex;gap:8px;flex:none}
 .int-actions .btn:disabled{opacity:.5;cursor:not-allowed}
 /* connect modal */
