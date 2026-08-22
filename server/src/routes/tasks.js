@@ -6,8 +6,9 @@ import { logActivity } from "../activity.js";
 
 export const tasksRouter = Router();
 
-const STATUS = ["todo", "in_progress", "done"];
+const STATUS = ["todo", "in_progress", "review", "done"];
 const PRIORITY = ["low", "medium", "high"];
+const PLATFORMS = ["instagram", "facebook", "youtube"];
 
 const TaskSchema = z.object({
   title: z.string().min(1),
@@ -18,12 +19,17 @@ const TaskSchema = z.object({
   status: z.enum(STATUS).optional(),
   priority: z.enum(PRIORITY).optional(),
   recurrence: z.enum(["none", "daily", "weekly"]).optional(),
+  // Phase 1 additions. content_type is a flexible tag (UI drives the list).
+  contentType: z.string().max(40).nullable().optional(),
+  platforms: z.array(z.enum(PLATFORMS)).optional(),
+  attachments: z.array(z.object({ url: z.string().url(), label: z.string().max(120).optional() })).optional(),
 });
 
 // Returned shape: task fields + assignee name/image + channel name for the UI.
 const SELECT = `
-  select t.id, t.title, t.description, t.editor_id, t.channel_id, t.post_id,
+  select t.id, t.serial, t.title, t.description, t.editor_id, t.channel_id, t.post_id,
          t.status, t.priority, t.due_date, t.recurrence, t.created_at, t.completed_at,
+         t.content_type, t.platforms, t.attachments,
          e.name as editor_name, e.image_url as editor_image,
          w.name as channel_name,
          (select count(*)::int from subtask s where s.task_id = t.id) as subtask_total,
@@ -64,10 +70,14 @@ tasksRouter.post("/tasks", requireEditor, async (req, res, next) => {
   const d = parsed.data;
   try {
     const status = d.status ?? "todo";
+    // Atomically claim the next per-org Task ID and insert in one statement.
     const { rows } = await pool.query(
-      `insert into task (org_id, editor_id, channel_id, title, description,
-                         status, priority, due_date, recurrence, completed_at)
-       values ($1,$2,$3,$4,$5,$6,$7,$8,$9, case when $6 = 'done' then now() else null end)
+      `with s as (update org set task_seq = task_seq + 1 where id = $1 returning task_seq)
+       insert into task (org_id, editor_id, channel_id, title, description,
+                         status, priority, due_date, recurrence,
+                         content_type, platforms, attachments, serial, completed_at)
+       select $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12::jsonb, (select task_seq from s),
+              case when $6 = 'done' then now() else null end
        returning id`,
       [
         req.orgId,
@@ -79,6 +89,9 @@ tasksRouter.post("/tasks", requireEditor, async (req, res, next) => {
         d.priority ?? "medium",
         d.dueDate || null,
         d.recurrence ?? "none",
+        d.contentType ?? null,
+        d.platforms ?? [],
+        JSON.stringify(d.attachments ?? []),
       ],
     );
     const { rows: full } = await pool.query(`${SELECT} where t.id = $1`, [rows[0].id]);
@@ -116,6 +129,12 @@ tasksRouter.patch("/tasks/:id", requireEditor, async (req, res, next) => {
   if (d.priority !== undefined) push("priority", d.priority);
   if (d.dueDate !== undefined) push("due_date", d.dueDate || null);
   if (d.recurrence !== undefined) push("recurrence", d.recurrence);
+  if (d.contentType !== undefined) push("content_type", d.contentType ?? null);
+  if (d.platforms !== undefined) push("platforms", d.platforms);
+  if (d.attachments !== undefined) {
+    params.push(JSON.stringify(d.attachments));
+    sets.push(`attachments = $${params.length}::jsonb`);
+  }
   if (d.status !== undefined) {
     push("status", d.status);
     // Stamp/clear completion time as status moves in/out of "done".

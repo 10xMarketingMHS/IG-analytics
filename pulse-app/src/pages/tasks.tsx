@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, type FormEvent, type ReactNode } from "react";
+import { useEffect, useMemo, useState, type ReactNode } from "react";
 import {
   DndContext, DragOverlay, MouseSensor, TouchSensor, KeyboardSensor,
   useSensor, useSensors, useDraggable, useDroppable, closestCorners,
@@ -8,9 +8,8 @@ import { useTasks } from "@/lib/use-tasks";
 import { useEditors } from "@/lib/use-editors";
 import { useWorkspaces } from "@/lib/workspaces-context";
 import { api, ApiError } from "@/lib/api";
-import { Modal } from "@/components/modal";
 import { toast } from "sonner";
-import type { Task, TaskStatus, TaskPriority, Editor, Subtask, TaskComment } from "@/lib/types";
+import type { Task, TaskStatus, TaskPriority, TaskAttachment, Editor, Subtask, TaskComment } from "@/lib/types";
 
 function relTime(iso: string) {
   const mins = Math.round((Date.now() - new Date(iso).getTime()) / 60000);
@@ -22,11 +21,40 @@ function relTime(iso: string) {
 }
 
 const COLUMNS: { key: TaskStatus; label: string }[] = [
-  { key: "todo", label: "To do" },
-  { key: "in_progress", label: "In progress" },
-  { key: "done", label: "Done" },
+  { key: "todo", label: "To Do" },
+  { key: "in_progress", label: "In Progress" },
+  { key: "review", label: "Review" },
+  { key: "done", label: "Completed" },
 ];
 const PRI_LABEL: Record<TaskPriority, string> = { low: "Low", medium: "Medium", high: "High" };
+
+// Task content type — a flexible, task-level deliverable tag (separate from the
+// post taxonomy). The UI drives the list; the backend stores it as free text.
+const CONTENT_TYPES: { value: string; label: string }[] = [
+  { value: "reel", label: "Reel" },
+  { value: "ad_video", label: "Ad Video" },
+  { value: "carousel", label: "Carousel" },
+  { value: "thumbnail", label: "Thumbnail" },
+  { value: "youtube_video", label: "YouTube Video" },
+];
+const CONTENT_LABEL = (v: string | null) => CONTENT_TYPES.find((c) => c.value === v)?.label ?? null;
+
+const PLATFORM_META: Record<string, { icon: string; label: string }> = {
+  instagram: { icon: "📸", label: "Instagram" },
+  facebook: { icon: "👍", label: "Facebook" },
+  youtube: { icon: "▶️", label: "YouTube" },
+};
+const ALL_PLATFORMS = ["instagram", "facebook", "youtube"];
+
+const SORTS: { value: string; label: string }[] = [
+  { value: "due", label: "Due date" },
+  { value: "priority", label: "Priority" },
+  { value: "created", label: "Newest" },
+  { value: "title", label: "Title" },
+];
+const PRI_ORDER: Record<string, number> = { high: 0, medium: 1, low: 2 };
+
+const taskCode = (serial: number) => `TASK-${serial}`;
 
 function today() {
   // Local calendar date as YYYY-MM-DD (Date.now avoided elsewhere but fine here).
@@ -84,7 +112,7 @@ function DraggableCard({ id, children }: { id: string; children: ReactNode }) {
 export function TasksPage() {
   const { tasks, refetch } = useTasks();
   const { editors } = useEditors();
-  const { active } = useWorkspaces();
+  const { active, workspaces } = useWorkspaces();
   // Viewers are read-only (the backend already 403s their writes); hide the
   // status-move controls from them so the affordance matches the permission.
   const canWrite = active?.role !== "viewer";
@@ -100,10 +128,31 @@ export function TasksPage() {
     useSensor(TouchSensor, { activationConstraint: { delay: 200, tolerance: 8 } }),
     useSensor(KeyboardSensor),
   );
-  const [view, setView] = useState<"board" | "calendar">("board");
-  const [modalOpen, setModalOpen] = useState(false);
-  const [editing, setEditing] = useState<Task | null>(null);
-  const openTask = (t: Task) => { setEditing(t); setModalOpen(true); };
+  const [view, setView] = useState<"board" | "list" | "calendar">("board");
+  // Right-side detail panel: hold the id, derive the live task so inline edits +
+  // refetch keep the panel fresh. `creating` opens the panel in create mode.
+  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [creating, setCreating] = useState(false);
+  const [query, setQuery] = useState("");
+  const [sortBy, setSortBy] = useState("due");
+  const [quickAddCol, setQuickAddCol] = useState<TaskStatus | null>(null);
+  const [quickAddText, setQuickAddText] = useState("");
+  const openTask = (t: Task) => { setCreating(false); setSelectedId(t.id); };
+  // "New Task" opens the full task-creation card, centered.
+  const startNewTask = () => { setSelectedId(null); setCreating(true); };
+  const selectedTask = (tasks ?? []).find((t) => t.id === selectedId) ?? null;
+
+  async function quickAdd(status: TaskStatus) {
+    const title = quickAddText.trim();
+    if (!title) { setQuickAddCol(null); return; }
+    try {
+      await api("/tasks", { method: "POST", body: JSON.stringify({ title, status }) });
+      setQuickAddText("");
+      await refetch();
+    } catch (e) {
+      toast.error(e instanceof ApiError ? e.message : "Could not add task.");
+    }
+  }
 
   // Apply any in-flight optimistic status before filtering, so the board (and
   // the per-column counts derived from it) reflect a drop immediately.
@@ -111,10 +160,20 @@ export function TasksPage() {
     () => (tasks ?? []).map((t) => (pending[t.id] ? { ...t, status: pending[t.id] } : t)),
     [tasks, pending],
   );
-  const filtered = useMemo(
-    () => effective.filter((t) => !filterEditor || t.editor_id === filterEditor),
-    [effective, filterEditor],
-  );
+  const filtered = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    const list = effective.filter((t) =>
+      (!filterEditor || t.editor_id === filterEditor) &&
+      (!q || t.title.toLowerCase().includes(q) || (t.description ?? "").toLowerCase().includes(q)),
+    );
+    const cmp: Record<string, (a: Task, b: Task) => number> = {
+      due: (a, b) => (a.due_date ?? "9999-99").localeCompare(b.due_date ?? "9999-99"),
+      priority: (a, b) => (PRI_ORDER[a.priority] - PRI_ORDER[b.priority]) || (a.due_date ?? "9999").localeCompare(b.due_date ?? "9999"),
+      created: (a, b) => b.created_at.localeCompare(a.created_at),
+      title: (a, b) => a.title.localeCompare(b.title),
+    };
+    return [...list].sort(cmp[sortBy] ?? cmp.due);
+  }, [effective, filterEditor, query, sortBy]);
   const byStatus = (s: TaskStatus) => filtered.filter((t) => t.status === s);
 
   // Both the ←/→ links and drag-and-drop call this — one PATCH path, so the
@@ -161,31 +220,28 @@ export function TasksPage() {
   return (
     <section className="screen">
       <div className="toolbar">
-        <select
-          className="t"
-          style={{ maxWidth: 240 }}
-          value={filterEditor}
-          onChange={(e) => setFilterEditor(e.target.value)}
-        >
-          <option value="">All team members</option>
-          {(editors ?? []).map((e) => (
-            <option key={e.id} value={e.id}>{e.name}</option>
-          ))}
-        </select>
         <div className="seg" style={{ margin: 0 }}>
           <button className={view === "board" ? "on" : ""} onClick={() => setView("board")}>🗂️ Board</button>
+          <button className={view === "list" ? "on" : ""} onClick={() => setView("list")}>☰ List</button>
           <button className={view === "calendar" ? "on" : ""} onClick={() => setView("calendar")}>📅 Calendar</button>
         </div>
+        <div className="search" style={{ maxWidth: 260 }}>
+          <span aria-hidden>🔎</span>
+          <input placeholder="Search tasks…" value={query} onChange={(e) => setQuery(e.target.value)} />
+        </div>
+        <select className="t" style={{ maxWidth: 200 }} value={filterEditor} onChange={(e) => setFilterEditor(e.target.value)}>
+          <option value="">All team members</option>
+          {(editors ?? []).map((e) => (<option key={e.id} value={e.id}>{e.name}</option>))}
+        </select>
+        <select className="t" style={{ maxWidth: 150 }} value={sortBy} onChange={(e) => setSortBy(e.target.value)} title="Sort tasks">
+          {SORTS.map((s) => (<option key={s.value} value={s.value}>↕ {s.label}</option>))}
+        </select>
         <div className="spacer" />
-        <button
-          className="btn btn-primary"
-          onClick={() => {
-            setEditing(null);
-            setModalOpen(true);
-          }}
-        >
-          ＋ Add Task
-        </button>
+        {canWrite && (
+          <button className="btn btn-primary" onClick={startNewTask}>
+            ＋ New Task
+          </button>
+        )}
       </div>
 
       {tasks === null ? (
@@ -194,6 +250,8 @@ export function TasksPage() {
         <div className="card pad" style={{ color: "var(--muted)", fontSize: 13.5 }}>
           No tasks yet. Click <b>＋ Add Task</b> to assign your first daily task to a team member.
         </div>
+      ) : view === "list" ? (
+        <TaskList tasks={filtered} onOpen={openTask} />
       ) : view === "calendar" ? (
         <TaskCalendar tasks={filtered} onOpen={openTask} />
       ) : (
@@ -212,14 +270,29 @@ export function TasksPage() {
                 <div className="task-colhead">
                   <span className={"tdot " + col.key} /> {col.label}
                   <span className="task-count">{items.length}</span>
+                  {canWrite && (
+                    <button className="task-coladd" title={`Add a task to ${col.label}`}
+                      onClick={() => { setQuickAddCol(col.key); setQuickAddText(""); }}>＋</button>
+                  )}
                 </div>
+                {quickAddCol === col.key && (
+                  <input
+                    className="task-quickadd" autoFocus
+                    placeholder="Task title, then Enter…"
+                    value={quickAddText}
+                    onChange={(e) => setQuickAddText(e.target.value)}
+                    onKeyDown={(e) => { if (e.key === "Enter") quickAdd(col.key); if (e.key === "Escape") setQuickAddCol(null); }}
+                    onBlur={() => quickAdd(col.key)}
+                  />
+                )}
                 {items.map((t) => {
                   const overdue =
                     t.status !== "done" && t.due_date && t.due_date < today();
                   const cardInner = (
-                    <div className="task-card" key={t.id} onClick={() => { setEditing(t); setModalOpen(true); }}>
+                    <div className={"task-card" + (selectedId === t.id ? " selected" : "")} key={t.id} onClick={() => openTask(t)}>
                       <div className="task-top">
                         <span style={{ display: "inline-flex", gap: 6, alignItems: "center", flexWrap: "wrap" }}>
+                          {t.content_type && <span className="task-ctype">{CONTENT_LABEL(t.content_type)}</span>}
                           <span className={"task-pri " + t.priority}>{PRI_LABEL[t.priority]}</span>
                           {overdue && (
                             <span className="task-overdue" title={`Due ${t.due_date}, still ${t.status.replace("_", " ")}`}>
@@ -248,6 +321,10 @@ export function TasksPage() {
                             ☑ {t.subtask_done}/{t.subtask_total}
                           </span>
                         )}
+                        {t.platforms?.length > 0 && (
+                          <span className="task-plats">{t.platforms.map((p) => PLATFORM_META[p]?.icon ?? "").join(" ")}</span>
+                        )}
+                        <span className="task-code">{taskCode(t.serial)}</span>
                       </div>
                       {canWrite && (
                         <div className="task-actions" onClick={(e) => e.stopPropagation()}>
@@ -287,136 +364,237 @@ export function TasksPage() {
         </DndContext>
       )}
 
-      {modalOpen && (
-        <TaskModal
-          task={editing}
-          editors={editors ?? []}
-          onClose={() => { setModalOpen(false); refetch(); }}
-          onSaved={() => { setModalOpen(false); refetch(); }}
+      {creating && (
+        <TaskPanel
+          mode="create" task={null} canWrite={canWrite} editors={editors ?? []} channels={(workspaces ?? [])}
+          onClose={() => setCreating(false)}
+          onChanged={refetch}
+          onCreated={(id) => { setCreating(false); setSelectedId(id); refetch(); }}
+          onDelete={() => {}}
+        />
+      )}
+      {selectedTask && !creating && (
+        <TaskPanel
+          mode="edit" task={selectedTask} canWrite={canWrite} editors={editors ?? []} channels={(workspaces ?? [])}
+          onClose={() => { setSelectedId(null); refetch(); }}
+          onChanged={refetch}
+          onCreated={() => {}}
+          onDelete={(t) => { setSelectedId(null); del(t); }}
         />
       )}
     </section>
   );
 }
 
-function TaskModal({
-  task,
-  editors,
-  onClose,
-  onSaved,
-}: {
+
+function dueLabel(date: string): string {
+  const [y, m, d] = date.split("-").map(Number);
+  const t = new Date();
+  const days = Math.round((Date.UTC(y, m - 1, d) - Date.UTC(t.getFullYear(), t.getMonth(), t.getDate())) / 86400000);
+  if (days === 0) return "Due today";
+  if (days > 0) return `Due in ${days} day${days === 1 ? "" : "s"}`;
+  return `Overdue by ${-days} day${-days === 1 ? "" : "s"}`;
+}
+
+function Row({ label, children }: { label: string; children: ReactNode }) {
+  return <div className="tp-row"><span className="tp-label">{label}</span><div className="tp-val">{children}</div></div>;
+}
+
+// Task detail card. Two modes sharing one layout:
+//  - "edit": right-side slide-in; every field saves inline via PATCH.
+//  - "create": centered dialog; fields fill a local draft, saved all at once by
+//    the "Create task" button. (Checklist/comments need a saved task, so they
+//    only appear in edit mode.)
+function TaskPanel({ mode, task, canWrite, editors, channels, onClose, onChanged, onCreated, onDelete }: {
+  mode: "create" | "edit";
   task: Task | null;
+  canWrite: boolean;
   editors: Editor[];
+  channels: { id: string; name: string }[];
   onClose: () => void;
-  onSaved: () => void;
+  onChanged: () => void;
+  onCreated: (id: string) => void;
+  onDelete: (t: Task) => void;
 }) {
-  const editing = Boolean(task);
+  const creating = mode === "create";
+  const ro = !canWrite;
+  const [draft, setDraft] = useState<{
+    channel_id: string | null; editor_id: string | null; due_date: string | null; priority: string;
+    status: string; content_type: string | null; platforms: string[]; attachments: TaskAttachment[];
+  }>({ channel_id: null, editor_id: null, due_date: null, priority: "medium", status: "todo", content_type: null, platforms: [], attachments: [] });
   const [title, setTitle] = useState(task?.title ?? "");
   const [description, setDescription] = useState(task?.description ?? "");
-  const [editorId, setEditorId] = useState(task?.editor_id ?? "");
-  const [dueDate, setDueDate] = useState(task?.due_date ?? today());
-  const [priority, setPriority] = useState<TaskPriority>(task?.priority ?? "medium");
-  const [recurrence, setRecurrence] = useState<"none" | "daily" | "weekly">(task?.recurrence ?? "none");
-  const [status, setStatus] = useState<TaskStatus>(task?.status ?? "todo");
-  const [saving, setSaving] = useState(false);
-  const [err, setErr] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  useEffect(() => { setTitle(task?.title ?? ""); setDescription(task?.description ?? ""); }, [task?.id]);
 
-  async function submit(e: FormEvent) {
-    e.preventDefault();
-    if (!title.trim()) { setErr("Give the task a title."); return; }
-    setSaving(true);
-    setErr(null);
-    const payload = {
-      title: title.trim(),
-      description,
-      editorId: editorId || null,
-      dueDate: dueDate || null,
-      priority,
-      recurrence,
-      status,
-    };
+  const cur = creating ? draft : {
+    channel_id: task!.channel_id, editor_id: task!.editor_id, due_date: task!.due_date, priority: task!.priority,
+    status: task!.status, content_type: task!.content_type, platforms: task!.platforms ?? [], attachments: task!.attachments ?? [],
+  };
+
+  async function patch(fields: Record<string, unknown>) {
+    if (!task) return;
+    try { await api(`/tasks/${task.id}`, { method: "PATCH", body: JSON.stringify(fields) }); onChanged(); }
+    catch (e) { toast.error(e instanceof Error ? e.message : "Couldn't save."); }
+  }
+  // Draft-update in create mode; inline PATCH in edit mode.
+  function set(localKey: string, apiKey: string, value: unknown) {
+    if (creating) setDraft((d) => ({ ...d, [localKey]: value }));
+    else patch({ [apiKey]: value });
+  }
+  function togglePlatform(p: string) {
+    const next = cur.platforms.includes(p) ? cur.platforms.filter((x) => x !== p) : [...cur.platforms, p];
+    set("platforms", "platforms", next);
+  }
+  async function create() {
+    if (!title.trim() || busy) return;
+    setBusy(true);
     try {
-      if (editing) {
-        await api(`/tasks/${task!.id}`, { method: "PATCH", body: JSON.stringify(payload) });
-        toast.success("Task updated.");
-      } else {
-        await api("/tasks", { method: "POST", body: JSON.stringify(payload) });
-        toast.success("Task created.");
-      }
-      onSaved();
-    } catch (e2) {
-      setErr(e2 instanceof ApiError ? e2.message : "Could not save task.");
-      setSaving(false);
-    }
+      const r = await api<{ task: Task }>("/tasks", { method: "POST", body: JSON.stringify({
+        title: title.trim(), description,
+        channelId: draft.channel_id, editorId: draft.editor_id, dueDate: draft.due_date,
+        priority: draft.priority, status: draft.status, contentType: draft.content_type,
+        platforms: draft.platforms, attachments: draft.attachments,
+      }) });
+      toast.success("Task created.");
+      onCreated(r.task.id);
+    } catch (e) { toast.error(e instanceof ApiError ? e.message : "Could not create task."); setBusy(false); }
   }
 
-  return (
-    <Modal onClose={onClose} title={editing ? "Edit Task" : "Add Task"}>
-      <form onSubmit={submit}>
-        <div className="field">
-          <label className="f">Task <span className="req">*</span></label>
-          <input className="t" placeholder="e.g. Edit Diabetes reel" value={title} onChange={(e) => setTitle(e.target.value)} />
+  const inner = (
+    <div className="tp-body">
+      <div className="tp-head">
+        {creating ? <b style={{ fontSize: 17 }}>New Task</b> : (
+          <div className="tp-due">
+            {task!.due_date ? <><span>📅 {dueLabel(task!.due_date)}</span><small>{task!.due_date}</small></> : <span className="hint" style={{ margin: 0 }}>No due date</span>}
+          </div>
+        )}
+        <div style={{ display: "flex", gap: 8 }}>
+          {!creating && !ro && <button className="btn btn-sm" onClick={() => onDelete(task!)}>🗑 Delete</button>}
+          <button className="task-x" onClick={onClose}>✕</button>
         </div>
-        <div className="field">
-          <label className="f">Details</label>
-          <textarea className="t" placeholder="Optional notes…" value={description} onChange={(e) => setDescription(e.target.value)} />
+      </div>
+      {!creating && (
+        <div className="tp-idrow">
+          {task!.content_type && <span className="task-ctype">{CONTENT_LABEL(task!.content_type)}</span>}
+          <span className="task-code">{taskCode(task!.serial)}</span>
         </div>
-        <div className="grid g3">
-          <div className="field">
-            <label className="f">Assign to</label>
-            <select className="t" value={editorId} onChange={(e) => setEditorId(e.target.value)}>
-              <option value="">Unassigned</option>
-              {editors.map((ed) => (
-                <option key={ed.id} value={ed.id}>{ed.name}</option>
-              ))}
+      )}
+      <input className="tp-title" autoFocus={creating} placeholder="Task title…" value={title} disabled={ro}
+        onChange={(e) => setTitle(e.target.value)}
+        onBlur={() => { if (!creating && title.trim() && title !== task!.title) patch({ title: title.trim() }); }} />
+      <textarea className="tp-desc" placeholder="Add a description…" value={description} disabled={ro}
+        onChange={(e) => setDescription(e.target.value)}
+        onBlur={() => { if (!creating && description !== (task!.description ?? "")) patch({ description }); }} />
+
+      <div className="tp-fields">
+        <Row label="Project">
+          <select className="t" disabled={ro} value={cur.channel_id ?? ""} onChange={(e) => set("channel_id", "channelId", e.target.value || null)}>
+            <option value="">—</option>
+            {channels.map((c) => (<option key={c.id} value={c.id}>{c.name}</option>))}
+          </select>
+        </Row>
+        <Row label="Assignee">
+          <select className="t" disabled={ro} value={cur.editor_id ?? ""} onChange={(e) => set("editor_id", "editorId", e.target.value || null)}>
+            <option value="">Unassigned</option>
+            {editors.map((ed) => (<option key={ed.id} value={ed.id}>{ed.name}</option>))}
+          </select>
+        </Row>
+        <Row label="Due Date"><input className="t" type="date" disabled={ro} value={cur.due_date ?? ""} onChange={(e) => set("due_date", "dueDate", e.target.value || null)} /></Row>
+        <Row label="Priority">
+          <select className="t" disabled={ro} value={cur.priority} onChange={(e) => set("priority", "priority", e.target.value)}>
+            <option value="low">Low</option><option value="medium">Medium</option><option value="high">High</option>
+          </select>
+        </Row>
+        <Row label="Status">
+          <select className="t" disabled={ro} value={cur.status} onChange={(e) => set("status", "status", e.target.value)}>
+            {COLUMNS.map((c) => (<option key={c.key} value={c.key}>{c.label}</option>))}
+          </select>
+        </Row>
+        <Row label="Content Type">
+          <select className="t" disabled={ro} value={cur.content_type ?? ""} onChange={(e) => set("content_type", "contentType", e.target.value || null)}>
+            <option value="">—</option>
+            {CONTENT_TYPES.map((c) => (<option key={c.value} value={c.value}>{c.label}</option>))}
+          </select>
+        </Row>
+        <Row label="Platforms">
+          <div className="tp-plats">
+            {ALL_PLATFORMS.map((p) => {
+              const on = cur.platforms.includes(p);
+              return <button key={p} disabled={ro} className={"tp-plat" + (on ? " on" : "")} onClick={() => togglePlatform(p)} title={PLATFORM_META[p].label}>{PLATFORM_META[p].icon}</button>;
+            })}
+          </div>
+        </Row>
+        {!creating && (
+          <Row label="Repeat">
+            <select className="t" disabled={ro} value={task!.recurrence} onChange={(e) => patch({ recurrence: e.target.value })}>
+              <option value="none">Doesn't repeat</option><option value="daily">🔁 Daily</option><option value="weekly">🔁 Weekly</option>
             </select>
-          </div>
-          <div className="field">
-            <label className="f">Due date</label>
-            <input className="t" type="date" value={dueDate} onChange={(e) => setDueDate(e.target.value)} />
-          </div>
-          <div className="field">
-            <label className="f">Priority</label>
-            <select className="t" value={priority} onChange={(e) => setPriority(e.target.value as TaskPriority)}>
-              <option value="low">Low</option>
-              <option value="medium">Medium</option>
-              <option value="high">High</option>
-            </select>
-          </div>
-          <div className="field">
-            <label className="f">Repeat</label>
-            <select className="t" value={recurrence} onChange={(e) => setRecurrence(e.target.value as "none" | "daily" | "weekly")}>
-              <option value="none">Doesn't repeat</option>
-              <option value="daily">🔁 Daily</option>
-              <option value="weekly">🔁 Weekly</option>
-            </select>
-          </div>
-        </div>
-        <div className="field">
-          <label className="f">Status</label>
-          <div className="statusseg">
-            {COLUMNS.map((c) => (
-              <button type="button" key={c.key} className={status === c.key ? "on" : ""} onClick={() => setStatus(c.key)}>
-                {c.label}
-              </button>
-            ))}
-          </div>
-        </div>
-        {editing && task && <Checklist taskId={task.id} />}
-        {editing && task && <Comments taskId={task.id} />}
-        {err && <p className="login-err" style={{ marginTop: 10 }}>{err}</p>}
-        <div className="formfoot">
+          </Row>
+        )}
+      </div>
+
+      <Attachments links={cur.attachments} readOnly={ro} onChange={(next) => set("attachments", "attachments", next)} />
+
+      {creating ? (
+        <div className="formfoot" style={{ marginTop: 14 }}>
+          <div className="hint" style={{ margin: 0, flex: 1 }}>Checklist &amp; comments become available after you create the task.</div>
           <button type="button" className="btn" onClick={onClose}>Cancel</button>
-          <button type="submit" className="btn btn-primary" disabled={saving}>
-            {saving ? "Saving…" : editing ? "Save changes" : "Create task"}
-          </button>
+          <button type="button" className="btn btn-primary" disabled={busy || !title.trim()} onClick={create}>{busy ? "Creating…" : "Create task"}</button>
         </div>
-      </form>
-    </Modal>
+      ) : (
+        <>
+          <Checklist taskId={task!.id} readOnly={ro} onChanged={onChanged} />
+          <Comments taskId={task!.id} />
+        </>
+      )}
+    </div>
+  );
+
+  return creating ? (
+    <div className="task-panel-scrim center" onClick={onClose}>
+      <div className="task-panel centered" onClick={(e) => e.stopPropagation()}>{inner}</div>
+    </div>
+  ) : (
+    <div className="task-panel-scrim" onClick={onClose}>
+      <aside className="task-panel" onClick={(e) => e.stopPropagation()}>{inner}</aside>
+    </div>
   );
 }
 
-function Checklist({ taskId }: { taskId: string }) {
+function Attachments({ links, readOnly, onChange }: { links: TaskAttachment[]; readOnly: boolean; onChange: (next: TaskAttachment[]) => void }) {
+  const [url, setUrl] = useState("");
+  const [label, setLabel] = useState("");
+  function add() {
+    let u = url.trim();
+    if (!u) return;
+    if (!/^https?:\/\//i.test(u)) u = "https://" + u;
+    try { new URL(u); } catch { toast.error("Enter a valid URL."); return; }
+    onChange([...links, { url: u, label: label.trim() || undefined }]);
+    setUrl(""); setLabel("");
+  }
+  return (
+    <div className="tp-section">
+      <div className="tp-sechead">Attachment links</div>
+      {links.length === 0 && <div className="hint" style={{ display: "block" }}>No links yet — paste a Drive / Frame.io / YouTube / reference URL.</div>}
+      {links.map((a, i) => (
+        <div className="tp-link" key={i}>
+          <a href={a.url} target="_blank" rel="noopener noreferrer">🔗 {a.label || a.url}</a>
+          {!readOnly && <button className="task-x" title="Remove" onClick={() => onChange(links.filter((_, j) => j !== i))}>✕</button>}
+        </div>
+      ))}
+      {!readOnly && (
+        <div className="tp-addlink">
+          <input className="t" placeholder="Paste a link…" value={url} onChange={(e) => setUrl(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") add(); }} />
+          <input className="t" placeholder="Label" value={label} onChange={(e) => setLabel(e.target.value)} style={{ maxWidth: 130 }} />
+          <button className="btn btn-sm" onClick={add}>Add</button>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function Checklist({ taskId, readOnly = false, onChanged }: { taskId: string; readOnly?: boolean; onChanged?: () => void }) {
   const [items, setItems] = useState<Subtask[]>([]);
   const [loading, setLoading] = useState(true);
   const [newTitle, setNewTitle] = useState("");
@@ -440,18 +618,21 @@ function Checklist({ taskId }: { taskId: string }) {
       const { subtask } = await api<{ subtask: Subtask }>(`/tasks/${taskId}/subtasks`, { method: "POST", body: JSON.stringify({ title: t }) });
       setItems((x) => [...x, subtask]);
       setNewTitle("");
+      onChanged?.();
     } catch { toast.error("Could not add item."); }
   }
   async function toggle(s: Subtask) {
     try {
       const { subtask } = await api<{ subtask: Subtask }>(`/subtasks/${s.id}`, { method: "PATCH", body: JSON.stringify({ done: !s.done }) });
       setItems((x) => x.map((i) => (i.id === s.id ? subtask : i)));
+      onChanged?.();
     } catch { toast.error("Could not update item."); }
   }
   async function del(s: Subtask) {
     try {
       await api(`/subtasks/${s.id}`, { method: "DELETE" });
       setItems((x) => x.filter((i) => i.id !== s.id));
+      onChanged?.();
     } catch { toast.error("Could not delete item."); }
   }
 
@@ -466,19 +647,21 @@ function Checklist({ taskId }: { taskId: string }) {
       <div className="chk-list">
         {items.map((s) => (
           <div className="chk-row" key={s.id}>
-            <button type="button" className={"chk-box" + (s.done ? " on" : "")} onClick={() => toggle(s)} aria-label="Toggle">{s.done ? "✓" : ""}</button>
+            <button type="button" className={"chk-box" + (s.done ? " on" : "")} onClick={() => !readOnly && toggle(s)} disabled={readOnly} aria-label="Toggle">{s.done ? "✓" : ""}</button>
             <span className={"chk-title" + (s.done ? " done" : "")}>{s.title}</span>
-            <button type="button" className="chk-del" onClick={() => del(s)} title="Remove">✕</button>
+            {!readOnly && <button type="button" className="chk-del" onClick={() => del(s)} title="Remove">✕</button>}
           </div>
         ))}
         {loading && <div className="hint">Loading…</div>}
         {!loading && items.length === 0 && <div className="hint" style={{ marginTop: 2 }}>Break this task into steps.</div>}
       </div>
-      <div className="chk-add">
-        <input className="t" placeholder="Add checklist item…" value={newTitle} onChange={(e) => setNewTitle(e.target.value)}
-          onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); add(); } }} />
-        <button type="button" className="btn" onClick={add} disabled={!newTitle.trim()}>Add</button>
-      </div>
+      {!readOnly && (
+        <div className="chk-add">
+          <input className="t" placeholder="Add checklist item…" value={newTitle} onChange={(e) => setNewTitle(e.target.value)}
+            onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); add(); } }} />
+          <button type="button" className="btn" onClick={add} disabled={!newTitle.trim()}>Add</button>
+        </div>
+      )}
     </div>
   );
 }
@@ -548,6 +731,45 @@ function Comments({ taskId }: { taskId: string }) {
 const WEEKDAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 function ymd(d: Date) {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+}
+
+// Phase 2 — dense List view (reuses the .tbl pattern). Search / sort / team
+// filter already apply upstream; clicking a row opens the detail panel.
+function TaskList({ tasks, onOpen }: { tasks: Task[]; onOpen: (t: Task) => void }) {
+  return (
+    <div className="card pad" style={{ overflowX: "auto" }}>
+      <table className="tbl task-tbl">
+        <thead>
+          <tr>
+            <th>Task</th><th>Type</th><th>Assignee</th><th>Project</th>
+            <th>Priority</th><th>Due</th><th>Checklist</th><th>Platforms</th><th>Status</th>
+          </tr>
+        </thead>
+        <tbody>
+          {tasks.length === 0 ? (
+            <tr><td colSpan={9} style={{ textAlign: "center", padding: 26, color: "var(--muted)" }}>No tasks match your search or filters.</td></tr>
+          ) : (
+            tasks.map((t) => {
+              const overdue = t.status !== "done" && t.due_date && t.due_date < today();
+              return (
+                <tr key={t.id} className="clickrow" onClick={() => onOpen(t)}>
+                  <td><b>{t.title}</b> <span className="task-code">{taskCode(t.serial)}</span></td>
+                  <td>{t.content_type ? <span className="task-ctype">{CONTENT_LABEL(t.content_type)}</span> : <span className="st dim">—</span>}</td>
+                  <td>{t.editor_name ? <Assignee name={t.editor_name} image={t.editor_image} /> : <span className="st dim">—</span>}</td>
+                  <td>{t.channel_name ?? <span className="st dim">—</span>}</td>
+                  <td><span className={"task-pri " + t.priority}>{PRI_LABEL[t.priority]}</span></td>
+                  <td className={overdue ? "num-over" : undefined}>{t.due_date ?? <span className="st dim">—</span>}</td>
+                  <td>{t.subtask_total > 0 ? `${t.subtask_done}/${t.subtask_total}` : <span className="st dim">—</span>}</td>
+                  <td className="task-plats">{t.platforms?.length ? t.platforms.map((p) => PLATFORM_META[p]?.icon ?? "").join(" ") : <span className="st dim">—</span>}</td>
+                  <td><span className={"task-statuschip " + t.status}>{COLUMNS.find((c) => c.key === t.status)?.label}</span></td>
+                </tr>
+              );
+            })
+          )}
+        </tbody>
+      </table>
+    </div>
+  );
 }
 
 function TaskCalendar({ tasks, onOpen }: { tasks: Task[]; onOpen: (t: Task) => void }) {
