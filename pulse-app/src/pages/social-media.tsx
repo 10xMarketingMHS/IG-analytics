@@ -2,6 +2,7 @@ import { useMemo, useState } from "react";
 import { useResource } from "@/lib/use-resource";
 import { useEditors } from "@/lib/use-editors";
 import { useAuth } from "@/lib/auth-context";
+import { noteTaskSeen } from "@/lib/use-task-notify";
 import { api, ApiError } from "@/lib/api";
 import { TaskModal } from "@/pages/tasks";
 import { toast } from "sonner";
@@ -47,6 +48,7 @@ export function SocialMediaPage() {
     try {
       await api(`/tasks/${t.id}`, { method: "PATCH", body: JSON.stringify({ editorId: user.editorId }) });
       toast.success(`Claimed "${t.title}".`);
+      noteTaskSeen(user.id, t.id);
       refetch();
     } catch (err) {
       toast.error(err instanceof ApiError ? err.message : "Could not claim that task.");

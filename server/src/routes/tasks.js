@@ -10,10 +10,8 @@ const STATUS = ["todo", "in_progress", "done"];
 const PRIORITY = ["low", "medium", "high"];
 // What *kind* of task this is — separate from priority (how urgent). Auto-
 // created (post-linked) tasks are always "content" and that's not user-editable.
-const TASK_TYPE = ["content", "short_task", "emergency", "general"];
-// A second, independent classifier: what production format the work is.
-// Optional — not every task (e.g. an emergency or general task) has one.
-const CONTENT_FORMAT = ["video", "image", "shoot", "other"];
+// "emergency" was dropped — priority=high already covers urgency.
+const TASK_TYPE = ["content", "short_task", "general"];
 
 const TaskSchema = z.object({
   title: z.string().min(1),
@@ -26,17 +24,35 @@ const TaskSchema = z.object({
   priority: z.enum(PRIORITY).optional(),
   recurrence: z.enum(["none", "daily", "weekly"]).optional(),
   taskType: z.enum(TASK_TYPE).optional(),
-  contentFormat: z.enum(CONTENT_FORMAT).nullable().optional(),
+  // What production format the work is — an FK into the org's own
+  // admin-manageable task_content_format list. Optional — not every task
+  // (e.g. a short/general task) has one.
+  contentFormatId: z.string().uuid().nullable().optional(),
+  // When a save results in an accepted task with a resolvable time budget,
+  // the client already knows (from this same response, checked after a first
+  // save) whether the budget clock would run past office close — self-assign
+  // never goes through the explicit /accept endpoint, so this is how it gets
+  // the same "start now or 9 AM tomorrow" choice. Ignored for anything else.
+  startAt: z.string().datetime().optional(),
 });
 
 // Returned shape: task fields + assignee name/image + channel name for the UI.
-// Social Media tasks (post_id set) also carry the post's title, permalink and
-// platform (account context) — a manual task has none of that, all null.
+// Content format is a joined name/icon (from the org's own taxonomy), not a
+// fixed enum. Social Media tasks (post_id set) also carry the post's title,
+// permalink and platform (account context) — a manual task has none of that,
+// all null.
 const SELECT = `
   select t.id, t.title, t.description, t.editor_id, t.channel_id, t.post_id,
-         t.status, t.priority, t.due_date, t.recurrence, t.task_type, t.content_format,
+         t.status, t.priority, t.due_date, t.recurrence, t.task_type,
+         t.content_format_id, cf.name as content_format_name, cf.icon as content_format_icon,
          t.budget_hours, t.budget_started_at, t.accepted, t.created_at, t.completed_at,
          e.name as editor_name, e.image_url as editor_image,
+         -- The assignee's break, so the client can offset the countdown by
+         -- however long they've been (or are currently) on break — a break
+         -- pauses every one of their running timers at once, computed here
+         -- rather than by rewriting budget_started_at on each task.
+         case when e.break_date = current_date then e.break_started_at end as editor_break_started_at,
+         case when e.break_date = current_date then e.break_used_seconds else 0 end as editor_break_used_seconds,
          w.name as channel_name,
          p.title as post_title, p.permalink as post_permalink,
          pl.key as platform_key, pl.name as platform_name,
@@ -46,20 +62,23 @@ const SELECT = `
     left join editor e on e.id = t.editor_id
     left join workspace w on w.id = t.channel_id
     left join post p on p.id = t.post_id
-    left join platform pl on pl.id = p.platform_id`;
+    left join platform pl on pl.id = p.platform_id
+    left join task_content_format cf on cf.id = t.content_format_id`;
 
 // Time-budget resolution (Phase 1): an editor's own rule for a format wins,
 // else the org-wide default, else no budget (task just has no timer).
-async function resolveBudgetHours(orgId, editorId, contentFormat) {
-  if (!contentFormat) return null;
+// Exported — posts.js's syncPostTask needs it to give auto-created (post-linked)
+// tasks a timer too, the same way a manually-created task gets one.
+export async function resolveBudgetHours(orgId, editorId, contentFormatId) {
+  if (!contentFormatId) return null;
   const { rows } = await pool.query(
     `select hours from task_time_rule
-      where org_id = $1 and content_format = $2 and editor_id = $3
+      where org_id = $1 and content_format_id = $2 and editor_id = $3
       union all
       select hours from task_time_rule
-      where org_id = $1 and content_format = $2 and editor_id is null
+      where org_id = $1 and content_format_id = $2 and editor_id is null
       limit 1`,
-    [orgId, contentFormat, editorId],
+    [orgId, contentFormatId, editorId],
   );
   return rows[0]?.hours ?? null;
 }
@@ -100,9 +119,9 @@ tasksRouter.get("/tasks", async (req, res, next) => {
       params.push(req.query.taskType);
       clauses.push(`t.task_type = $${params.length}`);
     }
-    if (req.query.contentFormat && CONTENT_FORMAT.includes(req.query.contentFormat)) {
-      params.push(req.query.contentFormat);
-      clauses.push(`t.content_format = $${params.length}`);
+    if (req.query.contentFormatId) {
+      params.push(req.query.contentFormatId);
+      clauses.push(`t.content_format_id = $${params.length}::uuid`);
     }
     if (req.query.dueBefore) {
       params.push(req.query.dueBefore);
@@ -132,15 +151,20 @@ tasksRouter.post("/tasks", requireEditor, async (req, res, next) => {
   try {
     const status = d.status ?? "todo";
     const assigneeId = d.editorId ?? null;
-    // Assigning to yourself accepts immediately (timer starts now); assigning
-    // to someone else needs their explicit accept before the timer starts.
+    // Assigning to yourself accepts immediately — no separate approval needed
+    // — but that's still an "accept" moment: the office-hours check just runs
+    // client-side after this response instead of before it (see startAt).
+    // Assigning to someone else needs their explicit accept before anything
+    // starts (POST /tasks/:id/accept), where the check runs up front.
     const accepted = !assigneeId || (await callerEditorId(req)) === assigneeId;
-    const budgetHours = await resolveBudgetHours(req.orgId, assigneeId, d.contentFormat ?? null);
+    const budgetHours = await resolveBudgetHours(req.orgId, assigneeId, d.contentFormatId ?? null);
+    const hasBudget = accepted && budgetHours != null;
+    const budgetStartedAt = hasBudget ? (d.startAt ? new Date(d.startAt) : new Date()) : null;
     const { rows } = await pool.query(
       `insert into task (org_id, editor_id, channel_id, title, description,
-                         status, priority, due_date, recurrence, task_type, content_format,
+                         status, priority, due_date, recurrence, task_type, content_format_id,
                          budget_hours, accepted, budget_started_at, completed_at)
-       values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13, case when $12::numeric is not null and $13 then now() else null end,
+       values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,
                case when $6 = 'done' then now() else null end)
        returning id`,
       [
@@ -156,9 +180,10 @@ tasksRouter.post("/tasks", requireEditor, async (req, res, next) => {
         // This endpoint is for manual tasks only (auto-created ones are
         // inserted directly by syncPostTask) — default to "general".
         d.taskType ?? "general",
-        d.contentFormat ?? null,
+        d.contentFormatId ?? null,
         budgetHours,
         accepted,
+        budgetStartedAt,
       ],
     );
     const { rows: full } = await pool.query(`${SELECT} where t.id = $1`, [rows[0].id]);
@@ -195,19 +220,27 @@ tasksRouter.patch("/tasks/:id", requireEditor, async (req, res, next) => {
   if (d.priority !== undefined) push("priority", d.priority);
   if (d.dueDate !== undefined) push("due_date", d.dueDate || null);
   if (d.recurrence !== undefined) push("recurrence", d.recurrence);
-  if (d.status !== undefined) {
-    push("status", d.status);
-    // Stamp/clear completion time as status moves in/out of "done".
-    sets.push(`completed_at = case when $${params.length} = 'done' then coalesce(completed_at, now()) else null end`);
-  }
   try {
     // Capture prior state so we can spawn the next occurrence on completion,
     // guard task_type for post-linked tasks, and re-resolve the time budget.
     const prior = (await pool.query(
-      "select status, recurrence, post_id, editor_id, content_format, accepted from task where id = $1 and org_id = $2",
+      "select status, recurrence, post_id, editor_id, content_format_id, accepted, budget_hours from task where id = $1 and org_id = $2",
       [req.params.id, req.orgId],
     )).rows[0];
     if (!prior) return res.status(404).json({ error: "Task not found" });
+
+    // Only the person a task is assigned to can move it between columns — not
+    // whoever assigned it, not an admin. Keeps "who's actually doing this"
+    // honest instead of someone else quietly marking their work done for them.
+    if (d.status !== undefined) {
+      const myEditorId = await callerEditorId(req);
+      if (!prior.editor_id || myEditorId !== prior.editor_id) {
+        return res.status(403).json({ error: "Only the person this task is assigned to can change its status." });
+      }
+      push("status", d.status);
+      // Stamp/clear completion time as status moves in/out of "done".
+      sets.push(`completed_at = case when $${params.length} = 'done' then coalesce(completed_at, now()) else null end`);
+    }
 
     // Manually linking a task to a post — turns it into a Social Media task
     // (§ splitting). Only for tasks that aren't already post-linked; only to
@@ -238,7 +271,7 @@ tasksRouter.patch("/tasks/:id", requireEditor, async (req, res, next) => {
       }
       push("task_type", d.taskType);
     }
-    if (d.contentFormat !== undefined) push("content_format", d.contentFormat ?? null);
+    if (d.contentFormatId !== undefined) push("content_format_id", d.contentFormatId ?? null);
 
     // Reassigning — resets acceptance unless it's a no-op (same editor) or a
     // self-assign (claiming, or a manager assigning their own work to themselves).
@@ -254,12 +287,20 @@ tasksRouter.patch("/tasks/:id", requireEditor, async (req, res, next) => {
     // Format or assignee changed → re-snapshot the budget from current rules.
     // Only actually starts the countdown (budget_started_at) once accepted —
     // an unaccepted reassignment still shows the resolved hours, just paused.
-    if (d.contentFormat !== undefined || d.editorId !== undefined) {
+    // startAt lets the caller pick when the clock starts (e.g. self-assigning
+    // past office close, same "start now or 9 AM tomorrow" choice the explicit
+    // accept endpoint offers) — defaults to now, same as before.
+    if (d.contentFormatId !== undefined || d.editorId !== undefined) {
       const effectiveEditorId = d.editorId !== undefined ? (d.editorId ?? null) : prior.editor_id;
-      const effectiveFormat = d.contentFormat !== undefined ? (d.contentFormat ?? null) : prior.content_format;
-      const budgetHours = await resolveBudgetHours(req.orgId, effectiveEditorId, effectiveFormat);
+      const effectiveFormatId = d.contentFormatId !== undefined ? (d.contentFormatId ?? null) : prior.content_format_id;
+      const budgetHours = await resolveBudgetHours(req.orgId, effectiveEditorId, effectiveFormatId);
       push("budget_hours", budgetHours);
-      push("budget_started_at", budgetHours !== null && accepted ? new Date() : null);
+      push("budget_started_at", budgetHours !== null && accepted ? (d.startAt ? new Date(d.startAt) : new Date()) : null);
+    } else if (d.startAt !== undefined && prior.accepted && prior.budget_hours != null) {
+      // Pure reschedule — nothing else about the task changed, just when its
+      // already-running clock should count from (e.g. deferring a self-assign
+      // made after office hours to 9 AM tomorrow instead).
+      push("budget_started_at", new Date(d.startAt));
     }
     if (!sets.length) return res.status(400).json({ error: "No fields to update" });
 
@@ -331,7 +372,7 @@ tasksRouter.post("/tasks/:id/accept", requireEditor, async (req, res, next) => {
 async function spawnNextOccurrence(taskId, recurrence) {
   try {
     const t = (await pool.query(
-      "select org_id, editor_id, channel_id, title, description, priority, due_date, task_type, content_format from task where id = $1",
+      "select org_id, editor_id, channel_id, title, description, priority, due_date, task_type, content_format_id from task where id = $1",
       [taskId],
     )).rows[0];
     if (!t) return;
@@ -340,11 +381,11 @@ async function spawnNextOccurrence(taskId, recurrence) {
     const nextDue = `(coalesce($7::date, current_date) + interval '${days} day')::date`;
     // Fresh occurrence gets its own budget snapshot, resolved against
     // whatever rules apply right now (not copied from the completed one).
-    const budgetHours = await resolveBudgetHours(t.org_id, t.editor_id, t.content_format);
+    const budgetHours = await resolveBudgetHours(t.org_id, t.editor_id, t.content_format_id);
     const { rows } = await pool.query(
-      `insert into task (org_id, editor_id, channel_id, title, description, priority, due_date, recurrence, status, task_type, content_format, budget_hours, budget_started_at)
+      `insert into task (org_id, editor_id, channel_id, title, description, priority, due_date, recurrence, status, task_type, content_format_id, budget_hours, budget_started_at)
        values ($1,$2,$3,$4,$5,$6, ${nextDue}, $8, 'todo', $9, $10, $11, case when $11::numeric is not null then now() else null end) returning id`,
-      [t.org_id, t.editor_id, t.channel_id, t.title, t.description, t.priority, t.due_date, recurrence, t.task_type, t.content_format, budgetHours],
+      [t.org_id, t.editor_id, t.channel_id, t.title, t.description, t.priority, t.due_date, recurrence, t.task_type, t.content_format_id, budgetHours],
     );
     const newId = rows[0].id;
     await pool.query(

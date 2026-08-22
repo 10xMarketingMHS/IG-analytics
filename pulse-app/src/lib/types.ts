@@ -103,10 +103,19 @@ export type TaskStatus = "todo" | "in_progress" | "done";
 export type TaskPriority = "low" | "medium" | "high";
 // What kind of task it is — distinct from priority (how urgent). "content" is
 // reserved for auto-created (post-linked) tasks and isn't user-selectable.
-export type TaskType = "content" | "short_task" | "emergency" | "general";
-// A second, independent classifier: what production format the work is.
-// Optional — not every task (e.g. an emergency or general task) has one.
-export type ContentFormat = "video" | "image" | "shoot" | "other";
+// "emergency" was dropped — priority "high" already covers urgency.
+export type TaskType = "content" | "short_task" | "general";
+
+// Content format is an admin-manageable, org-scoped taxonomy (like Pillars or
+// Avatars) rather than a fixed enum — orgs add/rename/retire their own
+// categories. See use-content-formats.ts.
+export type ContentFormatDef = {
+  id: string;
+  name: string;
+  icon: string;
+  sort_order: number;
+  active: boolean;
+};
 
 export type Task = {
   id: string;
@@ -127,9 +136,16 @@ export type Task = {
   subtask_done: number;
   recurrence: "none" | "daily" | "weekly";
   task_type: TaskType;
-  content_format: ContentFormat | null;
+  content_format_id: string | null;
+  content_format_name: string | null;
+  content_format_icon: string | null;
   budget_hours: number | null;
   budget_started_at: string | null;
+  // The assignee's break state — offsets the countdown by however long
+  // they've been (or are currently) on break, shared across every task
+  // they have running. See use-break.ts.
+  editor_break_started_at: string | null;
+  editor_break_used_seconds: number;
   // False when assigned by someone other than the assignee — the timer
   // doesn't start until they accept (POST /tasks/:id/accept).
   accepted: boolean;
@@ -140,11 +156,26 @@ export type Task = {
   platform_name: string | null;
 };
 
+// GET/POST /break/* — one editor's shared daily break budget (see
+// server/src/routes/breaks.js). remainingSeconds already accounts for
+// whatever's elapsed of a currently-running break.
+export type BreakStatus = {
+  onBreak: boolean;
+  startedAt?: string;
+  usedSeconds: number;
+  remainingSeconds: number;
+  dailyCapSeconds: number;
+  minBreakSeconds: number;
+  unlinked?: boolean;
+};
+
 // Admin-configured time-budget rule (Phase 1) — org-wide default (editor_id
 // null) or a specific override for one editor, per content format.
 export type TaskTimeRule = {
   id: string;
-  content_format: ContentFormat;
+  content_format_id: string;
+  content_format_name: string | null;
+  content_format_icon: string | null;
   editor_id: string | null;
   editor_name: string | null;
   hours: number;

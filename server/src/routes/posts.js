@@ -3,6 +3,7 @@ import { z } from "zod";
 import { pool } from "../db.js";
 import { requireEditor } from "../resolve-workspace.js";
 import { logActivity } from "../activity.js";
+import { resolveBudgetHours } from "./tasks.js";
 
 export const postsRouter = Router();
 
@@ -56,7 +57,7 @@ const EDIT_STAGES = ["not_started", "in_progress", "in_review", "pending", "comp
 async function syncPostTask(postId, orgId, callerUserId) {
   try {
     const { rows } = await pool.query(
-      "select id, editor_id, title, date, workspace_id, is_collab_mirror from post where id = $1 and deleted_at is null",
+      "select id, editor_id, title, date, workspace_id, is_collab_mirror, post_type from post where id = $1 and deleted_at is null",
       [postId],
     );
     const post = rows[0];
@@ -68,22 +69,48 @@ async function syncPostTask(postId, orgId, callerUserId) {
       const { rows: urows } = await pool.query("select editor_id from app_user where id = $1", [callerUserId]);
       accepted = urows[0]?.editor_id === post.editor_id;
     }
-    const existing = await pool.query("select id, editor_id, accepted from task where post_id = $1", [postId]);
+    // A post-linked task is editing work — default its production format from
+    // the post's own type (reel → Video, carousel → Image) so it gets a time
+    // budget automatically, the same as a manually-created task would. Falls
+    // through to no format (and no timer) if the org renamed/removed those.
+    const wantName = post.post_type === "carousel" ? "image" : "video";
+    const { rows: fmtRows } = await pool.query(
+      "select id from task_content_format where org_id = $1 and active and lower(name) = $2 limit 1",
+      [orgId, wantName],
+    );
+    const defaultFormatId = fmtRows[0]?.id ?? null;
+
+    const existing = await pool.query(
+      "select id, editor_id, accepted, content_format_id from task where post_id = $1",
+      [postId],
+    );
     if (existing.rows.length) {
       const prior = existing.rows[0];
       // Reassigning to a different editor re-opens acceptance for them.
       const nextAccepted = prior.editor_id === post.editor_id ? prior.accepted : accepted;
+      // Never override a format the user already picked (manually or via an
+      // earlier sync) — only fill it in the first time.
+      const nextFormatId = prior.content_format_id ?? defaultFormatId;
+      const budgetHours = await resolveBudgetHours(orgId, post.editor_id, nextFormatId);
       await pool.query(
         `update task set editor_id = $1, title = $2, due_date = $3, channel_id = $4, accepted = $5,
-                budget_started_at = case when $5 then budget_started_at else null end
-          where post_id = $6`,
-        [post.editor_id, post.title, post.date, post.workspace_id, nextAccepted, postId],
+                content_format_id = $6, budget_hours = $7,
+                budget_started_at = case
+                  when $5 and $7::numeric is not null then coalesce(budget_started_at, now())
+                  when $5 then budget_started_at
+                  else null
+                end
+          where post_id = $8`,
+        [post.editor_id, post.title, post.date, post.workspace_id, nextAccepted, nextFormatId, budgetHours, postId],
       );
     } else {
+      const budgetHours = await resolveBudgetHours(orgId, post.editor_id, defaultFormatId);
       await pool.query(
-        `insert into task (org_id, post_id, editor_id, channel_id, title, due_date, status, priority, task_type, accepted)
-         values ($1, $2, $3, $4, $5, $6, 'todo', 'medium', 'content', $7)`,
-        [orgId, postId, post.editor_id, post.workspace_id, post.title, post.date, accepted],
+        `insert into task (org_id, post_id, editor_id, channel_id, title, due_date, status, priority,
+                           task_type, accepted, content_format_id, budget_hours, budget_started_at)
+         values ($1, $2, $3, $4, $5, $6, 'todo', 'medium', 'content', $7, $8, $9,
+                 case when $7 and $9::numeric is not null then now() else null end)`,
+        [orgId, postId, post.editor_id, post.workspace_id, post.title, post.date, accepted, defaultFormatId, budgetHours],
       );
     }
   } catch (err) {

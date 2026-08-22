@@ -6,13 +6,16 @@ import {
 } from "@dnd-kit/core";
 import { useTasks } from "@/lib/use-tasks";
 import { useEditors } from "@/lib/use-editors";
+import { useContentFormats } from "@/lib/use-content-formats";
+import { noteTaskSeen } from "@/lib/use-task-notify";
+import { breakOffsetMs } from "@/lib/task-timing";
 import { useAuth } from "@/lib/auth-context";
 import { useWorkspaces } from "@/lib/workspaces-context";
 import { usePosts } from "@/lib/use-posts";
 import { api, ApiError } from "@/lib/api";
 import { Modal } from "@/components/modal";
 import { toast } from "sonner";
-import type { Task, TaskStatus, TaskPriority, TaskType, ContentFormat, Editor, Subtask, TaskComment } from "@/lib/types";
+import type { Task, TaskStatus, TaskPriority, TaskType, ContentFormatDef, Editor, Subtask, TaskComment } from "@/lib/types";
 
 function relTime(iso: string) {
   const mins = Math.round((Date.now() - new Date(iso).getTime()) / 60000);
@@ -33,17 +36,13 @@ const PRI_LABEL: Record<TaskPriority, string> = { low: "Low", medium: "Medium", 
 const TYPE_LABEL: Record<TaskType, string> = {
   content: "Content",
   short_task: "Short task",
-  emergency: "Emergency",
   general: "General",
 };
-const TYPE_ICON: Record<TaskType, string> = { content: "📄", short_task: "⚡", emergency: "🚨", general: "🗒️" };
+const TYPE_ICON: Record<TaskType, string> = { content: "📄", short_task: "⚡", general: "🗒️" };
 
-// Second, independent classifier — what production format the work is.
-// Optional, so every lookup goes through `?? null`-safe call sites.
-const FORMAT_LABEL: Record<ContentFormat, string> = {
-  video: "Video", image: "Image", shoot: "Shoot", other: "Other",
-};
-const FORMAT_ICON: Record<ContentFormat, string> = { video: "🎬", image: "🖼️", shoot: "📷", other: "🔧" };
+// Second, independent classifier — what production format the work is. Now a
+// live, admin-manageable list (task_content_format) instead of a fixed enum —
+// see useContentFormats(). Optional, so every lookup goes through `?? null`.
 
 function ymd(d: Date) {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
@@ -94,14 +93,15 @@ const VIEW_KEY_PREFIX = "pulse-tasks-view:";
 // Time-budget countdown (Phase 1) — budget_hours/budget_started_at are set
 // server-side from admin-configured rules; this just renders the clock.
 // A future budget_started_at (deferred acceptance, see § Accept) shows as
-// "starts at …" instead of counting down.
+// "starts at …" instead of counting down. The assignee's break time (if any)
+// pushes the deadline out — a break pauses every task they have running.
 function budgetInfo(t: Task, nowMs: number) {
   if (t.budget_hours == null || !t.budget_started_at || t.status === "done") return null;
   const startMs = new Date(t.budget_started_at).getTime();
   if (startMs > nowMs) {
     return { scheduled: true, over: false, label: `Starts ${new Date(startMs).toLocaleString([], { weekday: "short", hour: "numeric", minute: "2-digit" })}` };
   }
-  const deadlineMs = startMs + t.budget_hours * 3_600_000;
+  const deadlineMs = startMs + t.budget_hours * 3_600_000 + breakOffsetMs(t, nowMs);
   const remainingMs = deadlineMs - nowMs;
   const over = remainingMs < 0;
   const absMs = Math.abs(remainingMs);
@@ -123,6 +123,21 @@ function nineAmTomorrow(from: Date) {
   d.setDate(d.getDate() + 1);
   d.setHours(OFFICE_OPEN_HOUR, 0, 0, 0);
   return d;
+}
+
+// Daily-workload double-approval: one 3h job is normal, a second pushes past
+// half a day (needs a heads-up), a third is basically the whole 9h office day
+// (needs a stronger one). Same idea however the acceptance happens — accepted
+// via the explicit button, or self-assigned straight from Add/Edit Task.
+const WORKLOAD_WARN_HOURS = 6;
+const WORKLOAD_FULL_HOURS = 9;
+function classifyWorkload(totalHours: number): 0 | 1 | 2 {
+  if (totalHours > WORKLOAD_FULL_HOURS) return 2;
+  if (totalHours > WORKLOAD_WARN_HOURS) return 1;
+  return 0;
+}
+function fmtHours(n: number) {
+  return Number.isInteger(n) ? String(n) : n.toFixed(1);
 }
 
 // Whole days a due date is past today. Both inputs are YYYY-MM-DD; compared via
@@ -175,16 +190,20 @@ function DraggableCard({ id, children }: { id: string; children: ReactNode }) {
 export function TasksPage() {
   const { tasks, refetch } = useTasks();
   const { editors } = useEditors();
+  const { contentFormats } = useContentFormats();
   const { user } = useAuth();
   const { active } = useWorkspaces();
   const role = active?.role;
   // Viewers are read-only (the backend already 403s their writes); hide the
   // status-move controls from them so the affordance matches the permission.
   const canWrite = active?.role !== "viewer";
+  // Only the person a task is assigned to can move it between columns — not
+  // whoever assigned it, not an admin (the backend enforces this too).
+  const canMoveStatus = (t: Task) => canWrite && !!user?.editorId && t.editor_id === user.editorId;
 
   const [filterEditor, setFilterEditor] = useState("");
   const [filterType, setFilterType] = useState<TaskType | "">("");
-  const [filterFormat, setFilterFormat] = useState<ContentFormat | "">("");
+  const [filterFormat, setFilterFormat] = useState("");
   const [dueTab, setDueTab] = useState<DueTab>("all");
   // Optimistic status overrides (task id → status) applied while a move's PATCH
   // is in flight, so a drop or a link-click moves the card immediately.
@@ -203,7 +222,10 @@ export function TasksPage() {
   const openTask = (t: Task) => { setEditing(t); setModalOpen(true); };
   // Dual-confirmation prompt when accepting would run the budget past office
   // close — null when no prompt is showing.
-  const [acceptPrompt, setAcceptPrompt] = useState<{ task: Task; closeIn: string } | null>(null);
+  const [acceptPrompt, setAcceptPrompt] = useState<{ task: Task; closeIn: string; alreadyClosed: boolean } | null>(null);
+  // Double-approval prompt when accepting would push the assignee's committed
+  // hours for that due date past a normal day's worth of work.
+  const [workloadPrompt, setWorkloadPrompt] = useState<{ task: Task; total: number; tier: 1 | 2 } | null>(null);
 
   // "My Tasks" vs "Team" — editors default to their own work, admins default
   // to the whole team's (since they assign & monitor it). Either can toggle;
@@ -239,7 +261,7 @@ export function TasksPage() {
         if (scope === "mine" && t.editor_id !== user?.editorId) return false;
         if (filterEditor && t.editor_id !== filterEditor) return false;
         if (filterType && t.task_type !== filterType) return false;
-        if (filterFormat && t.content_format !== filterFormat) return false;
+        if (filterFormat && t.content_format_id !== filterFormat) return false;
         if (!matchesDueTab(t, dueTab, now)) return false;
         return true;
       }),
@@ -253,6 +275,7 @@ export function TasksPage() {
   // on failure it reverts to its original column and an error is surfaced.
   async function move(t: Task, status: TaskStatus) {
     if (t.status === status) return;
+    if (!canMoveStatus(t)) { toast.error("Only the person this task is assigned to can move it."); return; }
     setPending((p) => ({ ...p, [t.id]: status }));
     try {
       await api(`/tasks/${t.id}`, { method: "PATCH", body: JSON.stringify({ status }) });
@@ -292,6 +315,7 @@ export function TasksPage() {
     try {
       await api(`/tasks/${t.id}/accept`, { method: "POST", body: JSON.stringify({ startAt: startAt.toISOString() }) });
       toast.success(startAt.getTime() > Date.now() ? "Accepted — starts as scheduled." : "Accepted — timer started.");
+      if (user) noteTaskSeen(user.id, t.id);
       setAcceptPrompt(null);
       // The 60s tick won't have caught up yet — without this, a task accepted
       // "now" briefly (mis)renders as scheduled-for-later until it does.
@@ -302,15 +326,38 @@ export function TasksPage() {
     }
   }
 
-  // If accepting now would run past office close, ask which start time to use.
+  // Sum of this editor's other accepted, not-done tasks due the same day —
+  // what they've already committed to before this one.
+  function workloadTotalFor(editorId: string, dueDate: string, excludeId: string) {
+    return (tasks ?? [])
+      .filter((x) => x.editor_id === editorId && x.due_date === dueDate && x.accepted && x.status !== "done" && x.id !== excludeId && x.budget_hours != null)
+      .reduce((n, x) => n + Number(x.budget_hours), 0);
+  }
+
+  // Accepting runs two checks in sequence, either of which can pause for a
+  // confirmation: first whether it overloads the day, then whether its clock
+  // would run past office close (including after close has already passed).
   function handleAccept(t: Task) {
+    if (t.editor_id && t.due_date && t.budget_hours != null) {
+      const total = workloadTotalFor(t.editor_id, t.due_date, t.id) + Number(t.budget_hours);
+      const tier = classifyWorkload(total);
+      if (tier === 1 || tier === 2) {
+        setWorkloadPrompt({ task: t, total, tier });
+        return;
+      }
+    }
+    checkOfficeHours(t);
+  }
+
+  function checkOfficeHours(t: Task) {
     const now = new Date();
     if (t.budget_hours != null) {
-      const wouldEnd = new Date(now.getTime() + t.budget_hours * 3_600_000);
       const close = officeCloseToday(now);
-      if (wouldEnd > close || now >= close) {
-        const mins = Math.max(0, Math.round((close.getTime() - now.getTime()) / 60_000));
-        setAcceptPrompt({ task: t, closeIn: mins > 0 ? `${Math.floor(mins / 60)}h ${mins % 60}m` : "0m" });
+      const alreadyClosed = now >= close;
+      const wouldEnd = new Date(now.getTime() + t.budget_hours * 3_600_000);
+      if (alreadyClosed || wouldEnd > close) {
+        const mins = alreadyClosed ? 0 : Math.max(0, Math.round((close.getTime() - now.getTime()) / 60_000));
+        setAcceptPrompt({ task: t, closeIn: `${Math.floor(mins / 60)}h ${mins % 60}m`, alreadyClosed });
         return;
       }
     }
@@ -350,11 +397,11 @@ export function TasksPage() {
           className="t"
           style={{ maxWidth: 160 }}
           value={filterFormat}
-          onChange={(e) => setFilterFormat(e.target.value as ContentFormat | "")}
+          onChange={(e) => setFilterFormat(e.target.value)}
         >
           <option value="">All formats</option>
-          {(Object.keys(FORMAT_LABEL) as ContentFormat[]).map((f) => (
-            <option key={f} value={f}>{FORMAT_ICON[f]} {FORMAT_LABEL[f]}</option>
+          {(contentFormats ?? []).map((f) => (
+            <option key={f.id} value={f.id}>{f.icon} {f.name}</option>
           ))}
         </select>
         <div className="seg" style={{ margin: 0 }}>
@@ -417,25 +464,15 @@ export function TasksPage() {
                   const overdue =
                     t.status !== "done" && t.due_date && t.due_date < today();
                   const cardInner = (
-                    <div className="task-card" key={t.id} onClick={() => { setEditing(t); setModalOpen(true); }}>
+                    <div className={"task-card pri-" + t.priority} key={t.id} onClick={() => { setEditing(t); setModalOpen(true); }}>
                       <div className="task-top">
-                        <span style={{ display: "inline-flex", gap: 6, alignItems: "center", flexWrap: "wrap" }}>
-                          <span className={"task-pri " + t.priority}>{PRI_LABEL[t.priority]}</span>
-                          <span className={"task-typebadge " + t.task_type} title={TYPE_LABEL[t.task_type]}>
-                            {TYPE_ICON[t.task_type]} {TYPE_LABEL[t.task_type]}
-                          </span>
-                          {t.content_format && (
-                            <span className="task-formatbadge" title={FORMAT_LABEL[t.content_format]}>
-                              {FORMAT_ICON[t.content_format]} {FORMAT_LABEL[t.content_format]}
-                            </span>
-                          )}
-                          {overdue && (
-                            <span className="task-overdue" title={`Due ${t.due_date}, still ${t.status.replace("_", " ")}`}>
-                              {(() => { const n = daysOverdue(t.due_date!); return `${n} ${n === 1 ? "day" : "days"} overdue`; })()}
-                            </span>
-                          )}
-                          {t.post_id && <span className="task-postbadge" title="Auto-created from a post">📄 Post</span>}
-                          {t.recurrence !== "none" && <span className="task-recur" title={`Repeats ${t.recurrence}`}>🔁</span>}
+                        <span className="task-pri-group">
+                          <span className={"task-pri-dot " + t.priority} />
+                          <span className={"task-pri-label" + (t.priority === "high" ? " high" : "")}>{PRI_LABEL[t.priority]}</span>
+                        </span>
+                        <span className="task-flags">
+                          {t.post_id && <span title="Auto-created from a post">📄</span>}
+                          {t.recurrence !== "none" && <span title={`Repeats ${t.recurrence}`}>🔁</span>}
                         </span>
                         <button
                           className="task-x"
@@ -446,10 +483,22 @@ export function TasksPage() {
                         </button>
                       </div>
                       <div className="task-title">{t.title}</div>
+                      <div className="task-kind">
+                        <span>{TYPE_ICON[t.task_type]} {TYPE_LABEL[t.task_type]}</span>
+                        {t.content_format_name && (
+                          <>
+                            <span className="dot-sep">·</span>
+                            <span>{t.content_format_icon} {t.content_format_name}</span>
+                          </>
+                        )}
+                      </div>
                       <div className="task-meta">
                         <Assignee name={t.editor_name} image={t.editor_image} />
                         {t.due_date && (
-                          <span className={"task-due" + (overdue ? " over" : "")}>📅 {t.due_date}</span>
+                          <span className={"task-due" + (overdue ? " over" : "")}>
+                            📅 {t.due_date}
+                            {overdue && ` · ${daysOverdue(t.due_date!)}d overdue`}
+                          </span>
                         )}
                         {t.editor_id && !t.accepted ? (
                           user?.editorId === t.editor_id ? (
@@ -467,8 +516,8 @@ export function TasksPage() {
                           const b = budgetInfo(t, nowMs);
                           if (!b) return null;
                           return (
-                            <span className={"task-timer" + (b.over ? " over" : "")} title={b.scheduled ? "Timer hasn't started yet" : b.over ? "Over its time budget" : "Time remaining in its budget"}>
-                              ⏱ {b.scheduled ? b.label : b.over ? `+${b.label}` : `${b.label} left`}
+                            <span className={"task-timer" + (b.over ? " over" : "")} title={b.scheduled ? "Timer hasn't started yet" : b.over ? "Ran past its allotted time — needs follow-up" : "Time remaining"}>
+                              {b.scheduled ? `⏱ ${b.label}` : b.over ? `⚠ Pending — ${b.label} over` : `⏱ ${b.label} left`}
                             </span>
                           );
                         })()}
@@ -478,7 +527,7 @@ export function TasksPage() {
                           </span>
                         )}
                       </div>
-                      {canWrite && (
+                      {canMoveStatus(t) && (
                         <div className="task-actions" onClick={(e) => e.stopPropagation()}>
                           {ci > 0 && (
                             <button className="linkbtn" onClick={() => move(t, COLUMNS[ci - 1].key)}>
@@ -494,7 +543,7 @@ export function TasksPage() {
                       )}
                     </div>
                   );
-                  return canWrite ? (
+                  return canMoveStatus(t) ? (
                     <DraggableCard id={t.id} key={t.id}>{cardInner}</DraggableCard>
                   ) : cardInner;
                 })}
@@ -505,9 +554,12 @@ export function TasksPage() {
         </div>
           <DragOverlay dropAnimation={null}>
             {activeTask ? (
-              <div className="task-card dnd-overlay">
+              <div className={"task-card dnd-overlay pri-" + activeTask.priority}>
                 <div className="task-top">
-                  <span className={"task-pri " + activeTask.priority}>{PRI_LABEL[activeTask.priority]}</span>
+                  <span className="task-pri-group">
+                    <span className={"task-pri-dot " + activeTask.priority} />
+                    <span className={"task-pri-label" + (activeTask.priority === "high" ? " high" : "")}>{PRI_LABEL[activeTask.priority]}</span>
+                  </span>
                 </div>
                 <div className="task-title">{activeTask.title}</div>
               </div>
@@ -530,14 +582,24 @@ export function TasksPage() {
           <div className="modal" style={{ width: 440 }} onClick={(e) => e.stopPropagation()}>
             <div className="mhead">
               <span style={{ fontSize: 18 }}>⏰</span>
-              <h3>This runs past office hours</h3>
+              <h3>{acceptPrompt.alreadyClosed ? "Office hours have ended for today" : "This runs past office hours"}</h3>
               <button className="x" onClick={() => setAcceptPrompt(null)}>×</button>
             </div>
             <div className="mbody">
               <p style={{ margin: "0 0 4px", fontSize: 13.5, lineHeight: 1.6 }}>
-                <b>{acceptPrompt.task.title}</b> needs <b>{acceptPrompt.task.budget_hours}h</b>, but office
-                hours close in <b>{acceptPrompt.closeIn}</b> (6:00 PM). Starting now means finishing outside
-                office hours.
+                {acceptPrompt.alreadyClosed ? (
+                  <>
+                    <b>{acceptPrompt.task.title}</b> needs <b>{acceptPrompt.task.budget_hours}h</b>, and office
+                    hours already closed for today (6:00 PM). Starting now means the whole thing runs
+                    outside office hours.
+                  </>
+                ) : (
+                  <>
+                    <b>{acceptPrompt.task.title}</b> needs <b>{acceptPrompt.task.budget_hours}h</b>, but office
+                    hours close in <b>{acceptPrompt.closeIn}</b> (6:00 PM). Starting now means finishing outside
+                    office hours.
+                  </>
+                )}
               </p>
             </div>
             <div className="mfoot">
@@ -546,6 +608,37 @@ export function TasksPage() {
               </button>
               <button type="button" className="btn btn-primary" onClick={() => { acceptTask(acceptPrompt.task, new Date()); }}>
                 Start now anyway
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {workloadPrompt && (
+        <div className="modal-bg show" onClick={() => setWorkloadPrompt(null)}>
+          <div className="modal" style={{ width: 440 }} onClick={(e) => e.stopPropagation()}>
+            <div className="mhead">
+              <span style={{ fontSize: 18 }}>{workloadPrompt.tier === 2 ? "🔴" : "⚠️"}</span>
+              <h3>{workloadPrompt.tier === 2 ? "That's a full day already" : "Heavy day ahead"}</h3>
+              <button className="x" onClick={() => setWorkloadPrompt(null)}>×</button>
+            </div>
+            <div className="mbody">
+              <p style={{ margin: "0 0 4px", fontSize: 13.5, lineHeight: 1.6 }}>
+                With <b>{workloadPrompt.task.title}</b>, <b>{workloadPrompt.task.editor_name}</b> would have about{" "}
+                <b>{fmtHours(workloadPrompt.total)}h</b> due <b>{workloadPrompt.task.due_date}</b> —{" "}
+                {workloadPrompt.tier === 2
+                  ? "that's a full office day (9h) or more, spread across several tasks. It likely can't all get finished today."
+                  : "more than half the office day already spoken for across other tasks."}
+              </p>
+            </div>
+            <div className="mfoot">
+              <button type="button" className="btn" onClick={() => setWorkloadPrompt(null)}>Cancel</button>
+              <button
+                type="button"
+                className="btn btn-primary"
+                onClick={() => { const t = workloadPrompt.task; setWorkloadPrompt(null); checkOfficeHours(t); }}
+              >
+                Accept anyway
               </button>
             </div>
           </div>
@@ -567,17 +660,65 @@ export function TaskModal({
   onSaved: () => void;
 }) {
   const editing = Boolean(task);
+  const { user } = useAuth();
+  const { isAdmin } = useWorkspaces();
   const [title, setTitle] = useState(task?.title ?? "");
   const [description, setDescription] = useState(task?.description ?? "");
-  const [editorId, setEditorId] = useState(task?.editor_id ?? "");
-  const [dueDate, setDueDate] = useState(task?.due_date ?? today());
+  // Only admins can assign work to someone else — a non-admin creating a task
+  // just gets it assigned to themselves; editing an existing task never
+  // silently reassigns it (falls back to whatever it already was, even null).
+  const [editorId, setEditorId] = useState(() => {
+    if (editing) return task?.editor_id ?? "";
+    return isAdmin ? "" : (user?.editorId ?? "");
+  });
+  // Creating past office close? Default the due date to tomorrow — work
+  // started tonight isn't meant for today anymore.
+  const [dueDate, setDueDate] = useState(() => {
+    if (task?.due_date) return task.due_date;
+    const now = new Date();
+    return now >= officeCloseToday(now) ? ymd(addDays(now, 1)) : today();
+  });
   const [priority, setPriority] = useState<TaskPriority>(task?.priority ?? "medium");
   const [recurrence, setRecurrence] = useState<"none" | "daily" | "weekly">(task?.recurrence ?? "none");
   const [status, setStatus] = useState<TaskStatus>(task?.status ?? "todo");
   const [taskType, setTaskType] = useState<TaskType>(task?.task_type ?? "general");
-  const [contentFormat, setContentFormat] = useState<ContentFormat | "">(task?.content_format ?? "");
+  const [contentFormatId, setContentFormatId] = useState(task?.content_format_id ?? "");
+  const { contentFormats, refetch: refetchFormats } = useContentFormats();
+  const [addingFormat, setAddingFormat] = useState(false);
+  const [newFormatName, setNewFormatName] = useState("");
+  const [savingFormat, setSavingFormat] = useState(false);
   const [saving, setSaving] = useState(false);
   const [err, setErr] = useState<string | null>(null);
+  // Self-assigning (creating for yourself, or reassigning to yourself) accepts
+  // immediately with no separate approval step — so unlike an explicit Accept,
+  // there's no "before" moment to ask about office hours or daily workload.
+  // Both checks run right after the save instead, using the server's resolved
+  // budget/start time, and offer the same choices the explicit Accept flow does.
+  const [scheduleConflict, setScheduleConflict] = useState<{ taskId: string; closeIn: string; alreadyClosed: boolean } | null>(null);
+  const [workloadConflict, setWorkloadConflict] = useState<{ task: Task; total: number; tier: 1 | 2 } | null>(null);
+  const [resolving, setResolving] = useState(false);
+
+  // Admins can grow the taxonomy inline instead of hopping to a separate
+  // settings screen — the new format is selected immediately.
+  async function addFormat() {
+    const name = newFormatName.trim();
+    if (!name) return;
+    setSavingFormat(true);
+    try {
+      const res = await api<{ contentFormat: ContentFormatDef }>("/content-formats", {
+        method: "POST",
+        body: JSON.stringify({ name }),
+      });
+      await refetchFormats();
+      setContentFormatId(res.contentFormat.id);
+      setNewFormatName("");
+      setAddingFormat(false);
+    } catch (e2) {
+      toast.error(e2 instanceof ApiError ? e2.message : "Could not add that format.");
+    } finally {
+      setSavingFormat(false);
+    }
+  }
 
   // Auto-created (post-linked) tasks are always "content" — not user-editable.
   const typeLocked = Boolean(task?.post_id);
@@ -595,25 +736,101 @@ export function TaskModal({
       priority,
       recurrence,
       status,
-      contentFormat: contentFormat || null,
+      contentFormatId: contentFormatId || null,
     };
     if (!typeLocked) payload.taskType = taskType;
     try {
-      if (editing) {
-        await api(`/tasks/${task!.id}`, { method: "PATCH", body: JSON.stringify(payload) });
-        toast.success("Task updated.");
-      } else {
-        await api("/tasks", { method: "POST", body: JSON.stringify(payload) });
-        toast.success("Task created.");
-      }
-      onSaved();
+      const res = editing
+        ? await api<{ task: Task }>(`/tasks/${task!.id}`, { method: "PATCH", body: JSON.stringify(payload) })
+        : await api<{ task: Task }>("/tasks", { method: "POST", body: JSON.stringify(payload) });
+      toast.success(editing ? "Task updated." : "Task created.");
+      if (user) noteTaskSeen(user.id, res.task.id);
+      setSaving(false);
+      await afterSave(res.task);
     } catch (e2) {
       setErr(e2 instanceof ApiError ? e2.message : "Could not save task.");
       setSaving(false);
     }
   }
 
+  // Just self-accepted with a running clock — run the same two checks the
+  // explicit Accept flow runs up front, just after the fact: first whether
+  // this overloads the day, then whether its clock runs past office close.
+  async function afterSave(saved: Task) {
+    if (saved.accepted && saved.editor_id && saved.due_date && saved.budget_hours != null) {
+      try {
+        const { tasks: siblings } = await api<{ tasks: Task[] }>(
+          `/tasks?editorId=${saved.editor_id}&dueBefore=${saved.due_date}&dueAfter=${saved.due_date}`,
+        );
+        const total = siblings
+          .filter((x) => x.id !== saved.id && x.accepted && x.status !== "done" && x.budget_hours != null)
+          .reduce((n, x) => n + Number(x.budget_hours), 0) + Number(saved.budget_hours);
+        const tier = classifyWorkload(total);
+        if (tier === 1 || tier === 2) {
+          setWorkloadConflict({ task: saved, total, tier });
+          return;
+        }
+      } catch {
+        // Best-effort — a failed workload check shouldn't block the save.
+      }
+    }
+    checkScheduleConflict(saved);
+  }
+
+  function checkScheduleConflict(saved: Task) {
+    const startMs = saved.budget_started_at ? new Date(saved.budget_started_at).getTime() : null;
+    if (saved.accepted && saved.budget_hours != null && startMs != null && startMs <= Date.now()) {
+      const close = officeCloseToday(new Date(startMs));
+      const alreadyClosed = startMs >= close.getTime();
+      const wouldEnd = startMs + saved.budget_hours * 3_600_000;
+      if (alreadyClosed || wouldEnd > close.getTime()) {
+        const mins = alreadyClosed ? 0 : Math.max(0, Math.round((close.getTime() - startMs) / 60_000));
+        setScheduleConflict({ taskId: saved.id, closeIn: `${Math.floor(mins / 60)}h ${mins % 60}m`, alreadyClosed });
+        return;
+      }
+    }
+    onSaved();
+  }
+
+  async function resolveWorkload(keep: boolean) {
+    if (!workloadConflict) return;
+    const saved = workloadConflict.task;
+    setWorkloadConflict(null);
+    if (!keep) {
+      try {
+        await api(`/tasks/${saved.id}`, { method: "PATCH", body: JSON.stringify({ editorId: null }) });
+        toast.success("Unassigned — it's back in the pool.");
+      } catch (e2) {
+        toast.error(e2 instanceof ApiError ? e2.message : "Could not unassign.");
+      }
+      onSaved();
+      return;
+    }
+    checkScheduleConflict(saved);
+  }
+
+  async function resolveConflict(reschedule: boolean) {
+    if (!scheduleConflict) return;
+    if (reschedule) {
+      setResolving(true);
+      try {
+        await api(`/tasks/${scheduleConflict.taskId}`, {
+          method: "PATCH",
+          body: JSON.stringify({ startAt: nineAmTomorrow(new Date()).toISOString() }),
+        });
+        toast.success("Deferred to 9 AM tomorrow.");
+      } catch (e2) {
+        toast.error(e2 instanceof ApiError ? e2.message : "Could not reschedule.");
+      } finally {
+        setResolving(false);
+      }
+    }
+    setScheduleConflict(null);
+    onSaved();
+  }
+
   return (
+    <>
     <Modal onClose={onClose} title={editing ? "Edit Task" : "Add Task"}>
       <form onSubmit={submit}>
         <div className="field">
@@ -627,12 +844,18 @@ export function TaskModal({
         <div className="grid g3">
           <div className="field">
             <label className="f">Assign to</label>
-            <select className="t" value={editorId} onChange={(e) => setEditorId(e.target.value)}>
-              <option value="">Unassigned</option>
-              {editors.map((ed) => (
-                <option key={ed.id} value={ed.id}>{ed.name}</option>
-              ))}
-            </select>
+            {isAdmin ? (
+              <select className="t" value={editorId} onChange={(e) => setEditorId(e.target.value)}>
+                <option value="">Unassigned</option>
+                {editors.map((ed) => (
+                  <option key={ed.id} value={ed.id}>{ed.name}</option>
+                ))}
+              </select>
+            ) : (
+              <div className="t" style={{ display: "flex", alignItems: "center", color: "var(--muted)" }} title="Only admins can assign tasks to a team member.">
+                {editors.find((ed) => ed.id === editorId)?.name ?? "Unassigned"}
+              </div>
+            )}
           </div>
           <div className="field">
             <label className="f">Due date</label>
@@ -664,19 +887,50 @@ export function TaskModal({
               <select className="t" value={taskType} onChange={(e) => setTaskType(e.target.value as TaskType)}>
                 <option value="general">🗒️ General</option>
                 <option value="short_task">⚡ Short task</option>
-                <option value="emergency">🚨 Emergency</option>
               </select>
             )}
           </div>
-          <div className="field">
-            <label className="f">Content format</label>
-            <select className="t" value={contentFormat} onChange={(e) => setContentFormat(e.target.value as ContentFormat | "")}>
-              <option value="">None</option>
-              <option value="video">🎬 Video</option>
-              <option value="image">🖼️ Image</option>
-              <option value="shoot">📷 Shoot</option>
-              <option value="other">🔧 Other</option>
-            </select>
+        </div>
+        <div className="field">
+          <label className="f">Content format</label>
+          <div className="formatpills">
+            <button
+              type="button"
+              className={"formatpill" + (contentFormatId === "" ? " on" : "")}
+              onClick={() => setContentFormatId("")}
+            >
+              None
+            </button>
+            {(contentFormats ?? []).map((f) => (
+              <button
+                type="button"
+                key={f.id}
+                className={"formatpill" + (contentFormatId === f.id ? " on" : "")}
+                onClick={() => setContentFormatId(f.id)}
+              >
+                {f.icon} {f.name}
+              </button>
+            ))}
+            {addingFormat ? (
+              <span className="formatpill-add">
+                <input
+                  className="t"
+                  autoFocus
+                  placeholder="New format name"
+                  value={newFormatName}
+                  onChange={(e) => setNewFormatName(e.target.value)}
+                  onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); addFormat(); } if (e.key === "Escape") setAddingFormat(false); }}
+                />
+                <button type="button" className="btn btn-sm btn-primary" disabled={savingFormat || !newFormatName.trim()} onClick={addFormat}>
+                  {savingFormat ? "…" : "Add"}
+                </button>
+                <button type="button" className="btn btn-sm" onClick={() => { setAddingFormat(false); setNewFormatName(""); }}>✕</button>
+              </span>
+            ) : (
+              <button type="button" className="formatpill formatpill-new" onClick={() => setAddingFormat(true)}>
+                ＋ New format
+              </button>
+            )}
           </div>
         </div>
         <div className="field">
@@ -691,7 +945,7 @@ export function TaskModal({
         </div>
         {editing && task?.budget_hours != null && (
           <div className="field">
-            <label className="f">Time budget</label>
+            <label className="f">Time allotted</label>
             <div className="autofield">
               ⏱ {task.budget_hours}h, started {new Date(task.budget_started_at!).toLocaleString()} — set by your admin, not editable here.
             </div>
@@ -709,6 +963,59 @@ export function TaskModal({
         </div>
       </form>
     </Modal>
+    {scheduleConflict && (
+      <div className="modal-bg show" onClick={() => resolveConflict(false)}>
+        <div className="modal" style={{ width: 440 }} onClick={(e) => e.stopPropagation()}>
+          <div className="mhead">
+            <span style={{ fontSize: 18 }}>⏰</span>
+            <h3>{scheduleConflict.alreadyClosed ? "Office hours have ended for today" : "This runs past office hours"}</h3>
+            <button className="x" onClick={() => resolveConflict(false)}>×</button>
+          </div>
+          <div className="mbody">
+            <p style={{ margin: "0 0 4px", fontSize: 13.5, lineHeight: 1.6 }}>
+              {scheduleConflict.alreadyClosed ? (
+                <>Its timer already started, and office hours closed for today (6:00 PM) — the whole thing would run outside office hours.</>
+              ) : (
+                <>Its timer already started, but office hours close in <b>{scheduleConflict.closeIn}</b> (6:00 PM) — it'll finish outside office hours.</>
+              )}
+            </p>
+          </div>
+          <div className="mfoot">
+            <button type="button" className="btn" disabled={resolving} onClick={() => resolveConflict(true)}>
+              {resolving ? "…" : "Start 9 AM tomorrow"}
+            </button>
+            <button type="button" className="btn btn-primary" disabled={resolving} onClick={() => resolveConflict(false)}>
+              Keep as started
+            </button>
+          </div>
+        </div>
+      </div>
+    )}
+    {workloadConflict && (
+      <div className="modal-bg show" onClick={() => resolveWorkload(false)}>
+        <div className="modal" style={{ width: 440 }} onClick={(e) => e.stopPropagation()}>
+          <div className="mhead">
+            <span style={{ fontSize: 18 }}>{workloadConflict.tier === 2 ? "🔴" : "⚠️"}</span>
+            <h3>{workloadConflict.tier === 2 ? "That's a full day already" : "Heavy day ahead"}</h3>
+            <button className="x" onClick={() => resolveWorkload(false)}>×</button>
+          </div>
+          <div className="mbody">
+            <p style={{ margin: "0 0 4px", fontSize: 13.5, lineHeight: 1.6 }}>
+              With <b>{workloadConflict.task.title}</b>, this now adds up to about{" "}
+              <b>{fmtHours(workloadConflict.total)}h</b> due <b>{workloadConflict.task.due_date}</b> —{" "}
+              {workloadConflict.tier === 2
+                ? "a full office day (9h) or more, spread across several tasks. It likely can't all get finished today."
+                : "more than half the office day already spoken for across other tasks."}
+            </p>
+          </div>
+          <div className="mfoot">
+            <button type="button" className="btn" onClick={() => resolveWorkload(false)}>Unassign me</button>
+            <button type="button" className="btn btn-primary" onClick={() => resolveWorkload(true)}>Keep it</button>
+          </div>
+        </div>
+      </div>
+    )}
+    </>
   );
 }
 

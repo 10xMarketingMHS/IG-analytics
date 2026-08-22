@@ -8,11 +8,14 @@ export const usersRouter = Router();
 
 const ROLES = ["admin", "editor", "viewer"];
 
-// Everything here is admin-only.
-usersRouter.use(requireAdmin);
+// Everything here is admin-only — requireAdmin is applied per-route, not
+// router-wide. A router-level `.use(requireAdmin)` would 403 every request
+// that reaches this router before Express even checks whether one of its own
+// paths matches, silently blocking routers mounted after it too (activity,
+// integrations) for non-admins.
 
 // List the members of the active workspace with their role.
-usersRouter.get("/users", async (req, res, next) => {
+usersRouter.get("/users", requireAdmin, async (req, res, next) => {
   try {
     const { rows } = await pool.query(
       `select u.id, u.email, u.name, u.active, u.editor_id, m.role
@@ -42,7 +45,7 @@ const CreateSchema = z.object({
 
 // Add a user to the workspace with a role. Creates the account if the email
 // is new (password required); otherwise just grants access to an existing one.
-usersRouter.post("/users", async (req, res, next) => {
+usersRouter.post("/users", requireAdmin, async (req, res, next) => {
   const parsed = CreateSchema.safeParse(req.body);
   if (!parsed.success) {
     return res.status(400).json({ error: "Enter a valid email, role, and a password (6+ chars) for new users." });
@@ -126,7 +129,7 @@ async function adminCount(workspaceId) {
 
 // Update a member: role (in this workspace), account active flag, name, or
 // password reset. Protects against locking out the last admin / yourself.
-usersRouter.patch("/users/:id", async (req, res, next) => {
+usersRouter.patch("/users/:id", requireAdmin, async (req, res, next) => {
   const parsed = UpdateSchema.safeParse(req.body);
   if (!parsed.success) return res.status(400).json({ error: "Invalid update." });
   const { role, active, name, password, editorId } = parsed.data;
@@ -194,7 +197,7 @@ usersRouter.patch("/users/:id", async (req, res, next) => {
 
 // Revoke a user's access to this workspace (removes their membership). The
 // account itself remains (deactivate it separately to block all login).
-usersRouter.delete("/users/:id", async (req, res, next) => {
+usersRouter.delete("/users/:id", requireAdmin, async (req, res, next) => {
   const targetId = req.params.id;
   if (targetId === req.user.sub) {
     return res.status(409).json({ error: "You can't remove your own access." });
