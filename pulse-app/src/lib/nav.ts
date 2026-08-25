@@ -1,13 +1,11 @@
-export type NavSection = "Home" | "Analytics" | "Tasks" | "Operations" | "Manage";
+export type NavSection = "Home" | "Analytics" | "Tasks" | "Manage";
 
 // Section order + which ones show a group label (Home is unlabeled — it's the
-// landing item at the very top). Tasks is its own group, separate from
-// Operations — task/work-assignment tools vs. the content editing pipeline.
+// landing item at the very top).
 export const NAV_SECTIONS: { key: NavSection; label?: string }[] = [
   { key: "Home" },
   { key: "Tasks", label: "Tasks" },
   { key: "Analytics", label: "Analytics" },
-  { key: "Operations", label: "Operations" },
   { key: "Manage", label: "Manage" },
 ];
 
@@ -22,20 +20,18 @@ export type NavItem = {
   adminOnly?: boolean;
 };
 
-// Two pillars over a shared core: Analytics (content) + Operations (people).
 export const NAV_ITEMS: NavItem[] = [
   { title: "Home", href: "/home", icon: "🏠", section: "Home" },
   { title: "Dashboard", href: "/dashboard", icon: "📊", section: "Analytics" },
-  { title: "Insights", href: "/insights", icon: "💡", section: "Analytics" },
-  { title: "Trends", href: "/trends", icon: "📈", section: "Analytics" },
+  // Insights, Trends, Reports — hidden from the sidebar per request; routes/
+  // pages still exist (see App.tsx, PAGE_META below), just not linked.
   { title: "Top Performers", href: "/top", icon: "🥇", section: "Analytics" },
   { title: "Leaderboard", href: "/leaderboard", icon: "🏆", section: "Analytics" },
-  { title: "Reports", href: "/reports", icon: "📄", section: "Analytics" },
   { title: "Task Board", href: "/tasks", icon: "✅", section: "Tasks" },
-  { title: "Social Media", href: "/social-media", icon: "📱", section: "Tasks" },
+  { title: "Social & Ads Pipeline", href: "/metrics", icon: "🎬", section: "Tasks" },
   { title: "Task Settings", href: "/task-rules", icon: "🛠️", section: "Tasks", adminOnly: true },
-  { title: "Editing Pipeline", href: "/metrics", icon: "🎬", section: "Operations" },
-  { title: "Activity", href: "/activity", icon: "🔔", section: "Operations" },
+  // Social Media, Activity — hidden from the sidebar per request; routes/
+  // pages still exist.
   { title: "Add Post", href: "/posts/new", icon: "➕", section: "Manage", adminOnly: true },
   { title: "Posts", href: "/posts", icon: "🗂️", section: "Manage", showBadge: true },
   { title: "Channels", href: "/channels", icon: "🌐", section: "Manage" },
@@ -47,7 +43,7 @@ export const NAV_ITEMS: NavItem[] = [
 export const PAGE_META: Record<string, [string, string]> = {
   "/home": ["Home", "What needs your attention today"],
   "/dashboard": ["Dashboard", "Live analytics from your content data"],
-  "/metrics": ["Editing Progress", "Track every post through its editing pipeline across channels"],
+  "/metrics": ["Social & Ads Pipeline", "Who's working on which Social post or Ad, and where it stands"],
   "/insights": ["Insights", "What your data is telling you — computed automatically"],
   "/trends": ["Trends", "How your content is performing over time, and platform vs platform"],
   "/top": ["Top Performers", "Your best-performing content, ranked separately for each platform"],

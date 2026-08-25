@@ -11,14 +11,24 @@ function fmt(seconds: number) {
 }
 
 // Floating bottom-right pause/resume control for the shared daily break
-// budget (lunch + tea breaks). Only shown to logged-in team members (an
-// admin-only login with no linked editor has nothing to pause). Mounted once
-// in the app shell so it's available from any page, not just the Task Board.
+// budget (lunch + tea breaks). Stays visible for every logged-in user —
+// an admin-only login with no linked editor sees a disabled, explained
+// state rather than the widget just vanishing. Mounted once in the app
+// shell so it's available from any page, not just the Task Board.
 export function BreakWidget() {
   const { user } = useAuth();
   const { status, displayRemaining, busy, start, end } = useBreak();
 
-  if (!user?.editorId || !status || status.unlinked) return null;
+  if (!user || !status) return null;
+
+  if (status.unlinked) {
+    return (
+      <div className="break-widget" title="Ask an admin to link your login to a team member to track breaks.">
+        <div className="break-widget-label">No break tracking — account not linked to a team member</div>
+        <button type="button" className="break-widget-btn" disabled>⏸</button>
+      </div>
+    );
+  }
 
   const remaining = displayRemaining ?? status.remainingSeconds;
   const outOfBreak = !status.onBreak && remaining <= 0;

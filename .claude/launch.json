@@ -3,16 +3,10 @@
   "configurations": [
     {
       "name": "pulse-app",
-      "runtimeExecutable": "/Users/vasanthmhs/.nvm/versions/node/v24.18.0/bin/node",
-      "runtimeArgs": [
-        "/Users/vasanthmhs/Desktop/vasanth/Software /IG analytics/pulse-app/node_modules/vite/bin/vite.js",
-        "/Users/vasanthmhs/Desktop/vasanth/Software /IG analytics/pulse-app"
-      ],
+      "runtimeExecutable": "npm",
+      "runtimeArgs": ["--prefix", "pulse-app", "run", "dev"],
       "port": 3000,
-      "autoPort": true,
-      "env": {
-        "PATH": "/Users/vasanthmhs/.nvm/versions/node/v24.18.0/bin:/usr/bin:/bin:/usr/sbin:/sbin"
-      }
+      "autoPort": true
     }
   ]
 }

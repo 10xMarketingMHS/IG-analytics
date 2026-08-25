@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, type FormEvent, type ReactNode } from "react";
+import { useEffect, useMemo, useRef, useState, type FormEvent, type ReactNode } from "react";
 import {
   DndContext, DragOverlay, MouseSensor, TouchSensor, KeyboardSensor,
   useSensor, useSensors, useDraggable, useDroppable, closestCorners,
@@ -8,14 +8,14 @@ import { useTasks } from "@/lib/use-tasks";
 import { useEditors } from "@/lib/use-editors";
 import { useContentFormats } from "@/lib/use-content-formats";
 import { noteTaskSeen } from "@/lib/use-task-notify";
-import { breakOffsetMs } from "@/lib/task-timing";
+import { breakOffsetMs, isOverBudget } from "@/lib/task-timing";
 import { useAuth } from "@/lib/auth-context";
 import { useWorkspaces } from "@/lib/workspaces-context";
 import { usePosts } from "@/lib/use-posts";
 import { api, ApiError } from "@/lib/api";
 import { Modal } from "@/components/modal";
 import { toast } from "sonner";
-import type { Task, TaskStatus, TaskPriority, TaskType, ContentFormatDef, Editor, Subtask, TaskComment } from "@/lib/types";
+import type { Task, TaskStatus, TaskPriority, TaskType, TaskMeta, TaskReviewLogEntry, ContentFormatDef, Editor, Subtask, TaskComment } from "@/lib/types";
 
 function relTime(iso: string) {
   const mins = Math.round((Date.now() - new Date(iso).getTime()) / 60000);
@@ -29,6 +29,7 @@ function relTime(iso: string) {
 const COLUMNS: { key: TaskStatus; label: string }[] = [
   { key: "todo", label: "To do" },
   { key: "in_progress", label: "In progress" },
+  { key: "review", label: "Review" },
   { key: "done", label: "Done" },
 ];
 const PRI_LABEL: Record<TaskPriority, string> = { low: "Low", medium: "Medium", high: "High" };
@@ -37,8 +38,20 @@ const TYPE_LABEL: Record<TaskType, string> = {
   content: "Content",
   short_task: "Short task",
   general: "General",
+  social: "Social Media",
+  ad: "Paid Ad",
 };
-const TYPE_ICON: Record<TaskType, string> = { content: "📄", short_task: "⚡", general: "🗒️" };
+const TYPE_ICON: Record<TaskType, string> = { content: "📄", short_task: "⚡", general: "🗒️", social: "📱", ad: "📢" };
+// Task types selectable in the Add/Edit Task modal — "content" is reserved
+// for auto-created (post-linked) tasks, not offered here.
+const SELECTABLE_TASK_TYPES: TaskType[] = ["general", "short_task", "social", "ad"];
+// Coarse 3-way grouping for color-coding (calendar view, etc.) — mirrors the
+// "Normal / Social / Ad" split already used in the toolbar summary stats.
+// content/short_task/general all read as "Normal" work at a glance.
+type TaskTypeBucket = "normal" | "social" | "ad";
+function taskTypeBucket(t: Task): TaskTypeBucket {
+  return t.task_type === "social" ? "social" : t.task_type === "ad" ? "ad" : "normal";
+}
 
 // Second, independent classifier — what production format the work is. Now a
 // live, admin-manageable list (task_content_format) instead of a fixed enum —
@@ -99,15 +112,18 @@ function budgetInfo(t: Task, nowMs: number) {
   if (t.budget_hours == null || !t.budget_started_at || t.status === "done") return null;
   const startMs = new Date(t.budget_started_at).getTime();
   if (startMs > nowMs) {
-    return { scheduled: true, over: false, label: `Starts ${new Date(startMs).toLocaleString([], { weekday: "short", hour: "numeric", minute: "2-digit" })}` };
+    return { scheduled: true, over: false, paused: false, label: `Starts ${new Date(startMs).toLocaleString([], { weekday: "short", hour: "numeric", minute: "2-digit" })}` };
   }
   const deadlineMs = startMs + t.budget_hours * 3_600_000 + breakOffsetMs(t, nowMs);
   const remainingMs = deadlineMs - nowMs;
   const over = remainingMs < 0;
+  // On break right now, and not already over even accounting for the break
+  // offset — the clock reads as paused (yellow) rather than running (green).
+  const paused = !over && !!t.editor_break_started_at;
   const absMs = Math.abs(remainingMs);
   const h = Math.floor(absMs / 3_600_000);
   const m = Math.floor((absMs % 3_600_000) / 60_000);
-  return { scheduled: false, over, label: h > 0 ? `${h}h ${m}m` : `${m}m` };
+  return { scheduled: false, over, paused, label: h > 0 ? `${h}h ${m}m` : `${m}m` };
 }
 
 // Office hours the acceptance dual-confirmation checks against.
@@ -192,19 +208,31 @@ export function TasksPage() {
   const { editors } = useEditors();
   const { contentFormats } = useContentFormats();
   const { user } = useAuth();
-  const { active } = useWorkspaces();
+  const { active, isAdmin } = useWorkspaces();
   const role = active?.role;
   // Viewers are read-only (the backend already 403s their writes); hide the
   // status-move controls from them so the affordance matches the permission.
   const canWrite = active?.role !== "viewer";
-  // Only the person a task is assigned to can move it between columns — not
-  // whoever assigned it, not an admin (the backend enforces this too).
-  const canMoveStatus = (t: Task) => canWrite && !!user?.editorId && t.editor_id === user.editorId;
+  const isOwner = (t: Task) => !!user?.editorId && t.editor_id === user.editorId;
+  // Review is a checkpoint, not just another column: the assignee moves a
+  // task through todo -> in_progress -> review on their own; only an admin
+  // can resolve a review — approve it into done, or send it back to
+  // in_progress for rework. The backend enforces this too.
+  function canTransition(t: Task, target: TaskStatus): boolean {
+    if (!canWrite || target === t.status) return false;
+    if (t.status === "review") return isAdmin && (target === "done" || target === "in_progress");
+    if (target === "done") return false; // must go through review
+    return isOwner(t);
+  }
+  const canMoveStatus = (t: Task) => canWrite && (t.status === "review" ? isAdmin : isOwner(t));
 
   const [filterEditor, setFilterEditor] = useState("");
   const [filterType, setFilterType] = useState<TaskType | "">("");
   const [filterFormat, setFilterFormat] = useState("");
   const [dueTab, setDueTab] = useState<DueTab>("all");
+  // Global lookup — matches a task's TID/SID/AdID exactly or its title
+  // loosely, so "TID-00042" or "diabetes reel" both find their way in.
+  const [search, setSearch] = useState("");
   // Optimistic status overrides (task id → status) applied while a move's PATCH
   // is in flight, so a drop or a link-click moves the card immediately.
   const [pending, setPending] = useState<Record<string, TaskStatus>>({});
@@ -226,6 +254,7 @@ export function TasksPage() {
   // Double-approval prompt when accepting would push the assignee's committed
   // hours for that due date past a normal day's worth of work.
   const [workloadPrompt, setWorkloadPrompt] = useState<{ task: Task; total: number; tier: 1 | 2 } | null>(null);
+  const [reworkNotePrompt, setReworkNotePrompt] = useState<{ task: Task } | null>(null);
 
   // "My Tasks" vs "Team" — editors default to their own work, admins default
   // to the whole team's (since they assign & monitor it). Either can toggle;
@@ -256,34 +285,90 @@ export function TasksPage() {
     [tasks, pending],
   );
   const filtered = useMemo(
-    () =>
-      effective.filter((t) => {
+    () => {
+      const q = search.trim().toLowerCase();
+      return effective.filter((t) => {
         if (scope === "mine" && t.editor_id !== user?.editorId) return false;
         if (filterEditor && t.editor_id !== filterEditor) return false;
         if (filterType && t.task_type !== filterType) return false;
         if (filterFormat && t.content_format_id !== filterFormat) return false;
         if (!matchesDueTab(t, dueTab, now)) return false;
+        if (q) {
+          const hit =
+            t.title.toLowerCase().includes(q) ||
+            t.tid?.toLowerCase().includes(q) ||
+            t.sid?.toLowerCase().includes(q) ||
+            t.ad_id?.toLowerCase().includes(q);
+          if (!hit) return false;
+        }
         return true;
-      }),
-    [effective, scope, user?.editorId, filterEditor, filterType, filterFormat, dueTab, now],
+      });
+    },
+    [effective, scope, user?.editorId, filterEditor, filterType, filterFormat, dueTab, now, search],
   );
   const byStatus = (s: TaskStatus) => filtered.filter((t) => t.status === s);
+
+  // Toolbar summary strip — counts across every task in the org (not just
+  // whatever's currently filtered), so it reads as a stable at-a-glance total.
+  const taskCounts = useMemo(() => {
+    const all = tasks ?? [];
+    let social = 0, ad = 0, pendingOverdue = 0;
+    for (const t of all) {
+      if (t.task_type === "social") social++;
+      if (t.task_type === "ad") ad++;
+      const overdue = t.status !== "done" && !!t.due_date && t.due_date < today();
+      if (overdue || isOverBudget(t, nowMs)) pendingOverdue++;
+    }
+    return { total: all.length, social, ad, pendingOverdue };
+  }, [tasks, nowMs]);
 
   // Both the ←/→ links and drag-and-drop call this — one PATCH path, so the
   // backend side effects (completion timestamp, recurring spawn, activity log)
   // are identical however the card is moved. Optimistic: the card moves now;
   // on failure it reverts to its original column and an error is surfaced.
-  async function move(t: Task, status: TaskStatus) {
+  // Sending a task back from review needs a note first — that's a separate
+  // prompt (see sendBackPrompt below) rather than an instant move.
+  async function move(t: Task, status: TaskStatus, reviewNote?: string) {
     if (t.status === status) return;
-    if (!canMoveStatus(t)) { toast.error("Only the person this task is assigned to can move it."); return; }
+    if (!canTransition(t, status)) {
+      toast.error(
+        t.status === "review"
+          ? "Only an admin can approve or send back a task in review."
+          : status === "done"
+            ? "Move it to Review first."
+            : "Only the person this task is assigned to can move it.",
+      );
+      return;
+    }
+    if (t.status === "review" && status === "in_progress" && reviewNote === undefined) {
+      setSendBackPrompt({ task: t });
+      setSendBackNote("");
+      return;
+    }
     setPending((p) => ({ ...p, [t.id]: status }));
     try {
-      await api(`/tasks/${t.id}`, { method: "PATCH", body: JSON.stringify({ status }) });
+      await api(`/tasks/${t.id}`, { method: "PATCH", body: JSON.stringify({ status, ...(reviewNote ? { reviewNote } : {}) }) });
       await refetch();
     } catch (err) {
       toast.error(err instanceof ApiError ? err.message : "Could not update task.");
     } finally {
       setPending((p) => { const n = { ...p }; delete n[t.id]; return n; });
+    }
+  }
+
+  const [sendBackPrompt, setSendBackPrompt] = useState<{ task: Task } | null>(null);
+  const [sendBackNote, setSendBackNote] = useState("");
+  const [sendingBackBusy, setSendingBackBusy] = useState(false);
+  async function confirmSendBack() {
+    if (!sendBackPrompt) return;
+    const note = sendBackNote.trim();
+    if (!note) { toast.error("Add a note explaining what needs fixing."); return; }
+    setSendingBackBusy(true);
+    try {
+      await move(sendBackPrompt.task, "in_progress", note);
+      setSendBackPrompt(null);
+    } finally {
+      setSendingBackBusy(false);
     }
   }
 
@@ -334,10 +419,21 @@ export function TasksPage() {
       .reduce((n, x) => n + Number(x.budget_hours), 0);
   }
 
-  // Accepting runs two checks in sequence, either of which can pause for a
+  // Accepting a reworked task shows the admin's note first — the whole point
+  // of the re-accept gate is that the assignee actually sees what needs
+  // fixing before the clock resumes, not that it just silently continues.
+  function handleAccept(t: Task) {
+    if (t.pending_note) {
+      setReworkNotePrompt({ task: t });
+      return;
+    }
+    proceedAccept(t);
+  }
+
+  // Then the usual checks, in sequence, either of which can pause for a
   // confirmation: first whether it overloads the day, then whether its clock
   // would run past office close (including after close has already passed).
-  function handleAccept(t: Task) {
+  function proceedAccept(t: Task) {
     if (t.editor_id && t.due_date && t.budget_hours != null) {
       const total = workloadTotalFor(t.editor_id, t.due_date, t.id) + Number(t.budget_hours);
       const tier = classifyWorkload(total);
@@ -366,14 +462,55 @@ export function TasksPage() {
 
   return (
     <section className="screen">
-      <div className="toolbar">
-        <div className="seg" style={{ margin: 0 }}>
+      {/* Always visible, never competes for space with the filters below —
+          search and creating a task are the two things you reach for most. */}
+      <div className="toolbar-primary">
+        <div className="search" style={{ maxWidth: 420 }}>
+          🔎
+          <input
+            placeholder="Search by TID / SID / AdID / title…"
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+          />
+        </div>
+        <div className="toolbar-summary">
+          <span><b>{taskCounts.total}</b> total</span>
+          <span className="dot-sep">·</span>
+          <span><b>{taskCounts.social}</b> social</span>
+          <span className="dot-sep">·</span>
+          <span><b>{taskCounts.ad}</b> ad</span>
+          <span className="dot-sep">·</span>
+          <span className={taskCounts.pendingOverdue > 0 ? "toolbar-summary-alert" : undefined}><b>{taskCounts.pendingOverdue}</b> pending/overdue</span>
+        </div>
+        <button
+          className="btn btn-primary"
+          style={{ marginLeft: "auto" }}
+          onClick={() => {
+            setEditing(null);
+            setModalOpen(true);
+          }}
+        >
+          ＋ Add Task
+        </button>
+      </div>
+
+      {/* Filters — each group is its own pill/tab cluster and wraps onto a
+          new line if it doesn't fit, instead of forcing a horizontal scrollbar. */}
+      <div className="toolbar-filters">
+        <div className="seg">
           <button className={scope === "mine" ? "on" : ""} onClick={() => setScopeAndPersist("mine")}>🙋 My Tasks</button>
           <button className={scope === "team" ? "on" : ""} onClick={() => setScopeAndPersist("team")}>👥 Team</button>
         </div>
+        <div className="seg tabseg">
+          {DUE_TABS.map((d) => (
+            <button key={d.key} className={dueTab === d.key ? "on" : ""} onClick={() => setDueTab(d.key)}>
+              {d.label}
+            </button>
+          ))}
+        </div>
         <select
           className="t"
-          style={{ maxWidth: 200 }}
+          style={{ maxWidth: 160 }}
           value={filterEditor}
           onChange={(e) => setFilterEditor(e.target.value)}
         >
@@ -384,7 +521,7 @@ export function TasksPage() {
         </select>
         <select
           className="t"
-          style={{ maxWidth: 170 }}
+          style={{ maxWidth: 145 }}
           value={filterType}
           onChange={(e) => setFilterType(e.target.value as TaskType | "")}
         >
@@ -395,7 +532,7 @@ export function TasksPage() {
         </select>
         <select
           className="t"
-          style={{ maxWidth: 160 }}
+          style={{ maxWidth: 135 }}
           value={filterFormat}
           onChange={(e) => setFilterFormat(e.target.value)}
         >
@@ -404,28 +541,10 @@ export function TasksPage() {
             <option key={f.id} value={f.id}>{f.icon} {f.name}</option>
           ))}
         </select>
-        <div className="seg" style={{ margin: 0 }}>
+        <div className="seg" style={{ marginLeft: "auto" }}>
           <button className={view === "board" ? "on" : ""} onClick={() => setView("board")}>🗂️ Board</button>
           <button className={view === "calendar" ? "on" : ""} onClick={() => setView("calendar")}>📅 Calendar</button>
         </div>
-        <div className="spacer" />
-        <button
-          className="btn btn-primary"
-          onClick={() => {
-            setEditing(null);
-            setModalOpen(true);
-          }}
-        >
-          ＋ Add Task
-        </button>
-      </div>
-
-      <div className="seg duetabs">
-        {DUE_TABS.map((d) => (
-          <button key={d.key} className={dueTab === d.key ? "on" : ""} onClick={() => setDueTab(d.key)}>
-            {d.label}
-          </button>
-        ))}
       </div>
 
       {scope === "mine" && !user?.editorId && (
@@ -453,7 +572,15 @@ export function TasksPage() {
         >
         <div className="task-board">
           {COLUMNS.map((col, ci) => {
-            const items = byStatus(col.key);
+            const allItems = byStatus(col.key);
+            // Done resets daily on the board — only today's completions show
+            // here, so it never grows into an endless scroll. Anything
+            // finished on an earlier day is still there, just not on the
+            // board — the Calendar shows every day's completions by the day
+            // they were actually finished (see TaskCalendar below).
+            const isDone = col.key === "done";
+            const items = isDone ? allItems.filter((t) => t.completed_at && ymd(new Date(t.completed_at)) === today()) : allItems;
+            const olderDoneCount = isDone ? allItems.length - items.length : 0;
             return (
               <DroppableColumn id={col.key} key={col.key}>
                 <div className="task-colhead">
@@ -470,6 +597,10 @@ export function TasksPage() {
                           <span className={"task-pri-dot " + t.priority} />
                           <span className={"task-pri-label" + (t.priority === "high" ? " high" : "")}>{PRI_LABEL[t.priority]}</span>
                         </span>
+                        <span className="task-kind">
+                          {TYPE_ICON[t.task_type]} {TYPE_LABEL[t.task_type]}
+                          {t.content_format_name && <> · {t.content_format_icon} {t.content_format_name}</>}
+                        </span>
                         <span className="task-flags">
                           {t.post_id && <span title="Auto-created from a post">📄</span>}
                           {t.recurrence !== "none" && <span title={`Repeats ${t.recurrence}`}>🔁</span>}
@@ -483,24 +614,33 @@ export function TasksPage() {
                         </button>
                       </div>
                       <div className="task-title">{t.title}</div>
-                      <div className="task-kind">
-                        <span>{TYPE_ICON[t.task_type]} {TYPE_LABEL[t.task_type]}</span>
-                        {t.content_format_name && (
-                          <>
-                            <span className="dot-sep">·</span>
-                            <span>{t.content_format_icon} {t.content_format_name}</span>
-                          </>
-                        )}
-                      </div>
+                      {t.pending_note && (
+                        <div className="task-rework-note" title={t.pending_note}>
+                          📝 Rework: {t.pending_note}
+                        </div>
+                      )}
+                      {(t.tid || t.sid || t.ad_id || t.revision > 1) && (
+                        <div className="task-ids">
+                          {t.tid && <span>{t.tid}</span>}
+                          {t.sid && <><span className="dot-sep">·</span><span>{t.sid}</span></>}
+                          {t.ad_id && <><span className="dot-sep">·</span><span>{t.ad_id}</span></>}
+                          {t.revision > 1 && <><span className="dot-sep">·</span><span title="Sent back for rework" style={{ color: "var(--amber)" }}>Rev {t.revision}</span></>}
+                        </div>
+                      )}
                       <div className="task-meta">
-                        <Assignee name={t.editor_name} image={t.editor_image} />
+                        {/* Every card in "My Tasks" is already yours — showing your own name on each one is noise */}
+                        {!(scope === "mine" && t.editor_id === user?.editorId) && (
+                          <Assignee name={t.editor_name} image={t.editor_image} />
+                        )}
                         {t.due_date && (
                           <span className={"task-due" + (overdue ? " over" : "")}>
                             📅 {t.due_date}
                             {overdue && ` · ${daysOverdue(t.due_date!)}d overdue`}
                           </span>
                         )}
-                        {t.editor_id && !t.accepted ? (
+                      </div>
+                      {(() => {
+                        const acceptSlot = t.editor_id && !t.accepted ? (
                           user?.editorId === t.editor_id ? (
                             <button
                               type="button"
@@ -515,39 +655,72 @@ export function TasksPage() {
                         ) : (() => {
                           const b = budgetInfo(t, nowMs);
                           if (!b) return null;
+                          const cls = b.over ? " over" : b.paused ? " paused" : b.scheduled ? "" : " running";
+                          const title = b.scheduled
+                            ? "Timer hasn't started yet"
+                            : b.over
+                              ? "Ran past its allotted time — needs follow-up"
+                              : b.paused
+                                ? "Paused — the assignee is on a break"
+                                : "Time remaining";
                           return (
-                            <span className={"task-timer" + (b.over ? " over" : "")} title={b.scheduled ? "Timer hasn't started yet" : b.over ? "Ran past its allotted time — needs follow-up" : "Time remaining"}>
-                              {b.scheduled ? `⏱ ${b.label}` : b.over ? `⚠ Pending — ${b.label} over` : `⏱ ${b.label} left`}
+                            <span className={"task-timer" + cls} title={title}>
+                              {b.scheduled ? `⏱ ${b.label}` : b.over ? `⚠ Pending — ${b.label} over` : b.paused ? `⏸ ${b.label} left` : `⏱ ${b.label} left`}
                             </span>
                           );
-                        })()}
-                        {t.subtask_total > 0 && (
+                        })();
+                        const subtaskSlot = t.subtask_total > 0 && (
                           <span className={"task-check" + (t.subtask_done === t.subtask_total ? " full" : "")}>
                             ☑ {t.subtask_done}/{t.subtask_total}
                           </span>
-                        )}
-                      </div>
-                      {canMoveStatus(t) && (
-                        <div className="task-actions" onClick={(e) => e.stopPropagation()}>
-                          {ci > 0 && (
-                            <button className="linkbtn" onClick={() => move(t, COLUMNS[ci - 1].key)}>
-                              ← {COLUMNS[ci - 1].label}
-                            </button>
-                          )}
-                          {ci < COLUMNS.length - 1 && (
-                            <button className="linkbtn" onClick={() => move(t, COLUMNS[ci + 1].key)}>
-                              {COLUMNS[ci + 1].label} →
-                            </button>
-                          )}
-                        </div>
-                      )}
+                        );
+                        if (!acceptSlot && !subtaskSlot) return null;
+                        return (
+                          <div className="task-status-row">
+                            {acceptSlot}
+                            {subtaskSlot}
+                          </div>
+                        );
+                      })()}
+                      {(() => {
+                        const canPrev = ci > 0 && canTransition(t, COLUMNS[ci - 1].key);
+                        const canNext = ci < COLUMNS.length - 1 && canTransition(t, COLUMNS[ci + 1].key);
+                        if (!canPrev && !canNext) {
+                          // In review but this isn't an admin's view — nothing
+                          // to do here but wait.
+                          return t.status === "review" ? (
+                            <div className="task-actions">
+                              <span className="hint" style={{ margin: 0 }}>⏳ Waiting on admin review</span>
+                            </div>
+                          ) : null;
+                        }
+                        return (
+                          <div className="task-actions" onClick={(e) => e.stopPropagation()}>
+                            {canPrev && (
+                              <button className="linkbtn" onClick={() => move(t, COLUMNS[ci - 1].key)}>
+                                ← {COLUMNS[ci - 1].label}
+                              </button>
+                            )}
+                            {canNext && (
+                              <button className="linkbtn" onClick={() => move(t, COLUMNS[ci + 1].key)}>
+                                {COLUMNS[ci + 1].label} →
+                              </button>
+                            )}
+                          </div>
+                        );
+                      })()}
                     </div>
                   );
                   return canMoveStatus(t) ? (
                     <DraggableCard id={t.id} key={t.id}>{cardInner}</DraggableCard>
                   ) : cardInner;
                 })}
-                {items.length === 0 && <div className="task-empty">Nothing here</div>}
+                {items.length === 0 && <div className="task-empty">{isDone ? "Nothing finished yet today" : "Nothing here"}</div>}
+                {isDone && olderDoneCount > 0 && (
+                  <button type="button" className="task-show-more" onClick={() => setView("calendar")}>
+                    {olderDoneCount} completed on earlier days — view Calendar →
+                  </button>
+                )}
               </DroppableColumn>
             );
           })}
@@ -644,6 +817,80 @@ export function TasksPage() {
           </div>
         </div>
       )}
+
+      {reworkNotePrompt && (
+        <div className="modal-bg show" onClick={() => setReworkNotePrompt(null)}>
+          <div className="modal" style={{ width: 440 }} onClick={(e) => e.stopPropagation()}>
+            <div className="mhead">
+              <span style={{ fontSize: 18 }}>📝</span>
+              <h3>Rework requested</h3>
+              <button className="x" onClick={() => setReworkNotePrompt(null)}>×</button>
+            </div>
+            <div className="mbody">
+              <p style={{ margin: "0 0 10px", fontSize: 13.5, lineHeight: 1.6 }}>
+                Before you continue on <b>{reworkNotePrompt.task.title}</b>, here's what the admin flagged:
+              </p>
+              <div style={{
+                background: "rgba(255,255,255,0.06)",
+                border: "1px solid rgba(255,255,255,0.12)",
+                borderRadius: 10,
+                padding: "10px 12px",
+                fontSize: 13.5,
+                lineHeight: 1.6,
+                whiteSpace: "pre-wrap",
+              }}>
+                {reworkNotePrompt.task.pending_note}
+              </div>
+              <p style={{ margin: "10px 0 0", fontSize: 12.5, opacity: 0.7 }}>
+                Accepting resumes your timer from where it was paused — it won't reset to the full budget.
+              </p>
+            </div>
+            <div className="mfoot">
+              <button type="button" className="btn" onClick={() => setReworkNotePrompt(null)}>Cancel</button>
+              <button
+                type="button"
+                className="btn btn-primary"
+                onClick={() => {
+                  const t = reworkNotePrompt.task;
+                  setReworkNotePrompt(null);
+                  proceedAccept(t);
+                }}
+              >
+                Got it, continue
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+      {sendBackPrompt && (
+        <div className="modal-bg show" onClick={() => setSendBackPrompt(null)}>
+          <div className="modal" style={{ width: 440 }} onClick={(e) => e.stopPropagation()}>
+            <div className="mhead">
+              <span style={{ fontSize: 18 }}>↩️</span>
+              <h3>Send back for rework</h3>
+              <button className="x" onClick={() => setSendBackPrompt(null)}>×</button>
+            </div>
+            <div className="mbody">
+              <p style={{ margin: "0 0 10px", fontSize: 13.5, lineHeight: 1.6 }}>
+                What does <b>{sendBackPrompt.task.editor_name}</b> need to fix on <b>{sendBackPrompt.task.title}</b> before resubmitting?
+              </p>
+              <textarea
+                className="t"
+                autoFocus
+                placeholder="Explain what needs fixing…"
+                value={sendBackNote}
+                onChange={(e) => setSendBackNote(e.target.value)}
+              />
+            </div>
+            <div className="mfoot">
+              <button type="button" className="btn" onClick={() => setSendBackPrompt(null)}>Cancel</button>
+              <button type="button" className="btn btn-primary" disabled={sendingBackBusy || !sendBackNote.trim()} onClick={confirmSendBack}>
+                {sendingBackBusy ? "Sending…" : "Send back"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </section>
   );
 }
@@ -682,6 +929,11 @@ export function TaskModal({
   const [recurrence, setRecurrence] = useState<"none" | "daily" | "weekly">(task?.recurrence ?? "none");
   const [status, setStatus] = useState<TaskStatus>(task?.status ?? "todo");
   const [taskType, setTaskType] = useState<TaskType>(task?.task_type ?? "general");
+  const [meta, setMeta] = useState<TaskMeta>(task?.meta ?? {});
+  // Required when an admin sends a task back from Review to In progress —
+  // what the team needs to fix before resubmitting.
+  const [reviewNote, setReviewNote] = useState("");
+  const sendingBack = editing && task?.status === "review" && status === "in_progress";
   const [contentFormatId, setContentFormatId] = useState(task?.content_format_id ?? "");
   const { contentFormats, refetch: refetchFormats } = useContentFormats();
   const [addingFormat, setAddingFormat] = useState(false);
@@ -726,6 +978,7 @@ export function TaskModal({
   async function submit(e: FormEvent) {
     e.preventDefault();
     if (!title.trim()) { setErr("Give the task a title."); return; }
+    if (sendingBack && !reviewNote.trim()) { setErr("Add a note explaining what needs fixing."); return; }
     setSaving(true);
     setErr(null);
     const payload: Record<string, unknown> = {
@@ -738,7 +991,11 @@ export function TaskModal({
       status,
       contentFormatId: contentFormatId || null,
     };
-    if (!typeLocked) payload.taskType = taskType;
+    if (sendingBack) payload.reviewNote = reviewNote.trim();
+    if (!typeLocked) {
+      payload.taskType = taskType;
+      if (taskType === "social" || taskType === "ad") payload.meta = meta;
+    }
     try {
       const res = editing
         ? await api<{ task: Task }>(`/tasks/${task!.id}`, { method: "PATCH", body: JSON.stringify(payload) })
@@ -831,7 +1088,14 @@ export function TaskModal({
 
   return (
     <>
-    <Modal onClose={onClose} title={editing ? "Edit Task" : "Add Task"}>
+    <Modal onClose={onClose} title={editing ? "Edit Task" : "Add Task"} variant="drawer">
+      {editing && task && (task.tid || task.sid || task.ad_id) && (
+        <div className="task-ids" style={{ fontSize: 11.5, marginBottom: 14 }}>
+          {task.tid && <span>{task.tid}</span>}
+          {task.sid && <><span className="dot-sep">·</span><span>{task.sid}</span></>}
+          {task.ad_id && <><span className="dot-sep">·</span><span>{task.ad_id}</span></>}
+        </div>
+      )}
       <form onSubmit={submit}>
         <div className="field">
           <label className="f">Task <span className="req">*</span></label>
@@ -885,12 +1149,45 @@ export function TaskModal({
               </div>
             ) : (
               <select className="t" value={taskType} onChange={(e) => setTaskType(e.target.value as TaskType)}>
-                <option value="general">🗒️ General</option>
-                <option value="short_task">⚡ Short task</option>
+                {SELECTABLE_TASK_TYPES.map((tt) => (
+                  <option key={tt} value={tt}>{TYPE_ICON[tt]} {TYPE_LABEL[tt]}</option>
+                ))}
               </select>
             )}
           </div>
         </div>
+        {taskType === "social" && !typeLocked && (
+          <div className="grid g3">
+            <div className="field">
+              <label className="f">Platform</label>
+              <input className="t" placeholder="e.g. Instagram" value={meta.platform ?? ""} onChange={(e) => setMeta((m) => ({ ...m, platform: e.target.value }))} />
+            </div>
+            <div className="field" style={{ gridColumn: "span 2" }}>
+              <label className="f">Caption</label>
+              <input className="t" placeholder="Post caption…" value={meta.caption ?? ""} onChange={(e) => setMeta((m) => ({ ...m, caption: e.target.value }))} />
+            </div>
+            <div className="field" style={{ gridColumn: "1 / -1" }}>
+              <label className="f">Asset links</label>
+              <input className="t" placeholder="Links to creative assets…" value={meta.assetLinks ?? ""} onChange={(e) => setMeta((m) => ({ ...m, assetLinks: e.target.value }))} />
+            </div>
+          </div>
+        )}
+        {taskType === "ad" && !typeLocked && (
+          <div className="grid g3">
+            <div className="field">
+              <label className="f">Platform</label>
+              <input className="t" placeholder="e.g. Meta Ads" value={meta.platform ?? ""} onChange={(e) => setMeta((m) => ({ ...m, platform: e.target.value }))} />
+            </div>
+            <div className="field">
+              <label className="f">Ad spend</label>
+              <input className="t" type="number" min="0" step="0.01" placeholder="0.00" value={meta.adSpend ?? ""} onChange={(e) => setMeta((m) => ({ ...m, adSpend: e.target.value ? Number(e.target.value) : undefined }))} />
+            </div>
+            <div className="field">
+              <label className="f">Target URL</label>
+              <input className="t" placeholder="https://…" value={meta.targetUrl ?? ""} onChange={(e) => setMeta((m) => ({ ...m, targetUrl: e.target.value }))} />
+            </div>
+          </div>
+        )}
         <div className="field">
           <label className="f">Content format</label>
           <div className="formatpills">
@@ -936,13 +1233,45 @@ export function TaskModal({
         <div className="field">
           <label className="f">Status</label>
           <div className="statusseg">
-            {COLUMNS.map((c) => (
-              <button type="button" key={c.key} className={status === c.key ? "on" : ""} onClick={() => setStatus(c.key)}>
-                {c.label}
-              </button>
-            ))}
+            {COLUMNS.map((c) => {
+              // Same review-checkpoint rule the board enforces (and the
+              // backend is the real gate for) — free choice while creating,
+              // but editing an existing task only offers valid transitions.
+              const selectable =
+                !editing || !task || c.key === task.status
+                  ? true
+                  : task.status === "review"
+                    ? isAdmin && (c.key === "done" || c.key === "in_progress")
+                    : c.key !== "done" && !!user?.editorId && task.editor_id === user.editorId;
+              return (
+                <button
+                  type="button"
+                  key={c.key}
+                  disabled={!selectable}
+                  className={status === c.key ? "on" : ""}
+                  onClick={() => selectable && setStatus(c.key)}
+                  title={!selectable ? "Not available from here" : undefined}
+                >
+                  {c.label}
+                </button>
+              );
+            })}
           </div>
+          {editing && task?.status === "review" && !isAdmin && (
+            <div className="hint" style={{ marginTop: 6 }}>⏳ Waiting on admin review — only an admin can approve or send it back.</div>
+          )}
         </div>
+        {sendingBack && (
+          <div className="field">
+            <label className="f">What needs fixing? <span className="req">*</span></label>
+            <textarea
+              className="t"
+              placeholder="Explain what the team should fix before resubmitting…"
+              value={reviewNote}
+              onChange={(e) => setReviewNote(e.target.value)}
+            />
+          </div>
+        )}
         {editing && task?.budget_hours != null && (
           <div className="field">
             <label className="f">Time allotted</label>
@@ -953,6 +1282,7 @@ export function TaskModal({
         )}
         {editing && task && !task.post_id && <LinkPostControl taskId={task.id} onLinked={onSaved} />}
         {editing && task && <Checklist taskId={task.id} />}
+        {editing && task && <ReviewHistory taskId={task.id} />}
         {editing && task && <Comments taskId={task.id} />}
         {err && <p className="login-err" style={{ marginTop: 10 }}>{err}</p>}
         <div className="formfoot">
@@ -1129,6 +1459,44 @@ function Checklist({ taskId }: { taskId: string }) {
   );
 }
 
+// This task's review decisions (sent back for rework, or approved) — newest
+// first. Self-hides when there's no history yet, so a task that's never been
+// through review doesn't grow an empty section.
+function ReviewHistory({ taskId }: { taskId: string }) {
+  const [items, setItems] = useState<TaskReviewLogEntry[] | null>(null);
+
+  useEffect(() => {
+    let cancel = false;
+    api<{ reviews: TaskReviewLogEntry[] }>(`/tasks/${taskId}/reviews`)
+      .then((d) => { if (!cancel) setItems(d.reviews); })
+      .catch(() => { if (!cancel) setItems([]); });
+    return () => { cancel = true; };
+  }, [taskId]);
+
+  if (!items || items.length === 0) return null;
+
+  return (
+    <div className="field">
+      <label className="f">Review history</label>
+      <div className="cmt-list">
+        {items.map((r) => (
+          <div className="cmt" key={r.id}>
+            <span className="cmt-ava">{r.action === "approved" ? "✅" : "↩️"}</span>
+            <div className="cmt-body">
+              <div className="cmt-head">
+                <b>{r.actor_name ?? "Someone"}</b>
+                <span>{r.action === "approved" ? "approved" : "sent back"} · Rev {r.revision}</span>
+                <span className="cmt-time" style={{ marginLeft: "auto" }}>{relTime(r.created_at)}</span>
+              </div>
+              {r.note && <div className="cmt-text">{r.note}</div>}
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 function Comments({ taskId }: { taskId: string }) {
   const [items, setItems] = useState<TaskComment[]>([]);
   const [loading, setLoading] = useState(true);
@@ -1193,55 +1561,251 @@ function Comments({ taskId }: { taskId: string }) {
 
 const WEEKDAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 
+// A done task sits on the day it was actually finished, not the day it was
+// due; everything still in progress stays keyed by its due date. Shared by
+// the month grid, the week grid, and the day timeline below.
+function bucketTasksByDay(tasks: Task[]) {
+  const byDay: Record<string, Task[]> = {};
+  for (const t of tasks) {
+    const key = t.status === "done" && t.completed_at ? ymd(new Date(t.completed_at)) : t.due_date;
+    if (key) (byDay[key] ||= []).push(t);
+  }
+  return byDay;
+}
+
 function TaskCalendar({ tasks, onOpen }: { tasks: Task[]; onOpen: (t: Task) => void }) {
-  const [offset, setOffset] = useState(0);
+  const [calMode, setCalMode] = useState<"month" | "week">("month");
+  const [offset, setOffset] = useState(0); // month nav, month mode only
+  const [weekOffset, setWeekOffset] = useState(0); // week nav, week mode only
+  const [dayView, setDayView] = useState<Date | null>(null);
   const now = new Date();
+  const todayS = ymd(now);
+
+  const byDay = useMemo(() => bucketTasksByDay(tasks), [tasks]);
+  const noDate = tasks.filter((t) => !(t.status === "done" ? t.completed_at : t.due_date)).length;
+
+  const goPrev = () => (calMode === "month" ? setOffset((o) => o - 1) : setWeekOffset((o) => o - 1));
+  const goNext = () => (calMode === "month" ? setOffset((o) => o + 1) : setWeekOffset((o) => o + 1));
+  const goToday = () => { setOffset(0); setWeekOffset(0); };
+  const isToday = calMode === "month" ? offset === 0 : weekOffset === 0;
+
+  // Month grid.
   const view = new Date(now.getFullYear(), now.getMonth() + offset, 1);
   const year = view.getFullYear();
   const month = view.getMonth();
   const monthName = view.toLocaleString("default", { month: "long", year: "numeric" });
-
   const startDow = new Date(year, month, 1).getDay();
   const daysInMonth = new Date(year, month + 1, 0).getDate();
-  const cells: (Date | null)[] = [];
-  for (let i = 0; i < startDow; i++) cells.push(null);
-  for (let d = 1; d <= daysInMonth; d++) cells.push(new Date(year, month, d));
-  while (cells.length % 7 !== 0) cells.push(null);
+  const monthCells: (Date | null)[] = [];
+  for (let i = 0; i < startDow; i++) monthCells.push(null);
+  for (let d = 1; d <= daysInMonth; d++) monthCells.push(new Date(year, month, d));
+  while (monthCells.length % 7 !== 0) monthCells.push(null);
 
-  const byDay: Record<string, Task[]> = {};
-  for (const t of tasks) if (t.due_date) (byDay[t.due_date] ||= []).push(t);
-  const todayS = ymd(now);
-  const noDate = tasks.filter((t) => !t.due_date).length;
+  // Week grid — Sunday to Saturday, like the iOS Calendar week strip.
+  const weekBase = addDays(now, weekOffset * 7);
+  const weekStart = addDays(weekBase, -weekBase.getDay());
+  const weekDays = Array.from({ length: 7 }, (_, i) => addDays(weekStart, i));
+  const weekEnd = weekDays[6];
+  const weekLabel = weekStart.getMonth() === weekEnd.getMonth()
+    ? `${weekStart.toLocaleString("default", { month: "long" })} ${weekStart.getDate()}–${weekEnd.getDate()}, ${weekEnd.getFullYear()}`
+    : `${weekStart.toLocaleString("default", { month: "short" })} ${weekStart.getDate()} – ${weekEnd.toLocaleString("default", { month: "short" })} ${weekEnd.getDate()}, ${weekEnd.getFullYear()}`;
+
+  function renderCell(d: Date | null, i: number, maxChips: number) {
+    if (d === null) return <div key={i} className="cal-cell empty" />;
+    const key = ymd(d);
+    const items = byDay[key] ?? [];
+    return (
+      <div
+        key={i}
+        className={"cal-cell" + (key === todayS ? " today" : "")}
+        onClick={() => setDayView(d)}
+        title="View the day's timeline"
+      >
+        <div className="cal-day">{d.getDate()}</div>
+        <div className="cal-items">
+          {items.slice(0, maxChips).map((t) => (
+            <button
+              key={t.id}
+              className={"cal-task " + taskTypeBucket(t) + " status-" + t.status}
+              onClick={(e) => { e.stopPropagation(); onOpen(t); }}
+              title={`${TYPE_LABEL[t.task_type]} · ${t.title}`}
+            >
+              {t.title}
+            </button>
+          ))}
+          {items.length > maxChips && <div className="cal-more">+{items.length - maxChips} more</div>}
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="card pad">
       <div className="cal-head">
-        <button className="btn icon" onClick={() => setOffset((o) => o - 1)} aria-label="Previous month">‹</button>
-        <h3 className="cal-title">{monthName}</h3>
-        <button className="btn icon" onClick={() => setOffset((o) => o + 1)} aria-label="Next month">›</button>
-        {offset !== 0 && <button className="linkbtn" onClick={() => setOffset(0)}>Today</button>}
+        <button className="btn icon" onClick={goPrev} aria-label={calMode === "month" ? "Previous month" : "Previous week"}>‹</button>
+        <h3 className="cal-title">{calMode === "month" ? monthName : weekLabel}</h3>
+        <button className="btn icon" onClick={goNext} aria-label={calMode === "month" ? "Next month" : "Next week"}>›</button>
+        {!isToday && <button className="linkbtn" onClick={goToday}>Today</button>}
+        <div className="cal-mode-seg">
+          <button className={calMode === "month" ? "on" : ""} onClick={() => setCalMode("month")}>Month</button>
+          <button className={calMode === "week" ? "on" : ""} onClick={() => setCalMode("week")}>Week</button>
+        </div>
         <div className="spacer" />
+        <div className="cal-legend">
+          <span className="cal-legend-item"><span className="cal-legend-dot normal" />Normal</span>
+          <span className="cal-legend-item"><span className="cal-legend-dot social" />Social</span>
+          <span className="cal-legend-item"><span className="cal-legend-dot ad" />Ad</span>
+        </div>
         {noDate > 0 && <span className="hint" style={{ margin: 0 }}>{noDate} without a due date</span>}
       </div>
       <div className="cal-grid cal-dow">{WEEKDAYS.map((w) => <div key={w} className="cal-dowc">{w}</div>)}</div>
-      <div className="cal-grid">
-        {cells.map((d, i) =>
-          d === null ? (
-            <div key={i} className="cal-cell empty" />
-          ) : (
-            <div key={i} className={"cal-cell" + (ymd(d) === todayS ? " today" : "")}>
-              <div className="cal-day">{d.getDate()}</div>
-              <div className="cal-items">
-                {(byDay[ymd(d)] ?? []).slice(0, 3).map((t) => (
-                  <button key={t.id} className={"cal-task " + t.status} onClick={() => onOpen(t)} title={t.title}>
-                    {t.title}
-                  </button>
-                ))}
-                {(byDay[ymd(d)]?.length ?? 0) > 3 && <div className="cal-more">+{byDay[ymd(d)]!.length - 3} more</div>}
-              </div>
+      <div className={"cal-grid" + (calMode === "week" ? " week" : "")}>
+        {calMode === "month"
+          ? monthCells.map((d, i) => renderCell(d, i, 3))
+          : weekDays.map((d, i) => renderCell(d, i, 6))}
+      </div>
+      {dayView && (
+        <Modal onClose={() => setDayView(null)} variant="drawer" title={dayView.toLocaleDateString([], { weekday: "long", month: "long", day: "numeric" })}>
+          <DayTimeline
+            date={dayView}
+            tasks={byDay[ymd(dayView)] ?? []}
+            onOpen={onOpen}
+            onPrev={() => setDayView((d) => addDays(d!, -1))}
+            onNext={() => setDayView((d) => addDays(d!, 1))}
+            onToday={() => setDayView(new Date())}
+          />
+        </Modal>
+      )}
+    </div>
+  );
+}
+
+// A task's clock-time block on the day timeline — only resolvable once it
+// has actually started (budget_started_at set) and has a duration
+// (budget_hours). Anything else (not yet accepted, no time budget) has no
+// time of day to place, and shows in the all-day strip instead.
+function timeBlockFor(t: Task): { startMin: number; durMin: number } | null {
+  if (t.budget_hours == null || !t.budget_started_at) return null;
+  const start = new Date(t.budget_started_at);
+  const startMin = start.getHours() * 60 + start.getMinutes();
+  const durMin = Math.max(20, Math.round(Number(t.budget_hours) * 60));
+  return { startMin, durMin };
+}
+
+// Greedy interval-column packing so overlapping tasks sit side by side
+// instead of stacking on top of each other, iOS-Calendar style.
+function layoutTimedEvents(items: { task: Task; startMin: number; durMin: number }[]) {
+  const sorted = [...items].sort((a, b) => a.startMin - b.startMin);
+  const colEnds: number[] = [];
+  const placed = sorted.map((e) => {
+    let col = colEnds.findIndex((end) => end <= e.startMin);
+    if (col === -1) { col = colEnds.length; colEnds.push(e.startMin + e.durMin); }
+    else colEnds[col] = e.startMin + e.durMin;
+    return { ...e, col };
+  });
+  const totalCols = colEnds.length || 1;
+  return placed.map((e) => ({ ...e, totalCols }));
+}
+
+function fmtClock(min: number) {
+  const h = Math.floor(min / 60) % 24;
+  const m = min % 60;
+  return new Date(2000, 0, 1, h, m).toLocaleTimeString([], { hour: "numeric", minute: m ? "2-digit" : undefined });
+}
+
+const ROW_H = 52; // px per hour
+
+// iPhone-style day view: an all-day strip for tasks with no time-of-day, and
+// an hour-by-hour timeline below with each task drawn as a block positioned
+// and sized by when its clock started and how long its budget runs — exactly
+// the "see the time duration of it" view from a day cell.
+function DayTimeline({
+  date,
+  tasks,
+  onOpen,
+  onPrev,
+  onNext,
+  onToday,
+}: {
+  date: Date;
+  tasks: Task[];
+  onOpen: (t: Task) => void;
+  onPrev: () => void;
+  onNext: () => void;
+  onToday: () => void;
+}) {
+  const allDay = tasks.filter((t) => !timeBlockFor(t));
+  const timed = layoutTimedEvents(
+    tasks.flatMap((t) => {
+      const b = timeBlockFor(t);
+      return b ? [{ task: t, ...b }] : [];
+    }),
+  );
+  const isToday = ymd(date) === ymd(new Date());
+  const nowMin = new Date().getHours() * 60 + new Date().getMinutes();
+  const scrollRef = useRef<HTMLDivElement>(null);
+
+  // Open scrolled to mid-morning (or the current time, if today) instead of
+  // midnight — matches where the day's actual work tends to sit.
+  useEffect(() => {
+    const anchorMin = isToday ? Math.max(0, nowMin - 90) : 7 * 60;
+    scrollRef.current?.scrollTo({ top: (anchorMin / 60) * ROW_H });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [ymd(date)]);
+
+  return (
+    <div className="dayview">
+      <div className="dayview-nav">
+        <button className="btn icon" onClick={onPrev} aria-label="Previous day">‹</button>
+        <button className="btn icon" onClick={onNext} aria-label="Next day">›</button>
+        {!isToday && <button className="linkbtn" onClick={onToday}>Today</button>}
+      </div>
+      {allDay.length > 0 && (
+        <div className="dayview-allday">
+          {allDay.map((t) => (
+            <button
+              key={t.id}
+              className={"cal-task " + taskTypeBucket(t) + " status-" + t.status}
+              onClick={() => onOpen(t)}
+              title={`${TYPE_LABEL[t.task_type]} · ${t.title}`}
+            >
+              {t.title}
+            </button>
+          ))}
+        </div>
+      )}
+      <div className="dayview-timeline" ref={scrollRef}>
+        <div className="dayview-hours">
+          {Array.from({ length: 24 }, (_, h) => (
+            <div key={h} className="dayview-hourrow" style={{ height: ROW_H }}>
+              <span className="dayview-hourlabel">{fmtClock(h * 60)}</span>
             </div>
-          ),
-        )}
+          ))}
+        </div>
+        <div className="dayview-track" style={{ height: 24 * ROW_H }}>
+          {isToday && (
+            <div className="dayview-now" style={{ top: (nowMin / 60) * ROW_H }}>
+              <span className="dayview-now-dot" />
+            </div>
+          )}
+          {timed.map(({ task: t, startMin, durMin, col, totalCols }) => (
+            <button
+              key={t.id}
+              className={"dayview-block " + taskTypeBucket(t) + " status-" + t.status}
+              style={{
+                top: (startMin / 60) * ROW_H,
+                height: Math.max(20, (durMin / 60) * ROW_H),
+                left: `${(col / totalCols) * 100}%`,
+                width: `${100 / totalCols}%`,
+              }}
+              onClick={() => onOpen(t)}
+              title={`${TYPE_LABEL[t.task_type]} · ${t.title} · ${fmtClock(startMin)}–${fmtClock(startMin + durMin)}`}
+            >
+              <span className="dayview-block-title">{t.title}</span>
+              <span className="dayview-block-time">{fmtClock(startMin)} – {fmtClock(startMin + durMin)}</span>
+            </button>
+          ))}
+        </div>
       </div>
     </div>
   );

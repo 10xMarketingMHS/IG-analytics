@@ -1,33 +1,76 @@
-import { useEffect, useMemo, useState } from "react";
-import { useResource } from "@/lib/use-resource";
+import { useMemo, useState } from "react";
+import { useTasks } from "@/lib/use-tasks";
 import { useEditors } from "@/lib/use-editors";
-import { useWorkspaces } from "@/lib/workspaces-context";
-import { api } from "@/lib/api";
-import { toast } from "sonner";
-import type { Post, Platform, Taxonomy, EditStage } from "@/lib/types";
+import type { Task, TaskType } from "@/lib/types";
 
-const STAGES: { key: EditStage; label: string; cls: string }[] = [
+// This page is scoped to Social + Ad work only — the admin's day-to-day
+// Task Board covers everything, but checking it constantly for "who's
+// editing which reel/ad right now" is too much friction. This is that
+// narrower, editor-focused view: just the work that maps to actual
+// video/creative output, one row per task, grouped by pipeline stage.
+//
+// "Social" here means every post-linked task too (task_type "content" —
+// auto-created the moment a post is added, one per Reel/Carousel/post),
+// not just the ones someone manually typed as "Social Media" on the Task
+// Board. That auto-created bucket is where the real day-to-day editing
+// work actually lives; a manually-typed "social" task is the exception,
+// not the rule, so both count as the same "Social" pipeline.
+type TypeFilter = "all" | "social" | "ad";
+const TYPE_ICON: Record<TaskType, string> = { content: "📄", short_task: "⚡", general: "🗒️", social: "📱", ad: "📢" };
+function pipelineBucket(t: Task): "social" | "ad" | null {
+  if (t.task_type === "ad") return "ad";
+  if (t.task_type === "content" || t.task_type === "social") return "social";
+  return null;
+}
+
+// Five pipeline stages — the first two ("Pending accept" / "Not started")
+// split what used to be a single "todo" bucket, because whether the
+// assignee has actually accepted the work is exactly the kind of thing
+// this page exists to surface.
+type Stage = "pending_accept" | "not_started" | "in_progress" | "in_review" | "completed";
+const STAGES: { key: Stage; label: string; cls: string }[] = [
+  { key: "pending_accept", label: "Pending Accept", cls: "pd" },
   { key: "not_started", label: "Not Started", cls: "ns" },
   { key: "in_progress", label: "In Progress", cls: "ip" },
   { key: "in_review", label: "In Review", cls: "ir" },
-  { key: "pending", label: "Pending", cls: "pd" },
   { key: "completed", label: "Completed", cls: "cp" },
 ];
-// Brand logos (logo only — no text) for a clean, minimal Channel column.
+function stageOf(t: Task): Stage {
+  if (t.editor_id && !t.accepted) return "pending_accept";
+  if (t.status === "todo") return "not_started";
+  if (t.status === "in_progress") return "in_progress";
+  if (t.status === "review") return "in_review";
+  return "completed";
+}
+
+// Best-effort platform guess — social/ad tasks aren't always linked to a
+// Post (which is the only place a real platform_id lives), so fall back to
+// the free-text platform field editors type into the task form.
+function resolvePlatformKey(t: Task): string | undefined {
+  if (t.platform_key) return t.platform_key;
+  const label = t.meta?.platform;
+  if (!label) return undefined;
+  const l = label.toLowerCase();
+  if (l.includes("insta")) return "instagram";
+  if (l.includes("face") || l.includes("meta")) return "facebook";
+  if (l.includes("you")) return "youtube";
+  return undefined;
+}
+
 function PlatformLogo({ k, title }: { k?: string; title?: string }) {
-  const common = { width: 24, height: 24, viewBox: "0 0 24 24", "aria-label": title } as const;
+  const common = { width: 22, height: 22, viewBox: "0 0 24 24", "aria-label": title } as const;
   if (k === "instagram") {
     return (
       <svg {...common}>
         <defs>
-          <radialGradient id="iglg" cx="0.3" cy="1" r="1.1">
+          <radialGradient id="iglg2" cx="0.3" cy="1" r="1.1">
             <stop offset="0" stopColor="#fed373" />
             <stop offset="0.35" stopColor="#f15245" />
             <stop offset="0.7" stopColor="#d92e7f" />
             <stop offset="1" stopColor="#9b36b7" />
           </radialGradient>
         </defs>
-        <rect width="24" height="24" rx="7" fill="url(#iglg)" />
+        <rect width="24" height="24" rx="7" fill="url(#iglg2)" />
         <rect x="5" y="5" width="14" height="14" rx="4.5" fill="none" stroke="#fff" strokeWidth="1.8" />
         <circle cx="12" cy="12" r="3.4" fill="none" stroke="#fff" strokeWidth="1.8" />
         <circle cx="16.5" cy="7.5" r="1.1" fill="#fff" />
@@ -50,7 +93,7 @@ function PlatformLogo({ k, title }: { k?: string; title?: string }) {
       </svg>
     );
   }
-  return <span title={title}>📱</span>;
+  return <span title={title}>🌐</span>;
 }
 
 function relTime(iso: string | null) {
@@ -64,66 +107,51 @@ function relTime(iso: string | null) {
   return `${Math.round(h / 24)}d ago`;
 }
 
+function todayStr() {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+}
+function daysOverdue(due: string): number {
+  const [dy, dm, dd] = due.split("-").map(Number);
+  const [ty, tm, td] = todayStr().split("-").map(Number);
+  return Math.round((Date.UTC(ty, tm - 1, td) - Date.UTC(dy, dm - 1, dd)) / 86400000);
+}
+
 export function MetricsPage() {
-  const { data: postData, refetch } = useResource<{ posts: (Post & { channel_name?: string })[] }>("/posts?channel=all");
-  const { data: platData } = useResource<{ platforms: Platform[] }>("/platforms");
+  const { tasks: allTasks } = useTasks();
   const { editors } = useEditors();
-  const { workspaces } = useWorkspaces();
-  // Editing Pipeline is per-post workflow — a collab mirror is the same edit
-  // job as its owner, so it never shows as its own pipeline card.
-  const posts = postData?.posts?.filter((p) => !p.is_collab_mirror) ?? null;
-  const platformById = useMemo(() => new Map((platData?.platforms ?? []).map((p) => [p.id, p])), [platData]);
-  const editorById = useMemo(() => new Map((editors ?? []).map((e) => [e.id, e])), [editors]);
 
-  // Merge every channel's pillar names so we can show the "#pillar" tag.
-  const [pillarById, setPillarById] = useState<Record<string, string>>({});
-  useEffect(() => {
-    let cancel = false;
-    Promise.all(workspaces.map((w) => api<Taxonomy>(`/taxonomy?channel=${w.id}`).catch(() => null))).then((all) => {
-      if (cancel) return;
-      const m: Record<string, string> = {};
-      for (const t of all) if (t) for (const p of t.pillars) m[p.id] = p.name;
-      setPillarById(m);
-    });
-    return () => { cancel = true; };
-  }, [workspaces]);
+  // Only social + ad work belongs on this page — short_task/general are the
+  // Task Board's job. See pipelineBucket() above for what counts as "social".
+  const pipelineTasks = useMemo(
+    () => (allTasks ?? []).filter((t) => pipelineBucket(t) !== null),
+    [allTasks],
+  );
 
+  const [typeFilter, setTypeFilter] = useState<TypeFilter>("all");
   const [editorFilter, setEditorFilter] = useState("");
-  const [stageFilter, setStageFilter] = useState<"" | EditStage>("");
+  const [stageFilter, setStageFilter] = useState<"" | Stage>("");
 
   const rows = useMemo(() => {
-    let r = posts ?? [];
-    if (editorFilter) r = r.filter((p) => p.editor_id === editorFilter);
-    if (stageFilter) r = r.filter((p) => p.edit_stage === stageFilter);
+    let r = pipelineTasks;
+    if (typeFilter !== "all") r = r.filter((t) => pipelineBucket(t) === typeFilter);
+    if (editorFilter) r = r.filter((t) => t.editor_id === editorFilter);
+    if (stageFilter) r = r.filter((t) => stageOf(t) === stageFilter);
     return r;
-  }, [posts, editorFilter, stageFilter]);
+  }, [pipelineTasks, typeFilter, editorFilter, stageFilter]);
 
   const counts = useMemo(() => {
-    const c: Record<EditStage, number> = { not_started: 0, in_progress: 0, in_review: 0, pending: 0, completed: 0 };
-    for (const p of rows) c[p.edit_stage] = (c[p.edit_stage] ?? 0) + 1;
+    const c: Record<Stage, number> = { pending_accept: 0, not_started: 0, in_progress: 0, in_review: 0, completed: 0 };
+    for (const t of rows) c[stageOf(t)]++;
     return c;
   }, [rows]);
   const total = rows.length;
   const pct = (n: number) => (total ? Math.round((n / total) * 100) : 0);
   const completedPct = pct(counts.completed);
+  const socialCount = rows.filter((t) => pipelineBucket(t) === "social").length;
+  const adCount = rows.filter((t) => pipelineBucket(t) === "ad").length;
 
-  async function setStage(post: Post, stage: EditStage) {
-    try {
-      await api(`/posts/${post.id}`, { method: "PATCH", body: JSON.stringify({ editStage: stage }) });
-      refetch();
-    } catch {
-      toast.error("Could not update stage.");
-    }
-  }
-
-  if (posts === null) return <section className="screen"><div className="hint">Loading…</div></section>;
-
-  const KPIS: [string, string, number, string][] = [
-    ["📋", "Total Tasks", total, "tint-indigo"],
-    ["✅", "Completed", counts.completed, "tint-teal"],
-    ["🔄", "In Progress", counts.in_progress, "tint-amber"],
-    ["🕓", "Pending", counts.pending, "tint-rose"],
-  ];
+  if (allTasks === null) return <section className="screen"><div className="hint">Loading…</div></section>;
 
   return (
     <section className="screen">
@@ -132,69 +160,96 @@ export function MetricsPage() {
           <option value="">All Editors</option>
           {(editors ?? []).map((ed) => <option key={ed.id} value={ed.id}>{ed.name}</option>)}
         </select>
-        <select className="t" style={{ maxWidth: 180 }} value={stageFilter} onChange={(e) => setStageFilter(e.target.value as EditStage | "")}>
+        <select className="t" style={{ maxWidth: 180 }} value={stageFilter} onChange={(e) => setStageFilter(e.target.value as Stage | "")}>
           <option value="">All Stages</option>
           {STAGES.map((s) => <option key={s.key} value={s.key}>{s.label}</option>)}
         </select>
         <div className="spacer" />
+        <div className="seg">
+          <button className={typeFilter === "all" ? "on" : ""} onClick={() => setTypeFilter("all")}>All</button>
+          <button className={typeFilter === "social" ? "on" : ""} onClick={() => setTypeFilter("social")}>📱 Social</button>
+          <button className={typeFilter === "ad" ? "on" : ""} onClick={() => setTypeFilter("ad")}>📢 Ads</button>
+        </div>
       </div>
 
-      <div className="grid g4">
-        {KPIS.map(([ic, label, val, tint]) => (
-          <div className="card kpi" key={label}>
-            <div className={"ic " + tint}>{ic}</div>
-            <div className="l">{label}</div>
-            <div className="v">{val}</div>
-            <div className="d flat">{label === "Total Tasks" ? "across all channels" : pct(val) + "% of total"}</div>
+      {/* One consolidated stats panel instead of KPI cards + a separate donut —
+          same numbers, no redundancy between them. */}
+      <div className="card pad mx-summary">
+        <div className="mx-summary-top">
+          <div className="mx-summary-num">
+            <b>{total}</b> task{total === 1 ? "" : "s"}
+            <span className="mx-summary-split">{socialCount} social · {adCount} ads</span>
           </div>
-        ))}
-      </div>
-
-      <div className="card pad" style={{ marginTop: 16, display: "flex", alignItems: "center", gap: 30, flexWrap: "wrap" }}>
-        <div className="mx-donut">
-          <svg width="132" height="132" viewBox="0 0 42 42">
-            <circle cx="21" cy="21" r="15.9" fill="none" stroke="var(--border)" strokeWidth="4" />
-            <circle cx="21" cy="21" r="15.9" fill="none" stroke="var(--accent)" strokeWidth="4"
-              strokeDasharray={`${completedPct} ${100 - completedPct}`} strokeDashoffset="25" strokeLinecap="round" />
-            <text x="21" y="20" textAnchor="middle" fontSize="8" fontWeight="800" fill="var(--text)">{completedPct}%</text>
-            <text x="21" y="27" textAnchor="middle" fontSize="3.4" fill="var(--muted)">Completed</text>
-          </svg>
+          <div className="mx-summary-pct"><b>{completedPct}%</b> completed</div>
+        </div>
+        <div className="mx-stackbar">
+          {total === 0 ? (
+            <div className="mx-stackbar-empty" />
+          ) : (
+            STAGES.map((s) => counts[s.key] > 0 && (
+              <div
+                key={s.key}
+                className={"mx-stackbar-seg " + s.cls}
+                style={{ width: `${pct(counts[s.key])}%` }}
+                title={`${s.label}: ${counts[s.key]}`}
+              />
+            ))
+          )}
         </div>
         <div className="mx-legend">
           {STAGES.map((s) => (
-            <div className="mx-leg" key={s.key}>
+            <button
+              key={s.key}
+              className={"mx-leg" + (stageFilter === s.key ? " on" : "")}
+              onClick={() => setStageFilter(stageFilter === s.key ? "" : s.key)}
+              title={`Filter to ${s.label}`}
+            >
               <span className={"mx-dot " + s.cls} />
               <div>
                 <div className="mx-leg-l">{s.label}</div>
                 <div className="mx-leg-n">{counts[s.key]} <span>Tasks</span></div>
               </div>
-            </div>
+            </button>
           ))}
         </div>
       </div>
 
-      <div className="sectitle"><span className="dot" />Editing pipeline<span className="s">{total} post{total === 1 ? "" : "s"} across all channels</span></div>
+      <div className="sectitle"><span className="dot" />Social & Ads pipeline<span className="s">{total} task{total === 1 ? "" : "s"} · who's working on what</span></div>
 
       {rows.length === 0 ? (
-        <div className="card pad" style={{ color: "var(--muted)", fontSize: 13 }}>No posts match these filters.</div>
+        <div className="card pad mx-empty">
+          <span className="mx-empty-ic">🎬</span>
+          No social or ad tasks match these filters.
+        </div>
       ) : (
         <div className="card" style={{ overflowX: "auto" }}>
           <table className="tbl mx-tbl">
             <thead>
-              <tr><th>Title</th><th>Channel</th><th>Editor</th><th>Stage</th><th>Due date</th><th>Updated</th></tr>
+              <tr><th>Title</th><th>ID</th><th>Channel</th><th>Editor</th><th>Stage</th><th>Due date</th><th>Updated</th></tr>
             </thead>
             <tbody>
-              {rows.map((p) => {
-                const pf = p.platform_id ? platformById.get(p.platform_id) : undefined;
-                const ed = p.editor_id ? editorById.get(p.editor_id) : undefined;
+              {rows.map((t) => {
+                const ed = editors?.find((e) => e.id === t.editor_id);
+                const stage = STAGES.find((s) => s.key === stageOf(t))!;
+                const bucket = pipelineBucket(t)!;
+                // Social/Ad id only — no TID fallback, per the request that this
+                // page shouldn't surface the general task id at all.
+                const idLabel = t.task_type === "ad" ? t.ad_id : t.sid;
+                const overdue = t.due_date && stage.key !== "completed" && t.due_date < todayStr();
                 return (
-                  <tr key={p.id}>
+                  <tr key={t.id} className={"mx-row " + bucket}>
                     <td>
-                      <div style={{ fontWeight: 700 }}>{p.title}</div>
-                      {pillarById[p.pillar_id] && <div style={{ fontSize: 11.5, color: "var(--accent-ink)", fontWeight: 700 }}>#{pillarById[p.pillar_id].replace(/\s+/g, "")}</div>}
+                      <div style={{ fontWeight: 700 }}>
+                        <span style={{ marginRight: 5 }}>{TYPE_ICON[t.task_type]}</span>
+                        {t.title}
+                      </div>
                     </td>
-                    <td title={p.channel_name ?? ""}>
-                      <span className="mx-chan"><PlatformLogo k={pf?.key} title={pf?.name} /></span>
+                    <td>{idLabel ? <span className="mx-idchip">{idLabel}</span> : <span style={{ color: "var(--faint)" }}>—</span>}</td>
+                    <td>
+                      <span className="mx-chan">
+                        <PlatformLogo k={resolvePlatformKey(t)} title={t.meta?.platform || t.channel_name || undefined} />
+                        <span>{t.channel_name ?? t.meta?.platform ?? "—"}</span>
+                      </span>
                     </td>
                     <td>
                       {ed ? (
@@ -205,17 +260,15 @@ export function MetricsPage() {
                       ) : <span style={{ color: "var(--faint)" }}>Unassigned</span>}
                     </td>
                     <td>
-                      <select
-                        className={"mx-stage " + (STAGES.find((s) => s.key === p.edit_stage)?.cls ?? "")}
-                        value={p.edit_stage}
-                        onChange={(e) => setStage(p, e.target.value as EditStage)}
-                        title="Change stage"
-                      >
-                        {STAGES.map((s) => <option key={s.key} value={s.key}>{s.label}</option>)}
-                      </select>
+                      {/* Read-only — changing stage has real rules (accept, admin-only
+                          review resolution) that live on the Task Board, not here. */}
+                      <span className={"mx-stage " + stage.cls} style={{ cursor: "default" }}>{stage.label}</span>
                     </td>
-                    <td style={{ whiteSpace: "nowrap" }}>{p.date}</td>
-                    <td style={{ color: "var(--muted)", whiteSpace: "nowrap" }}>{relTime(p.updated_at)}</td>
+                    <td style={{ whiteSpace: "nowrap" }}>
+                      {t.due_date ?? "—"}
+                      {overdue && <span className="mx-overdue">{daysOverdue(t.due_date!)}d overdue</span>}
+                    </td>
+                    <td style={{ color: "var(--muted)", whiteSpace: "nowrap" }}>{relTime(t.completed_at ?? t.created_at)}</td>
                   </tr>
                 );
               })}

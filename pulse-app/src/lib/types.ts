@@ -99,12 +99,27 @@ export type IntegrationStatus = {
   };
 };
 
-export type TaskStatus = "todo" | "in_progress" | "done";
+// review is a checkpoint, not just another column — see the status-transition
+// guard in server/src/routes/tasks.js: the assignee moves a task through
+// todo -> in_progress -> review on their own; only an admin can resolve a
+// review (approve into done, or send back to in_progress for rework).
+export type TaskStatus = "todo" | "in_progress" | "review" | "done";
 export type TaskPriority = "low" | "medium" | "high";
 // What kind of task it is — distinct from priority (how urgent). "content" is
 // reserved for auto-created (post-linked) tasks and isn't user-selectable.
-// "emergency" was dropped — priority "high" already covers urgency.
-export type TaskType = "content" | "short_task" | "general";
+// "emergency" was dropped — priority "high" already covers urgency. "social"
+// and "ad" each carry a secondary id (SID/AdID) alongside the task's own TID.
+export type TaskType = "content" | "short_task" | "general" | "social" | "ad";
+
+// Type-specific extras for social/ad tasks — optional, only meaningful when
+// task_type is "social" or "ad" respectively.
+export type TaskMeta = {
+  platform?: string;
+  caption?: string;
+  assetLinks?: string;
+  adSpend?: number;
+  targetUrl?: string;
+};
 
 // Content format is an admin-manageable, org-scoped taxonomy (like Pillars or
 // Avatars) rather than a fixed enum — orgs add/rename/retire their own
@@ -136,6 +151,17 @@ export type Task = {
   subtask_done: number;
   recurrence: "none" | "daily" | "weekly";
   task_type: TaskType;
+  // Every task has a TID; sid/ad_id are only set for social/ad tasks.
+  tid: string | null;
+  sid: string | null;
+  ad_id: string | null;
+  meta: TaskMeta;
+  // Bumps every time an admin sends it back from Review for rework — see
+  // TaskReviewLogEntry for the note that came with each bump.
+  revision: number;
+  // Set when sent back for rework — surfaced right at the re-accept moment,
+  // then cleared once the assignee accepts. Null otherwise.
+  pending_note: string | null;
   content_format_id: string | null;
   content_format_name: string | null;
   content_format_icon: string | null;
@@ -167,6 +193,16 @@ export type BreakStatus = {
   dailyCapSeconds: number;
   minBreakSeconds: number;
   unlinked?: boolean;
+};
+
+// One entry in a task's review history — GET /tasks/:id/reviews, newest first.
+export type TaskReviewLogEntry = {
+  id: string;
+  revision: number;
+  action: "approved" | "sent_back";
+  note: string | null;
+  created_at: string;
+  actor_name: string | null;
 };
 
 // Admin-configured time-budget rule (Phase 1) — org-wide default (editor_id

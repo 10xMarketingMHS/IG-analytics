@@ -11,11 +11,16 @@ export function Modal({
   title,
   children,
   wide,
+  variant = "center",
 }: {
   onClose: () => void;
   title?: string;
   children: ReactNode;
   wide?: boolean;
+  // "drawer" slides in from the right edge instead of the usual centered
+  // glass card — for detail panels you want to keep glancing at the list
+  // behind (e.g. a task's full detail while the board stays visible).
+  variant?: "center" | "drawer";
 }) {
   // Close on Escape.
   useEffect(() => {
@@ -36,9 +41,9 @@ export function Modal({
   }, []);
 
   return createPortal(
-    <div className="modal-overlay" onMouseDown={onClose}>
+    <div className={"modal-overlay" + (variant === "drawer" ? " drawer" : "")} onMouseDown={onClose}>
       <div
-        className={"modal-card" + (wide ? " wide" : "")}
+        className={"modal-card" + (wide ? " wide" : "") + (variant === "drawer" ? " drawer" : "")}
         role="dialog"
         aria-modal="true"
         aria-label={title}

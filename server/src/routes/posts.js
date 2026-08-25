@@ -3,7 +3,7 @@ import { z } from "zod";
 import { pool } from "../db.js";
 import { requireEditor } from "../resolve-workspace.js";
 import { logActivity } from "../activity.js";
-import { resolveBudgetHours } from "./tasks.js";
+import { resolveBudgetHours, nextTaskRef } from "./tasks.js";
 
 export const postsRouter = Router();
 
@@ -81,7 +81,7 @@ async function syncPostTask(postId, orgId, callerUserId) {
     const defaultFormatId = fmtRows[0]?.id ?? null;
 
     const existing = await pool.query(
-      "select id, editor_id, accepted, content_format_id from task where post_id = $1",
+      "select id, editor_id, accepted, content_format_id, sid from task where post_id = $1",
       [postId],
     );
     if (existing.rows.length) {
@@ -92,25 +92,31 @@ async function syncPostTask(postId, orgId, callerUserId) {
       // earlier sync) — only fill it in the first time.
       const nextFormatId = prior.content_format_id ?? defaultFormatId;
       const budgetHours = await resolveBudgetHours(orgId, post.editor_id, nextFormatId);
+      // A post-linked task is social-media editing work — same "Social" bucket
+      // as a manually-typed social task, so it gets an SID too (backfilled for
+      // rows created before this existed).
+      const sid = prior.sid ?? await nextTaskRef(orgId, "sid");
       await pool.query(
         `update task set editor_id = $1, title = $2, due_date = $3, channel_id = $4, accepted = $5,
-                content_format_id = $6, budget_hours = $7,
+                content_format_id = $6, budget_hours = $7, sid = $9,
                 budget_started_at = case
                   when $5 and $7::numeric is not null then coalesce(budget_started_at, now())
                   when $5 then budget_started_at
                   else null
                 end
           where post_id = $8`,
-        [post.editor_id, post.title, post.date, post.workspace_id, nextAccepted, nextFormatId, budgetHours, postId],
+        [post.editor_id, post.title, post.date, post.workspace_id, nextAccepted, nextFormatId, budgetHours, postId, sid],
       );
     } else {
       const budgetHours = await resolveBudgetHours(orgId, post.editor_id, defaultFormatId);
+      const tid = await nextTaskRef(orgId, "tid");
+      const sid = await nextTaskRef(orgId, "sid");
       await pool.query(
         `insert into task (org_id, post_id, editor_id, channel_id, title, due_date, status, priority,
-                           task_type, accepted, content_format_id, budget_hours, budget_started_at)
+                           task_type, accepted, content_format_id, budget_hours, budget_started_at, tid, sid)
          values ($1, $2, $3, $4, $5, $6, 'todo', 'medium', 'content', $7, $8, $9,
-                 case when $7 and $9::numeric is not null then now() else null end)`,
-        [orgId, postId, post.editor_id, post.workspace_id, post.title, post.date, accepted, defaultFormatId, budgetHours],
+                 case when $7 and $9::numeric is not null then now() else null end, $10, $11)`,
+        [orgId, postId, post.editor_id, post.workspace_id, post.title, post.date, accepted, defaultFormatId, budgetHours, tid, sid],
       );
     }
   } catch (err) {

@@ -8,7 +8,7 @@ import { TaskModal } from "@/pages/tasks";
 import { toast } from "sonner";
 import type { Task, TaskStatus } from "@/lib/types";
 
-const STATUS_LABEL: Record<TaskStatus, string> = { todo: "To do", in_progress: "In progress", done: "Done" };
+const STATUS_LABEL: Record<TaskStatus, string> = { todo: "To do", in_progress: "In progress", review: "Review", done: "Done" };
 
 function today() {
   const d = new Date();
