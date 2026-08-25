@@ -8,14 +8,17 @@ export const usersRouter = Router();
 
 const ROLES = ["admin", "editor", "viewer"];
 
-// Everything here is admin-only.
-usersRouter.use(requireAdmin);
+// Everything here is admin-only — requireAdmin is applied per-route, not
+// router-wide. A router-level `.use(requireAdmin)` would 403 every request
+// that reaches this router before Express even checks whether one of its own
+// paths matches, silently blocking routers mounted after it too (activity,
+// integrations) for non-admins.
 
 // List the members of the active workspace with their role.
-usersRouter.get("/users", async (req, res, next) => {
+usersRouter.get("/users", requireAdmin, async (req, res, next) => {
   try {
     const { rows } = await pool.query(
-      `select u.id, u.email, u.name, u.active, m.role
+      `select u.id, u.email, u.name, u.active, u.editor_id, m.role
        from membership m
        join app_user u on u.id = m.user_id
        where m.workspace_id = $1
@@ -35,16 +38,19 @@ const CreateSchema = z.object({
   name: z.string().trim().optional(),
   password: z.string().min(6).optional(),
   role: z.enum(["admin", "editor", "viewer"]),
+  // Link straight to a team-member (editor) record at creation — the Teams
+  // page's "add person with login" flow does this in one step.
+  editorId: z.string().uuid().nullable().optional(),
 });
 
 // Add a user to the workspace with a role. Creates the account if the email
 // is new (password required); otherwise just grants access to an existing one.
-usersRouter.post("/users", async (req, res, next) => {
+usersRouter.post("/users", requireAdmin, async (req, res, next) => {
   const parsed = CreateSchema.safeParse(req.body);
   if (!parsed.success) {
     return res.status(400).json({ error: "Enter a valid email, role, and a password (6+ chars) for new users." });
   }
-  const { email, name, password, role } = parsed.data;
+  const { email, name, password, role, editorId } = parsed.data;
   const client = await pool.connect();
   try {
     await client.query("BEGIN");
@@ -66,6 +72,25 @@ usersRouter.post("/users", async (req, res, next) => {
         [email, name ?? null, hash],
       ));
       user = rows[0];
+    }
+
+    if (editorId) {
+      const { rows: erows } = await client.query(
+        "select 1 from editor where id = $1 and org_id = $2", [editorId, req.orgId],
+      );
+      if (!erows.length) {
+        await client.query("ROLLBACK");
+        return res.status(400).json({ error: "That team member wasn't found." });
+      }
+      const { rows: taken } = await client.query(
+        "select 1 from app_user where editor_id = $1 and id != $2", [editorId, user.id],
+      );
+      if (taken.length) {
+        await client.query("ROLLBACK");
+        return res.status(409).json({ error: "That team member already has a login linked." });
+      }
+      await client.query("update app_user set editor_id = $1 where id = $2", [editorId, user.id]);
+      user.editor_id = editorId;
     }
 
     await client.query(
@@ -90,6 +115,8 @@ const UpdateSchema = z.object({
   active: z.boolean().optional(),
   name: z.string().trim().optional(),
   password: z.string().min(6).optional(),
+  // Which team-member (editor) record this login is — powers "My Tasks".
+  editorId: z.string().uuid().nullable().optional(),
 });
 
 async function adminCount(workspaceId) {
@@ -102,14 +129,21 @@ async function adminCount(workspaceId) {
 
 // Update a member: role (in this workspace), account active flag, name, or
 // password reset. Protects against locking out the last admin / yourself.
-usersRouter.patch("/users/:id", async (req, res, next) => {
+usersRouter.patch("/users/:id", requireAdmin, async (req, res, next) => {
   const parsed = UpdateSchema.safeParse(req.body);
   if (!parsed.success) return res.status(400).json({ error: "Invalid update." });
-  const { role, active, name, password } = parsed.data;
+  const { role, active, name, password, editorId } = parsed.data;
   const targetId = req.params.id;
   const isSelf = targetId === req.user.sub;
 
   try {
+    if (editorId) {
+      const { rows: erows } = await pool.query(
+        "select 1 from editor where id = $1 and org_id = $2",
+        [editorId, req.orgId],
+      );
+      if (!erows.length) return res.status(400).json({ error: "That team member wasn't found." });
+    }
     const { rows: mrows } = await pool.query(
       "select role from membership where workspace_id = $1 and user_id = $2",
       [req.workspaceId, targetId],
@@ -142,13 +176,14 @@ usersRouter.patch("/users/:id", async (req, res, next) => {
     if (active !== undefined) { vals.push(active); sets.push(`active = $${vals.length}`); }
     if (name !== undefined) { vals.push(name); sets.push(`name = $${vals.length}`); }
     if (password) { vals.push(await bcrypt.hash(password, 10)); sets.push(`password_hash = $${vals.length}`); }
+    if (editorId !== undefined) { vals.push(editorId || null); sets.push(`editor_id = $${vals.length}`); }
     if (sets.length) {
       vals.push(targetId);
       await pool.query(`update app_user set ${sets.join(", ")} where id = $${vals.length}`, vals);
     }
 
     const { rows } = await pool.query(
-      `select u.id, u.email, u.name, u.active, m.role
+      `select u.id, u.email, u.name, u.active, u.editor_id, m.role
        from app_user u join membership m on m.user_id = u.id and m.workspace_id = $1
        where u.id = $2`,
       [req.workspaceId, targetId],
@@ -162,7 +197,7 @@ usersRouter.patch("/users/:id", async (req, res, next) => {
 
 // Revoke a user's access to this workspace (removes their membership). The
 // account itself remains (deactivate it separately to block all login).
-usersRouter.delete("/users/:id", async (req, res, next) => {
+usersRouter.delete("/users/:id", requireAdmin, async (req, res, next) => {
   const targetId = req.params.id;
   if (targetId === req.user.sub) {
     return res.status(409).json({ error: "You can't remove your own access." });

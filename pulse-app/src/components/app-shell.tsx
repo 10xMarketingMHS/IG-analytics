@@ -6,6 +6,9 @@ import { useWorkspaces } from "@/lib/workspaces-context";
 import { usePosts } from "@/lib/use-posts";
 import { useResource } from "@/lib/use-resource";
 import { getActivitySeen, onActivitySeenChange } from "@/lib/activity-seen";
+import { useTaskAssignNotify } from "@/lib/use-task-notify";
+import { useOverdueTaskNotify } from "@/lib/use-overdue-notify";
+import { BreakWidget } from "@/components/break-widget";
 import { useTheme } from "@/components/theme-provider";
 import type { Activity } from "@/lib/types";
 
@@ -36,13 +39,15 @@ function metaFor(pathname: string): [string, string] {
 
 export function AppShell() {
   const { user, logout } = useAuth();
-  const { active } = useWorkspaces();
+  const { active, isAdmin } = useWorkspaces();
   const { theme, toggle } = useTheme();
   const location = useLocation();
   const navigate = useNavigate();
   const { posts } = usePosts();
   const postCount = posts?.length ?? null;
   const unread = useUnreadActivity();
+  useTaskAssignNotify();
+  useOverdueTaskNotify();
   const [menuOpen, setMenuOpen] = useState(false);
 
   // Close the mobile drawer whenever the route changes.
@@ -73,7 +78,7 @@ export function AppShell() {
           {NAV_SECTIONS.map((section) => (
             <div key={section.key}>
               {section.label && <div className="navsec">{section.label}</div>}
-              {NAV_ITEMS.filter((i) => i.section === section.key).map((item) => (
+              {NAV_ITEMS.filter((i) => i.section === section.key && (!i.adminOnly || isAdmin)).map((item) => (
                 <NavLink
                   key={item.href}
                   to={item.href}
@@ -137,18 +142,21 @@ export function AppShell() {
           <button className="btn icon" title="Theme" onClick={toggle}>
             {theme === "dark" ? "☀️" : "🌙"}
           </button>
-          <button
-            className="btn btn-primary add-post-btn"
-            onClick={() => navigate("/posts/new", { state: { backgroundLocation: location } })}
-          >
-            <span className="ap-plus">＋</span>
-            <span className="ap-text"> Add Post</span>
-          </button>
+          {isAdmin && (
+            <button
+              className="btn btn-primary add-post-btn"
+              onClick={() => navigate("/posts/new", { state: { backgroundLocation: location } })}
+            >
+              <span className="ap-plus">＋</span>
+              <span className="ap-text"> Add Post</span>
+            </button>
+          )}
         </div>
         <div className="content">
           <Outlet />
         </div>
       </main>
+      <BreakWidget />
     </div>
   );
 }

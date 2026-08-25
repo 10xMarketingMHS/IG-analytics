@@ -12,6 +12,15 @@ const EnvSchema = z.object({
   // no-op there. Only matters in dev where Vite (:3000) calls the API (:4000).
   CORS_ORIGIN: z.string().min(1).default("http://localhost:3000"),
   NODE_ENV: z.enum(["development", "production"]).default("development"),
+  // Set to "true" only when the frontend is on a different domain than this
+  // API (e.g. Netlify frontend + Render backend, for a staging split-deploy).
+  // The session cookie needs SameSite=None to survive a real cross-site
+  // fetch — SameSite=Lax (the same-origin default) is silently dropped by
+  // the browser on cross-origin requests, which breaks login with no error.
+  CROSS_ORIGIN_COOKIES: z
+    .string()
+    .optional()
+    .transform((v) => v === "true"),
 
   // --- Integrations (all optional; features stay dormant until set) ---
   // Public origin of this deployment, used to build OAuth redirect URIs.

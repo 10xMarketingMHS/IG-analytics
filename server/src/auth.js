@@ -24,7 +24,7 @@ authRouter.post("/login", async (req, res, next) => {
 
   try {
     const { rows } = await pool.query(
-      "select id, email, password_hash, active from app_user where lower(email) = lower($1)",
+      "select id, email, password_hash, active, editor_id from app_user where lower(email) = lower($1)",
       [email],
     );
     const user = rows[0];
@@ -47,11 +47,13 @@ authRouter.post("/login", async (req, res, next) => {
     );
     res.cookie(COOKIE_NAME, token, {
       httpOnly: true,
-      sameSite: "lax",
-      secure: config.NODE_ENV === "production",
+      // SameSite=None is required for a cross-origin frontend (e.g. Netlify
+      // staging) to receive this cookie at all; it also requires Secure.
+      sameSite: config.CROSS_ORIGIN_COOKIES ? "none" : "lax",
+      secure: config.CROSS_ORIGIN_COOKIES || config.NODE_ENV === "production",
       maxAge: 7 * 24 * 60 * 60 * 1000,
     });
-    res.json({ user: { id: user.id, email: user.email } });
+    res.json({ user: { id: user.id, email: user.email, editorId: user.editor_id } });
   } catch (err) {
     next(err);
   }
@@ -62,12 +64,15 @@ authRouter.post("/logout", (_req, res) => {
   res.status(204).end();
 });
 
-authRouter.get("/me", (req, res) => {
+authRouter.get("/me", async (req, res) => {
   const token = req.cookies?.[COOKIE_NAME];
   if (!token) return res.status(401).json({ error: "Not signed in" });
   try {
     const payload = jwt.verify(token, config.JWT_SECRET);
-    res.json({ user: { id: payload.sub, email: payload.email } });
+    // editor_id can change after login (an admin can link/unlink it later),
+    // so it's looked up fresh here rather than trusted from the token.
+    const { rows } = await pool.query("select editor_id from app_user where id = $1", [payload.sub]);
+    res.json({ user: { id: payload.sub, email: payload.email, editorId: rows[0]?.editor_id ?? null } });
   } catch {
     res.status(401).json({ error: "Session expired" });
   }

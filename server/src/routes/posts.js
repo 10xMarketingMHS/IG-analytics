@@ -3,6 +3,7 @@ import { z } from "zod";
 import { pool } from "../db.js";
 import { requireEditor } from "../resolve-workspace.js";
 import { logActivity } from "../activity.js";
+import { resolveBudgetHours, nextTaskRef } from "./tasks.js";
 
 export const postsRouter = Router();
 
@@ -50,27 +51,72 @@ const EDIT_STAGES = ["not_started", "in_progress", "in_review", "pending", "comp
 // Keep a Task Management task in sync with a post's assigned editor. Creates the
 // task when a post has an editor and none exists yet; updates it (reassign /
 // retitle / re-date) otherwise. No-op when the post has no editor.
-async function syncPostTask(postId, orgId) {
+// callerUserId: whoever is making this post write — if they're assigning the
+// post to someone else, that task needs an explicit accept; assigning to
+// themselves (their own linked editor) accepts it immediately.
+async function syncPostTask(postId, orgId, callerUserId) {
   try {
     const { rows } = await pool.query(
-      "select id, editor_id, title, date, workspace_id, is_collab_mirror from post where id = $1 and deleted_at is null",
+      "select id, editor_id, title, date, workspace_id, is_collab_mirror, post_type from post where id = $1 and deleted_at is null",
       [postId],
     );
     const post = rows[0];
     // A collab mirror represents the same physical work as its owner — never
     // give it its own task (it also carries no editor by design).
     if (!post || !post.editor_id || post.is_collab_mirror) return;
-    const existing = await pool.query("select id from task where post_id = $1", [postId]);
+    let accepted = true;
+    if (callerUserId) {
+      const { rows: urows } = await pool.query("select editor_id from app_user where id = $1", [callerUserId]);
+      accepted = urows[0]?.editor_id === post.editor_id;
+    }
+    // A post-linked task is editing work — default its production format from
+    // the post's own type (reel → Video, carousel → Image) so it gets a time
+    // budget automatically, the same as a manually-created task would. Falls
+    // through to no format (and no timer) if the org renamed/removed those.
+    const wantName = post.post_type === "carousel" ? "image" : "video";
+    const { rows: fmtRows } = await pool.query(
+      "select id from task_content_format where org_id = $1 and active and lower(name) = $2 limit 1",
+      [orgId, wantName],
+    );
+    const defaultFormatId = fmtRows[0]?.id ?? null;
+
+    const existing = await pool.query(
+      "select id, editor_id, accepted, content_format_id, sid from task where post_id = $1",
+      [postId],
+    );
     if (existing.rows.length) {
+      const prior = existing.rows[0];
+      // Reassigning to a different editor re-opens acceptance for them.
+      const nextAccepted = prior.editor_id === post.editor_id ? prior.accepted : accepted;
+      // Never override a format the user already picked (manually or via an
+      // earlier sync) — only fill it in the first time.
+      const nextFormatId = prior.content_format_id ?? defaultFormatId;
+      const budgetHours = await resolveBudgetHours(orgId, post.editor_id, nextFormatId);
+      // A post-linked task is social-media editing work — same "Social" bucket
+      // as a manually-typed social task, so it gets an SID too (backfilled for
+      // rows created before this existed).
+      const sid = prior.sid ?? await nextTaskRef(orgId, "sid");
       await pool.query(
-        "update task set editor_id = $1, title = $2, due_date = $3, channel_id = $4 where post_id = $5",
-        [post.editor_id, post.title, post.date, post.workspace_id, postId],
+        `update task set editor_id = $1, title = $2, due_date = $3, channel_id = $4, accepted = $5,
+                content_format_id = $6, budget_hours = $7, sid = $9,
+                budget_started_at = case
+                  when $5 and $7::numeric is not null then coalesce(budget_started_at, now())
+                  when $5 then budget_started_at
+                  else null
+                end
+          where post_id = $8`,
+        [post.editor_id, post.title, post.date, post.workspace_id, nextAccepted, nextFormatId, budgetHours, postId, sid],
       );
     } else {
+      const budgetHours = await resolveBudgetHours(orgId, post.editor_id, defaultFormatId);
+      const tid = await nextTaskRef(orgId, "tid");
+      const sid = await nextTaskRef(orgId, "sid");
       await pool.query(
-        `insert into task (org_id, post_id, editor_id, channel_id, title, due_date, status, priority)
-         values ($1, $2, $3, $4, $5, $6, 'todo', 'medium')`,
-        [orgId, postId, post.editor_id, post.workspace_id, post.title, post.date],
+        `insert into task (org_id, post_id, editor_id, channel_id, title, due_date, status, priority,
+                           task_type, accepted, content_format_id, budget_hours, budget_started_at, tid, sid)
+         values ($1, $2, $3, $4, $5, $6, 'todo', 'medium', 'content', $7, $8, $9,
+                 case when $7 and $9::numeric is not null then now() else null end, $10, $11)`,
+        [orgId, postId, post.editor_id, post.workspace_id, post.title, post.date, accepted, defaultFormatId, budgetHours, tid, sid],
       );
     }
   } catch (err) {
@@ -205,7 +251,7 @@ postsRouter.post("/posts", requireEditor, async (req, res, next) => {
       ],
     );
     // Auto-create a Task Management task for the assigned editor.
-    await syncPostTask(rows[0].id, req.orgId);
+    await syncPostTask(rows[0].id, req.orgId, req.user.sub);
     await logActivity({
       orgId: req.orgId,
       actorId: req.user.sub,
@@ -281,7 +327,7 @@ postsRouter.patch("/posts/:id", requireEditor, async (req, res, next) => {
     );
     if (rows.length === 0) return res.status(404).json({ error: "Post not found" });
     // Keep the linked task in sync (e.g. editor assigned/changed on edit).
-    await syncPostTask(req.params.id, req.orgId);
+    await syncPostTask(req.params.id, req.orgId, req.user.sub);
 
     const post = rows[0];
     if (prior && prior.status !== "published" && post.status === "published") {

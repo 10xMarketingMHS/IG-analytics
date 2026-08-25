@@ -6,50 +6,176 @@ import { logActivity } from "../activity.js";
 
 export const tasksRouter = Router();
 
+// Review is a checkpoint, not just another column: the assignee moves a task
+// through todo -> in_progress -> review on their own, but only an admin can
+// resolve a review — approve it into done, or send it back to in_progress
+// for rework. See the status-transition guard in the PATCH handler below.
 const STATUS = ["todo", "in_progress", "review", "done"];
 const PRIORITY = ["low", "medium", "high"];
+// What *kind* of task this is — separate from priority (how urgent). Auto-
+// created (post-linked) tasks are always "content" and that's not user-editable.
+// "emergency" was dropped — priority=high already covers urgency. "social"
+// and "ad" each carry a secondary id alongside the task's own TID — see
+// nextTaskRef() below.
+const TASK_TYPE = ["content", "short_task", "general", "social", "ad"];
 const PLATFORMS = ["instagram", "facebook", "youtube"];
+
+// Type-specific extras for social/ad tasks — small and varying enough per
+// type that a JSON bag beats a wide sparse column set. All optional; nothing
+// here is validated against a fixed platform list since it's just metadata,
+// not a relation.
+const MetaSchema = z
+  .object({
+    platform: z.string().max(40).optional(),
+    caption: z.string().max(2000).optional(),
+    assetLinks: z.string().max(2000).optional(),
+    adSpend: z.number().nonnegative().optional(),
+    targetUrl: z.string().max(500).optional(),
+  })
+  .partial();
 
 const TaskSchema = z.object({
   title: z.string().min(1),
   description: z.string().optional(),
   editorId: z.string().uuid().nullable().optional(),
   channelId: z.string().uuid().nullable().optional(),
+  postId: z.string().uuid().nullable().optional(),
   dueDate: z.string().optional().nullable(), // YYYY-MM-DD
   status: z.enum(STATUS).optional(),
+  // Required when sending a task back from review to in_progress — what
+  // needs fixing, so the team isn't just told "no" with nothing to act on.
+  reviewNote: z.string().trim().max(2000).optional(),
   priority: z.enum(PRIORITY).optional(),
   recurrence: z.enum(["none", "daily", "weekly"]).optional(),
+  taskType: z.enum(TASK_TYPE).optional(),
+  // What production format the work is — an FK into the org's own
+  // admin-manageable task_content_format list. Optional — not every task
+  // (e.g. a short/general task) has one.
+  contentFormatId: z.string().uuid().nullable().optional(),
+  meta: MetaSchema.optional(),
+  // When a save results in an accepted task with a resolvable time budget,
+  // the client already knows (from this same response, checked after a first
+  // save) whether the budget clock would run past office close — self-assign
+  // never goes through the explicit /accept endpoint, so this is how it gets
+  // the same "start now or 9 AM tomorrow" choice. Ignored for anything else.
+  startAt: z.string().datetime().optional(),
   // Phase 1 additions. content_type is a flexible tag (UI drives the list).
   contentType: z.string().max(40).nullable().optional(),
   platforms: z.array(z.enum(PLATFORMS)).optional(),
   attachments: z.array(z.object({ url: z.string().url(), label: z.string().max(120).optional() })).optional(),
 });
 
+// TID-00001 for every task; SID-00001 additionally for a Social task, or
+// AdID-00001 for a Paid Ad task — both linked to the same row, so either one
+// searches straight to its parent task (see GET /tasks' q filter).
+export async function nextTaskRef(orgId, kind) {
+  const prefix = { tid: "TID", sid: "SID", adid: "AdID" }[kind];
+  const { rows } = await pool.query("select next_task_ref($1, $2) as n", [orgId, kind]);
+  return `${prefix}-${String(rows[0].n).padStart(5, "0")}`;
+}
+
 // Returned shape: task fields + assignee name/image + channel name for the UI.
+// Content format is a joined name/icon (from the org's own taxonomy), not a
+// fixed enum. Social Media tasks (post_id set) also carry the post's title,
+// permalink and platform (account context) — a manual task has none of that,
+// all null.
 const SELECT = `
   select t.id, t.serial, t.title, t.description, t.editor_id, t.channel_id, t.post_id,
-         t.status, t.priority, t.due_date, t.recurrence, t.created_at, t.completed_at,
+         t.status, t.priority, t.due_date, t.recurrence, t.task_type,
+         t.tid, t.sid, t.ad_id, t.meta, t.revision, t.pending_note,
+         t.content_format_id, cf.name as content_format_name, cf.icon as content_format_icon,
+         t.budget_hours, t.budget_started_at, t.accepted, t.created_at, t.completed_at,
          t.content_type, t.platforms, t.attachments,
          e.name as editor_name, e.image_url as editor_image,
+         -- The assignee's break, so the client can offset the countdown by
+         -- however long they've been (or are currently) on break — a break
+         -- pauses every one of their running timers at once, computed here
+         -- rather than by rewriting budget_started_at on each task.
+         case when e.break_date = current_date then e.break_started_at end as editor_break_started_at,
+         case when e.break_date = current_date then e.break_used_seconds else 0 end as editor_break_used_seconds,
          w.name as channel_name,
+         p.title as post_title, p.permalink as post_permalink,
+         pl.key as platform_key, pl.name as platform_name,
          (select count(*)::int from subtask s where s.task_id = t.id) as subtask_total,
          (select count(*)::int from subtask s where s.task_id = t.id and s.done) as subtask_done
     from task t
     left join editor e on e.id = t.editor_id
-    left join workspace w on w.id = t.channel_id`;
+    left join workspace w on w.id = t.channel_id
+    left join post p on p.id = t.post_id
+    left join platform pl on pl.id = p.platform_id
+    left join task_content_format cf on cf.id = t.content_format_id`;
 
-// List every task in the org, newest-relevant first. Optional filters.
+// Time-budget resolution (Phase 1): an editor's own rule for a format wins,
+// else the org-wide default, else no budget (task just has no timer).
+// Exported — posts.js's syncPostTask needs it to give auto-created (post-linked)
+// tasks a timer too, the same way a manually-created task gets one.
+export async function resolveBudgetHours(orgId, editorId, contentFormatId) {
+  if (!contentFormatId) return null;
+  const { rows } = await pool.query(
+    `select hours from task_time_rule
+      where org_id = $1 and content_format_id = $2 and editor_id = $3
+      union all
+      select hours from task_time_rule
+      where org_id = $1 and content_format_id = $2 and editor_id is null
+      limit 1`,
+    [orgId, contentFormatId, editorId],
+  );
+  return rows[0]?.hours ?? null;
+}
+
+// Whichever editor the caller's own login is linked to (§ My Tasks / § Accept).
+async function callerEditorId(req) {
+  const { rows } = await pool.query("select editor_id from app_user where id = $1", [req.user.sub]);
+  return rows[0]?.editor_id ?? null;
+}
+
+// List every task in the org, newest-relevant first. Optional filters:
+//   editorId=<uuid>   — a specific assignee
+//   assignee=me        — tasks assigned to the caller's linked editor (§ My Tasks)
+//   status=<status>
+//   taskType=<type>
+//   dueBefore/dueAfter — YYYY-MM-DD, inclusive, for due-date range views
+//   socialMedia=1       — only post-linked tasks (§ Social Media tracking)
 tasksRouter.get("/tasks", async (req, res, next) => {
   try {
     const clauses = ["t.org_id = $1"];
     const params = [req.orgId];
-    if (req.query.editorId) {
+    if (req.query.socialMedia === "1") clauses.push("t.post_id is not null");
+
+    if (req.query.assignee === "me") {
+      const { rows } = await pool.query("select editor_id from app_user where id = $1", [req.user.sub]);
+      // No linked editor → "my tasks" is an empty set, not "all tasks".
+      params.push(rows[0]?.editor_id ?? "00000000-0000-0000-0000-000000000000");
+      clauses.push(`t.editor_id = $${params.length}`);
+    } else if (req.query.editorId) {
       params.push(req.query.editorId);
       clauses.push(`t.editor_id = $${params.length}`);
     }
     if (req.query.status && STATUS.includes(req.query.status)) {
       params.push(req.query.status);
       clauses.push(`t.status = $${params.length}`);
+    }
+    if (req.query.taskType && TASK_TYPE.includes(req.query.taskType)) {
+      params.push(req.query.taskType);
+      clauses.push(`t.task_type = $${params.length}`);
+    }
+    if (req.query.contentFormatId) {
+      params.push(req.query.contentFormatId);
+      clauses.push(`t.content_format_id = $${params.length}::uuid`);
+    }
+    if (req.query.dueBefore) {
+      params.push(req.query.dueBefore);
+      clauses.push(`t.due_date <= $${params.length}`);
+    }
+    if (req.query.dueAfter) {
+      params.push(req.query.dueAfter);
+      clauses.push(`t.due_date >= $${params.length}`);
+    }
+    // Global lookup by reference id (TID/SID/AdID) or a plain title match —
+    // exact id hits are what the search bar is really for, title is a bonus.
+    if (req.query.q) {
+      params.push(`%${req.query.q}%`);
+      clauses.push(`(t.tid ilike $${params.length} or t.sid ilike $${params.length} or t.ad_id ilike $${params.length} or t.title ilike $${params.length})`);
     }
     const { rows } = await pool.query(
       `${SELECT} where ${clauses.join(" and ")}
@@ -70,18 +196,40 @@ tasksRouter.post("/tasks", requireEditor, async (req, res, next) => {
   const d = parsed.data;
   try {
     const status = d.status ?? "todo";
-    // Atomically claim the next per-org Task ID and insert in one statement.
+    const assigneeId = d.editorId ?? null;
+    // Assigning to yourself accepts immediately — no separate approval needed
+    // — but that's still an "accept" moment: the office-hours check just runs
+    // client-side after this response instead of before it (see startAt).
+    // Assigning to someone else needs their explicit accept before anything
+    // starts (POST /tasks/:id/accept), where the check runs up front.
+    const accepted = !assigneeId || (await callerEditorId(req)) === assigneeId;
+    const budgetHours = await resolveBudgetHours(req.orgId, assigneeId, d.contentFormatId ?? null);
+    const hasBudget = accepted && budgetHours != null;
+    const budgetStartedAt = hasBudget ? (d.startAt ? new Date(d.startAt) : new Date()) : null;
+    // This endpoint is for manual tasks only (auto-created ones are inserted
+    // directly by syncPostTask) — default to "general".
+    const taskType = d.taskType ?? "general";
+    // Every task gets a TID; a Social or Paid Ad task additionally gets its
+    // own secondary id, both pointing at this same row.
+    const tid = await nextTaskRef(req.orgId, "tid");
+    const sid = taskType === "social" ? await nextTaskRef(req.orgId, "sid") : null;
+    const adId = taskType === "ad" ? await nextTaskRef(req.orgId, "adid") : null;
+    // Atomically claim the next per-org Task ID (serial, "TASK-####") and
+    // insert in one statement, alongside the TID/SID/AdID system above —
+    // both id schemes point at the same row.
     const { rows } = await pool.query(
       `with s as (update org set task_seq = task_seq + 1 where id = $1 returning task_seq)
        insert into task (org_id, editor_id, channel_id, title, description,
-                         status, priority, due_date, recurrence,
-                         content_type, platforms, attachments, serial, completed_at)
-       select $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12::jsonb, (select task_seq from s),
-              case when $6 = 'done' then now() else null end
+                         status, priority, due_date, recurrence, task_type, content_format_id,
+                         budget_hours, accepted, budget_started_at, completed_at,
+                         tid, sid, ad_id, meta, content_type, platforms, attachments, serial)
+       select $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,
+              case when $6 = 'done' then now() else null end,
+              $15,$16,$17,$18,$19,$20,$21::jsonb, (select task_seq from s)
        returning id`,
       [
         req.orgId,
-        d.editorId ?? null,
+        assigneeId,
         d.channelId ?? null,
         d.title,
         d.description ?? "",
@@ -89,6 +237,15 @@ tasksRouter.post("/tasks", requireEditor, async (req, res, next) => {
         d.priority ?? "medium",
         d.dueDate || null,
         d.recurrence ?? "none",
+        taskType,
+        d.contentFormatId ?? null,
+        budgetHours,
+        accepted,
+        budgetStartedAt,
+        tid,
+        sid,
+        adId,
+        JSON.stringify(d.meta ?? {}),
         d.contentType ?? null,
         d.platforms ?? [],
         JSON.stringify(d.attachments ?? []),
@@ -124,7 +281,6 @@ tasksRouter.patch("/tasks/:id", requireEditor, async (req, res, next) => {
   };
   if (d.title !== undefined) push("title", d.title);
   if (d.description !== undefined) push("description", d.description);
-  if (d.editorId !== undefined) push("editor_id", d.editorId ?? null);
   if (d.channelId !== undefined) push("channel_id", d.channelId ?? null);
   if (d.priority !== undefined) push("priority", d.priority);
   if (d.dueDate !== undefined) push("due_date", d.dueDate || null);
@@ -135,16 +291,152 @@ tasksRouter.patch("/tasks/:id", requireEditor, async (req, res, next) => {
     params.push(JSON.stringify(d.attachments));
     sets.push(`attachments = $${params.length}::jsonb`);
   }
-  if (d.status !== undefined) {
-    push("status", d.status);
-    // Stamp/clear completion time as status moves in/out of "done".
-    sets.push(`completed_at = case when $${params.length} = 'done' then coalesce(completed_at, now()) else null end`);
-  }
-  if (!sets.length) return res.status(400).json({ error: "No fields to update" });
+  // Note: d.status is NOT pushed here — it goes through the review-stage
+  // permission gate + completed_at stamping further down (after `prior` is
+  // fetched), not this generic field loop. See the sets.length guard below
+  // that one instead of duplicating it here.
   try {
-    // Capture prior state so we can spawn the next occurrence on completion.
-    const prior = (await pool.query("select status, recurrence from task where id = $1 and org_id = $2", [req.params.id, req.orgId])).rows[0];
+    // Capture prior state so we can spawn the next occurrence on completion,
+    // guard task_type for post-linked tasks, and re-resolve the time budget.
+    const prior = (await pool.query(
+      "select status, recurrence, post_id, editor_id, content_format_id, accepted, budget_hours, budget_started_at, budget_used_seconds, sid, ad_id, revision from task where id = $1 and org_id = $2",
+      [req.params.id, req.orgId],
+    )).rows[0];
     if (!prior) return res.status(404).json({ error: "Task not found" });
+
+    // Status moves follow who's allowed to make that particular call:
+    //  - todo/in_progress/review: only the assignee — not whoever assigned
+    //    it, not an admin. Keeps "who's actually doing this" honest.
+    //  - out of review (approve into done, or send back to in_progress for
+    //    rework): only an admin — that's the whole point of a review stage.
+    //  - into done from anywhere else: not allowed — it has to go through
+    //    review first.
+    // Only gate (and only touch the column) when this is an actual change —
+    // the client always sends the current status alongside unrelated edits
+    // (e.g. tweaking the description of a task sitting in review), and that
+    // must never require admin rights just because status came along for the ride.
+    // reviewLogAction/reviewNote, once set, drive the task_review_log entry
+    // written after the main update below.
+    let reviewLogAction = null;
+    let reviewNote = null;
+    if (d.status !== undefined && d.status !== prior.status) {
+      if (prior.status === "review") {
+        if (req.role !== "admin") {
+          return res.status(403).json({ error: "Only an admin can approve or send back a task in review." });
+        }
+        if (d.status !== "done" && d.status !== "in_progress") {
+          return res.status(400).json({ error: "From review, a task can only move to Completed or back to In progress." });
+        }
+        if (d.status === "in_progress") {
+          reviewNote = (d.reviewNote ?? "").trim();
+          if (!reviewNote) {
+            return res.status(400).json({ error: "Add a note explaining what needs fixing before sending it back." });
+          }
+          reviewLogAction = "sent_back";
+          // A rework cycle — bump the version so the team can tell revisions
+          // apart, and require the assignee to explicitly re-accept before
+          // the clock resumes (same gate a fresh assignment gets) — this is
+          // also where the note actually reaches them, right at accept time.
+          push("revision", prior.revision + 1);
+          push("accepted", false);
+          push("pending_note", reviewNote);
+        } else {
+          reviewLogAction = "approved";
+          reviewNote = (d.reviewNote ?? "").trim() || null;
+        }
+      } else {
+        if (d.status === "done") {
+          return res.status(400).json({ error: "Move it to Review first — only an admin can mark it Completed." });
+        }
+        const myEditorId = await callerEditorId(req);
+        if (!prior.editor_id || myEditorId !== prior.editor_id) {
+          return res.status(403).json({ error: "Only the person this task is assigned to can change its status." });
+        }
+      }
+      // Entering review pauses the clock — bank whatever's elapsed so far
+      // rather than letting review time (or a later rework cycle) eat into
+      // the assignee's actual working budget; resumes exactly where it left
+      // off when they're accepted back in (see POST /tasks/:id/accept).
+      if (d.status === "review" && prior.budget_started_at && prior.budget_hours != null) {
+        const elapsedSec = Math.max(0, (Date.now() - new Date(prior.budget_started_at).getTime()) / 1000);
+        push("budget_used_seconds", Number(prior.budget_used_seconds ?? 0) + elapsedSec);
+        push("budget_started_at", null);
+      }
+      push("status", d.status);
+      // Stamp/clear completion time as status moves in/out of "done".
+      sets.push(`completed_at = case when $${params.length} = 'done' then coalesce(completed_at, now()) else null end`);
+    }
+
+    // Manually linking a task to a post — turns it into a Social Media task
+    // (§ splitting). Only for tasks that aren't already post-linked; only to
+    // posts that don't already have their own linked task.
+    if (d.postId !== undefined) {
+      if (prior.post_id) {
+        return res.status(400).json({ error: "This task is already linked to a post." });
+      }
+      if (d.postId) {
+        const { rows: prows } = await pool.query(
+          "select id from post p join workspace w on w.id = p.workspace_id where p.id = $1 and w.org_id = $2 and p.deleted_at is null",
+          [d.postId, req.orgId],
+        );
+        if (!prows.length) return res.status(400).json({ error: "That post wasn't found." });
+        const { rows: existing } = await pool.query("select id from task where post_id = $1", [d.postId]);
+        if (existing.length) return res.status(409).json({ error: "That post already has a linked task." });
+      }
+      push("post_id", d.postId ?? null);
+      // A post-linked task always reads as Content from here on, same as an auto-created one.
+      push("task_type", "content");
+    }
+
+    if (d.taskType !== undefined && d.postId === undefined) {
+      // Auto-created tasks are always "content" and that's not user-editable.
+      // (Linking a post above already forces task_type — skip this branch then.)
+      if (prior.post_id) {
+        return res.status(400).json({ error: "This task's type is set automatically — it's linked to a post." });
+      }
+      push("task_type", d.taskType);
+      // Retroactively mint the secondary id the moment a task becomes Social
+      // or Paid Ad — e.g. a General task that turns out to need one. Never
+      // re-generates one that already exists.
+      if (d.taskType === "social" && !prior.sid) push("sid", await nextTaskRef(req.orgId, "sid"));
+      if (d.taskType === "ad" && !prior.ad_id) push("ad_id", await nextTaskRef(req.orgId, "adid"));
+    }
+    if (d.contentFormatId !== undefined) push("content_format_id", d.contentFormatId ?? null);
+    if (d.meta !== undefined) push("meta", JSON.stringify(d.meta));
+
+    // Reassigning — resets acceptance unless it's a no-op (same editor) or a
+    // self-assign (claiming, or a manager assigning their own work to themselves).
+    let accepted = prior.accepted;
+    if (d.editorId !== undefined) {
+      const nextEditorId = d.editorId ?? null;
+      push("editor_id", nextEditorId);
+      if (nextEditorId !== prior.editor_id) {
+        accepted = !nextEditorId || (await callerEditorId(req)) === nextEditorId;
+        push("accepted", accepted);
+      }
+    }
+    // Format or assignee changed → re-snapshot the budget from current rules.
+    // Only actually starts the countdown (budget_started_at) once accepted —
+    // an unaccepted reassignment still shows the resolved hours, just paused.
+    // startAt lets the caller pick when the clock starts (e.g. self-assigning
+    // past office close, same "start now or 9 AM tomorrow" choice the explicit
+    // accept endpoint offers) — defaults to now, same as before.
+    if (d.contentFormatId !== undefined || d.editorId !== undefined) {
+      const effectiveEditorId = d.editorId !== undefined ? (d.editorId ?? null) : prior.editor_id;
+      const effectiveFormatId = d.contentFormatId !== undefined ? (d.contentFormatId ?? null) : prior.content_format_id;
+      const budgetHours = await resolveBudgetHours(req.orgId, effectiveEditorId, effectiveFormatId);
+      push("budget_hours", budgetHours);
+      push("budget_started_at", budgetHours !== null && accepted ? (d.startAt ? new Date(d.startAt) : new Date()) : null);
+      // Handing it to someone new — any time banked from the previous
+      // assignee's paused work session doesn't carry over to them.
+      if (d.editorId !== undefined && d.editorId !== prior.editor_id) push("budget_used_seconds", 0);
+    } else if (d.startAt !== undefined && prior.accepted && prior.budget_hours != null) {
+      // Pure reschedule — nothing else about the task changed, just when its
+      // already-running clock should count from (e.g. deferring a self-assign
+      // made after office hours to 9 AM tomorrow instead).
+      push("budget_started_at", new Date(d.startAt));
+    }
+    if (!sets.length) return res.status(400).json({ error: "No fields to update" });
 
     const { rows } = await pool.query(
       `update task set ${sets.join(", ")} where id = $1 and org_id = $2 returning id`,
@@ -171,6 +463,59 @@ tasksRouter.patch("/tasks/:id", requireEditor, async (req, res, next) => {
         summary: `Completed task “${full[0].title}”`,
       });
     }
+    // Record the review decision (and, for a rework cycle, the note the team
+    // needs) against the revision it just landed on.
+    if (reviewLogAction) {
+      await pool.query(
+        `insert into task_review_log (task_id, revision, action, note, actor_id) values ($1, $2, $3, $4, $5)`,
+        [req.params.id, full[0].revision, reviewLogAction, reviewNote, req.user.sub],
+      );
+    }
+    res.json({ task: full[0] });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// Accept an assignment — only the assignee themselves, and only once. This is
+// what actually starts the time-budget countdown (budget_started_at); until
+// this, an assigned-by-someone-else task just sits pending with no timer.
+// startAt lets the client defer the start (e.g. "9am tomorrow" when accepting
+// now would run the budget past office close) — client computes the wall-clock
+// time since office hours are a local-time concept, not something the server
+// should guess at.
+tasksRouter.post("/tasks/:id/accept", requireEditor, async (req, res, next) => {
+  const startAt = req.body?.startAt ? new Date(req.body.startAt) : new Date();
+  if (isNaN(startAt.getTime())) return res.status(400).json({ error: "Invalid start time." });
+  try {
+    const prior = (await pool.query(
+      "select editor_id, accepted, budget_hours, status, budget_used_seconds from task where id = $1 and org_id = $2",
+      [req.params.id, req.orgId],
+    )).rows[0];
+    if (!prior) return res.status(404).json({ error: "Task not found" });
+    if (prior.accepted) return res.status(400).json({ error: "This task is already accepted." });
+    const myEditorId = await callerEditorId(req);
+    if (!myEditorId || myEditorId !== prior.editor_id) {
+      return res.status(403).json({ error: "Only the person this task is assigned to can accept it." });
+    }
+    // Resuming after a pause (sent back from review) picks up where it left
+    // off — the start point shifts back by however much was already banked,
+    // so the countdown reflects only what's actually left, not a fresh
+    // budget_hours. A brand-new assignment has nothing banked, so this is a
+    // no-op for the normal case.
+    const usedSec = Number(prior.budget_used_seconds ?? 0);
+    const effectiveStart = usedSec > 0 ? new Date(startAt.getTime() - usedSec * 1000) : startAt;
+    // Accepting a task still sitting in To Do is also what actually starts
+    // work on it — move it into In Progress in the same step, instead of
+    // requiring a separate manual drag right after.
+    const nextStatus = prior.status === "todo" ? "in_progress" : prior.status;
+    await pool.query(
+      `update task
+          set accepted = true, budget_started_at = $3, budget_used_seconds = 0, pending_note = null, status = $4
+        where id = $1 and org_id = $2`,
+      [req.params.id, req.orgId, prior.budget_hours != null ? effectiveStart : null, nextStatus],
+    );
+    const { rows: full } = await pool.query(`${SELECT} where t.id = $1`, [req.params.id]);
     res.json({ task: full[0] });
   } catch (err) {
     next(err);
@@ -182,17 +527,25 @@ tasksRouter.patch("/tasks/:id", requireEditor, async (req, res, next) => {
 async function spawnNextOccurrence(taskId, recurrence) {
   try {
     const t = (await pool.query(
-      "select org_id, editor_id, channel_id, title, description, priority, due_date from task where id = $1",
+      "select org_id, editor_id, channel_id, title, description, priority, due_date, task_type, content_format_id from task where id = $1",
       [taskId],
     )).rows[0];
     if (!t) return;
     const days = recurrence === "weekly" ? 7 : 1;
     // Advance from the current due date if set, else from today.
     const nextDue = `(coalesce($7::date, current_date) + interval '${days} day')::date`;
+    // Fresh occurrence gets its own budget snapshot, resolved against
+    // whatever rules apply right now (not copied from the completed one) —
+    // and its own TID, being a distinct row (a recurring Social/Ad task also
+    // gets a fresh SID/AdID, same as any other task of that type).
+    const budgetHours = await resolveBudgetHours(t.org_id, t.editor_id, t.content_format_id);
+    const tid = await nextTaskRef(t.org_id, "tid");
+    const sid = t.task_type === "social" ? await nextTaskRef(t.org_id, "sid") : null;
+    const adId = t.task_type === "ad" ? await nextTaskRef(t.org_id, "adid") : null;
     const { rows } = await pool.query(
-      `insert into task (org_id, editor_id, channel_id, title, description, priority, due_date, recurrence, status)
-       values ($1,$2,$3,$4,$5,$6, ${nextDue}, $8, 'todo') returning id`,
-      [t.org_id, t.editor_id, t.channel_id, t.title, t.description, t.priority, t.due_date, recurrence],
+      `insert into task (org_id, editor_id, channel_id, title, description, priority, due_date, recurrence, status, task_type, content_format_id, budget_hours, budget_started_at, tid, sid, ad_id)
+       values ($1,$2,$3,$4,$5,$6, ${nextDue}, $8, 'todo', $9, $10, $11, case when $11::numeric is not null then now() else null end, $12, $13, $14) returning id`,
+      [t.org_id, t.editor_id, t.channel_id, t.title, t.description, t.priority, t.due_date, recurrence, t.task_type, t.content_format_id, budgetHours, tid, sid, adId],
     );
     const newId = rows[0].id;
     await pool.query(
@@ -223,6 +576,27 @@ async function ownsTask(taskId, orgId) {
   const { rows } = await pool.query("select 1 from task where id = $1 and org_id = $2", [taskId, orgId]);
   return rows.length > 0;
 }
+
+// Every review decision on this task — sent back (with its note) or
+// approved — newest first, so the team can see exactly what changed each
+// revision and why.
+tasksRouter.get("/tasks/:id/reviews", async (req, res, next) => {
+  try {
+    if (!(await ownsTask(req.params.id, req.orgId))) return res.status(404).json({ error: "Task not found" });
+    const { rows } = await pool.query(
+      `select l.id, l.revision, l.action, l.note, l.created_at,
+              coalesce(u.name, u.email) as actor_name
+         from task_review_log l
+         left join app_user u on u.id = l.actor_id
+        where l.task_id = $1
+        order by l.created_at desc`,
+      [req.params.id],
+    );
+    res.json({ reviews: rows });
+  } catch (err) {
+    next(err);
+  }
+});
 
 tasksRouter.get("/tasks/:id/subtasks", async (req, res, next) => {
   try {

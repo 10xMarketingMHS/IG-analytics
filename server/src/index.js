@@ -14,7 +14,10 @@ import { taxonomyRouter } from "./routes/taxonomy.js";
 import { editorsRouter } from "./routes/editors.js";
 import { platformsRouter } from "./routes/platforms.js";
 import { tasksRouter } from "./routes/tasks.js";
+import { taskRulesRouter } from "./routes/task-rules.js";
+import { contentFormatsRouter } from "./routes/content-formats.js";
 import { usersRouter } from "./routes/users.js";
+import { breaksRouter } from "./routes/breaks.js";
 import { activityRouter } from "./routes/activity.js";
 import { integrationsRouter } from "./routes/integrations.js";
 
@@ -46,7 +49,10 @@ app.use("/api", requireAuth, resolveWorkspace, taxonomyRouter);
 app.use("/api", requireAuth, resolveWorkspace, editorsRouter);
 app.use("/api", requireAuth, resolveWorkspace, platformsRouter);
 app.use("/api", requireAuth, resolveWorkspace, tasksRouter);
+app.use("/api", requireAuth, resolveWorkspace, taskRulesRouter);
+app.use("/api", requireAuth, resolveWorkspace, contentFormatsRouter);
 app.use("/api", requireAuth, resolveWorkspace, usersRouter);
+app.use("/api", requireAuth, resolveWorkspace, breaksRouter);
 app.use("/api", requireAuth, resolveWorkspace, activityRouter);
 app.use("/api", requireAuth, resolveWorkspace, integrationsRouter);
 
