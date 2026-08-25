@@ -18,6 +18,7 @@ const PRIORITY = ["low", "medium", "high"];
 // and "ad" each carry a secondary id alongside the task's own TID — see
 // nextTaskRef() below.
 const TASK_TYPE = ["content", "short_task", "general", "social", "ad"];
+const PLATFORMS = ["instagram", "facebook", "youtube"];
 
 // Type-specific extras for social/ad tasks — small and varying enough per
 // type that a JSON bag beats a wide sparse column set. All optional; nothing
@@ -58,6 +59,10 @@ const TaskSchema = z.object({
   // never goes through the explicit /accept endpoint, so this is how it gets
   // the same "start now or 9 AM tomorrow" choice. Ignored for anything else.
   startAt: z.string().datetime().optional(),
+  // Phase 1 additions. content_type is a flexible tag (UI drives the list).
+  contentType: z.string().max(40).nullable().optional(),
+  platforms: z.array(z.enum(PLATFORMS)).optional(),
+  attachments: z.array(z.object({ url: z.string().url(), label: z.string().max(120).optional() })).optional(),
 });
 
 // TID-00001 for every task; SID-00001 additionally for a Social task, or
@@ -75,11 +80,12 @@ export async function nextTaskRef(orgId, kind) {
 // permalink and platform (account context) — a manual task has none of that,
 // all null.
 const SELECT = `
-  select t.id, t.title, t.description, t.editor_id, t.channel_id, t.post_id,
+  select t.id, t.serial, t.title, t.description, t.editor_id, t.channel_id, t.post_id,
          t.status, t.priority, t.due_date, t.recurrence, t.task_type,
          t.tid, t.sid, t.ad_id, t.meta, t.revision, t.pending_note,
          t.content_format_id, cf.name as content_format_name, cf.icon as content_format_icon,
          t.budget_hours, t.budget_started_at, t.accepted, t.created_at, t.completed_at,
+         t.content_type, t.platforms, t.attachments,
          e.name as editor_name, e.image_url as editor_image,
          -- The assignee's break, so the client can offset the countdown by
          -- however long they've been (or are currently) on break — a break
@@ -200,20 +206,26 @@ tasksRouter.post("/tasks", requireEditor, async (req, res, next) => {
     const budgetHours = await resolveBudgetHours(req.orgId, assigneeId, d.contentFormatId ?? null);
     const hasBudget = accepted && budgetHours != null;
     const budgetStartedAt = hasBudget ? (d.startAt ? new Date(d.startAt) : new Date()) : null;
+    // This endpoint is for manual tasks only (auto-created ones are inserted
+    // directly by syncPostTask) — default to "general".
     const taskType = d.taskType ?? "general";
     // Every task gets a TID; a Social or Paid Ad task additionally gets its
     // own secondary id, both pointing at this same row.
     const tid = await nextTaskRef(req.orgId, "tid");
     const sid = taskType === "social" ? await nextTaskRef(req.orgId, "sid") : null;
     const adId = taskType === "ad" ? await nextTaskRef(req.orgId, "adid") : null;
+    // Atomically claim the next per-org Task ID (serial, "TASK-####") and
+    // insert in one statement, alongside the TID/SID/AdID system above —
+    // both id schemes point at the same row.
     const { rows } = await pool.query(
-      `insert into task (org_id, editor_id, channel_id, title, description,
+      `with s as (update org set task_seq = task_seq + 1 where id = $1 returning task_seq)
+       insert into task (org_id, editor_id, channel_id, title, description,
                          status, priority, due_date, recurrence, task_type, content_format_id,
                          budget_hours, accepted, budget_started_at, completed_at,
-                         tid, sid, ad_id, meta)
-       values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,
-               case when $6 = 'done' then now() else null end,
-               $15,$16,$17,$18)
+                         tid, sid, ad_id, meta, content_type, platforms, attachments, serial)
+       select $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,
+              case when $6 = 'done' then now() else null end,
+              $15,$16,$17,$18,$19,$20,$21::jsonb, (select task_seq from s)
        returning id`,
       [
         req.orgId,
@@ -225,8 +237,6 @@ tasksRouter.post("/tasks", requireEditor, async (req, res, next) => {
         d.priority ?? "medium",
         d.dueDate || null,
         d.recurrence ?? "none",
-        // This endpoint is for manual tasks only (auto-created ones are
-        // inserted directly by syncPostTask) — default to "general".
         taskType,
         d.contentFormatId ?? null,
         budgetHours,
@@ -236,6 +246,9 @@ tasksRouter.post("/tasks", requireEditor, async (req, res, next) => {
         sid,
         adId,
         JSON.stringify(d.meta ?? {}),
+        d.contentType ?? null,
+        d.platforms ?? [],
+        JSON.stringify(d.attachments ?? []),
       ],
     );
     const { rows: full } = await pool.query(`${SELECT} where t.id = $1`, [rows[0].id]);
@@ -272,6 +285,16 @@ tasksRouter.patch("/tasks/:id", requireEditor, async (req, res, next) => {
   if (d.priority !== undefined) push("priority", d.priority);
   if (d.dueDate !== undefined) push("due_date", d.dueDate || null);
   if (d.recurrence !== undefined) push("recurrence", d.recurrence);
+  if (d.contentType !== undefined) push("content_type", d.contentType ?? null);
+  if (d.platforms !== undefined) push("platforms", d.platforms);
+  if (d.attachments !== undefined) {
+    params.push(JSON.stringify(d.attachments));
+    sets.push(`attachments = $${params.length}::jsonb`);
+  }
+  // Note: d.status is NOT pushed here — it goes through the review-stage
+  // permission gate + completed_at stamping further down (after `prior` is
+  // fetched), not this generic field loop. See the sets.length guard below
+  // that one instead of duplicating it here.
   try {
     // Capture prior state so we can spawn the next occurrence on completion,
     // guard task_type for post-linked tasks, and re-resolve the time budget.

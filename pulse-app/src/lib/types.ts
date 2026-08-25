@@ -132,8 +132,11 @@ export type ContentFormatDef = {
   active: boolean;
 };
 
+export type TaskAttachment = { url: string; label?: string };
+
 export type Task = {
   id: string;
+  serial: number;
   title: string;
   description: string | null;
   editor_id: string | null;
@@ -144,6 +147,9 @@ export type Task = {
   due_date: string | null;
   created_at: string;
   completed_at: string | null;
+  content_type: string | null;
+  platforms: string[];
+  attachments: TaskAttachment[];
   editor_name: string | null;
   editor_image: string | null;
   channel_name: string | null;
