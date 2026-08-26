@@ -127,6 +127,43 @@ async function adminCount(workspaceId) {
   return rows[0].c;
 }
 
+const SelfUpdateSchema = z.object({
+  name: z.string().trim().min(1).max(80).optional(),
+  // Data URL (client resizes/encodes before sending, same pattern as an
+  // editor's image_url) or null to clear back to an initial-letter avatar.
+  imageUrl: z.string().max(500_000).nullable().optional(),
+  // A CSS gradient/color value (e.g. "linear-gradient(135deg,#ec4899,#8b5cf6)"),
+  // not just a short hex code — needs real room.
+  color: z.string().max(120).nullable().optional(),
+});
+
+// Self-service profile — any authenticated user can update their own display
+// name, photo, and accent color. No admin gate: this can only ever touch the
+// caller's own row (req.user.sub), never anyone else's. Registered before
+// PATCH /users/:id so "me" isn't swallowed as an :id value.
+usersRouter.patch("/users/me", async (req, res, next) => {
+  const parsed = SelfUpdateSchema.safeParse(req.body);
+  if (!parsed.success) return res.status(400).json({ error: "Invalid profile update." });
+  const d = parsed.data;
+  const sets = [];
+  const params = [req.user.sub];
+  const push = (col, val) => { params.push(val); sets.push(`${col} = $${params.length}`); };
+  if (d.name !== undefined) push("name", d.name);
+  if (d.imageUrl !== undefined) push("image_url", d.imageUrl);
+  if (d.color !== undefined) push("color", d.color);
+  if (!sets.length) return res.status(400).json({ error: "Nothing to update." });
+  try {
+    await pool.query(`update app_user set ${sets.join(", ")} where id = $1`, params);
+    const { rows } = await pool.query(
+      "select id, email, name, image_url, color, editor_id from app_user where id = $1",
+      [req.user.sub],
+    );
+    res.json({ user: rows[0] });
+  } catch (err) {
+    next(err);
+  }
+});
+
 // Update a member: role (in this workspace), account active flag, name, or
 // password reset. Protects against locking out the last admin / yourself.
 usersRouter.patch("/users/:id", requireAdmin, async (req, res, next) => {

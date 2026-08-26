@@ -26,15 +26,15 @@ import { TopPerformersPage } from "@/pages/top-performers";
 import { MetricsPage } from "@/pages/metrics";
 import { ReportsPage } from "@/pages/reports";
 import { PostsPage } from "@/pages/posts";
-import { ChannelsPage } from "@/pages/channels";
 import { TasksPage } from "@/pages/tasks";
-import { TaskRulesPage } from "@/pages/task-rules";
 import { SocialMediaPage } from "@/pages/social-media";
 import { ActivityPage } from "@/pages/activity";
 import { AddPostPage } from "@/pages/add-post";
 import { BulkAddPostPage } from "@/pages/bulk-add-post";
+// Task Settings, Channels, and Teams are now tabs inside one master Settings
+// page (see settings.tsx) — /task-rules, /channels, /teams still route here
+// so any old link keeps working, just pre-selecting the matching tab.
 import { SettingsPage } from "@/pages/settings";
-import { TeamsPage } from "@/pages/teams";
 import { FormatAnalyticsPage } from "@/pages/format-analytics";
 import { LeaderboardPage } from "@/pages/leaderboard";
 
@@ -86,11 +86,13 @@ function AppRoutes() {
             <Route path="/top" element={<TopPerformersPage />} />
             <Route path="/reports" element={<ReportsPage />} />
             <Route path="/posts" element={<PostsPage />} />
-            <Route path="/channels" element={<ChannelsPage />} />
+            {/* Channels, Task Settings, Teams all live inside Settings now — these
+                paths just render it pre-selected to the matching tab. */}
+            <Route path="/channels" element={<SettingsPage />} />
             {/* Integrations merged into Channels — keep the path working for old links / OAuth callback. */}
             <Route path="/integrations" element={<Navigate to="/channels" replace />} />
             <Route path="/tasks" element={<TasksPage />} />
-            <Route path="/task-rules" element={<TaskRulesPage />} />
+            <Route path="/task-rules" element={<SettingsPage />} />
             <Route path="/social-media" element={<SocialMediaPage />} />
             <Route path="/activity" element={<ActivityPage />} />
             {/* Direct visits (no background) still render the form. */}
@@ -98,7 +100,7 @@ function AppRoutes() {
             <Route path="/posts/:id/edit" element={<AddPostPage />} />
             <Route path="/analytics/:type" element={<FormatAnalyticsPage />} />
             <Route path="/settings" element={<SettingsPage />} />
-            <Route path="/teams" element={<TeamsPage />} />
+            <Route path="/teams" element={<SettingsPage />} />
           </Route>
         </Route>
 

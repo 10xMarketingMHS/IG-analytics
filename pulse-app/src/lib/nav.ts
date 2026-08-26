@@ -32,13 +32,12 @@ export const NAV_ITEMS: NavItem[] = [
   { title: "Leaderboard", href: "/leaderboard", icon: "🏆", section: "Analytics" },
   { title: "Task Board", href: "/tasks", icon: "✅", section: "Tasks" },
   { title: "Social & Ads Pipeline", href: "/metrics", icon: "🎬", section: "Tasks" },
-  { title: "Task Settings", href: "/task-rules", icon: "🛠️", section: "Tasks", adminOnly: true },
   // Social Media, Activity — hidden from the sidebar per request; routes/
   // pages still exist.
   { title: "Add Post", href: "/posts/new", icon: "➕", section: "Manage", adminOnly: true },
   { title: "Posts", href: "/posts", icon: "🗂️", section: "Manage", showBadge: true },
-  { title: "Channels", href: "/channels", icon: "🌐", section: "Manage" },
-  { title: "Teams", href: "/teams", icon: "🧑‍🤝‍🧑", section: "Manage" },
+  // Task Settings, Channels, and Teams are tabs inside Settings now, not
+  // separate sidebar links — one place for all admin configuration.
   { title: "Settings", href: "/settings", icon: "⚙️", section: "Manage" },
 ];
 
@@ -60,6 +59,6 @@ export const PAGE_META: Record<string, [string, string]> = {
   "/task-rules": ["Task Settings", "Content formats and how many hours each should take, per person or org-wide"],
   "/activity": ["Activity", "Everything happening across Media House, newest first"],
   "/teams": ["Teams", "Roster, hierarchy, and login access — one place for everyone on the team"],
-  "/settings": ["Settings", "Taxonomy, scoring weights, and integrations"],
+  "/settings": ["Settings", "Content taxonomy, task rules, channels, and your team — all in one place"],
   "/analytics": ["Format analytics", "Total performance across all posts of one format"],
 };

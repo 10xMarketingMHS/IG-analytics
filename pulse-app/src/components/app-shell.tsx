@@ -9,6 +9,7 @@ import { getActivitySeen, onActivitySeenChange } from "@/lib/activity-seen";
 import { useTaskAssignNotify } from "@/lib/use-task-notify";
 import { useOverdueTaskNotify } from "@/lib/use-overdue-notify";
 import { BreakWidget } from "@/components/break-widget";
+import { MyProfileModal } from "@/components/my-profile-modal";
 import { useTheme } from "@/components/theme-provider";
 import type { Activity } from "@/lib/types";
 
@@ -49,6 +50,7 @@ export function AppShell() {
   useTaskAssignNotify();
   useOverdueTaskNotify();
   const [menuOpen, setMenuOpen] = useState(false);
+  const [profileOpen, setProfileOpen] = useState(false);
 
   // Close the mobile drawer whenever the route changes.
   useEffect(() => {
@@ -56,7 +58,7 @@ export function AppShell() {
   }, [location.pathname]);
 
   const [title, sub] = metaFor(location.pathname);
-  const initial = (user?.email ?? "?").charAt(0).toUpperCase();
+  const initial = (user?.name || user?.email || "?").charAt(0).toUpperCase();
 
   async function handleSignOut() {
     await logout();
@@ -104,15 +106,26 @@ export function AppShell() {
           ))}
         </nav>
         <div className="userchip">
-          <div className="avatar">{initial}</div>
-          <div style={{ flex: 1, minWidth: 0 }}>
-            <div className="nm">Admin</div>
-            <div className="rl">{active?.name ?? "Pulse"}</div>
-          </div>
+          <button
+            type="button"
+            className="userchip-open"
+            title="My Profile"
+            onClick={() => setProfileOpen(true)}
+            style={{ all: "unset", display: "flex", alignItems: "center", gap: 10, flex: 1, minWidth: 0, cursor: "pointer" }}
+          >
+            <div className="avatar" style={{ background: user?.imageUrl ? undefined : (user?.color ?? undefined), overflow: "hidden" }}>
+              {user?.imageUrl ? <img src={user.imageUrl} alt="" style={{ width: "100%", height: "100%", objectFit: "cover" }} /> : initial}
+            </div>
+            <div style={{ flex: 1, minWidth: 0, textAlign: "left" }}>
+              <div className="nm">{user?.name || user?.email || "Account"}</div>
+              <div className="rl">{active?.role ? active.role.charAt(0).toUpperCase() + active.role.slice(1) : "Member"}</div>
+            </div>
+          </button>
           <button className="logout" title="Sign out" onClick={handleSignOut}>
             ⎋
           </button>
         </div>
+        {profileOpen && <MyProfileModal onClose={() => setProfileOpen(false)} />}
       </aside>
 
       <main>

@@ -6,7 +6,9 @@ import { useEditors } from "@/lib/use-editors";
 import { useContentFormats } from "@/lib/use-content-formats";
 import type { ContentFormatDef, TaskTimeRule } from "@/lib/types";
 
-export function TaskRulesPage() {
+// Rendered as one tab inside the master Settings page (see settings.tsx) —
+// no outer <section className="screen"> here, that's Settings' job.
+export function TaskRulesSection() {
   const { isAdmin } = useWorkspaces();
   const { editors } = useEditors();
   const { contentFormats } = useContentFormats();
@@ -24,13 +26,13 @@ export function TaskRulesPage() {
 
   if (!isAdmin) {
     return (
-      <section className="screen">
+      <>
         <div className="sectitle"><span className="dot" />Task Settings<span className="s">content formats & how much time each task gets</span></div>
         <div className="card pad" style={{ color: "var(--muted)", fontSize: 13 }}>
           Only admins can manage content formats and set how much time a task gets. When you create or work
           on a task, its format list and countdown (if any) follow whatever your admin has configured here.
         </div>
-      </section>
+      </>
     );
   }
 
@@ -57,7 +59,7 @@ export function TaskRulesPage() {
   const formats = contentFormats ?? [];
 
   return (
-    <section className="screen">
+    <>
       <div className="sectitle">
         <span className="dot" />Content formats
         <span className="s">what production formats your org uses — click one to rename it</span>
@@ -132,7 +134,7 @@ export function TaskRulesPage() {
           the global default above. Clear the cell (and click away) to remove the override and fall back to the default.
         </div>
       </div>
-    </section>
+    </>
   );
 }
 

@@ -24,7 +24,7 @@ authRouter.post("/login", async (req, res, next) => {
 
   try {
     const { rows } = await pool.query(
-      "select id, email, password_hash, active, editor_id from app_user where lower(email) = lower($1)",
+      "select id, email, password_hash, active, editor_id, name, image_url, color from app_user where lower(email) = lower($1)",
       [email],
     );
     const user = rows[0];
@@ -53,7 +53,9 @@ authRouter.post("/login", async (req, res, next) => {
       secure: config.CROSS_ORIGIN_COOKIES || config.NODE_ENV === "production",
       maxAge: 7 * 24 * 60 * 60 * 1000,
     });
-    res.json({ user: { id: user.id, email: user.email, editorId: user.editor_id } });
+    res.json({
+      user: { id: user.id, email: user.email, editorId: user.editor_id, name: user.name, imageUrl: user.image_url, color: user.color },
+    });
   } catch (err) {
     next(err);
   }
@@ -69,10 +71,17 @@ authRouter.get("/me", async (req, res) => {
   if (!token) return res.status(401).json({ error: "Not signed in" });
   try {
     const payload = jwt.verify(token, config.JWT_SECRET);
-    // editor_id can change after login (an admin can link/unlink it later),
-    // so it's looked up fresh here rather than trusted from the token.
-    const { rows } = await pool.query("select editor_id from app_user where id = $1", [payload.sub]);
-    res.json({ user: { id: payload.sub, email: payload.email, editorId: rows[0]?.editor_id ?? null } });
+    // editor_id (and profile fields, which the user can change themselves)
+    // can change after login, so they're looked up fresh rather than trusted
+    // from the token, which only ever carries id + email.
+    const { rows } = await pool.query(
+      "select editor_id, name, image_url, color from app_user where id = $1",
+      [payload.sub],
+    );
+    const u = rows[0];
+    res.json({
+      user: { id: payload.sub, email: payload.email, editorId: u?.editor_id ?? null, name: u?.name ?? null, imageUrl: u?.image_url ?? null, color: u?.color ?? null },
+    });
   } catch {
     res.status(401).json({ error: "Session expired" });
   }
