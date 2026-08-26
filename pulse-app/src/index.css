@@ -716,6 +716,30 @@ html[data-theme="dark"] .st-planned{background:#3f2f0a;color:#fbbf24}
 .tbl td{padding:11px 13px;border-bottom:1px solid var(--border2);white-space:nowrap}
 .tbl tr:last-child td{border-bottom:0}
 .tbl tr:hover td{background:var(--panel2)}
+
+/* Content formats table (Task Settings) — icon + name + points + time budget
+   in one row per format. Scrollable once formats run long instead of the
+   page just growing forever — keeps room for 10+ formats without the
+   section taking over the whole tab. */
+.fmt-table-wrap{max-height:460px;overflow-y:auto;border:1px solid var(--border);border-radius:12px}
+.fmt-table-wrap .tbl th{position:sticky;top:0;background:var(--panel);z-index:1}
+.fmt-tbl td{white-space:nowrap}
+.fmt-name-input{width:100%;min-width:120px;border:1px solid transparent;background:transparent;font-weight:650}
+.fmt-name-input:hover,.fmt-name-input:focus{border-color:var(--border);background:var(--panel2)}
+.fmt-overrides-wrap{max-height:420px;overflow-y:auto}
+
+/* Icon picker — click the current icon to open a small swatch grid. */
+.iconpicker{position:relative;display:inline-block}
+.iconpicker-trigger{width:32px;height:32px;border-radius:9px;border:1px solid var(--border);background:var(--panel2);
+  font-size:16px;cursor:pointer;display:grid;place-items:center;transition:.15s}
+.iconpicker-trigger:hover{border-color:var(--accent);background:var(--accent-weak)}
+.iconpicker-pop{position:absolute;top:calc(100% + 6px);left:0;z-index:20;display:grid;
+  grid-template-columns:repeat(4,32px);gap:5px;padding:8px;border-radius:12px;
+  background:var(--panel);border:1px solid var(--border);box-shadow:0 16px 36px rgba(0,0,0,.28)}
+.iconpicker-opt{width:32px;height:32px;border-radius:8px;border:1px solid transparent;background:var(--panel2);
+  font-size:16px;cursor:pointer;display:grid;place-items:center;transition:.12s}
+.iconpicker-opt:hover{border-color:var(--accent);background:var(--accent-weak)}
+.iconpicker-opt.on{border-color:var(--accent);background:var(--accent-weak)}
 .num{text-align:right;font-variant-numeric:tabular-nums}
 .tag{display:inline-block;font-size:11px;font-weight:650;padding:2px 8px;border-radius:6px;background:var(--accent-weak);color:var(--accent-ink)}
 .tag.av{background:var(--indigo-weak);color:var(--indigo)}

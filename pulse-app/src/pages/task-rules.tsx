@@ -1,10 +1,18 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 import { api, ApiError } from "@/lib/api";
 import { useWorkspaces } from "@/lib/workspaces-context";
 import { useEditors } from "@/lib/use-editors";
 import { useContentFormats } from "@/lib/use-content-formats";
 import type { ContentFormatDef, TaskTimeRule } from "@/lib/types";
+
+// A curated set — enough variety for common content work without turning the
+// picker into an unscrollable wall of emoji. "Other" formats can still pick
+// whichever reads best; nothing forces a literal meaning.
+const ICON_OPTIONS = [
+  "🎬", "🖼️", "📷", "🎥", "▶️", "🎙️", "📝", "🎨",
+  "📱", "🖥️", "📊", "🗓️", "💡", "✂️", "🔊", "🔧",
+];
 
 // Rendered as one tab inside the master Settings page (see settings.tsx) —
 // no outer <section className="screen"> here, that's Settings' job.
@@ -54,13 +62,30 @@ export function TaskRulesSection() {
     }
   }
 
-  async function savePoints(contentFormatId: string, points: number) {
+  async function patchFormat(id: string, patch: Record<string, unknown>, errorMsg: string) {
     try {
-      await api(`/content-formats/${contentFormatId}`, { method: "PATCH", body: JSON.stringify({ points }) });
-      toast.success("Points saved.");
+      await api(`/content-formats/${id}`, { method: "PATCH", body: JSON.stringify(patch) });
       await refetchFormats();
     } catch (err) {
-      toast.error(err instanceof ApiError ? err.message : "Could not save points.");
+      toast.error(err instanceof ApiError ? err.message : errorMsg);
+    }
+  }
+  async function addFormat(name: string, icon: string) {
+    try {
+      await api("/content-formats", { method: "POST", body: JSON.stringify({ name, icon }) });
+      await refetchFormats();
+    } catch (err) {
+      toast.error(err instanceof ApiError ? err.message : "Could not add that format.");
+      throw err; // keep the add-row open so nothing typed gets lost
+    }
+  }
+  async function removeFormat(f: ContentFormatDef) {
+    if (!window.confirm(`Remove "${f.name}"? Tasks and rules already using it keep working — it just won't be offered for new ones.`)) return;
+    try {
+      await api(`/content-formats/${f.id}`, { method: "DELETE" });
+      await refetchFormats();
+    } catch (err) {
+      toast.error(err instanceof ApiError ? err.message : "Could not remove that format.");
     }
   }
 
@@ -72,51 +97,47 @@ export function TaskRulesSection() {
     <>
       <div className="sectitle">
         <span className="dot" />Content formats
-        <span className="s">what production formats your org uses — click one to rename it</span>
-      </div>
-      <FormatManager />
-
-      <div className="sectitle" style={{ marginTop: 28 }}>
-        <span className="dot" />Points per format
-        <span className="s">the Points Formula's base value — a Reel and a Poster can be worth different amounts</span>
+        <span className="s">icon, points, and time budget together — click a name to rename it</span>
       </div>
       <div className="card pad">
         {contentFormats === null ? (
           <div className="hint">Loading…</div>
-        ) : formats.length === 0 ? (
-          <div className="hint">No content formats yet — add one above first.</div>
         ) : (
-          <div className="grid g4">
-            {formats.map((f) => (
-              <PointsBox key={f.id} format={f} onSave={(points) => savePoints(f.id, points)} />
-            ))}
+          <div className="fmt-table-wrap">
+            <table className="tbl fmt-tbl">
+              <thead>
+                <tr>
+                  <th style={{ width: 44 }}></th>
+                  <th>Format</th>
+                  <th style={{ width: 110, textAlign: "center" }}>Points</th>
+                  <th style={{ width: 130, textAlign: "center" }}>Time budget</th>
+                  <th style={{ width: 36 }}></th>
+                </tr>
+              </thead>
+              <tbody>
+                {formats.map((f) => (
+                  <FormatRow
+                    key={f.id}
+                    format={f}
+                    rule={globalFor(f)}
+                    onIcon={(icon) => patchFormat(f.id, { icon }, "Could not change the icon.")}
+                    onRename={(name) => patchFormat(f.id, { name }, "Could not rename that format.")}
+                    onPoints={(points) => patchFormat(f.id, { points }, "Could not save points.")}
+                    onHours={(hours) => setRule(f.id, null, hours)}
+                    onClearHours={() => { const r = globalFor(f); if (r) removeRule(r.id); }}
+                    onRemove={() => removeFormat(f)}
+                  />
+                ))}
+                <AddFormatRow onAdd={addFormat} />
+              </tbody>
+            </table>
           </div>
         )}
         <div className="hint" style={{ marginTop: 14 }}>
-          On or before due date earns the full amount, 1 day late earns half, 2 days late earns none, 3+ days late
-          costs the task's full points back. This is separate from the time budget below — a format's point value
-          and how long it should take are two different settings.
-        </div>
-      </div>
-
-      <div className="sectitle" style={{ marginTop: 28 }}>
-        <span className="dot" />Global defaults
-        <span className="s">how long each content format should take, org-wide</span>
-      </div>
-      <div className="card pad">
-        {rules === null || contentFormats === null ? (
-          <div className="hint">Loading…</div>
-        ) : formats.length === 0 ? (
-          <div className="hint">No content formats yet — add one from the Add Task modal, or under Settings.</div>
-        ) : (
-          <div className="grid g4">
-            {formats.map((f) => (
-              <FormatBox key={f.id} format={f} rule={globalFor(f)} onSave={(hours) => setRule(f.id, null, hours)} onRemove={globalFor(f) ? () => removeRule(globalFor(f)!.id) : undefined} />
-            ))}
-          </div>
-        )}
-        <div className="hint" style={{ marginTop: 14 }}>
-          When someone creates a task in a format with no rule set here (and no personal override), that task simply has no timer.
+          <b>Points</b> — the Points Formula's base value for this format (on/before due date earns it in full, 1 day
+          late earns half, 2 days late earns none, 3+ days late costs it back). <b>Time budget</b> — hours before a
+          task's countdown runs out; blank means no timer. The two are independent — a Reel and a Poster can score
+          differently even at the same time budget. Removing a format doesn't touch tasks already using it.
         </div>
       </div>
 
@@ -132,7 +153,7 @@ export function TaskRulesSection() {
         ) : formats.length === 0 ? (
           <div className="hint">No content formats yet.</div>
         ) : (
-          <div className="bulk-scroll">
+          <div className="bulk-scroll fmt-overrides-wrap">
             <table className="tbl">
               <thead>
                 <tr>
@@ -171,183 +192,178 @@ export function TaskRulesSection() {
   );
 }
 
-// Add, rename, or retire the org's content formats (Video/Reels/Image/…) —
-// the same admin-manageable taxonomy the Add Task modal lets you grow inline,
-// just with rename/remove alongside add.
-function FormatManager() {
-  const { contentFormats, refetch } = useContentFormats();
-  const [addingNew, setAddingNew] = useState(false);
-  const [newName, setNewName] = useState("");
-  const [savingNew, setSavingNew] = useState(false);
-  const [editingId, setEditingId] = useState<string | null>(null);
-  const [editName, setEditName] = useState("");
+// A small icon-swatch popover — click the current icon to pick a new one.
+// Closes on an outside click or after picking.
+function IconPicker({ value, onPick }: { value: string; onPick: (icon: string) => void }) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
 
-  async function addFormat() {
-    const name = newName.trim();
-    if (!name) return;
-    setSavingNew(true);
-    try {
-      await api("/content-formats", { method: "POST", body: JSON.stringify({ name }) });
-      await refetch();
-      setNewName("");
-      setAddingNew(false);
-    } catch (err) {
-      toast.error(err instanceof ApiError ? err.message : "Could not add that format.");
-    } finally {
-      setSavingNew(false);
+  useEffect(() => {
+    if (!open) return;
+    function onDocClick(e: MouseEvent) {
+      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
     }
-  }
-
-  async function renameFormat(id: string, currentName: string) {
-    const name = editName.trim();
-    setEditingId(null);
-    if (!name || name === currentName) return;
-    try {
-      await api(`/content-formats/${id}`, { method: "PATCH", body: JSON.stringify({ name }) });
-      await refetch();
-    } catch (err) {
-      toast.error(err instanceof ApiError ? err.message : "Could not rename that format.");
-    }
-  }
-
-  async function removeFormat(f: ContentFormatDef) {
-    if (!window.confirm(`Remove "${f.name}"? Tasks and rules already using it keep working — it just won't be offered for new ones.`)) return;
-    try {
-      await api(`/content-formats/${f.id}`, { method: "DELETE" });
-      await refetch();
-    } catch (err) {
-      toast.error(err instanceof ApiError ? err.message : "Could not remove that format.");
-    }
-  }
+    document.addEventListener("mousedown", onDocClick);
+    return () => document.removeEventListener("mousedown", onDocClick);
+  }, [open]);
 
   return (
-    <div className="card pad">
-      {contentFormats === null ? (
-        <div className="hint">Loading…</div>
-      ) : (
-        <div className="formatpills">
-          {contentFormats.map((f) =>
-            editingId === f.id ? (
-              <span className="formatpill-add" key={f.id}>
-                <input
-                  className="t"
-                  autoFocus
-                  value={editName}
-                  onChange={(e) => setEditName(e.target.value)}
-                  onKeyDown={(e) => {
-                    if (e.key === "Enter") { e.preventDefault(); renameFormat(f.id, f.name); }
-                    if (e.key === "Escape") setEditingId(null);
-                  }}
-                  onBlur={() => renameFormat(f.id, f.name)}
-                />
-              </span>
-            ) : (
-              <span className="formatpill on formatpill-manage" key={f.id}>
-                <button type="button" className="formatpill-label" onClick={() => { setEditingId(f.id); setEditName(f.name); }} title="Click to rename">
-                  {f.icon} {f.name}
-                </button>
-                <button type="button" className="formatpill-x" onClick={() => removeFormat(f)} title="Remove">✕</button>
-              </span>
-            ),
-          )}
-          {addingNew ? (
-            <span className="formatpill-add">
-              <input
-                className="t"
-                autoFocus
-                placeholder="New format name"
-                value={newName}
-                onChange={(e) => setNewName(e.target.value)}
-                onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); addFormat(); } if (e.key === "Escape") setAddingNew(false); }}
-              />
-              <button type="button" className="btn btn-sm btn-primary" disabled={savingNew || !newName.trim()} onClick={addFormat}>
-                {savingNew ? "…" : "Add"}
-              </button>
-              <button type="button" className="btn btn-sm" onClick={() => { setAddingNew(false); setNewName(""); }}>✕</button>
-            </span>
-          ) : (
-            <button type="button" className="formatpill formatpill-new" onClick={() => setAddingNew(true)}>
-              ＋ New format
+    <div className="iconpicker" ref={ref}>
+      <button type="button" className="iconpicker-trigger" onClick={() => setOpen((o) => !o)} title="Change icon">
+        {value}
+      </button>
+      {open && (
+        <div className="iconpicker-pop">
+          {ICON_OPTIONS.map((ic) => (
+            <button
+              key={ic}
+              type="button"
+              className={"iconpicker-opt" + (ic === value ? " on" : "")}
+              onClick={() => { onPick(ic); setOpen(false); }}
+            >
+              {ic}
             </button>
-          )}
+          ))}
         </div>
       )}
-      <div className="hint" style={{ marginTop: 12 }}>
-        Click a format to rename it. Removing one doesn't touch tasks that already use it — it just stops being offered for new ones.
-      </div>
     </div>
   );
 }
 
-// One format's Points Formula base_points — independent of its time budget.
-function PointsBox({ format, onSave }: { format: ContentFormatDef; onSave: (points: number) => void }) {
-  const [points, setPoints] = useState(format.points.toString());
-
-  useEffect(() => { setPoints(format.points.toString()); }, [format.points]);
-
-  function save() {
-    const n = Number(points);
-    if (points === "" || !(n >= 0)) { setPoints(format.points.toString()); return; }
-    if (n === format.points) return;
-    onSave(n);
-  }
-
-  return (
-    <div className="field" style={{ marginBottom: 0 }}>
-      <label className="f">{format.icon} {format.name}</label>
-      <input
-        className="t"
-        type="number"
-        min="0"
-        step="0.5"
-        placeholder="Points"
-        value={points}
-        onChange={(e) => setPoints(e.target.value)}
-        onBlur={save}
-        onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); (e.target as HTMLInputElement).blur(); } }}
-      />
-    </div>
-  );
-}
-
-function FormatBox({
-  format, rule, onSave, onRemove,
+// One format's full row: icon, name (click to rename), points, time budget,
+// remove. Each field saves independently on blur/pick, same "no Save button"
+// pattern as the rest of this page.
+function FormatRow({
+  format, rule, onIcon, onRename, onPoints, onHours, onClearHours, onRemove,
 }: {
   format: ContentFormatDef;
   rule: TaskTimeRule | null;
-  onSave: (hours: number) => void;
-  onRemove?: () => void;
+  onIcon: (icon: string) => void;
+  onRename: (name: string) => void;
+  onPoints: (points: number) => void;
+  onHours: (hours: number) => void;
+  onClearHours: () => void;
+  onRemove: () => void;
 }) {
+  const [name, setName] = useState(format.name);
+  const [points, setPoints] = useState(format.points.toString());
   const [hours, setHours] = useState(rule?.hours?.toString() ?? "");
 
-  useEffect(() => { setHours(rule?.hours?.toString() ?? ""); }, [rule?.hours]);
+  useEffect(() => setName(format.name), [format.name]);
+  useEffect(() => setPoints(format.points.toString()), [format.points]);
+  useEffect(() => setHours(rule?.hours?.toString() ?? ""), [rule?.hours]);
 
-  function save() {
-    const n = Number(hours);
-    if (!hours || !(n > 0)) return;
-    onSave(n);
+  function saveName() {
+    const trimmed = name.trim();
+    if (!trimmed || trimmed === format.name) { setName(format.name); return; }
+    onRename(trimmed);
+  }
+  function savePoints() {
+    const n = Number(points);
+    if (points === "" || !(n >= 0)) { setPoints(format.points.toString()); return; }
+    if (n === format.points) return;
+    onPoints(n);
+  }
+  function saveHours() {
+    const trimmed = hours.trim();
+    if (!trimmed) { if (rule) onClearHours(); return; }
+    const n = Number(trimmed);
+    if (!(n > 0)) { setHours(rule?.hours?.toString() ?? ""); return; }
+    if (rule && n === rule.hours) return;
+    onHours(n);
+  }
+  const blurOnEnter = (e: React.KeyboardEvent<HTMLInputElement>) => {
+    if (e.key === "Enter") (e.target as HTMLInputElement).blur();
+  };
+
+  return (
+    <tr>
+      <td><IconPicker value={format.icon} onPick={onIcon} /></td>
+      <td>
+        <input
+          className="t fmt-name-input"
+          value={name}
+          onChange={(e) => setName(e.target.value)}
+          onBlur={saveName}
+          onKeyDown={blurOnEnter}
+        />
+      </td>
+      <td>
+        <input
+          className="t" type="number" min="0" step="0.5" style={{ width: 86, textAlign: "center" }}
+          value={points} onChange={(e) => setPoints(e.target.value)} onBlur={savePoints} onKeyDown={blurOnEnter}
+        />
+      </td>
+      <td>
+        <input
+          className="t" type="number" min="0.5" step="0.5" placeholder="—" style={{ width: 86, textAlign: "center" }}
+          value={hours} onChange={(e) => setHours(e.target.value)} onBlur={saveHours} onKeyDown={blurOnEnter}
+        />
+      </td>
+      <td>
+        <button type="button" className="linkbtn" style={{ color: "var(--rose)" }} onClick={onRemove} title="Remove format">✕</button>
+      </td>
+    </tr>
+  );
+}
+
+// Bottom row of the table — collapses to a plain "+ Add format" link, expands
+// into name + icon fields inline (no modal) when clicked.
+function AddFormatRow({ onAdd }: { onAdd: (name: string, icon: string) => Promise<void> }) {
+  const [adding, setAdding] = useState(false);
+  const [name, setName] = useState("");
+  const [icon, setIcon] = useState("🔧");
+  const [saving, setSaving] = useState(false);
+
+  if (!adding) {
+    return (
+      <tr>
+        <td colSpan={5} style={{ padding: "10px 8px" }}>
+          <button type="button" className="linkbtn" onClick={() => setAdding(true)}>＋ Add format</button>
+        </td>
+      </tr>
+    );
+  }
+
+  async function submit() {
+    const trimmed = name.trim();
+    if (!trimmed) return;
+    setSaving(true);
+    try {
+      await onAdd(trimmed, icon);
+      setName("");
+      setIcon("🔧");
+      setAdding(false);
+    } catch {
+      // onAdd already toasted the error — leave the row open so nothing's lost.
+    } finally {
+      setSaving(false);
+    }
   }
 
   return (
-    <div className="field" style={{ marginBottom: 0 }}>
-      <label className="f">{format.icon} {format.name}</label>
-      <div style={{ display: "flex", gap: 6 }}>
+    <tr>
+      <td><IconPicker value={icon} onPick={setIcon} /></td>
+      <td>
         <input
-          className="t"
-          type="number"
-          min="0.5"
-          step="0.5"
-          placeholder="Hours"
-          value={hours}
-          onChange={(e) => setHours(e.target.value)}
-          onBlur={save}
-          onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); save(); } }}
+          className="t fmt-name-input"
+          autoFocus
+          placeholder="New format name"
+          value={name}
+          onChange={(e) => setName(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === "Enter") { e.preventDefault(); submit(); }
+            if (e.key === "Escape") setAdding(false);
+          }}
         />
-        {onRemove && (
-          <button type="button" className="linkbtn" style={{ color: "var(--rose)" }} onClick={onRemove} title="Clear default">✕</button>
-        )}
-      </div>
-    </div>
+      </td>
+      <td colSpan={3} style={{ display: "flex", gap: 6 }}>
+        <button type="button" className="btn btn-sm btn-primary" disabled={saving || !name.trim()} onClick={submit}>
+          {saving ? "…" : "Add"}
+        </button>
+        <button type="button" className="btn btn-sm" onClick={() => setAdding(false)}>Cancel</button>
+      </td>
+    </tr>
   );
 }
 
