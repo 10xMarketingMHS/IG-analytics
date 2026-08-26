@@ -8,7 +8,7 @@ import { useTasks } from "@/lib/use-tasks";
 import { useEditors } from "@/lib/use-editors";
 import { useContentFormats } from "@/lib/use-content-formats";
 import { noteTaskSeen } from "@/lib/use-task-notify";
-import { breakOffsetMs, isOverBudget } from "@/lib/task-timing";
+import { breakOffsetMs, isOverBudget, OFFICE_CLOSE_HOUR } from "@/lib/task-timing";
 import { useAuth } from "@/lib/auth-context";
 import { useWorkspaces } from "@/lib/workspaces-context";
 import { usePosts } from "@/lib/use-posts";
@@ -158,7 +158,6 @@ function budgetInfo(t: Task, nowMs: number) {
 
 // Office hours the acceptance dual-confirmation checks against.
 const OFFICE_OPEN_HOUR = 9;
-const OFFICE_CLOSE_HOUR = 18;
 function officeCloseToday(from: Date) {
   const d = new Date(from);
   d.setHours(OFFICE_CLOSE_HOUR, 0, 0, 0);
@@ -320,7 +319,29 @@ export function TasksPage() {
   function setScopeAndPersist(next: "mine" | "team") {
     setScope(next);
     if (viewKey) window.localStorage.setItem(viewKey, next);
+    // A member filter left over from Team scope makes "My Tasks" look broken
+    // (mine AND someone else's editor_id can never both be true) — clear it.
+    if (next === "mine") setFilterEditor("");
   }
+  // Clicking "Team" while it's already the active scope has nothing else to
+  // do, so that click opens the member-filter popover instead — one button
+  // covers both "switch to team view" and "filter to one person," instead of
+  // a separate always-visible dropdown eating toolbar width.
+  const [teamMenuOpen, setTeamMenuOpen] = useState(false);
+  const teamMenuRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!teamMenuOpen) return;
+    function onDocClick(e: MouseEvent) {
+      if (teamMenuRef.current && !teamMenuRef.current.contains(e.target as Node)) setTeamMenuOpen(false);
+    }
+    document.addEventListener("mousedown", onDocClick);
+    return () => document.removeEventListener("mousedown", onDocClick);
+  }, [teamMenuOpen]);
+  function onTeamClick() {
+    if (scope === "team") { setTeamMenuOpen((o) => !o); return; }
+    setScopeAndPersist("team");
+  }
+  const filteredEditorName = filterEditor ? (editors ?? []).find((e) => e.id === filterEditor)?.name : null;
 
   const now = useMemo(() => new Date(), []);
   // Live clock for the budget countdown — ticks once a minute so cards stay
@@ -559,7 +580,33 @@ export function TasksPage() {
       <div className="toolbar-filters">
         <div className="seg">
           <button className={scope === "mine" ? "on" : ""} onClick={() => setScopeAndPersist("mine")}>🙋 My Tasks</button>
-          <button className={scope === "team" ? "on" : ""} onClick={() => setScopeAndPersist("team")}>👥 Team</button>
+          <div className="team-btn-wrap" ref={teamMenuRef}>
+            <button className={"team-btn" + (scope === "team" ? " on" : "")} onClick={onTeamClick}>
+              👥 {filteredEditorName ?? "Team"}
+              {scope === "team" && <span className="team-btn-caret">▾</span>}
+            </button>
+            {teamMenuOpen && (
+              <div className="team-menu">
+                <button
+                  type="button"
+                  className={"team-menu-opt" + (!filterEditor ? " on" : "")}
+                  onClick={() => { setFilterEditor(""); setTeamMenuOpen(false); }}
+                >
+                  All team members
+                </button>
+                {(editors ?? []).map((e) => (
+                  <button
+                    key={e.id}
+                    type="button"
+                    className={"team-menu-opt" + (filterEditor === e.id ? " on" : "")}
+                    onClick={() => { setFilterEditor(e.id); setTeamMenuOpen(false); }}
+                  >
+                    {e.name}
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
         </div>
         <div className="seg tabseg">
           {DUE_TABS.map((d) => (
@@ -568,17 +615,6 @@ export function TasksPage() {
             </button>
           ))}
         </div>
-        <select
-          className="t"
-          style={{ maxWidth: 160 }}
-          value={filterEditor}
-          onChange={(e) => setFilterEditor(e.target.value)}
-        >
-          <option value="">All team members</option>
-          {(editors ?? []).map((e) => (
-            <option key={e.id} value={e.id}>{e.name}</option>
-          ))}
-        </select>
         <select
           className="t"
           style={{ maxWidth: 145 }}
