@@ -4,6 +4,12 @@ import type { Task } from "@/lib/types";
 // admin overdue-task notifier (use-overdue-notify.ts) so both agree on
 // exactly when a task's clock is actually paused vs. genuinely over.
 
+// Office close, local time — also drives the accept flow's "this runs past
+// office hours" confirmation (tasks.tsx) and hides the break widget past
+// this hour (break-widget.tsx): breaks are a workday concept, not something
+// that makes sense to offer once the day's officially over.
+export const OFFICE_CLOSE_HOUR = 18;
+
 // How long the assignee's break has paused their timers by, right now — the
 // used-so-far total, plus (if currently on break) however much of the
 // current break has elapsed, capped at what's left of the daily allowance.

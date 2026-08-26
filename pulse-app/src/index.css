@@ -591,6 +591,20 @@ nav.side>div:first-child{margin-top:2px}
 .seg{display:inline-flex;background:var(--panel2);border:1px solid var(--border);border-radius:12px;padding:3px;gap:4px;margin-bottom:14px}
 .seg button{border:0;background:transparent;color:var(--muted);font-weight:700;font-size:13px;padding:7px 14px;border-radius:9px;display:flex;align-items:center;gap:8px}
 .seg button.on{background:var(--panel);color:var(--accent-ink);box-shadow:var(--shadow)}
+
+/* Team button doubles as the member filter — click once to switch to Team
+   scope, click again (already active) to open the member popover, instead
+   of a separate always-visible "All team members" dropdown eating toolbar
+   width and pushing the view toggle onto its own line. */
+.team-btn-wrap{position:relative;display:inline-flex}
+.team-btn-caret{font-size:10px;opacity:.7}
+.team-menu{position:absolute;top:calc(100% + 6px);left:0;z-index:20;min-width:170px;max-height:280px;overflow-y:auto;
+  display:flex;flex-direction:column;padding:6px;border-radius:12px;gap:2px;
+  background:var(--panel);border:1px solid var(--border);box-shadow:0 16px 36px rgba(0,0,0,.28)}
+.team-menu-opt{border:0;background:transparent;text-align:left;padding:8px 10px;border-radius:8px;
+  font-size:13px;font-weight:650;color:var(--text);cursor:pointer;white-space:nowrap}
+.team-menu-opt:hover{background:var(--panel2)}
+.team-menu-opt.on{background:var(--accent-weak);color:var(--accent-ink)}
 label.f{display:block;font-size:12px;font-weight:700;color:var(--muted);margin:0 0 6px}
 .req{color:var(--rose)}
 .field{margin-bottom:16px}

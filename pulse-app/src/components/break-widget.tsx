@@ -2,6 +2,7 @@ import { useLocation } from "react-router-dom";
 import { useAuth } from "@/lib/auth-context";
 import { useBreak } from "@/lib/use-break";
 import { ApiError } from "@/lib/api";
+import { OFFICE_CLOSE_HOUR } from "@/lib/task-timing";
 import { toast } from "sonner";
 
 function fmt(seconds: number) {
@@ -24,6 +25,11 @@ export function BreakWidget() {
 
   if (location.pathname !== "/tasks") return null;
   if (!user || !status) return null;
+  // Breaks are a workday concept — no point offering "start a break" once
+  // office hours are over. Exception: someone already mid-break needs to
+  // stay able to end it, so this only hides the *offer*, never a break
+  // that's already running.
+  if (new Date().getHours() >= OFFICE_CLOSE_HOUR && !status.onBreak) return null;
 
   if (status.unlinked) {
     return (
