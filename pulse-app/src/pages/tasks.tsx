@@ -1580,6 +1580,24 @@ function TaskPanel({ mode, task, canWrite, editors, channels, onClose, onChanged
   const [busy, setBusy] = useState(false);
   useEffect(() => { setTitle(task?.title ?? ""); setDescription(task?.description ?? ""); }, [task?.id]);
 
+  // Self vs. Assign toggle for new tasks — most tasks anyone creates (admin
+  // included) are for themselves, so defaulting to a mandatory "pick a name"
+  // dropdown made every self-task an extra click. Only meaningful in create
+  // mode, and only when the creator actually has a linked roster record to
+  // assign to ("Myself" is meaningless otherwise — same gate as the "mine"
+  // scope banner above).
+  const canSelfAssign = Boolean(user?.editorId);
+  const [assignMode, setAssignMode] = useState<"self" | "assign">(canSelfAssign ? "self" : "assign");
+  function setMode(next: "self" | "assign") {
+    setAssignMode(next);
+    if (creating) setDraft((d) => ({ ...d, editor_id: next === "self" ? (user?.editorId ?? null) : null }));
+  }
+  useEffect(() => {
+    if (creating && assignMode === "self") setDraft((d) => ({ ...d, editor_id: user?.editorId ?? null }));
+    // Only on mount for create mode — after that, setMode() owns the sync.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   const cur = creating ? draft : {
     channel_id: task!.channel_id, editor_id: task!.editor_id, due_date: task!.due_date, priority: task!.priority,
     status: task!.status, content_type: task!.content_type, platforms: task!.platforms ?? [], attachments: task!.attachments ?? [],
@@ -1667,10 +1685,20 @@ function TaskPanel({ mode, task, canWrite, editors, channels, onClose, onChanged
           </select>
         </Row>
         <Row label="Assignee">
-          <select className="t" disabled={ro} value={cur.editor_id ?? ""} onChange={(e) => set("editor_id", "editorId", e.target.value || null)}>
-            <option value="">Unassigned</option>
-            {editors.map((ed) => (<option key={ed.id} value={ed.id}>{ed.name}</option>))}
-          </select>
+          {creating && canSelfAssign && (
+            <div className="seg assign-mode-seg">
+              <button type="button" className={assignMode === "self" ? "on" : ""} onClick={() => setMode("self")}>🙋 Myself</button>
+              <button type="button" className={assignMode === "assign" ? "on" : ""} onClick={() => setMode("assign")}>👥 Assign</button>
+            </div>
+          )}
+          {creating && assignMode === "self" ? (
+            <div className="t autofield">{editors.find((ed) => ed.id === user?.editorId)?.name ?? "Myself"}</div>
+          ) : (
+            <select className="t" disabled={ro} value={cur.editor_id ?? ""} onChange={(e) => set("editor_id", "editorId", e.target.value || null)}>
+              <option value="">Unassigned</option>
+              {editors.map((ed) => (<option key={ed.id} value={ed.id}>{ed.name}</option>))}
+            </select>
+          )}
         </Row>
         <Row label="Due Date"><input className="t" type="date" disabled={ro} value={cur.due_date ?? ""} onChange={(e) => set("due_date", "dueDate", e.target.value || null)} /></Row>
         <Row label="Priority">

@@ -600,6 +600,10 @@ nav.side>div:first-child{margin-top:2px}
 .seg{display:inline-flex;background:var(--panel2);border:1px solid var(--border);border-radius:12px;padding:3px;gap:4px;margin-bottom:14px}
 .seg button{border:0;background:transparent;color:var(--muted);font-weight:700;font-size:13px;padding:7px 14px;border-radius:9px;display:flex;align-items:center;gap:8px}
 .seg button.on{background:var(--panel);color:var(--accent-ink);box-shadow:var(--shadow)}
+/* Self/Assign toggle in the task creation form's Assignee row — smaller and
+   tighter than the page-level .seg toggles it borrows its look from. */
+.assign-mode-seg{margin-bottom:6px;padding:2px}
+.assign-mode-seg button{font-size:12px;padding:5px 10px}
 
 /* Team button doubles as the member filter — click once to switch to Team
    scope, click again (already active) to open the member popover, instead
