@@ -1132,17 +1132,23 @@ img.lb-ava{object-fit:cover}
 }
 
 /* Break widget — floating bottom-right pause/resume for the daily break budget */
-.break-widget{position:fixed;right:20px;bottom:20px;z-index:90;display:flex;align-items:center;gap:10px;
-  background:var(--panel);border:1px solid var(--border);border-radius:999px;padding:8px 8px 8px 16px;
-  box-shadow:0 12px 32px rgba(90,40,180,.22);backdrop-filter:blur(10px)}
+/* Collapsed to a bare circle by default — hovering, or an active break
+   (.on, which needs to stay legible without requiring a hover), expands it
+   to show the label. */
+.break-widget{position:fixed;right:20px;bottom:20px;z-index:90;display:flex;align-items:center;gap:0;
+  background:var(--panel);border:1px solid var(--border);border-radius:999px;padding:8px;
+  box-shadow:0 12px 32px rgba(90,40,180,.22);backdrop-filter:blur(10px);
+  transition:padding .18s ease,gap .18s ease}
+.break-widget:hover,.break-widget.on{gap:10px;padding:8px 8px 8px 16px}
 .break-widget.on{border-color:var(--amber);background:color-mix(in srgb,var(--panel) 88%,var(--amber))}
-.break-widget-label{font-size:12px;font-weight:700;color:var(--muted);white-space:nowrap}
+.break-widget-label{font-size:12px;font-weight:700;color:var(--muted);white-space:nowrap;
+  max-width:0;opacity:0;overflow:hidden;transition:max-width .18s ease,opacity .12s ease}
+.break-widget:hover .break-widget-label,.break-widget.on .break-widget-label{max-width:280px;opacity:1}
 .break-widget.on .break-widget-label{color:var(--amber)}
 .break-widget-btn{width:38px;height:38px;border-radius:50%;border:0;flex:none;cursor:pointer;font-size:14px;
   display:grid;place-items:center;color:#fff;background:var(--grad);box-shadow:var(--shadow)}
 .break-widget-btn.pause{background:linear-gradient(135deg,#f59e0b,#d97706)}
 .break-widget-btn:disabled{opacity:.5;cursor:not-allowed}
 @media screen and (max-width:768px){
-  .break-widget{right:14px;bottom:14px;padding:6px 6px 6px 12px}
-  .break-widget-label{display:none}
+  .break-widget{right:14px;bottom:14px}
 }

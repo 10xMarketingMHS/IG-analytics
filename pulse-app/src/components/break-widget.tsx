@@ -1,3 +1,4 @@
+import { useLocation } from "react-router-dom";
 import { useAuth } from "@/lib/auth-context";
 import { useBreak } from "@/lib/use-break";
 import { ApiError } from "@/lib/api";
@@ -11,14 +12,17 @@ function fmt(seconds: number) {
 }
 
 // Floating bottom-right pause/resume control for the shared daily break
-// budget (lunch + tea breaks). Stays visible for every logged-in user —
-// an admin-only login with no linked editor sees a disabled, explained
-// state rather than the widget just vanishing. Mounted once in the app
-// shell so it's available from any page, not just the Task Board.
+// budget (lunch + tea breaks). Only relevant where task timers actually run,
+// so it only shows on the Task Board — mounted once in the app shell, but
+// self-hides everywhere else rather than following the user to every page.
+// Collapses to a bare circle when idle (hover, or an active break, reveals
+// the label) so it doesn't compete for attention outside that one context.
 export function BreakWidget() {
   const { user } = useAuth();
   const { status, displayRemaining, busy, start, end } = useBreak();
+  const location = useLocation();
 
+  if (location.pathname !== "/tasks") return null;
   if (!user || !status) return null;
 
   if (status.unlinked) {
