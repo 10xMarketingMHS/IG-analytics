@@ -52,6 +52,13 @@ nav.side::-webkit-scrollbar-thumb:hover{background:var(--faint)}
 .navitem .badge{margin-left:auto;font-size:9px;background:var(--indigo-weak);color:var(--indigo);padding:1px 6px;border-radius:10px;font-weight:700}
 .userchip{margin:11px;padding:9px 10px;border-radius:11px;background:var(--panel2);border:1px solid var(--border);display:flex;align-items:center;gap:9px}
 .avatar{width:29px;height:29px;border-radius:8px;background:linear-gradient(135deg,#6366f1,#8b5cf6);color:#fff;display:grid;place-items:center;font-weight:700;font-size:12px}
+/* Admin indicator: a gradient glow ring around the sidebar avatar instead of
+   an "Admin" text label under the name — same idea as a verified/paid-tier
+   ring (e.g. Gmail). No-op for everyone else, so no layout shift. */
+.avatar-ring{border-radius:9px;flex:none}
+.avatar-ring.admin{padding:2px;background:linear-gradient(135deg,#f59e0b,#f97316,#ec4899,#8b5cf6);
+  box-shadow:0 0 8px rgba(245,158,11,.5),0 0 3px rgba(236,72,153,.5)}
+.avatar-ring.admin .avatar{border-radius:7px}
 .userchip .nm{font-size:11.5px;font-weight:700;line-height:1.2}
 .userchip .rl{font-size:9.5px;color:var(--muted)}
 .rolepill{font-size:8.5px;font-weight:800;color:var(--accent-ink);background:var(--accent-weak);padding:1px 6px;border-radius:8px;margin-left:auto}

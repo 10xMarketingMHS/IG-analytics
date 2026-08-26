@@ -371,10 +371,12 @@ export function TasksPage() {
 
   const byStatus = (s: TaskStatus) => filtered.filter((t) => t.status === s);
 
-  // Toolbar summary strip — counts across every task in the org (not just
-  // whatever's currently filtered), so it reads as a stable at-a-glance total.
+  // Toolbar summary strip — counts across every OTHER filter (type/format/
+  // due-tab/search don't shrink it, so it reads as a stable at-a-glance
+  // total) but does respect My Tasks vs Team — otherwise "My Tasks" shows an
+  // empty board next to a misleadingly large org-wide number.
   const taskCounts = useMemo(() => {
-    const all = tasks ?? [];
+    const all = scope === "mine" ? (tasks ?? []).filter((t) => t.editor_id === user?.editorId) : (tasks ?? []);
     let social = 0, ad = 0, pendingOverdue = 0;
     for (const t of all) {
       if (t.task_type === "social") social++;
@@ -383,7 +385,7 @@ export function TasksPage() {
       if (overdue || isOverBudget(t, nowMs)) pendingOverdue++;
     }
     return { total: all.length, social, ad, pendingOverdue };
-  }, [tasks, nowMs]);
+  }, [tasks, nowMs, scope, user?.editorId]);
 
   // Both the ←/→ links and drag-and-drop call this — one PATCH path, so the
   // backend side effects (completion timestamp, recurring spawn, activity log)
