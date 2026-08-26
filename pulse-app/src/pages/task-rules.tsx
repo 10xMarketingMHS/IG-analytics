@@ -11,7 +11,7 @@ import type { ContentFormatDef, TaskTimeRule } from "@/lib/types";
 export function TaskRulesSection() {
   const { isAdmin } = useWorkspaces();
   const { editors } = useEditors();
-  const { contentFormats } = useContentFormats();
+  const { contentFormats, refetch: refetchFormats } = useContentFormats();
   const [rules, setRules] = useState<TaskTimeRule[] | null>(null);
 
   const load = useCallback(() => {
@@ -54,6 +54,16 @@ export function TaskRulesSection() {
     }
   }
 
+  async function savePoints(contentFormatId: string, points: number) {
+    try {
+      await api(`/content-formats/${contentFormatId}`, { method: "PATCH", body: JSON.stringify({ points }) });
+      toast.success("Points saved.");
+      await refetchFormats();
+    } catch (err) {
+      toast.error(err instanceof ApiError ? err.message : "Could not save points.");
+    }
+  }
+
   const globalFor = (f: ContentFormatDef) => rules?.find((r) => r.content_format_id === f.id && !r.editor_id) ?? null;
   const overrideFor = (editorId: string, f: ContentFormatDef) => rules?.find((r) => r.content_format_id === f.id && r.editor_id === editorId) ?? null;
   const formats = contentFormats ?? [];
@@ -65,6 +75,29 @@ export function TaskRulesSection() {
         <span className="s">what production formats your org uses — click one to rename it</span>
       </div>
       <FormatManager />
+
+      <div className="sectitle" style={{ marginTop: 28 }}>
+        <span className="dot" />Points per format
+        <span className="s">the Points Formula's base value — a Reel and a Poster can be worth different amounts</span>
+      </div>
+      <div className="card pad">
+        {contentFormats === null ? (
+          <div className="hint">Loading…</div>
+        ) : formats.length === 0 ? (
+          <div className="hint">No content formats yet — add one above first.</div>
+        ) : (
+          <div className="grid g4">
+            {formats.map((f) => (
+              <PointsBox key={f.id} format={f} onSave={(points) => savePoints(f.id, points)} />
+            ))}
+          </div>
+        )}
+        <div className="hint" style={{ marginTop: 14 }}>
+          On or before due date earns the full amount, 1 day late earns half, 2 days late earns none, 3+ days late
+          costs the task's full points back. This is separate from the time budget below — a format's point value
+          and how long it should take are two different settings.
+        </div>
+      </div>
 
       <div className="sectitle" style={{ marginTop: 28 }}>
         <span className="dot" />Global defaults
@@ -242,6 +275,37 @@ function FormatManager() {
       <div className="hint" style={{ marginTop: 12 }}>
         Click a format to rename it. Removing one doesn't touch tasks that already use it — it just stops being offered for new ones.
       </div>
+    </div>
+  );
+}
+
+// One format's Points Formula base_points — independent of its time budget.
+function PointsBox({ format, onSave }: { format: ContentFormatDef; onSave: (points: number) => void }) {
+  const [points, setPoints] = useState(format.points.toString());
+
+  useEffect(() => { setPoints(format.points.toString()); }, [format.points]);
+
+  function save() {
+    const n = Number(points);
+    if (points === "" || !(n >= 0)) { setPoints(format.points.toString()); return; }
+    if (n === format.points) return;
+    onSave(n);
+  }
+
+  return (
+    <div className="field" style={{ marginBottom: 0 }}>
+      <label className="f">{format.icon} {format.name}</label>
+      <input
+        className="t"
+        type="number"
+        min="0"
+        step="0.5"
+        placeholder="Points"
+        value={points}
+        onChange={(e) => setPoints(e.target.value)}
+        onBlur={save}
+        onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); (e.target as HTMLInputElement).blur(); } }}
+      />
     </div>
   );
 }

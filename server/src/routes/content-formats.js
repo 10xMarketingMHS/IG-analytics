@@ -8,9 +8,14 @@ export const contentFormatsRouter = Router();
 const Schema = z.object({
   name: z.string().trim().min(1).max(40),
   icon: z.string().trim().min(1).max(8).optional(),
+  // Points Formula base_points for this format — how much a task in it is
+  // worth before the on-time/late timing multiplier applies. Independent of
+  // budget_hours (task-rules.js) — a format's point value and its time
+  // budget are two separate admin decisions.
+  points: z.number().nonnegative().max(1000).optional(),
 });
 
-const SELECT = "id, name, icon, sort_order, active";
+const SELECT = "id, name, icon, sort_order, active, points";
 
 // Org-wide, like editors — every channel picks from the same list.
 contentFormatsRouter.get("/content-formats", async (req, res, next) => {
@@ -52,6 +57,7 @@ contentFormatsRouter.patch("/content-formats/:id", requireAdmin, async (req, res
   const vals = [];
   if (parsed.data.name !== undefined) { vals.push(parsed.data.name); sets.push(`name = $${vals.length}`); }
   if (parsed.data.icon !== undefined) { vals.push(parsed.data.icon); sets.push(`icon = $${vals.length}`); }
+  if (parsed.data.points !== undefined) { vals.push(parsed.data.points); sets.push(`points = $${vals.length}`); }
   if (!sets.length) return res.status(400).json({ error: "Nothing to update." });
   vals.push(req.params.id, req.orgId);
   try {
