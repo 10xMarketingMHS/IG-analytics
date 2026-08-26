@@ -606,7 +606,11 @@ export function TasksPage() {
             {SORTS.map((s) => (<option key={s.value} value={s.value}>↕ {s.label}</option>))}
           </select>
         )}
-        <div className="seg" style={{ marginLeft: "auto" }}>
+        {/* No marginLeft:auto here on purpose — List view adds the Sort select
+            above, which can push this row past one line; auto-margin would
+            then strand this toggle alone on its own wrapped line instead of
+            flowing naturally with whatever else wrapped. */}
+        <div className="seg">
           <button className={view === "board" ? "on" : ""} onClick={() => setView("board")}>🗂️ Board</button>
           <button className={view === "list" ? "on" : ""} onClick={() => setView("list")}>☰ List</button>
           <button className={view === "calendar" ? "on" : ""} onClick={() => setView("calendar")}>📅 Calendar</button>
