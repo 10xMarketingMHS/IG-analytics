@@ -10,7 +10,7 @@ type Period = "month" | "all";
 type Tab = "social" | "house" | "path";
 
 type Row = { editor: Editor; reels: number; carousels: number; views: number; points: number };
-type HouseRow = { editor: Editor; assigned: number; completed: number; rate: number };
+type HouseRow = { editor: Editor; points: number; completed: number };
 
 const AV_GRADIENTS = [
   "linear-gradient(135deg,#7c3aed,#a855f7)",
@@ -40,6 +40,29 @@ function Avatar({ editor }: { editor: Editor }) {
 // Weighted engagement across an editor's reels & carousels.
 function pointsOf(p: Post) {
   return p.likes + 2 * p.comments + 3 * p.shares + 3 * p.saves;
+}
+
+// ---- Points Formula (locked spec) — timeliness only, no efficiency/hours- ----
+// worked component. A task's own budget_hours is its base value (bigger work
+// is worth more); tasks with no resolved budget fall back to 1. Bounded: a
+// single task can cost at most its own full base value, in either direction.
+//   on/before due date -> +100% · 1 day late -> +50% · 2 days late -> 0%
+//   3+ days late -> -100% (flat, doesn't get worse)
+// No due date is treated as on-time (nothing to be late against).
+function daysBetween(fromYmd: string, toYmd: string): number {
+  const [fy, fm, fd] = fromYmd.split("-").map(Number);
+  const [ty, tm, td] = toYmd.split("-").map(Number);
+  return Math.round((Date.UTC(ty, tm - 1, td) - Date.UTC(fy, fm - 1, fd)) / 86400000);
+}
+function taskPoints(t: Task): number {
+  const base = t.budget_hours != null ? Number(t.budget_hours) : 1;
+  if (!t.completed_at) return 0;
+  if (!t.due_date) return base;
+  const daysLate = daysBetween(t.due_date, ymd(new Date(t.completed_at)));
+  if (daysLate <= 0) return base;
+  if (daysLate === 1) return base * 0.5;
+  if (daysLate === 2) return 0;
+  return -base;
 }
 
 // ---- Progress Path (rank-over-time bump chart, per calendar month, daily) ----
@@ -91,9 +114,8 @@ function usePrefersReducedMotion() {
 }
 
 // Daily cumulative score + rank for one month. Fresh start: day 1 = 0 for every
-// editor (ties broken alphabetically). Task mode uses scoring option B — on-time
-// completion +2, late +1, pending/overdue contributes nothing (the editor simply
-// falls behind).
+// editor (ties broken alphabetically). Task mode uses the points formula (see
+// taskPoints above) — timeliness-based, bounded to each task's own base value.
 //
 // The x-axis always spans the FULL calendar month (`axisDays`, 28-31 days); the
 // drawn line/dots/avatars stop at `dataLen` — today for the in-progress month,
@@ -120,8 +142,7 @@ function buildSeries(mode: PathMode, month: string, editors: Editor[], posts: Po
       if (!t.editor_id || !t.completed_at) continue;
       const comp = ymd(new Date(t.completed_at)); // local calendar day of completion
       if (comp.slice(0, 7) !== month) continue;
-      const onTime = t.due_date ? comp <= t.due_date : true; // no due date → treat as on-time
-      events.push({ e: t.editor_id, day: comp, pts: onTime ? 2 : 1 });
+      events.push({ e: t.editor_id, day: comp, pts: taskPoints(t) });
     }
   }
 
@@ -320,22 +341,28 @@ export function LeaderboardPage() {
   const socialRanked = socialRows.filter((r) => r.reels + r.carousels > 0);
   const socialUnranked = socialRows.filter((r) => r.reels + r.carousels === 0);
 
-  // ---- Media House Leaders (task completion) ----
+  // ---- Media House Leaders — Points Formula (locked spec) ----
+  // Ranked monthly, current calendar month only: no carryover, no persisted
+  // running balance — a plain sum of this month's completed tasks' points,
+  // recomputed fresh every render (so an admin correcting a task after the
+  // fact just updates the total, no manual reversal needed).
   const houseRows = useMemo<HouseRow[]>(() => {
     if (!editors || !tasks) return [];
+    const thisMonth = ymd(new Date()).slice(0, 7);
     return editors
       .map((editor) => {
-        const own = tasks.filter((t) => t.editor_id === editor.id);
-        const completed = own.filter((t) => t.status === "done").length;
-        const assigned = own.length;
-        return { editor, assigned, completed, rate: assigned ? completed / assigned : 0 };
+        const own = tasks.filter(
+          (t) => t.editor_id === editor.id && t.completed_at && ymd(new Date(t.completed_at)).slice(0, 7) === thisMonth,
+        );
+        const points = own.reduce((sum, t) => sum + taskPoints(t), 0);
+        return { editor, points, completed: own.length };
       })
-      // Rank by completion rate, then by volume completed (fair tiebreak).
-      .sort((a, b) => b.rate - a.rate || b.completed - a.completed);
+      // Rank by points, then by volume completed (fair tiebreak).
+      .sort((a, b) => b.points - a.points || b.completed - a.completed);
   }, [editors, tasks]);
 
-  const houseRanked = houseRows.filter((r) => r.assigned > 0);
-  const houseUnranked = houseRows.filter((r) => r.assigned === 0);
+  const houseRanked = houseRows.filter((r) => r.completed > 0);
+  const houseUnranked = houseRows.filter((r) => r.completed === 0);
 
   // ---- Progress Path: month options depend on the active mode ----
   const pathMonths = useMemo(
@@ -377,7 +404,7 @@ export function LeaderboardPage() {
           <h2>Media House Leaderboard</h2>
           <p>
             Two ways to lead. <b>Social Media Leaders</b> climb on the performance of the Reels &amp;
-            Carousels they edit. <b>Media House Leaders</b> climb on getting their assigned tasks done.
+            Carousels they edit. <b>Media House Leaders</b> climb on points earned finishing tasks on time.
           </p>
         </div>
       </div>
@@ -473,7 +500,7 @@ export function LeaderboardPage() {
           <div className="hint" style={{ margin: "0 0 4px" }}>
             {pathMode === "content"
               ? "Editors climb as their published Reels & Carousels earn points. Resets each month."
-              : "On-time completions score +2, late +1 — ranked by cumulative points, not completion rate. Resets each month."}
+              : "On time earns full points, 1 day late half, 2 days late none, 3+ days late costs the task's full points back. Resets each month."}
           </div>
           {monthFellBack && (
             <div className="pp-note">
@@ -506,14 +533,14 @@ export function LeaderboardPage() {
           <div className="lb-main">
             <div className="lb-statbar">
               <h3>Work performance</h3>
-              <div className="hint" style={{ margin: 0 }}>Ranked by task completion</div>
+              <div className="hint" style={{ margin: 0 }}>Ranked by points earned this month — resets on the 1st</div>
             </div>
 
             <div className="lb-head lb-head-house">
               <div>Position</div>
               <div>Team member</div>
-              <div className="lb-hidesm" style={{ textAlign: "right", paddingRight: 24 }}>Done · Assigned</div>
-              <div style={{ textAlign: "right", paddingRight: 22 }}>Completion</div>
+              <div className="lb-hidesm" style={{ textAlign: "right", paddingRight: 24 }}>Completed</div>
+              <div style={{ textAlign: "right", paddingRight: 22 }}>Points</div>
             </div>
             <div className="lb-list">
               {houseRanked.map((r, i) => (
@@ -525,8 +552,8 @@ export function LeaderboardPage() {
                     <Avatar editor={r.editor} />
                     <div className="who"><b>{r.editor.name}</b><small>{r.editor.designation || "Editor"}</small></div>
                   </div>
-                  <div className="lb-cell num lb-hidesm">{r.completed} · {r.assigned}</div>
-                  <div className="lb-points">{Math.round(r.rate * 100)}%</div>
+                  <div className="lb-cell num lb-hidesm">{r.completed}</div>
+                  <div className="lb-points">{r.points.toFixed(1)}</div>
                 </div>
               ))}
               {houseUnranked.map((r) => (
@@ -536,13 +563,13 @@ export function LeaderboardPage() {
                     <Avatar editor={r.editor} />
                     <div className="who"><b>{r.editor.name}</b><small>{r.editor.designation || "Editor"}</small></div>
                   </div>
-                  <div className="lb-cell lb-hidesm" style={{ gridColumn: "3 / span 2" }}>No tasks assigned yet</div>
+                  <div className="lb-cell lb-hidesm" style={{ gridColumn: "3 / span 2" }}>No tasks completed this month</div>
                 </div>
               ))}
             </div>
             {houseRanked.length === 0 && (
               <div className="hint" style={{ marginTop: 14 }}>
-                No tasks completed yet. Assign tasks on the{" "}
+                No tasks completed this month yet. Assign tasks on the{" "}
                 <Link to="/tasks" style={{ color: "var(--accent-ink)", fontWeight: 700 }}>Task Management</Link> board.
               </div>
             )}
@@ -615,9 +642,8 @@ function FeaturedHouse({ champion }: { champion?: HouseRow }) {
       <div className="fx-name">{editor.name}</div>
       <div className="fx-role">{editor.designation || "Editor"}</div>
       <div className="fx-stats">
-        <div className="fx-stat"><b>{Math.round(champion.rate * 100)}%</b><span>Completion</span></div>
-        <div className="fx-stat"><b>{champion.completed}</b><span>Done</span></div>
-        <div className="fx-stat"><b>{champion.assigned}</b><span>Assigned</span></div>
+        <div className="fx-stat"><b>{champion.points.toFixed(1)}</b><span>Points</span></div>
+        <div className="fx-stat"><b>{champion.completed}</b><span>Completed</span></div>
       </div>
     </aside>
   );

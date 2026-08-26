@@ -21,7 +21,10 @@ export type NavItem = {
 };
 
 export const NAV_ITEMS: NavItem[] = [
-  { title: "Home", href: "/home", icon: "🏠", section: "Home" },
+  // "My Day" — a personalized daily brief (what needs *your* attention),
+  // distinct from Dashboard, which shows the same org-wide analytics to
+  // everyone. Route stays /home; only the display name changed.
+  { title: "My Day", href: "/home", icon: "🏠", section: "Home" },
   { title: "Dashboard", href: "/dashboard", icon: "📊", section: "Analytics" },
   // Insights, Trends, Reports — hidden from the sidebar per request; routes/
   // pages still exist (see App.tsx, PAGE_META below), just not linked.
@@ -41,7 +44,7 @@ export const NAV_ITEMS: NavItem[] = [
 
 // Page title + subtitle shown in the topbar, keyed by pathname.
 export const PAGE_META: Record<string, [string, string]> = {
-  "/home": ["Home", "What needs your attention today"],
+  "/home": ["My Day", "What needs your attention today"],
   "/dashboard": ["Dashboard", "Live analytics from your content data"],
   "/metrics": ["Social & Ads Pipeline", "Who's working on which Social post or Ad, and where it stands"],
   "/insights": ["Insights", "What your data is telling you — computed automatically"],
