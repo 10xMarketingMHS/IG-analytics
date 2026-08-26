@@ -130,6 +130,9 @@ export type ContentFormatDef = {
   icon: string;
   sort_order: number;
   active: boolean;
+  // Points Formula base_points for this format — independent of budget_hours
+  // (task_time_rule). See taskPoints() in leaderboard.tsx.
+  points: number;
 };
 
 export type TaskAttachment = { url: string; label?: string };
@@ -171,6 +174,9 @@ export type Task = {
   content_format_id: string | null;
   content_format_name: string | null;
   content_format_icon: string | null;
+  // Points Formula base_points for this task's format — see taskPoints() in
+  // leaderboard.tsx. Null only if content_format_id itself is null.
+  content_format_points: number | null;
   budget_hours: number | null;
   budget_started_at: string | null;
   // The assignee's break state — offsets the countdown by however long

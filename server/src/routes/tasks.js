@@ -84,6 +84,7 @@ const SELECT = `
          t.status, t.priority, t.due_date, t.recurrence, t.task_type,
          t.tid, t.sid, t.ad_id, t.meta, t.revision, t.pending_note,
          t.content_format_id, cf.name as content_format_name, cf.icon as content_format_icon,
+         cf.points as content_format_points,
          t.budget_hours, t.budget_started_at, t.accepted, t.created_at, t.completed_at,
          t.content_type, t.platforms, t.attachments,
          e.name as editor_name, e.image_url as editor_image,

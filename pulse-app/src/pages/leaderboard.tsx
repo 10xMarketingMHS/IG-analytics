@@ -43,9 +43,11 @@ function pointsOf(p: Post) {
 }
 
 // ---- Points Formula (locked spec) — timeliness only, no efficiency/hours- ----
-// worked component. A task's own budget_hours is its base value (bigger work
-// is worth more); tasks with no resolved budget fall back to 1. Bounded: a
-// single task can cost at most its own full base value, in either direction.
+// worked component. base_points is an admin-set value per content format
+// (Reels/Poster/etc. — see Settings → Task Settings → Points per format),
+// independent of that format's time budget; tasks with no resolved format
+// fall back to 1. Bounded: a single task can cost at most its own full base
+// value, in either direction.
 //   on/before due date -> +100% · 1 day late -> +50% · 2 days late -> 0%
 //   3+ days late -> -100% (flat, doesn't get worse)
 // No due date is treated as on-time (nothing to be late against).
@@ -55,7 +57,7 @@ function daysBetween(fromYmd: string, toYmd: string): number {
   return Math.round((Date.UTC(ty, tm - 1, td) - Date.UTC(fy, fm - 1, fd)) / 86400000);
 }
 function taskPoints(t: Task): number {
-  const base = t.budget_hours != null ? Number(t.budget_hours) : 1;
+  const base = t.content_format_points != null ? Number(t.content_format_points) : 1;
   if (!t.completed_at) return 0;
   if (!t.due_date) return base;
   const daysLate = daysBetween(t.due_date, ymd(new Date(t.completed_at)));
