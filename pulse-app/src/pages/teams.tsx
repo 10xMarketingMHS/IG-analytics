@@ -40,7 +40,9 @@ function gradFor(seed: string) {
 // common case. Merged by editor_id so "add a person" is one flow either way.
 type Row = { editor: Editor | null; user: AppUser | null };
 
-export function TeamsPage() {
+// Rendered as one tab inside the master Settings page (see settings.tsx) —
+// no outer <section className="screen"> here, that's Settings' job.
+export function TeamsSection() {
   const { active, isAdmin } = useWorkspaces();
   const { editors, refetch: refetchEditors } = useEditors();
   const [users, setUsers] = useState<AppUser[] | null>(null);
@@ -55,12 +57,10 @@ export function TeamsPage() {
 
   if (!isAdmin) {
     return (
-      <section className="screen">
-        <div className="card pad" style={{ color: "var(--muted)", fontSize: 13 }}>
-          You're signed in as a <b style={{ color: "var(--text)" }}>{active?.role ?? "member"}</b> of this
-          workspace. Only admins can manage the team.
-        </div>
-      </section>
+      <div className="card pad" style={{ color: "var(--muted)", fontSize: 13 }}>
+        You're signed in as a <b style={{ color: "var(--text)" }}>{active?.role ?? "member"}</b> of this
+        workspace. Only admins can manage the team.
+      </div>
     );
   }
 
@@ -121,7 +121,7 @@ export function TeamsPage() {
   }
 
   return (
-    <section className="screen">
+    <>
       <p className="hint" style={{ margin: "0 0 14px" }}>
         Everyone who works on content, whether they sign in to Pulse or not — designation shows their role on
         the team, login access (optional) controls what they can do here.
@@ -195,7 +195,7 @@ export function TeamsPage() {
       {modal && (
         <TeamMemberModal row={modal.row} onClose={() => setModal(null)} onSaved={refetchAll} />
       )}
-    </section>
+    </>
   );
 }
 

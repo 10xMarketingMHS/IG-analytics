@@ -45,7 +45,9 @@ function relTime(iso: string | null) {
   return `${Math.round(h / 24)}d ago`;
 }
 
-export function ChannelsPage() {
+// Rendered as one tab inside the master Settings page (see settings.tsx) —
+// no outer <section className="screen"> here, that's Settings' job.
+export function ChannelsSection() {
   const { workspaces, active, isAdmin, refresh, switchTo } = useWorkspaces();
   const [params, setParams] = useSearchParams();
   const { data: platData } = useResource<{ platforms: Platform[] }>("/platforms");
@@ -377,7 +379,7 @@ export function ChannelsPage() {
   }
 
   return (
-    <section className="screen">
+    <>
       <div className="hint" style={{ marginBottom: 16 }}>
         🌐 Add brand channels, choose which platforms each is on, and connect Instagram or YouTube to pull live metrics — all in one place.
         {!isAdmin && <span style={{ color: "var(--amber)", marginLeft: 6 }}>· Read-only (admins can edit).</span>}
@@ -650,6 +652,6 @@ export function ChannelsPage() {
           </Modal>
         );
       })()}
-    </section>
+    </>
   );
 }
