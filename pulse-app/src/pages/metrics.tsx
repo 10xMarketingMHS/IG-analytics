@@ -155,7 +155,7 @@ export function MetricsPage() {
 
   return (
     <section className="screen">
-      <div className="toolbar" style={{ alignItems: "center" }}>
+      <div className="toolbar" style={{ alignItems: "center", marginBottom: 10 }}>
         <select className="t" style={{ maxWidth: 200 }} value={editorFilter} onChange={(e) => setEditorFilter(e.target.value)}>
           <option value="">All Editors</option>
           {(editors ?? []).map((ed) => <option key={ed.id} value={ed.id}>{ed.name}</option>)}
@@ -205,16 +205,14 @@ export function MetricsPage() {
               title={`Filter to ${s.label}`}
             >
               <span className={"mx-dot " + s.cls} />
-              <div>
-                <div className="mx-leg-l">{s.label}</div>
-                <div className="mx-leg-n">{counts[s.key]} <span>Tasks</span></div>
-              </div>
+              <span className="mx-leg-l">{s.label}</span>
+              <span className="mx-leg-n">{counts[s.key]}</span>
             </button>
           ))}
         </div>
       </div>
 
-      <div className="sectitle"><span className="dot" />Social & Ads pipeline<span className="s">{total} task{total === 1 ? "" : "s"} · who's working on what</span></div>
+      <div className="sectitle" style={{ margin: "12px 2px 8px" }}><span className="dot" />Social & Ads pipeline<span className="s">{total} task{total === 1 ? "" : "s"} · who's working on what</span></div>
 
       {rows.length === 0 ? (
         <div className="card pad mx-empty">

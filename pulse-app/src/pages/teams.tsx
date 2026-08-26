@@ -9,8 +9,12 @@ import type { AppUser, Editor, Role } from "@/lib/types";
 // Common titles across a content team's hierarchy — a suggestion list, not a
 // closed set. Anyone can still type a custom designation (Freelancer, Intern
 // at a client's own name, etc.) since every org's vocabulary differs.
+// Seniority ladder, top (most senior) to bottom, followed by functional
+// specialties. This is a free-text field with suggestions, not an enum —
+// someone who's both a level and a specialty (e.g. a Team Lead who also
+// does video edits) can just type both: "Team Lead – Video Editor".
 const DESIGNATIONS = [
-  "Team Lead", "Senior Editor", "Editor", "Junior Editor", "Fresher / Intern",
+  "Manager", "Team Lead", "Senior Editor", "Editor", "Junior Editor", "Fresher / Intern",
   "Video Editor", "Motion Designer", "Graphic Designer", "Copywriter", "Thumbnail Designer",
 ];
 
@@ -308,7 +312,7 @@ function TeamMemberModal({ row, onClose, onSaved }: { row: Row; onClose: () => v
               <datalist id="team-designations">
                 {DESIGNATIONS.map((d) => <option key={d} value={d} />)}
               </datalist>
-              <div className="hint" style={{ marginTop: 5 }}>Pick a suggestion or type your own — Team Lead, Senior/Junior Editor, Graphic Designer…</div>
+              <div className="hint" style={{ marginTop: 5 }}>Pick a suggestion or type your own — combine a level and a specialty if needed, e.g. "Team Lead – Video Editor".</div>
             </div>
 
             <label style={{ display: "flex", alignItems: "center", gap: 9, margin: "18px 0 4px", cursor: user ? "default" : "pointer", fontSize: 13.5, fontWeight: 700 }}>
