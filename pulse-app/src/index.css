@@ -881,12 +881,14 @@ select.mini{font-family:inherit;font-size:12.5px;font-weight:700;color:var(--tex
 .wsitem.create{color:var(--accent-ink);font-weight:700}
 
 /* leaderboard */
-.lb-hero{position:relative;overflow:hidden;border-radius:16px;border:1px solid var(--border);background:linear-gradient(120deg,var(--panel),var(--panel2));display:flex;align-items:center;gap:24px;padding:22px 28px;margin-bottom:22px}
-.lb-hero::after{content:'';position:absolute;inset:0;background:radial-gradient(120% 150% at 10% 45%,rgba(245,196,81,.16),transparent 46%);pointer-events:none}
-.lb-hero .trophy{font-size:66px;line-height:1;filter:drop-shadow(0 10px 20px rgba(245,196,81,.45));flex:none}
-.lb-hero .htext{position:relative;z-index:1}
-.lb-hero h2{margin:0 0 7px;font-size:23px;letter-spacing:-.4px}
-.lb-hero p{margin:0;color:var(--muted);font-size:13.5px;line-height:1.55;max-width:640px}
+/* Compact single-line banner — the page title/subtitle already live in the
+   app-shell topbar, so this only needs to explain the two scoring tracks,
+   not repeat "Leaderboard" again in a large decorative card. */
+.lb-hero{position:relative;overflow:hidden;border-radius:12px;border:1px solid var(--border);background:linear-gradient(120deg,var(--panel),var(--panel2));display:flex;align-items:center;gap:12px;padding:10px 16px;margin-bottom:16px}
+.lb-hero::after{content:'';position:absolute;inset:0;background:radial-gradient(120% 150% at 10% 45%,rgba(245,196,81,.12),transparent 46%);pointer-events:none}
+.lb-hero .trophy{font-size:22px;line-height:1;flex:none}
+.lb-hero .htext{position:relative;z-index:1;min-width:0}
+.lb-hero p{margin:0;color:var(--muted);font-size:12.5px;line-height:1.4}
 .lb-hero p b{color:var(--accent-ink)}
 .lb-tabs{display:inline-flex;background:var(--glass);border:1px solid var(--glass-brd);border-radius:14px;padding:5px;gap:5px;margin:0 0 20px;
   backdrop-filter:blur(14px);-webkit-backdrop-filter:blur(14px)}
@@ -914,6 +916,12 @@ select.mini{font-family:inherit;font-size:12.5px;font-weight:700;color:var(--tex
 .lb-head,.lb-row{display:grid;grid-template-columns:110px 1fr 124px 92px 104px;align-items:center}
 .lb-head{padding:0 22px 12px;font-size:11px;text-transform:uppercase;letter-spacing:.5px;color:var(--muted);font-weight:700}
 .lb-list{display:flex;flex-direction:column;gap:10px}
+/* Caps the ranked list at ~6 rows tall and scrolls the rest, so the page
+   stays the same size whether the team has 4 people or 40 — same "keep
+   room" pattern as the Task Settings format table. The header row rides
+   along, pinned to the top of the scroll area. */
+.lb-table-wrap{max-height:600px;overflow-y:auto;padding:2px 2px 0}
+.lb-table-wrap .lb-head{position:sticky;top:0;z-index:2;background:var(--bg);padding-top:2px}
 .lb-row{position:relative;background:var(--panel);border:1px solid var(--border);border-radius:12px;height:74px;overflow:hidden;
   transition:transform .3s cubic-bezier(.22,.61,.36,1),box-shadow .3s ease,border-color .2s ease;will-change:transform}
 /* soft top-halo that fades in on hover — the premium "glow" */
@@ -1021,9 +1029,8 @@ img.lb-ava{object-fit:cover}
   .lb-head,.lb-row{grid-template-columns:84px 1fr 104px}
   .lb-head-house,.lb-row-house{grid-template-columns:84px 1fr 104px}
   .lb-hidesm{display:none}
-  .lb-hero{padding:18px 20px}
-  .lb-hero .trophy{font-size:52px}
-  .lb-hero h2{font-size:20px}
+  .lb-hero{padding:9px 14px}
+  .lb-hero .trophy{font-size:18px}
   .modal{width:100%!important}
 }
 
@@ -1181,7 +1188,6 @@ img.lb-ava{object-fit:cover}
   .tp-row-stats{gap:10px}
   .tp-row-stats span:not(.tp-score){display:none}
   .statusseg{width:100%}
-  .lb-hero{flex-direction:column;text-align:center;gap:12px}
   .lb-statbar{flex-wrap:wrap}
   .rangepop{width:min(92vw,470px)}
 }

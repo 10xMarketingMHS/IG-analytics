@@ -403,10 +403,9 @@ export function LeaderboardPage() {
       <div className="lb-hero">
         <div className="trophy">🏆</div>
         <div className="htext">
-          <h2>Media House Leaderboard</h2>
           <p>
-            Two ways to lead. <b>Social Media Leaders</b> climb on the performance of the Reels &amp;
-            Carousels they edit. <b>Media House Leaders</b> climb on points earned finishing tasks on time.
+            Two ways to lead: <b>Social Media Leaders</b> climb on the performance of the Reels &amp;
+            Carousels they edit, <b>Media House Leaders</b> climb on points earned finishing tasks on time.
           </p>
         </div>
       </div>
@@ -441,40 +440,42 @@ export function LeaderboardPage() {
               </div>
             </div>
 
-            <div className="lb-head">
-              <div>Position</div>
-              <div>Editor</div>
-              <div className="lb-hidesm">Reels · Carousels</div>
-              <div className="lb-hidesm" style={{ textAlign: "right", paddingRight: 10 }}>Views</div>
-              <div style={{ textAlign: "right", paddingRight: 22 }}>Points</div>
-            </div>
-            <div className="lb-list">
-              {socialRanked.map((r, i) => (
-                <div key={r.editor.id} className={"lb-row " + (MEDAL_VARIANT[i] ?? "")}>
-                  <div className="lb-rankcell">
-                    {i < 3 ? <Laurel rank={i + 1} variant={MEDAL_VARIANT[i]} /> : <span className="lb-rnum">{i + 1}</span>}
+            <div className="lb-table-wrap">
+              <div className="lb-head">
+                <div>Position</div>
+                <div>Editor</div>
+                <div className="lb-hidesm">Reels · Carousels</div>
+                <div className="lb-hidesm" style={{ textAlign: "right", paddingRight: 10 }}>Views</div>
+                <div style={{ textAlign: "right", paddingRight: 22 }}>Points</div>
+              </div>
+              <div className="lb-list">
+                {socialRanked.map((r, i) => (
+                  <div key={r.editor.id} className={"lb-row " + (MEDAL_VARIANT[i] ?? "")}>
+                    <div className="lb-rankcell">
+                      {i < 3 ? <Laurel rank={i + 1} variant={MEDAL_VARIANT[i]} /> : <span className="lb-rnum">{i + 1}</span>}
+                    </div>
+                    <div className="lb-player">
+                      <Avatar editor={r.editor} />
+                      <div className="who"><b>{r.editor.name}</b><small>{r.editor.designation || "Editor"}</small></div>
+                    </div>
+                    <div className="lb-cell lb-hidesm"><div className="lb-rc"><span>🎬 <b>{r.reels}</b></span><span>🖼️ <b>{r.carousels}</b></span></div></div>
+                    <div className="lb-cell num lb-hidesm">{r.views.toLocaleString()}</div>
+                    <div className="lb-points">{r.points.toLocaleString()}</div>
                   </div>
-                  <div className="lb-player">
-                    <Avatar editor={r.editor} />
-                    <div className="who"><b>{r.editor.name}</b><small>{r.editor.designation || "Editor"}</small></div>
+                ))}
+                {socialUnranked.map((r) => (
+                  <div key={r.editor.id} className="lb-row" style={{ opacity: 0.55 }}>
+                    <div className="lb-rankcell"><span className="lb-rnum">—</span></div>
+                    <div className="lb-player">
+                      <Avatar editor={r.editor} />
+                      <div className="who"><b>{r.editor.name}</b><small>{r.editor.designation || "Editor"}</small></div>
+                    </div>
+                    <div className="lb-cell lb-hidesm" style={{ gridColumn: "3 / span 3" }}>
+                      No published posts {period === "month" ? "this month" : "yet"}
+                    </div>
                   </div>
-                  <div className="lb-cell lb-hidesm"><div className="lb-rc"><span>🎬 <b>{r.reels}</b></span><span>🖼️ <b>{r.carousels}</b></span></div></div>
-                  <div className="lb-cell num lb-hidesm">{r.views.toLocaleString()}</div>
-                  <div className="lb-points">{r.points.toLocaleString()}</div>
-                </div>
-              ))}
-              {socialUnranked.map((r) => (
-                <div key={r.editor.id} className="lb-row" style={{ opacity: 0.55 }}>
-                  <div className="lb-rankcell"><span className="lb-rnum">—</span></div>
-                  <div className="lb-player">
-                    <Avatar editor={r.editor} />
-                    <div className="who"><b>{r.editor.name}</b><small>{r.editor.designation || "Editor"}</small></div>
-                  </div>
-                  <div className="lb-cell lb-hidesm" style={{ gridColumn: "3 / span 3" }}>
-                    No published posts {period === "month" ? "this month" : "yet"}
-                  </div>
-                </div>
-              ))}
+                ))}
+              </div>
             </div>
             {socialRanked.length === 0 && (
               <div className="hint" style={{ marginTop: 14 }}>
@@ -538,36 +539,38 @@ export function LeaderboardPage() {
               <div className="hint" style={{ margin: 0 }}>Ranked by points earned this month — resets on the 1st</div>
             </div>
 
-            <div className="lb-head lb-head-house">
-              <div>Position</div>
-              <div>Team member</div>
-              <div className="lb-hidesm" style={{ textAlign: "right", paddingRight: 24 }}>Completed</div>
-              <div style={{ textAlign: "right", paddingRight: 22 }}>Points</div>
-            </div>
-            <div className="lb-list">
-              {houseRanked.map((r, i) => (
-                <div key={r.editor.id} className={"lb-row lb-row-house " + (MEDAL_VARIANT[i] ?? "")}>
-                  <div className="lb-rankcell">
-                    {i < 3 ? <Laurel rank={i + 1} variant={MEDAL_VARIANT[i]} /> : <span className="lb-rnum">{i + 1}</span>}
+            <div className="lb-table-wrap">
+              <div className="lb-head lb-head-house">
+                <div>Position</div>
+                <div>Team member</div>
+                <div className="lb-hidesm" style={{ textAlign: "right", paddingRight: 24 }}>Completed</div>
+                <div style={{ textAlign: "right", paddingRight: 22 }}>Points</div>
+              </div>
+              <div className="lb-list">
+                {houseRanked.map((r, i) => (
+                  <div key={r.editor.id} className={"lb-row lb-row-house " + (MEDAL_VARIANT[i] ?? "")}>
+                    <div className="lb-rankcell">
+                      {i < 3 ? <Laurel rank={i + 1} variant={MEDAL_VARIANT[i]} /> : <span className="lb-rnum">{i + 1}</span>}
+                    </div>
+                    <div className="lb-player">
+                      <Avatar editor={r.editor} />
+                      <div className="who"><b>{r.editor.name}</b><small>{r.editor.designation || "Editor"}</small></div>
+                    </div>
+                    <div className="lb-cell num lb-hidesm">{r.completed}</div>
+                    <div className="lb-points">{r.points.toFixed(1)}</div>
                   </div>
-                  <div className="lb-player">
-                    <Avatar editor={r.editor} />
-                    <div className="who"><b>{r.editor.name}</b><small>{r.editor.designation || "Editor"}</small></div>
+                ))}
+                {houseUnranked.map((r) => (
+                  <div key={r.editor.id} className="lb-row lb-row-house" style={{ opacity: 0.55 }}>
+                    <div className="lb-rankcell"><span className="lb-rnum">—</span></div>
+                    <div className="lb-player">
+                      <Avatar editor={r.editor} />
+                      <div className="who"><b>{r.editor.name}</b><small>{r.editor.designation || "Editor"}</small></div>
+                    </div>
+                    <div className="lb-cell lb-hidesm" style={{ gridColumn: "3 / span 2" }}>No tasks completed this month</div>
                   </div>
-                  <div className="lb-cell num lb-hidesm">{r.completed}</div>
-                  <div className="lb-points">{r.points.toFixed(1)}</div>
-                </div>
-              ))}
-              {houseUnranked.map((r) => (
-                <div key={r.editor.id} className="lb-row lb-row-house" style={{ opacity: 0.55 }}>
-                  <div className="lb-rankcell"><span className="lb-rnum">—</span></div>
-                  <div className="lb-player">
-                    <Avatar editor={r.editor} />
-                    <div className="who"><b>{r.editor.name}</b><small>{r.editor.designation || "Editor"}</small></div>
-                  </div>
-                  <div className="lb-cell lb-hidesm" style={{ gridColumn: "3 / span 2" }}>No tasks completed this month</div>
-                </div>
-              ))}
+                ))}
+              </div>
             </div>
             {houseRanked.length === 0 && (
               <div className="hint" style={{ marginTop: 14 }}>
