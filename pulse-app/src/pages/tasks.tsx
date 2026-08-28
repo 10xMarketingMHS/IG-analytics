@@ -293,14 +293,16 @@ export function TasksPage() {
   // refetch keep the panel fresh. `creating` opens the panel in create mode.
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [creating, setCreating] = useState(false);
+  // Status the create modal should open with (a column's ＋ pre-selects that
+  // column; the toolbar's "＋ Add Task" leaves it null → To Do).
+  const [createStatus, setCreateStatus] = useState<TaskStatus | null>(null);
   // Text search — matches title, description, and any of the dual ids
   // (TID/SID/AdID). Also used by List view's search box.
   const [sortBy, setSortBy] = useState("due");
-  const [quickAddCol, setQuickAddCol] = useState<TaskStatus | null>(null);
-  const [quickAddText, setQuickAddText] = useState("");
   const openTask = (t: Task) => { setCreating(false); setSelectedId(t.id); };
-  // "New Task" opens the full task-creation card, centered.
-  const startNewTask = () => { setSelectedId(null); setCreating(true); };
+  // "New Task" (and every per-column ＋) opens the full categorized creation
+  // card — Social/Ads → Brand → Content Type — so every task gets its SID/AID.
+  const startNewTask = (status: TaskStatus | null = null) => { setSelectedId(null); setCreateStatus(status); setCreating(true); };
   const selectedTask = (tasks ?? []).find((t) => t.id === selectedId) ?? null;
   // Dual-confirmation prompt when accepting would run the budget past office
   // close — null when no prompt is showing.
@@ -309,18 +311,6 @@ export function TasksPage() {
   // hours for that due date past a normal day's worth of work.
   const [workloadPrompt, setWorkloadPrompt] = useState<{ task: Task; total: number; tier: 1 | 2 } | null>(null);
   const [reworkNotePrompt, setReworkNotePrompt] = useState<{ task: Task } | null>(null);
-
-  async function quickAdd(status: TaskStatus) {
-    const title = quickAddText.trim();
-    if (!title) { setQuickAddCol(null); return; }
-    try {
-      await api("/tasks", { method: "POST", body: JSON.stringify({ title, status }) });
-      setQuickAddText("");
-      await refetch();
-    } catch (e) {
-      toast.error(e instanceof ApiError ? e.message : "Could not add task.");
-    }
-  }
 
   // "My Tasks" vs "Team" — editors default to their own work, admins default
   // to the whole team's (since they assign & monitor it). Either can toggle;
@@ -584,7 +574,7 @@ export function TasksPage() {
           <span className={taskCounts.pendingOverdue > 0 ? "toolbar-summary-alert" : undefined}><b>{taskCounts.pendingOverdue}</b> pending/overdue</span>
         </div>
         {canWrite && (
-          <button className="btn btn-primary" style={{ marginLeft: "auto" }} onClick={startNewTask}>
+          <button className="btn btn-primary" style={{ marginLeft: "auto" }} onClick={() => startNewTask()}>
             ＋ Add Task
           </button>
         )}
@@ -711,19 +701,9 @@ export function TasksPage() {
                   <span className="task-count">{items.length}</span>
                   {canWrite && (
                     <button className="task-coladd" title={`Add a task to ${col.label}`}
-                      onClick={() => { setQuickAddCol(col.key); setQuickAddText(""); }}>＋</button>
+                      onClick={() => startNewTask(col.key)}>＋</button>
                   )}
                 </div>
-                {quickAddCol === col.key && (
-                  <input
-                    className="task-quickadd" autoFocus
-                    placeholder="Task title, then Enter…"
-                    value={quickAddText}
-                    onChange={(e) => setQuickAddText(e.target.value)}
-                    onKeyDown={(e) => { if (e.key === "Enter") quickAdd(col.key); if (e.key === "Escape") setQuickAddCol(null); }}
-                    onBlur={() => quickAdd(col.key)}
-                  />
-                )}
                 {items.map((t) => {
                   const overdue =
                     t.status !== "done" && t.due_date && t.due_date < today();
@@ -757,10 +737,11 @@ export function TasksPage() {
                           📝 Rework: {t.pending_note}
                         </div>
                       )}
-                      {(t.sid || t.ad_id || t.revision > 1) && (
+                      {(t.tid || t.sid || t.ad_id || t.revision > 1) && (
                         <div className="task-ids">
-                          {t.sid && <span>{showId(t.sid)}</span>}
-                          {t.ad_id && <span>{showId(t.ad_id)}</span>}
+                          {t.tid && <span>{t.tid}</span>}
+                          {t.sid && <><span className="dot-sep">·</span><span>{showId(t.sid)}</span></>}
+                          {t.ad_id && <><span className="dot-sep">·</span><span>{showId(t.ad_id)}</span></>}
                           {t.revision > 1 && <><span className="dot-sep">·</span><span title="Sent back for rework" style={{ color: "var(--amber)" }}>Rev {t.revision}</span></>}
                         </div>
                       )}
@@ -884,6 +865,7 @@ export function TasksPage() {
       {creating && (
         <TaskPanel
           mode="create" task={null} canWrite={canWrite} editors={editors ?? []} channels={(workspaces ?? [])}
+          initialStatus={createStatus}
           onClose={() => setCreating(false)}
           onChanged={refetch}
           onCreated={(id) => { setCreating(false); setSelectedId(id); refetch(); }}
@@ -1239,10 +1221,11 @@ export function TaskModal({
   return (
     <>
     <Modal onClose={onClose} title={editing ? "Edit Task" : "Add Task"} variant="drawer">
-      {editing && task && (task.sid || task.ad_id) && (
+      {editing && task && (task.tid || task.sid || task.ad_id) && (
         <div className="task-ids" style={{ fontSize: 11.5, marginBottom: 14 }}>
-          {task.sid && <span>{showId(task.sid)}</span>}
-          {task.ad_id && <span>{showId(task.ad_id)}</span>}
+          {task.tid && <span>{task.tid}</span>}
+          {task.sid && <><span className="dot-sep">·</span><span>{showId(task.sid)}</span></>}
+          {task.ad_id && <><span className="dot-sep">·</span><span>{showId(task.ad_id)}</span></>}
         </div>
       )}
       <form onSubmit={submit}>
@@ -1568,12 +1551,13 @@ function Row({ label, children }: { label: string; children: ReactNode }) {
 // offered here — it requires a rework note, which the board's dedicated
 // prompt collects; approving (→ Completed) doesn't need one, so that stays
 // available inline.
-function TaskPanel({ mode, task, canWrite, editors, channels, onClose, onChanged, onCreated, onDelete }: {
+function TaskPanel({ mode, task, canWrite, editors, channels, initialStatus, onClose, onChanged, onCreated, onDelete }: {
   mode: "create" | "edit";
   task: Task | null;
   canWrite: boolean;
   editors: Editor[];
   channels: { id: string; name: string }[];
+  initialStatus?: TaskStatus | null;
   onClose: () => void;
   onChanged: () => void;
   onCreated: (id: string) => void;
@@ -1586,7 +1570,7 @@ function TaskPanel({ mode, task, canWrite, editors, channels, onClose, onChanged
   const [draft, setDraft] = useState<{
     channel_id: string | null; editor_id: string | null; due_date: string | null; priority: string;
     status: string; content_type: string | null; platforms: string[]; attachments: TaskAttachment[];
-  }>({ channel_id: null, editor_id: null, due_date: null, priority: "medium", status: "todo", content_type: null, platforms: [], attachments: [] });
+  }>({ channel_id: null, editor_id: null, due_date: null, priority: "medium", status: initialStatus ?? "todo", content_type: null, platforms: [], attachments: [] });
   const [title, setTitle] = useState(task?.title ?? "");
   const [description, setDescription] = useState(task?.description ?? "");
   const [busy, setBusy] = useState(false);
@@ -1694,6 +1678,7 @@ function TaskPanel({ mode, task, canWrite, editors, channels, onClose, onChanged
         <div className="tp-idrow">
           {editCategory && <span className="task-ctype">{CATEGORY_LABEL[editCategory]}</span>}
           {task!.content_type && <span className="task-ctype">{CONTENT_LABEL(task!.content_type)}</span>}
+          {task!.tid && <span className="task-code">{task!.tid}</span>}
           {task!.sid && <span className="task-code">{showId(task!.sid)}</span>}
           {task!.ad_id && <span className="task-code">{showId(task!.ad_id)}</span>}
         </div>
@@ -2064,6 +2049,7 @@ function TaskList({ tasks, onOpen }: { tasks: Task[]; onOpen: (t: Task) => void 
                 <tr key={t.id} className="clickrow" onClick={() => onOpen(t)}>
                   <td>
                     <b>{t.title}</b>{" "}
+                    {t.tid && <span className="task-code">{t.tid}</span>}
                     {t.sid && <span className="task-code">{showId(t.sid)}</span>}
                     {t.ad_id && <span className="task-code">{showId(t.ad_id)}</span>}
                   </td>
