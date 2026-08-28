@@ -78,10 +78,6 @@ const CONTENT_LABEL = (v: string | null) => CONTENT_TYPES.find((c) => c.value ==
 // category first, then only its content types are offered.
 type TaskCategory = "social" | "ad";
 const CATEGORY_LABEL: Record<TaskCategory, string> = { social: "Social", ad: "Ads" };
-const CATEGORY_CONTENT_TYPES: Record<TaskCategory, string[]> = {
-  social: ["reel", "carousel", "thumbnail", "youtube_video"],
-  ad: ["ad_video"],
-};
 // A task's category, inferred from its task_type (null for legacy general/short
 // tasks that predate the Social/Ads split).
 const taskCategory = (t: Pick<Task, "task_type">): TaskCategory | null =>
@@ -1567,10 +1563,11 @@ function TaskPanel({ mode, task, canWrite, editors, channels, initialStatus, onC
   const { user } = useAuth();
   const { isAdmin } = useWorkspaces();
   const ro = !canWrite;
+  const { contentFormats } = useContentFormats();
   const [draft, setDraft] = useState<{
     channel_id: string | null; editor_id: string | null; due_date: string | null; priority: string;
-    status: string; content_type: string | null; platforms: string[]; attachments: TaskAttachment[];
-  }>({ channel_id: null, editor_id: null, due_date: null, priority: "medium", status: initialStatus ?? "todo", content_type: null, platforms: [], attachments: [] });
+    status: string; content_format_id: string | null; platforms: string[]; attachments: TaskAttachment[];
+  }>({ channel_id: null, editor_id: null, due_date: null, priority: "medium", status: initialStatus ?? "todo", content_format_id: null, platforms: [], attachments: [] });
   const [title, setTitle] = useState(task?.title ?? "");
   const [description, setDescription] = useState(task?.description ?? "");
   const [busy, setBusy] = useState(false);
@@ -1580,19 +1577,15 @@ function TaskPanel({ mode, task, canWrite, editors, channels, initialStatus, onC
   const [category, setCategory] = useState<TaskCategory | null>(null);
   const editCategory = task ? taskCategory(task) : null;
   const activeCategory: TaskCategory | null = creating ? category : editCategory;
-  // Content types on offer: gated by the active category (all of them for a
-  // legacy edit with no category).
-  const contentTypeChoices = activeCategory
-    ? CONTENT_TYPES.filter((c) => CATEGORY_CONTENT_TYPES[activeCategory].includes(c.value))
-    : creating ? [] : CONTENT_TYPES;
+  // Content types come from the admin taxonomy (Settings → Task Settings),
+  // scoped to the active category — picking one drives the task's points + timer.
+  const contentTypeChoices = (contentFormats ?? []).filter((f) => f.active && f.category === activeCategory);
   useEffect(() => { setTitle(task?.title ?? ""); setDescription(task?.description ?? ""); }, [task?.id]);
-  // Picking/switching category in create mode clears a now-invalid content type.
+  // Picking/switching category in create mode clears a now-invalid content type
+  // (each category has its own list).
   function pickCategory(next: TaskCategory) {
     setCategory(next);
-    setDraft((d) => ({
-      ...d,
-      content_type: d.content_type && CATEGORY_CONTENT_TYPES[next].includes(d.content_type) ? d.content_type : null,
-    }));
+    setDraft((d) => ({ ...d, content_format_id: null }));
   }
 
   // Self vs. Assign toggle for new tasks — most tasks anyone creates (admin
@@ -1615,7 +1608,7 @@ function TaskPanel({ mode, task, canWrite, editors, channels, initialStatus, onC
 
   const cur = creating ? draft : {
     channel_id: task!.channel_id, editor_id: task!.editor_id, due_date: task!.due_date, priority: task!.priority,
-    status: task!.status, content_type: task!.content_type, platforms: task!.platforms ?? [], attachments: task!.attachments ?? [],
+    status: task!.status, content_format_id: task!.content_format_id, platforms: task!.platforms ?? [], attachments: task!.attachments ?? [],
   };
 
   async function patch(fields: Record<string, unknown>) {
@@ -1642,7 +1635,7 @@ function TaskPanel({ mode, task, canWrite, editors, channels, initialStatus, onC
       const r = await api<{ task: Task }>("/tasks", { method: "POST", body: JSON.stringify({
         title: title.trim(), description, taskType: category,
         channelId: draft.channel_id, editorId: draft.editor_id, dueDate: draft.due_date,
-        priority: draft.priority, status: draft.status, contentType: draft.content_type,
+        priority: draft.priority, status: draft.status, contentFormatId: draft.content_format_id,
         platforms: draft.platforms, attachments: draft.attachments,
       }) });
       toast.success("Task created.");
@@ -1677,7 +1670,9 @@ function TaskPanel({ mode, task, canWrite, editors, channels, initialStatus, onC
       {!creating && (
         <div className="tp-idrow">
           {editCategory && <span className="task-ctype">{CATEGORY_LABEL[editCategory]}</span>}
-          {task!.content_type && <span className="task-ctype">{CONTENT_LABEL(task!.content_type)}</span>}
+          {(task!.content_format_name || task!.content_type) && (
+            <span className="task-ctype">{task!.content_format_name ? `${task!.content_format_icon ?? ""} ${task!.content_format_name}` : CONTENT_LABEL(task!.content_type)}</span>
+          )}
           {task!.tid && <span className="task-code">{task!.tid}</span>}
           {task!.sid && <span className="task-code">{showId(task!.sid)}</span>}
           {task!.ad_id && <span className="task-code">{showId(task!.ad_id)}</span>}
@@ -1751,9 +1746,9 @@ function TaskPanel({ mode, task, canWrite, editors, channels, initialStatus, onC
         )}
         {(activeCategory || !creating) && (
           <Row label="Content Type">
-            <select className="t" disabled={ro} value={cur.content_type ?? ""} onChange={(e) => set("content_type", "contentType", e.target.value || null)}>
+            <select className="t" disabled={ro} value={cur.content_format_id ?? ""} onChange={(e) => set("content_format_id", "contentFormatId", e.target.value || null)}>
               <option value="">—</option>
-              {contentTypeChoices.map((c) => (<option key={c.value} value={c.value}>{c.label}</option>))}
+              {contentTypeChoices.map((f) => (<option key={f.id} value={f.id}>{f.icon} {f.name}</option>))}
             </select>
           </Row>
         )}
@@ -2053,7 +2048,7 @@ function TaskList({ tasks, onOpen }: { tasks: Task[]; onOpen: (t: Task) => void 
                     {t.sid && <span className="task-code">{showId(t.sid)}</span>}
                     {t.ad_id && <span className="task-code">{showId(t.ad_id)}</span>}
                   </td>
-                  <td>{t.content_type ? <span className="task-ctype">{CONTENT_LABEL(t.content_type)}</span> : <span className="st dim">—</span>}</td>
+                  <td>{t.content_format_name ? <span className="task-ctype">{t.content_format_icon} {t.content_format_name}</span> : t.content_type ? <span className="task-ctype">{CONTENT_LABEL(t.content_type)}</span> : <span className="st dim">—</span>}</td>
                   <td>{t.editor_name ? <Assignee name={t.editor_name} image={t.editor_image} /> : <span className="st dim">—</span>}</td>
                   <td>{t.channel_name ?? <span className="st dim">—</span>}</td>
                   <td><span className={"task-pri " + t.priority}>{PRI_LABEL[t.priority]}</span></td>

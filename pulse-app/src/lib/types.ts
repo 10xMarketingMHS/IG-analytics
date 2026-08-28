@@ -130,6 +130,9 @@ export type ContentFormatDef = {
   icon: string;
   sort_order: number;
   active: boolean;
+  // Social vs Ads — the category this content type belongs to (null only for
+  // retired legacy formats that predate the split).
+  category: "social" | "ad" | null;
   // Points Formula base_points for this format — independent of budget_hours
   // (task_time_rule). See taskPoints() in leaderboard.tsx.
   points: number;

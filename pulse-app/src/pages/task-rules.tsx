@@ -70,9 +70,9 @@ export function TaskRulesSection() {
       toast.error(err instanceof ApiError ? err.message : errorMsg);
     }
   }
-  async function addFormat(name: string, icon: string) {
+  async function addFormat(name: string, icon: string, category: "social" | "ad") {
     try {
-      await api("/content-formats", { method: "POST", body: JSON.stringify({ name, icon }) });
+      await api("/content-formats", { method: "POST", body: JSON.stringify({ name, icon, category }) });
       await refetchFormats();
     } catch (err) {
       toast.error(err instanceof ApiError ? err.message : "Could not add that format.");
@@ -93,101 +93,115 @@ export function TaskRulesSection() {
   const overrideFor = (editorId: string, f: ContentFormatDef) => rules?.find((r) => r.content_format_id === f.id && r.editor_id === editorId) ?? null;
   const formats = contentFormats ?? [];
 
+  // One Social section and one Ads section — each is a self-contained content
+  // formats table + per-person overrides grid, scoped to that category's list.
+  const CATEGORIES: { key: "social" | "ad"; label: string }[] = [
+    { key: "social", label: "Social" },
+    { key: "ad", label: "Ads" },
+  ];
+
   return (
     <>
-      <div className="sectitle">
-        <span className="dot" />Content formats
-        <span className="s">icon, points, and time budget together — click a name to rename it</span>
-      </div>
-      <div className="card pad">
-        {contentFormats === null ? (
-          <div className="hint">Loading…</div>
-        ) : (
-          <div className="fmt-table-wrap">
-            <table className="tbl fmt-tbl">
-              <thead>
-                <tr>
-                  <th style={{ width: 44 }}></th>
-                  <th>Format</th>
-                  <th style={{ width: 110, textAlign: "center" }}>Points</th>
-                  <th style={{ width: 130, textAlign: "center" }}>Time budget</th>
-                  <th style={{ width: 36 }}></th>
-                </tr>
-              </thead>
-              <tbody>
-                {formats.map((f) => (
-                  <FormatRow
-                    key={f.id}
-                    format={f}
-                    rule={globalFor(f)}
-                    onIcon={(icon) => patchFormat(f.id, { icon }, "Could not change the icon.")}
-                    onRename={(name) => patchFormat(f.id, { name }, "Could not rename that format.")}
-                    onPoints={(points) => patchFormat(f.id, { points }, "Could not save points.")}
-                    onHours={(hours) => setRule(f.id, null, hours)}
-                    onClearHours={() => { const r = globalFor(f); if (r) removeRule(r.id); }}
-                    onRemove={() => removeFormat(f)}
-                  />
-                ))}
-                <AddFormatRow onAdd={addFormat} />
-              </tbody>
-            </table>
-          </div>
-        )}
-        <div className="hint" style={{ marginTop: 14 }}>
-          <b>Points</b> — the Points Formula's base value for this format (on/before due date earns it in full, 1 day
-          late earns half, 2 days late earns none, 3+ days late costs it back). <b>Time budget</b> — hours before a
-          task's countdown runs out; blank means no timer. The two are independent — a Reel and a Poster can score
-          differently even at the same time budget. Removing a format doesn't touch tasks already using it.
-        </div>
-      </div>
-
-      <div className="sectitle" style={{ marginTop: 28 }}>
-        <span className="dot" />Per-person overrides
-        <span className="s">every team member, editable inline — blank cells inherit the global default</span>
-      </div>
-      <div className="card pad">
-        {rules === null || !editors || contentFormats === null ? (
-          <div className="hint">Loading…</div>
-        ) : editors.length === 0 ? (
-          <div className="hint">No team members yet — add editors under Settings first.</div>
-        ) : formats.length === 0 ? (
-          <div className="hint">No content formats yet.</div>
-        ) : (
-          <div className="bulk-scroll fmt-overrides-wrap">
-            <table className="tbl">
-              <thead>
-                <tr>
-                  <th>Team member</th>
-                  {formats.map((f) => (
-                    <th key={f.id} style={{ textAlign: "center" }}>{f.icon} {f.name}</th>
-                  ))}
-                </tr>
-              </thead>
-              <tbody>
-                {editors.map((ed) => (
-                  <tr key={ed.id}>
-                    <td style={{ fontWeight: 650 }}>{ed.name}</td>
-                    {formats.map((f) => (
-                      <td key={f.id} style={{ textAlign: "center" }}>
-                        <OverrideCell
-                          rule={overrideFor(ed.id, f)}
-                          globalHours={globalFor(f)?.hours ?? null}
-                          onSave={(hours) => setRule(f.id, ed.id, hours)}
-                          onClear={(id) => removeRule(id)}
+      {CATEGORIES.map(({ key, label }, i) => {
+        const catFormats = formats.filter((f) => f.category === key);
+        return (
+          <div key={key}>
+            <div className="sectitle" style={i > 0 ? { marginTop: 36 } : undefined}>
+              <span className="dot" />{label} — content formats
+              <span className="s">icon, points, and time budget together — click a name to rename it</span>
+            </div>
+            <div className="card pad">
+              {contentFormats === null ? (
+                <div className="hint">Loading…</div>
+              ) : (
+                <div className="fmt-table-wrap">
+                  <table className="tbl fmt-tbl">
+                    <thead>
+                      <tr>
+                        <th style={{ width: 44 }}></th>
+                        <th>Format</th>
+                        <th style={{ width: 110, textAlign: "center" }}>Points</th>
+                        <th style={{ width: 130, textAlign: "center" }}>Time budget</th>
+                        <th style={{ width: 36 }}></th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {catFormats.map((f) => (
+                        <FormatRow
+                          key={f.id}
+                          format={f}
+                          rule={globalFor(f)}
+                          onIcon={(icon) => patchFormat(f.id, { icon }, "Could not change the icon.")}
+                          onRename={(name) => patchFormat(f.id, { name }, "Could not rename that format.")}
+                          onPoints={(points) => patchFormat(f.id, { points }, "Could not save points.")}
+                          onHours={(hours) => setRule(f.id, null, hours)}
+                          onClearHours={() => { const r = globalFor(f); if (r) removeRule(r.id); }}
+                          onRemove={() => removeFormat(f)}
                         />
-                      </td>
-                    ))}
-                  </tr>
-                ))}
-              </tbody>
-            </table>
+                      ))}
+                      <AddFormatRow onAdd={(name, icon) => addFormat(name, icon, key)} />
+                    </tbody>
+                  </table>
+                </div>
+              )}
+              <div className="hint" style={{ marginTop: 14 }}>
+                <b>Points</b> — the Points Formula's base value for this format (on/before due date earns it in full, 1 day
+                late earns half, 2 days late earns none, 3+ days late costs it back). <b>Time budget</b> — hours before a
+                task's countdown runs out; blank means no timer. The two are independent — a Reel and a Poster can score
+                differently even at the same time budget. Removing a format doesn't touch tasks already using it.
+              </div>
+            </div>
+
+            <div className="sectitle" style={{ marginTop: 28 }}>
+              <span className="dot" />{label} — per-person overrides
+              <span className="s">every team member, editable inline — blank cells inherit the global default</span>
+            </div>
+            <div className="card pad">
+              {rules === null || !editors || contentFormats === null ? (
+                <div className="hint">Loading…</div>
+              ) : editors.length === 0 ? (
+                <div className="hint">No team members yet — add editors under Settings first.</div>
+              ) : catFormats.length === 0 ? (
+                <div className="hint">No {label} content formats yet — add one above first.</div>
+              ) : (
+                <div className="bulk-scroll fmt-overrides-wrap">
+                  <table className="tbl">
+                    <thead>
+                      <tr>
+                        <th>Team member</th>
+                        {catFormats.map((f) => (
+                          <th key={f.id} style={{ textAlign: "center" }}>{f.icon} {f.name}</th>
+                        ))}
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {editors.map((ed) => (
+                        <tr key={ed.id}>
+                          <td style={{ fontWeight: 650 }}>{ed.name}</td>
+                          {catFormats.map((f) => (
+                            <td key={f.id} style={{ textAlign: "center" }}>
+                              <OverrideCell
+                                rule={overrideFor(ed.id, f)}
+                                globalHours={globalFor(f)?.hours ?? null}
+                                onSave={(hours) => setRule(f.id, ed.id, hours)}
+                                onClear={(id) => removeRule(id)}
+                              />
+                            </td>
+                          ))}
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+              <div className="hint" style={{ marginTop: 12 }}>
+                Type a number and click away to save — that person always gets exactly that much time for that format, ignoring
+                the global default above. Clear the cell (and click away) to remove the override and fall back to the default.
+              </div>
+            </div>
           </div>
-        )}
-        <div className="hint" style={{ marginTop: 12 }}>
-          Type a number and click away to save — that person always gets exactly that much time for that format, ignoring
-          the global default above. Clear the cell (and click away) to remove the override and fall back to the default.
-        </div>
-      </div>
+        );
+      })}
     </>
   );
 }

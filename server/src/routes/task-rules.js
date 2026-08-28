@@ -16,7 +16,8 @@ export const taskRulesRouter = Router();
 const SELECT = `
   select r.id, r.content_format_id, r.editor_id, r.hours, r.updated_at,
          e.name as editor_name,
-         cf.name as content_format_name, cf.icon as content_format_icon
+         cf.name as content_format_name, cf.icon as content_format_icon,
+         cf.category as content_format_category
     from task_time_rule r
     left join editor e on e.id = r.editor_id
     left join task_content_format cf on cf.id = r.content_format_id`;
