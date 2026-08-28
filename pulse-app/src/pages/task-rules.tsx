@@ -21,6 +21,8 @@ export function TaskRulesSection() {
   const { editors } = useEditors();
   const { contentFormats, refetch: refetchFormats } = useContentFormats();
   const [rules, setRules] = useState<TaskTimeRule[] | null>(null);
+  // Which category's formats + overrides are on screen — toggled at the top.
+  const [activeCat, setActiveCat] = useState<"social" | "ad">("social");
 
   const load = useCallback(() => {
     api<{ rules: TaskTimeRule[] }>("/task-time-rules")
@@ -102,11 +104,18 @@ export function TaskRulesSection() {
 
   return (
     <>
-      {CATEGORIES.map(({ key, label }, i) => {
+      <div className="seg cat-toggle" style={{ marginBottom: 20, width: "fit-content" }}>
+        {CATEGORIES.map((c) => (
+          <button key={c.key} type="button" className={activeCat === c.key ? "on" : ""} onClick={() => setActiveCat(c.key)}>
+            {c.label}
+          </button>
+        ))}
+      </div>
+      {CATEGORIES.filter((c) => c.key === activeCat).map(({ key, label }) => {
         const catFormats = formats.filter((f) => f.category === key);
         return (
           <div key={key}>
-            <div className="sectitle" style={i > 0 ? { marginTop: 36 } : undefined}>
+            <div className="sectitle">
               <span className="dot" />{label} — content formats
               <span className="s">icon, points, and time budget together — click a name to rename it</span>
             </div>
