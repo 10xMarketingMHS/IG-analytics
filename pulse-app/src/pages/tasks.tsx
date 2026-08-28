@@ -73,6 +73,23 @@ const CONTENT_TYPES: { value: string; label: string }[] = [
 ];
 const CONTENT_LABEL = (v: string | null) => CONTENT_TYPES.find((c) => c.value === v)?.label ?? null;
 
+// A board task is created under one of two categories — Social or Ads — which
+// drives its per-brand id (SID vs AID) and gates the Content Type list: pick a
+// category first, then only its content types are offered.
+type TaskCategory = "social" | "ad";
+const CATEGORY_LABEL: Record<TaskCategory, string> = { social: "Social", ad: "Ads" };
+const CATEGORY_CONTENT_TYPES: Record<TaskCategory, string[]> = {
+  social: ["reel", "carousel", "thumbnail", "youtube_video"],
+  ad: ["ad_video"],
+};
+// A task's category, inferred from its task_type (null for legacy general/short
+// tasks that predate the Social/Ads split).
+const taskCategory = (t: Pick<Task, "task_type">): TaskCategory | null =>
+  t.task_type === "social" ? "social" : t.task_type === "ad" ? "ad" : null;
+// Display normalizer for the secondary id — old rows stored the "AdID-" prefix,
+// new ones store "AID-"; show them all as "AID-".
+const showId = (v: string | null | undefined) => (v ? v.replace(/^AdID/i, "AID") : v);
+
 const PLATFORM_META: Record<string, { icon: string; label: string }> = {
   instagram: { icon: "📸", label: "Instagram" },
   facebook: { icon: "👍", label: "Facebook" },
@@ -87,8 +104,6 @@ const SORTS: { value: string; label: string }[] = [
   { value: "title", label: "Title" },
 ];
 const PRI_ORDER: Record<string, number> = { high: 0, medium: 1, low: 2 };
-
-const taskCode = (serial: number) => `TASK-${serial}`;
 
 function today() {
   // Local calendar date as YYYY-MM-DD (Date.now avoided elsewhere but fine here).
@@ -742,11 +757,10 @@ export function TasksPage() {
                           📝 Rework: {t.pending_note}
                         </div>
                       )}
-                      {(t.tid || t.sid || t.ad_id || t.revision > 1) && (
+                      {(t.sid || t.ad_id || t.revision > 1) && (
                         <div className="task-ids">
-                          {t.tid && <span>{t.tid}</span>}
-                          {t.sid && <><span className="dot-sep">·</span><span>{t.sid}</span></>}
-                          {t.ad_id && <><span className="dot-sep">·</span><span>{t.ad_id}</span></>}
+                          {t.sid && <span>{showId(t.sid)}</span>}
+                          {t.ad_id && <span>{showId(t.ad_id)}</span>}
                           {t.revision > 1 && <><span className="dot-sep">·</span><span title="Sent back for rework" style={{ color: "var(--amber)" }}>Rev {t.revision}</span></>}
                         </div>
                       )}
@@ -764,7 +778,6 @@ export function TasksPage() {
                         {t.platforms?.length > 0 && (
                           <span className="task-plats">{t.platforms.map((p) => PLATFORM_META[p]?.icon ?? "").join(" ")}</span>
                         )}
-                        <span className="task-code">{taskCode(t.serial)}</span>
                       </div>
                       {(() => {
                         const acceptSlot = t.editor_id && !t.accepted ? (
@@ -1226,11 +1239,10 @@ export function TaskModal({
   return (
     <>
     <Modal onClose={onClose} title={editing ? "Edit Task" : "Add Task"} variant="drawer">
-      {editing && task && (task.tid || task.sid || task.ad_id) && (
+      {editing && task && (task.sid || task.ad_id) && (
         <div className="task-ids" style={{ fontSize: 11.5, marginBottom: 14 }}>
-          {task.tid && <span>{task.tid}</span>}
-          {task.sid && <><span className="dot-sep">·</span><span>{task.sid}</span></>}
-          {task.ad_id && <><span className="dot-sep">·</span><span>{task.ad_id}</span></>}
+          {task.sid && <span>{showId(task.sid)}</span>}
+          {task.ad_id && <span>{showId(task.ad_id)}</span>}
         </div>
       )}
       <form onSubmit={submit}>
@@ -1578,7 +1590,26 @@ function TaskPanel({ mode, task, canWrite, editors, channels, onClose, onChanged
   const [title, setTitle] = useState(task?.title ?? "");
   const [description, setDescription] = useState(task?.description ?? "");
   const [busy, setBusy] = useState(false);
+  // Board tasks are created as Social or Ads (chosen first); Content Type stays
+  // hidden until one is picked. In edit mode the category is fixed by the task's
+  // existing task_type (never re-picked here — that would churn its SID/AID).
+  const [category, setCategory] = useState<TaskCategory | null>(null);
+  const editCategory = task ? taskCategory(task) : null;
+  const activeCategory: TaskCategory | null = creating ? category : editCategory;
+  // Content types on offer: gated by the active category (all of them for a
+  // legacy edit with no category).
+  const contentTypeChoices = activeCategory
+    ? CONTENT_TYPES.filter((c) => CATEGORY_CONTENT_TYPES[activeCategory].includes(c.value))
+    : creating ? [] : CONTENT_TYPES;
   useEffect(() => { setTitle(task?.title ?? ""); setDescription(task?.description ?? ""); }, [task?.id]);
+  // Picking/switching category in create mode clears a now-invalid content type.
+  function pickCategory(next: TaskCategory) {
+    setCategory(next);
+    setDraft((d) => ({
+      ...d,
+      content_type: d.content_type && CATEGORY_CONTENT_TYPES[next].includes(d.content_type) ? d.content_type : null,
+    }));
+  }
 
   // Self vs. Assign toggle for new tasks — most tasks anyone creates (admin
   // included) are for themselves, so defaulting to a mandatory "pick a name"
@@ -1617,12 +1648,15 @@ function TaskPanel({ mode, task, canWrite, editors, channels, onClose, onChanged
     const next = cur.platforms.includes(p) ? cur.platforms.filter((x) => x !== p) : [...cur.platforms, p];
     set("platforms", "platforms", next);
   }
+  // A board task must declare its category and belong to a brand (Project) —
+  // that's what its per-brand SID/AID is numbered against.
+  const canCreate = Boolean(title.trim() && category && draft.channel_id);
   async function create() {
-    if (!title.trim() || busy) return;
+    if (!canCreate || busy) return;
     setBusy(true);
     try {
       const r = await api<{ task: Task }>("/tasks", { method: "POST", body: JSON.stringify({
-        title: title.trim(), description,
+        title: title.trim(), description, taskType: category,
         channelId: draft.channel_id, editorId: draft.editor_id, dueDate: draft.due_date,
         priority: draft.priority, status: draft.status, contentType: draft.content_type,
         platforms: draft.platforms, attachments: draft.attachments,
@@ -1658,11 +1692,10 @@ function TaskPanel({ mode, task, canWrite, editors, channels, onClose, onChanged
       </div>
       {!creating && (
         <div className="tp-idrow">
+          {editCategory && <span className="task-ctype">{CATEGORY_LABEL[editCategory]}</span>}
           {task!.content_type && <span className="task-ctype">{CONTENT_LABEL(task!.content_type)}</span>}
-          <span className="task-code">{taskCode(task!.serial)}</span>
-          {task!.tid && <span className="task-code">{task!.tid}</span>}
-          {task!.sid && <span className="task-code">{task!.sid}</span>}
-          {task!.ad_id && <span className="task-code">{task!.ad_id}</span>}
+          {task!.sid && <span className="task-code">{showId(task!.sid)}</span>}
+          {task!.ad_id && <span className="task-code">{showId(task!.ad_id)}</span>}
         </div>
       )}
       {!creating && task!.pending_note && (
@@ -1678,6 +1711,14 @@ function TaskPanel({ mode, task, canWrite, editors, channels, onClose, onChanged
         onBlur={() => { if (!creating && description !== (task!.description ?? "")) patch({ description }); }} />
 
       <div className="tp-fields">
+        {creating && (
+          <Row label="Category">
+            <div className="seg assign-mode-seg">
+              <button type="button" className={category === "social" ? "on" : ""} onClick={() => pickCategory("social")}>📣 Social</button>
+              <button type="button" className={category === "ad" ? "on" : ""} onClick={() => pickCategory("ad")}>💰 Ads</button>
+            </div>
+          </Row>
+        )}
         <Row label="Project">
           <select className="t" disabled={ro} value={cur.channel_id ?? ""} onChange={(e) => set("channel_id", "channelId", e.target.value || null)}>
             <option value="">—</option>
@@ -1723,12 +1764,14 @@ function TaskPanel({ mode, task, canWrite, editors, channels, onClose, onChanged
             </div>
           </Row>
         )}
-        <Row label="Content Type">
-          <select className="t" disabled={ro} value={cur.content_type ?? ""} onChange={(e) => set("content_type", "contentType", e.target.value || null)}>
-            <option value="">—</option>
-            {CONTENT_TYPES.map((c) => (<option key={c.value} value={c.value}>{c.label}</option>))}
-          </select>
-        </Row>
+        {(activeCategory || !creating) && (
+          <Row label="Content Type">
+            <select className="t" disabled={ro} value={cur.content_type ?? ""} onChange={(e) => set("content_type", "contentType", e.target.value || null)}>
+              <option value="">—</option>
+              {contentTypeChoices.map((c) => (<option key={c.value} value={c.value}>{c.label}</option>))}
+            </select>
+          </Row>
+        )}
         <Row label="Platforms">
           <div className="tp-plats">
             {ALL_PLATFORMS.map((p) => {
@@ -1750,9 +1793,14 @@ function TaskPanel({ mode, task, canWrite, editors, channels, onClose, onChanged
 
       {creating ? (
         <div className="formfoot" style={{ marginTop: 14 }}>
-          <div className="hint" style={{ margin: 0, flex: 1 }}>Checklist &amp; comments become available after you create the task.</div>
+          <div className="hint" style={{ margin: 0, flex: 1 }}>
+            {!category ? "Choose a category — Social or Ads — to begin."
+              : !draft.channel_id ? "Pick a Project (brand) — Social/Ads tasks are numbered per brand."
+              : !title.trim() ? "Add a task title."
+              : "Checklist & comments become available after you create the task."}
+          </div>
           <button type="button" className="btn" onClick={onClose}>Cancel</button>
-          <button type="button" className="btn btn-primary" disabled={busy || !title.trim()} onClick={create}>{busy ? "Creating…" : "Create task"}</button>
+          <button type="button" className="btn btn-primary" disabled={busy || !canCreate} onClick={create}>{busy ? "Creating…" : "Create task"}</button>
         </div>
       ) : (
         <>
@@ -2014,7 +2062,11 @@ function TaskList({ tasks, onOpen }: { tasks: Task[]; onOpen: (t: Task) => void 
               const overdue = t.status !== "done" && t.due_date && t.due_date < today();
               return (
                 <tr key={t.id} className="clickrow" onClick={() => onOpen(t)}>
-                  <td><b>{t.title}</b> <span className="task-code">{taskCode(t.serial)}</span></td>
+                  <td>
+                    <b>{t.title}</b>{" "}
+                    {t.sid && <span className="task-code">{showId(t.sid)}</span>}
+                    {t.ad_id && <span className="task-code">{showId(t.ad_id)}</span>}
+                  </td>
                   <td>{t.content_type ? <span className="task-ctype">{CONTENT_LABEL(t.content_type)}</span> : <span className="st dim">—</span>}</td>
                   <td>{t.editor_name ? <Assignee name={t.editor_name} image={t.editor_image} /> : <span className="st dim">—</span>}</td>
                   <td>{t.channel_name ?? <span className="st dim">—</span>}</td>

@@ -65,12 +65,22 @@ const TaskSchema = z.object({
   attachments: z.array(z.object({ url: z.string().url(), label: z.string().max(120).optional() })).optional(),
 });
 
-// TID-00001 for every task; SID-00001 additionally for a Social task, or
-// AdID-00001 for a Paid Ad task — both linked to the same row, so either one
-// searches straight to its parent task (see GET /tasks' q filter).
+// Every task gets an org-wide TID as an internal key (no longer shown in the
+// UI). A Social task additionally gets a per-BRAND SID, a Paid Ad task a
+// per-brand AID — see nextBrandTaskRef. Either id searches straight to its
+// parent task (see GET /tasks' q filter).
 export async function nextTaskRef(orgId, kind) {
-  const prefix = { tid: "TID", sid: "SID", adid: "AdID" }[kind];
+  const prefix = { tid: "TID", sid: "SID", adid: "AID" }[kind];
   const { rows } = await pool.query("select next_task_ref($1, $2) as n", [orgId, kind]);
+  return `${prefix}-${String(rows[0].n).padStart(5, "0")}`;
+}
+
+// Per-brand (workspace) SID / AID — the numbering resets per brand, so each
+// brand carries its own SID-00001…/AID-00001… sequence. Mirrors nextTaskRef
+// but keyed by channel_id via next_brand_task_ref().
+export async function nextBrandTaskRef(channelId, kind) {
+  const prefix = { sid: "SID", adid: "AID" }[kind];
+  const { rows } = await pool.query("select next_brand_task_ref($1, $2) as n", [channelId, kind]);
   return `${prefix}-${String(rows[0].n).padStart(5, "0")}`;
 }
 
@@ -210,11 +220,16 @@ tasksRouter.post("/tasks", requireEditor, async (req, res, next) => {
     // This endpoint is for manual tasks only (auto-created ones are inserted
     // directly by syncPostTask) — default to "general".
     const taskType = d.taskType ?? "general";
-    // Every task gets a TID; a Social or Paid Ad task additionally gets its
-    // own secondary id, both pointing at this same row.
+    // Social and Paid Ad tasks are numbered per brand, so they must belong to
+    // one (a Project) — enforce it up front rather than minting an orphan id.
+    if ((taskType === "social" || taskType === "ad") && !d.channelId) {
+      return res.status(400).json({ error: "Pick a Project (brand) — Social and Ads tasks are numbered per brand." });
+    }
+    // Every task gets an org-wide TID (internal key); a Social task also gets a
+    // per-brand SID, a Paid Ad task a per-brand AID.
     const tid = await nextTaskRef(req.orgId, "tid");
-    const sid = taskType === "social" ? await nextTaskRef(req.orgId, "sid") : null;
-    const adId = taskType === "ad" ? await nextTaskRef(req.orgId, "adid") : null;
+    const sid = taskType === "social" ? await nextBrandTaskRef(d.channelId, "sid") : null;
+    const adId = taskType === "ad" ? await nextBrandTaskRef(d.channelId, "adid") : null;
     // Atomically claim the next per-org Task ID (serial, "TASK-####") and
     // insert in one statement, alongside the TID/SID/AdID system above —
     // both id schemes point at the same row.
@@ -300,7 +315,7 @@ tasksRouter.patch("/tasks/:id", requireEditor, async (req, res, next) => {
     // Capture prior state so we can spawn the next occurrence on completion,
     // guard task_type for post-linked tasks, and re-resolve the time budget.
     const prior = (await pool.query(
-      "select status, recurrence, post_id, editor_id, content_format_id, accepted, budget_hours, budget_started_at, budget_used_seconds, sid, ad_id, revision from task where id = $1 and org_id = $2",
+      "select status, recurrence, post_id, editor_id, channel_id, content_format_id, accepted, budget_hours, budget_started_at, budget_used_seconds, sid, ad_id, revision from task where id = $1 and org_id = $2",
       [req.params.id, req.orgId],
     )).rows[0];
     if (!prior) return res.status(404).json({ error: "Task not found" });
@@ -396,11 +411,18 @@ tasksRouter.patch("/tasks/:id", requireEditor, async (req, res, next) => {
         return res.status(400).json({ error: "This task's type is set automatically — it's linked to a post." });
       }
       push("task_type", d.taskType);
-      // Retroactively mint the secondary id the moment a task becomes Social
-      // or Paid Ad — e.g. a General task that turns out to need one. Never
-      // re-generates one that already exists.
-      if (d.taskType === "social" && !prior.sid) push("sid", await nextTaskRef(req.orgId, "sid"));
-      if (d.taskType === "ad" && !prior.ad_id) push("ad_id", await nextTaskRef(req.orgId, "adid"));
+      // Retroactively mint the per-brand secondary id the moment a task becomes
+      // Social or Paid Ad — numbered within its brand (Project), so it needs
+      // one. Uses the channel being set in this same PATCH if present, else the
+      // task's existing one. Never re-generates an id that already exists.
+      if (d.taskType === "social" || d.taskType === "ad") {
+        const effChannel = d.channelId !== undefined ? (d.channelId ?? null) : prior.channel_id;
+        if (!effChannel) {
+          return res.status(400).json({ error: "Pick a Project (brand) first — Social and Ads tasks are numbered per brand." });
+        }
+        if (d.taskType === "social" && !prior.sid) push("sid", await nextBrandTaskRef(effChannel, "sid"));
+        if (d.taskType === "ad" && !prior.ad_id) push("ad_id", await nextBrandTaskRef(effChannel, "adid"));
+      }
     }
     if (d.contentFormatId !== undefined) push("content_format_id", d.contentFormatId ?? null);
     if (d.meta !== undefined) push("meta", JSON.stringify(d.meta));
@@ -541,8 +563,8 @@ async function spawnNextOccurrence(taskId, recurrence) {
     // gets a fresh SID/AdID, same as any other task of that type).
     const budgetHours = await resolveBudgetHours(t.org_id, t.editor_id, t.content_format_id);
     const tid = await nextTaskRef(t.org_id, "tid");
-    const sid = t.task_type === "social" ? await nextTaskRef(t.org_id, "sid") : null;
-    const adId = t.task_type === "ad" ? await nextTaskRef(t.org_id, "adid") : null;
+    const sid = t.task_type === "social" && t.channel_id ? await nextBrandTaskRef(t.channel_id, "sid") : null;
+    const adId = t.task_type === "ad" && t.channel_id ? await nextBrandTaskRef(t.channel_id, "adid") : null;
     const { rows } = await pool.query(
       `insert into task (org_id, editor_id, channel_id, title, description, priority, due_date, recurrence, status, task_type, content_format_id, budget_hours, budget_started_at, tid, sid, ad_id)
        values ($1,$2,$3,$4,$5,$6, ${nextDue}, $8, 'todo', $9, $10, $11, case when $11::numeric is not null then now() else null end, $12, $13, $14) returning id`,
