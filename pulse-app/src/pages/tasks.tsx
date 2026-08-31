@@ -1779,14 +1779,13 @@ function TaskPanel({ mode, task, canWrite, editors, channels, onClose, onChanged
           </Row>
         )}
         <Row label="Content Type">
-          {activeCategory || !creating ? (
-            <select className="t" disabled={ro} value={cur.content_format_id ?? ""} onChange={(e) => set("content_format_id", "contentFormatId", e.target.value || null)}>
-              <option value="">—</option>
-              {contentTypeChoices.map((f) => (<option key={f.id} value={f.id}>{f.icon} {f.name}</option>))}
-            </select>
-          ) : (
-            <div className="t autofield" style={{ color: "var(--muted)" }}>Pick a category first</div>
-          )}
+          {/* Always a dropdown; its options are the content types configured in
+              Task Settings for the active category. Disabled until a category
+              is picked (create mode). */}
+          <select className="t" disabled={ro || (creating && !activeCategory)} value={cur.content_format_id ?? ""} onChange={(e) => set("content_format_id", "contentFormatId", e.target.value || null)}>
+            <option value="">{creating && !activeCategory ? "Pick a category first" : "—"}</option>
+            {contentTypeChoices.map((f) => (<option key={f.id} value={f.id}>{f.icon} {f.name}</option>))}
+          </select>
         </Row>
         {!creating && (
           <Row label="Repeat">
