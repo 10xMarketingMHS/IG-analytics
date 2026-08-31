@@ -91,7 +91,6 @@ const PLATFORM_META: Record<string, { icon: string; label: string }> = {
   facebook: { icon: "👍", label: "Facebook" },
   youtube: { icon: "▶️", label: "YouTube" },
 };
-const ALL_PLATFORMS = ["instagram", "facebook", "youtube"];
 
 const SORTS: { value: string; label: string }[] = [
   { value: "due", label: "Due date" },
@@ -293,16 +292,13 @@ export function TasksPage() {
   // refetch keep the panel fresh. `creating` opens the panel in create mode.
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [creating, setCreating] = useState(false);
-  // Status the create modal should open with (a column's ＋ pre-selects that
-  // column; the toolbar's "＋ Add Task" leaves it null → To Do).
-  const [createStatus, setCreateStatus] = useState<TaskStatus | null>(null);
   // Text search — matches title, description, and any of the dual ids
   // (TID/SID/AdID). Also used by List view's search box.
   const [sortBy, setSortBy] = useState("due");
   const openTask = (t: Task) => { setCreating(false); setSelectedId(t.id); };
   // "New Task" (and every per-column ＋) opens the full categorized creation
-  // card — Social/Ads → Brand → Content Type — so every task gets its SID/AID.
-  const startNewTask = (status: TaskStatus | null = null) => { setSelectedId(null); setCreateStatus(status); setCreating(true); };
+  // card — Social/Ads → Brand → Content Type. Every new task starts in To Do.
+  const startNewTask = () => { setSelectedId(null); setCreating(true); };
   const selectedTask = (tasks ?? []).find((t) => t.id === selectedId) ?? null;
   // Dual-confirmation prompt when accepting would run the budget past office
   // close — null when no prompt is showing.
@@ -712,7 +708,7 @@ export function TasksPage() {
                   <span className="task-count">{items.length}</span>
                   {canWrite && (
                     <button className="task-coladd" title={`Add a task to ${col.label}`}
-                      onClick={() => startNewTask(col.key)}>＋</button>
+                      onClick={() => startNewTask()}>＋</button>
                   )}
                 </div>
                 {items.map((t) => {
@@ -891,7 +887,6 @@ export function TasksPage() {
       {creating && (
         <TaskPanel
           mode="create" task={null} canWrite={canWrite} editors={editors ?? []} channels={(workspaces ?? [])}
-          initialStatus={createStatus}
           onClose={() => setCreating(false)}
           onChanged={refetch}
           onCreated={(id) => { setCreating(false); setSelectedId(id); refetch(); }}
@@ -1577,13 +1572,12 @@ function Row({ label, children }: { label: string; children: ReactNode }) {
 // offered here — it requires a rework note, which the board's dedicated
 // prompt collects; approving (→ Completed) doesn't need one, so that stays
 // available inline.
-function TaskPanel({ mode, task, canWrite, editors, channels, initialStatus, onClose, onChanged, onCreated, onDelete }: {
+function TaskPanel({ mode, task, canWrite, editors, channels, onClose, onChanged, onCreated, onDelete }: {
   mode: "create" | "edit";
   task: Task | null;
   canWrite: boolean;
   editors: Editor[];
   channels: { id: string; name: string }[];
-  initialStatus?: TaskStatus | null;
   onClose: () => void;
   onChanged: () => void;
   onCreated: (id: string) => void;
@@ -1596,8 +1590,8 @@ function TaskPanel({ mode, task, canWrite, editors, channels, initialStatus, onC
   const { contentFormats } = useContentFormats();
   const [draft, setDraft] = useState<{
     channel_id: string | null; editor_id: string | null; due_date: string | null; priority: string;
-    status: string; content_format_id: string | null; platforms: string[]; attachments: TaskAttachment[];
-  }>({ channel_id: null, editor_id: null, due_date: null, priority: "medium", status: initialStatus ?? "todo", content_format_id: null, platforms: [], attachments: [] });
+    status: string; content_format_id: string | null; attachments: TaskAttachment[];
+  }>({ channel_id: null, editor_id: null, due_date: null, priority: "medium", status: "todo", content_format_id: null, attachments: [] });
   const [title, setTitle] = useState(task?.title ?? "");
   const [description, setDescription] = useState(task?.description ?? "");
   const [busy, setBusy] = useState(false);
@@ -1638,7 +1632,7 @@ function TaskPanel({ mode, task, canWrite, editors, channels, initialStatus, onC
 
   const cur = creating ? draft : {
     channel_id: task!.channel_id, editor_id: task!.editor_id, due_date: task!.due_date, priority: task!.priority,
-    status: task!.status, content_format_id: task!.content_format_id, platforms: task!.platforms ?? [], attachments: task!.attachments ?? [],
+    status: task!.status, content_format_id: task!.content_format_id, attachments: task!.attachments ?? [],
   };
 
   async function patch(fields: Record<string, unknown>) {
@@ -1651,10 +1645,6 @@ function TaskPanel({ mode, task, canWrite, editors, channels, initialStatus, onC
     if (creating) setDraft((d) => ({ ...d, [localKey]: value }));
     else patch({ [apiKey]: value });
   }
-  function togglePlatform(p: string) {
-    const next = cur.platforms.includes(p) ? cur.platforms.filter((x) => x !== p) : [...cur.platforms, p];
-    set("platforms", "platforms", next);
-  }
   // A board task must declare its category and belong to a brand (Project) —
   // that's what its per-brand SID/AID is numbered against.
   const canCreate = Boolean(title.trim() && category && draft.channel_id);
@@ -1663,10 +1653,11 @@ function TaskPanel({ mode, task, canWrite, editors, channels, initialStatus, onC
     setBusy(true);
     try {
       const r = await api<{ task: Task }>("/tasks", { method: "POST", body: JSON.stringify({
-        title: title.trim(), description, taskType: category,
+        // Every new task starts in To Do, regardless of where it was opened from.
+        title: title.trim(), description, taskType: category, status: "todo",
         channelId: draft.channel_id, editorId: draft.editor_id, dueDate: draft.due_date,
-        priority: draft.priority, status: draft.status, contentFormatId: draft.content_format_id,
-        platforms: draft.platforms, attachments: draft.attachments,
+        priority: draft.priority, contentFormatId: draft.content_format_id,
+        attachments: draft.attachments,
       }) });
       toast.success("Task created.");
       onCreated(r.task.id);
@@ -1736,14 +1727,23 @@ function TaskPanel({ mode, task, canWrite, editors, channels, initialStatus, onC
           </select>
         </Row>
         <Row label="Assignee">
-          {creating && canSelfAssign && (
+          {/* Only admins can assign work to someone else. Everyone else creates
+              tasks for themselves — no Assign option. */}
+          {creating && canSelfAssign && isAdmin && (
             <div className="seg assign-mode-seg">
               <button type="button" className={assignMode === "self" ? "on" : ""} onClick={() => setMode("self")}>🙋 Myself</button>
               <button type="button" className={assignMode === "assign" ? "on" : ""} onClick={() => setMode("assign")}>👥 Assign</button>
             </div>
           )}
-          {creating && assignMode === "self" ? (
-            <div className="t autofield">{editors.find((ed) => ed.id === user?.editorId)?.name ?? "Myself"}</div>
+          {creating ? (
+            isAdmin && assignMode === "assign" ? (
+              <select className="t" disabled={ro} value={cur.editor_id ?? ""} onChange={(e) => set("editor_id", "editorId", e.target.value || null)}>
+                <option value="">Unassigned</option>
+                {editors.map((ed) => (<option key={ed.id} value={ed.id}>{ed.name}</option>))}
+              </select>
+            ) : (
+              <div className="t autofield">{editors.find((ed) => ed.id === user?.editorId)?.name ?? "Myself"}</div>
+            )
           ) : (
             <select className="t" disabled={ro} value={cur.editor_id ?? ""} onChange={(e) => set("editor_id", "editorId", e.target.value || null)}>
               <option value="">Unassigned</option>
@@ -1757,11 +1757,15 @@ function TaskPanel({ mode, task, canWrite, editors, channels, initialStatus, onC
             <option value="low">Low</option><option value="medium">Medium</option><option value="high">High</option>
           </select>
         </Row>
-        <Row label="Status">
-          <select className="t" disabled={ro || (!creating && statusOptions.length <= 1)} value={cur.status} onChange={(e) => set("status", "status", e.target.value)}>
-            {statusOptions.map((c) => (<option key={c.key} value={c.key}>{c.label}</option>))}
-          </select>
-        </Row>
+        {/* New tasks always start in To Do — the Status control only appears
+            once the task exists (edit mode). */}
+        {!creating && (
+          <Row label="Status">
+            <select className="t" disabled={ro || statusOptions.length <= 1} value={cur.status} onChange={(e) => set("status", "status", e.target.value)}>
+              {statusOptions.map((c) => (<option key={c.key} value={c.key}>{c.label}</option>))}
+            </select>
+          </Row>
+        )}
         {!creating && task!.status === "review" && (
           <div className="hint" style={{ margin: "-2px 0 4px" }}>
             {isAdmin ? "Sending back for rework needs a note — use the ← button on the board." : "⏳ Waiting on admin review."}
@@ -1774,21 +1778,15 @@ function TaskPanel({ mode, task, canWrite, editors, channels, initialStatus, onC
             </div>
           </Row>
         )}
-        {(activeCategory || !creating) && (
-          <Row label="Content Type">
+        <Row label="Content Type">
+          {activeCategory || !creating ? (
             <select className="t" disabled={ro} value={cur.content_format_id ?? ""} onChange={(e) => set("content_format_id", "contentFormatId", e.target.value || null)}>
               <option value="">—</option>
               {contentTypeChoices.map((f) => (<option key={f.id} value={f.id}>{f.icon} {f.name}</option>))}
             </select>
-          </Row>
-        )}
-        <Row label="Platforms">
-          <div className="tp-plats">
-            {ALL_PLATFORMS.map((p) => {
-              const on = cur.platforms.includes(p);
-              return <button key={p} disabled={ro} className={"tp-plat" + (on ? " on" : "")} onClick={() => togglePlatform(p)} title={PLATFORM_META[p].label}>{PLATFORM_META[p].icon}</button>;
-            })}
-          </div>
+          ) : (
+            <div className="t autofield" style={{ color: "var(--muted)" }}>Pick a category first</div>
+          )}
         </Row>
         {!creating && (
           <Row label="Repeat">
