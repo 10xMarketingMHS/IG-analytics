@@ -2,20 +2,35 @@ import { useMemo } from "react";
 import { Link, useNavigate, useLocation } from "react-router-dom";
 import { useTasks } from "@/lib/use-tasks";
 import { useAuth } from "@/lib/auth-context";
-import { useWorkspaces } from "@/lib/workspaces-context";
+import { useEditors } from "@/lib/use-editors";
 import { useResource } from "@/lib/use-resource";
 import { rangeFor, inRange, compactNum } from "@/lib/date-range";
 import { performanceScore, formatScore } from "@/lib/score";
+import { ymd, myRankInRange } from "@/lib/task-points";
 import type { Post } from "@/lib/types";
 
 function todayStr() {
-  const d = new Date();
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+  return ymd(new Date());
 }
 function greeting() {
   const h = new Date().getHours();
   return h < 12 ? "Good morning" : h < 17 ? "Good afternoon" : "Good evening";
 }
+// Monday-start of the current calendar week, as YYYY-MM-DD.
+function weekStartStr() {
+  const d = new Date();
+  const day = d.getDay(); // 0 = Sunday
+  const diff = day === 0 ? 6 : day - 1;
+  d.setDate(d.getDate() - diff);
+  return ymd(d);
+}
+function monthStartStr() {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-01`;
+}
+// A little extra flair once someone's actually on top of a board — a plain
+// "#1" doesn't read as a win the way a medal does.
+const RANK_BADGE: Record<number, string> = { 1: "🥇", 2: "🥈", 3: "🥉" };
 
 const STAGE_META: Record<string, { label: string; cls: string }> = {
   not_started: { label: "Not Started", cls: "ns" },
@@ -29,21 +44,21 @@ export function HomePage() {
   const navigate = useNavigate();
   const location = useLocation();
   const { user } = useAuth();
-  const { isAdmin } = useWorkspaces();
   const { tasks } = useTasks();
+  const { editors } = useEditors();
   const { data: postData } = useResource<{ posts: (Post & { channel_name?: string })[] }>("/posts?channel=all");
   // Home is org-wide — collab mirrors never count here (count or performance).
   const posts = postData?.posts?.filter((p) => !p.is_collab_mirror) ?? null;
 
   const today = todayStr();
+  const firstName = (user?.name || user?.email || "").split(" ")[0].split("@")[0];
 
   const ops = useMemo(() => {
-    // My Day is personal for editors/viewers — each sees only the tasks assigned
-    // to them (someone with no linked roster record simply sees none). Admins
-    // oversee the whole team, so they see everyone's tasks here.
-    const scoped = isAdmin
-      ? (tasks ?? [])
-      : (tasks ?? []).filter((t) => user?.editorId != null && t.editor_id === user.editorId);
+    // My Day is personal for EVERYONE, admins included — it's each person's
+    // own view of what's on their plate, not a team-wide dashboard (the Task
+    // Board already covers oversight). Someone with no linked roster record
+    // simply sees none of their own.
+    const scoped = (tasks ?? []).filter((t) => user?.editorId != null && t.editor_id === user.editorId);
     const open = scoped.filter((t) => t.status !== "done" && t.due_date);
     const overdue = open.filter((t) => (t.due_date as string) < today);
     const dueToday = open.filter((t) => t.due_date === today);
@@ -51,7 +66,21 @@ export function HomePage() {
       .sort((a, b) => (a.due_date as string).localeCompare(b.due_date as string))
       .slice(0, 6);
     return { overdue: overdue.length, dueToday: dueToday.length, needAction };
-  }, [tasks, today, user?.editorId, isAdmin]);
+  }, [tasks, today, user?.editorId]);
+
+  // ---- "Your Score" — gamified Media House points, Today / This week / This
+  // month, reusing the exact same points formula the Media House Leaders
+  // board scores by (see lib/task-points). Only meaningful for someone linked
+  // to a roster record — same gate as the rest of My Day's personal scoping.
+  const scoreWindows = useMemo(() => {
+    if (!editors || !tasks || !user?.editorId) return null;
+    const eid = user.editorId;
+    return {
+      today: myRankInRange(editors, tasks, today, today, eid),
+      week: myRankInRange(editors, tasks, weekStartStr(), today, eid),
+      month: myRankInRange(editors, tasks, monthStartStr(), today, eid),
+    };
+  }, [editors, tasks, today, user?.editorId]);
 
   const pipeline = useMemo(() => {
     const c: Record<string, number> = { not_started: 0, in_progress: 0, in_review: 0, pending: 0, completed: 0 };
@@ -93,8 +122,8 @@ export function HomePage() {
       {/* Hero */}
       <div className="home-hero">
         <div>
-          <h2 className="home-greet">{greeting()} 👋</h2>
-          <p className="home-sub">Here's what needs your attention across <b>Media House</b> today.</p>
+          <h2 className="home-greet">{greeting()}{firstName ? `, ${firstName}` : ""} 👋</h2>
+          <p className="home-sub">Here's what needs your attention today.</p>
         </div>
         <div className="home-actions">
           <button className="btn" onClick={() => navigate("/tasks")}>✅ New Task</button>
@@ -104,6 +133,38 @@ export function HomePage() {
           >＋ Add Post</button>
         </div>
       </div>
+
+      {!user?.editorId && (
+        <div className="card pad" style={{ color: "var(--muted)", fontSize: 13, marginBottom: 16 }}>
+          Your account isn't linked to a team member yet, so My Day and your score have nothing personal to show.
+          Ask an admin to link you under Settings → Team.
+        </div>
+      )}
+
+      {/* Your Score — gamified Media House points, so finishing work on time
+          feels like a win, not just a checkbox. Hidden entirely for anyone
+          not linked to a roster record — same gate My Day itself uses. */}
+      {scoreWindows && (
+        <div className="score-strip">
+          {([
+            ["today", "Today", scoreWindows.today],
+            ["week", "This week", scoreWindows.week],
+            ["month", "This month", scoreWindows.month],
+          ] as const).map(([key, label, w]) => (
+            <div key={key} className={"score-tile" + (w.rank === 1 ? " top" : "")}>
+              <div className="score-tile-label">{label}</div>
+              <div className="score-tile-rank">
+                {w.rank ? (RANK_BADGE[w.rank] ?? `#${w.rank}`) : "—"}
+              </div>
+              <div className="score-tile-pts">{w.points.toFixed(1)} pts</div>
+              <div className="score-tile-sub">
+                {w.rank ? `of ${w.totalRanked} scoring` : "no points yet"}
+              </div>
+            </div>
+          ))}
+          <Link to="/leaderboard" className="score-strip-link">🏆 Full leaderboard →</Link>
+        </div>
+      )}
 
       {/* Attention strip */}
       <div className="home-stats">

@@ -4,6 +4,7 @@ import { useEditors } from "@/lib/use-editors";
 import { useResource } from "@/lib/use-resource";
 import { useTasks } from "@/lib/use-tasks";
 import { rangeFor, inRange, compactNum } from "@/lib/date-range";
+import { ymd, taskPoints } from "@/lib/task-points";
 import type { Post, Editor, Task } from "@/lib/types";
 
 type Period = "month" | "all";
@@ -42,38 +43,10 @@ function pointsOf(p: Post) {
   return p.likes + 2 * p.comments + 3 * p.shares + 3 * p.saves;
 }
 
-// ---- Points Formula (locked spec) — timeliness only, no efficiency/hours- ----
-// worked component. base_points is an admin-set value per content format
-// (Reels/Poster/etc. — see Settings → Task Settings → Points per format),
-// independent of that format's time budget; tasks with no resolved format
-// fall back to 1. Bounded: a single task can cost at most its own full base
-// value, in either direction.
-//   on/before due date -> +100% · 1 day late -> +50% · 2 days late -> 0%
-//   3+ days late -> -100% (flat, doesn't get worse)
-// No due date is treated as on-time (nothing to be late against).
-function daysBetween(fromYmd: string, toYmd: string): number {
-  const [fy, fm, fd] = fromYmd.split("-").map(Number);
-  const [ty, tm, td] = toYmd.split("-").map(Number);
-  return Math.round((Date.UTC(ty, tm - 1, td) - Date.UTC(fy, fm - 1, fd)) / 86400000);
-}
-function taskPoints(t: Task): number {
-  const base = t.content_format_points != null ? Number(t.content_format_points) : 1;
-  if (!t.completed_at) return 0;
-  if (!t.due_date) return base;
-  const daysLate = daysBetween(t.due_date, ymd(new Date(t.completed_at)));
-  if (daysLate <= 0) return base;
-  if (daysLate === 1) return base * 0.5;
-  if (daysLate === 2) return 0;
-  return -base;
-}
-
 // ---- Progress Path (rank-over-time bump chart, per calendar month, daily) ----
 type PathMode = "content" | "task";
 const PATH_COLORS = ["#ef4444", "#3b82f6", "#10b981", "#f59e0b", "#8b5cf6", "#ec4899", "#06b6d4", "#84cc16", "#f97316", "#6366f1", "#14b8a6", "#e11d48"];
 const MON = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
-function ymd(d: Date) {
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
-}
 function labelMonth(m: string) {
   const [y, mo] = m.split("-");
   return `${MON[Number(mo) - 1]} ${y}`;
