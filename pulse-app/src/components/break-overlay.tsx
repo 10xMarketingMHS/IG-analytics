@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { useAuth } from "@/lib/auth-context";
-import { useBreak } from "@/lib/use-break";
+import { useBreakState } from "@/lib/break-context";
 
 // A full-screen celebratory card that appears whenever the user is on a break —
 // mirrors the same break state the corner widget uses (useBreak), counts the
@@ -45,7 +45,7 @@ const TICKS = Array.from({ length: 48 }, (_, i) => {
 
 export function BreakOverlay() {
   const { user } = useAuth();
-  const { status, displayRemaining } = useBreak();
+  const { status, displayRemaining } = useBreakState();
   const onBreak = !!status?.onBreak;
   const [dismissed, setDismissed] = useState(false);
 

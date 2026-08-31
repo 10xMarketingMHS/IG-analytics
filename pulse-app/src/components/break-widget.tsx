@@ -1,6 +1,6 @@
 import { useLocation } from "react-router-dom";
 import { useAuth } from "@/lib/auth-context";
-import { useBreak } from "@/lib/use-break";
+import { useBreakState } from "@/lib/break-context";
 import { ApiError } from "@/lib/api";
 import { OFFICE_CLOSE_HOUR } from "@/lib/task-timing";
 import { toast } from "sonner";
@@ -20,7 +20,7 @@ function fmt(seconds: number) {
 // the label) so it doesn't compete for attention outside that one context.
 export function BreakWidget() {
   const { user } = useAuth();
-  const { status, displayRemaining, busy, start, end } = useBreak();
+  const { status, displayRemaining, busy, start, end } = useBreakState();
   const location = useLocation();
 
   if (location.pathname !== "/tasks") return null;

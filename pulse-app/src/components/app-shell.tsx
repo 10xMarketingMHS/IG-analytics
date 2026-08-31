@@ -11,6 +11,7 @@ import { useTaskAssignNotify } from "@/lib/use-task-notify";
 import { useOverdueTaskNotify } from "@/lib/use-overdue-notify";
 import { BreakWidget } from "@/components/break-widget";
 import { BreakOverlay } from "@/components/break-overlay";
+import { BreakProvider } from "@/lib/break-context";
 import { MyProfileModal } from "@/components/my-profile-modal";
 import { useTheme } from "@/components/theme-provider";
 import type { Activity } from "@/lib/types";
@@ -77,6 +78,7 @@ export function AppShell() {
   }
 
   return (
+    <BreakProvider>
     <div className={"app" + (menuOpen ? " menu-open" : "")}>
       <div className="app-backdrop" onClick={() => setMenuOpen(false)} />
       <aside>
@@ -187,5 +189,6 @@ export function AppShell() {
       <BreakWidget />
       <BreakOverlay />
     </div>
+    </BreakProvider>
   );
 }
