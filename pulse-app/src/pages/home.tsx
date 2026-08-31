@@ -1,6 +1,8 @@
 import { useMemo } from "react";
 import { Link, useNavigate, useLocation } from "react-router-dom";
 import { useTasks } from "@/lib/use-tasks";
+import { useAuth } from "@/lib/auth-context";
+import { useWorkspaces } from "@/lib/workspaces-context";
 import { useResource } from "@/lib/use-resource";
 import { rangeFor, inRange, compactNum } from "@/lib/date-range";
 import { performanceScore, formatScore } from "@/lib/score";
@@ -26,6 +28,8 @@ const STAGE_META: Record<string, { label: string; cls: string }> = {
 export function HomePage() {
   const navigate = useNavigate();
   const location = useLocation();
+  const { user } = useAuth();
+  const { isAdmin } = useWorkspaces();
   const { tasks } = useTasks();
   const { data: postData } = useResource<{ posts: (Post & { channel_name?: string })[] }>("/posts?channel=all");
   // Home is org-wide — collab mirrors never count here (count or performance).
@@ -34,14 +38,20 @@ export function HomePage() {
   const today = todayStr();
 
   const ops = useMemo(() => {
-    const open = (tasks ?? []).filter((t) => t.status !== "done" && t.due_date);
+    // My Day is personal for editors/viewers — each sees only the tasks assigned
+    // to them (someone with no linked roster record simply sees none). Admins
+    // oversee the whole team, so they see everyone's tasks here.
+    const scoped = isAdmin
+      ? (tasks ?? [])
+      : (tasks ?? []).filter((t) => user?.editorId != null && t.editor_id === user.editorId);
+    const open = scoped.filter((t) => t.status !== "done" && t.due_date);
     const overdue = open.filter((t) => (t.due_date as string) < today);
     const dueToday = open.filter((t) => t.due_date === today);
     const needAction = [...overdue, ...dueToday]
       .sort((a, b) => (a.due_date as string).localeCompare(b.due_date as string))
       .slice(0, 6);
     return { overdue: overdue.length, dueToday: dueToday.length, needAction };
-  }, [tasks, today]);
+  }, [tasks, today, user?.editorId, isAdmin]);
 
   const pipeline = useMemo(() => {
     const c: Record<string, number> = { not_started: 0, in_progress: 0, in_review: 0, pending: 0, completed: 0 };
