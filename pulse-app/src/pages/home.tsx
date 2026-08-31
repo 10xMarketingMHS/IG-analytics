@@ -1,4 +1,4 @@
-import { useMemo } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Link, useNavigate, useLocation } from "react-router-dom";
 import { useTasks } from "@/lib/use-tasks";
 import { useAuth } from "@/lib/auth-context";
@@ -12,9 +12,13 @@ import type { Post } from "@/lib/types";
 function todayStr() {
   return ymd(new Date());
 }
-function greeting() {
-  const h = new Date().getHours();
-  return h < 12 ? "Good morning" : h < 17 ? "Good afternoon" : "Good evening";
+function greeting(now: Date) {
+  const h = now.getHours();
+  // Midnight-to-5am shouldn't say "Good morning" — nobody wants that at 1am.
+  if (h < 5) return "Good night";
+  if (h < 12) return "Good morning";
+  if (h < 17) return "Good afternoon";
+  return "Good evening";
 }
 // Monday-start of the current calendar week, as YYYY-MM-DD.
 function weekStartStr() {
@@ -52,6 +56,16 @@ export function HomePage() {
 
   const today = todayStr();
   const firstName = (user?.name || user?.email || "").split(" ")[0].split("@")[0];
+
+  // The greeting ("Good morning/afternoon/evening") needs an actual clock
+  // tick to stay correct — without one, a tab left open across noon or 5pm
+  // keeps showing whatever it computed on the last render forever, since
+  // nothing else on this page re-renders on a fixed schedule.
+  const [now, setNow] = useState(() => new Date());
+  useEffect(() => {
+    const id = setInterval(() => setNow(new Date()), 60_000);
+    return () => clearInterval(id);
+  }, []);
 
   const ops = useMemo(() => {
     // My Day is personal for EVERYONE, admins included — it's each person's
@@ -122,7 +136,7 @@ export function HomePage() {
       {/* Hero */}
       <div className="home-hero">
         <div>
-          <h2 className="home-greet">{greeting()}{firstName ? `, ${firstName}` : ""} 👋</h2>
+          <h2 className="home-greet">{greeting(now)}{firstName ? `, ${firstName}` : ""} 👋</h2>
           <p className="home-sub">Here's what needs your attention today.</p>
         </div>
         <div className="home-actions">
