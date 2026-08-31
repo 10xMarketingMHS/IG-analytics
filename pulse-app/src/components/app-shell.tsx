@@ -10,6 +10,7 @@ import { getActivitySeen, onActivitySeenChange } from "@/lib/activity-seen";
 import { useTaskAssignNotify } from "@/lib/use-task-notify";
 import { useOverdueTaskNotify } from "@/lib/use-overdue-notify";
 import { BreakWidget } from "@/components/break-widget";
+import { BreakOverlay } from "@/components/break-overlay";
 import { MyProfileModal } from "@/components/my-profile-modal";
 import { useTheme } from "@/components/theme-provider";
 import type { Activity } from "@/lib/types";
@@ -184,6 +185,7 @@ export function AppShell() {
         </div>
       </main>
       <BreakWidget />
+      <BreakOverlay />
     </div>
   );
 }
