@@ -63,6 +63,8 @@ const TaskSchema = z.object({
   contentType: z.string().max(40).nullable().optional(),
   platforms: z.array(z.enum(PLATFORMS)).optional(),
   attachments: z.array(z.object({ url: z.string().url(), label: z.string().max(120).optional() })).optional(),
+  // Admin Hold / Resume — parks an in-progress task and pauses its timer.
+  onHold: z.boolean().optional(),
 });
 
 // Every task gets an org-wide TID as an internal key (no longer shown in the
@@ -95,7 +97,7 @@ const SELECT = `
          t.tid, t.sid, t.ad_id, t.meta, t.revision, t.pending_note,
          t.content_format_id, cf.name as content_format_name, cf.icon as content_format_icon,
          cf.points as content_format_points,
-         t.budget_hours, t.budget_started_at, t.accepted, t.created_at, t.completed_at,
+         t.budget_hours, t.budget_started_at, t.accepted, t.on_hold, t.created_at, t.completed_at,
          t.content_type, t.platforms, t.attachments,
          e.name as editor_name, e.image_url as editor_image,
          -- The assignee's break, so the client can offset the countdown by
@@ -315,7 +317,7 @@ tasksRouter.patch("/tasks/:id", requireEditor, async (req, res, next) => {
     // Capture prior state so we can spawn the next occurrence on completion,
     // guard task_type for post-linked tasks, and re-resolve the time budget.
     const prior = (await pool.query(
-      "select status, recurrence, post_id, editor_id, channel_id, content_format_id, accepted, budget_hours, budget_started_at, budget_used_seconds, sid, ad_id, revision from task where id = $1 and org_id = $2",
+      "select status, recurrence, post_id, editor_id, channel_id, content_format_id, accepted, budget_hours, budget_started_at, budget_used_seconds, on_hold, sid, ad_id, revision from task where id = $1 and org_id = $2",
       [req.params.id, req.orgId],
     )).rows[0];
     if (!prior) return res.status(404).json({ error: "Task not found" });
@@ -364,6 +366,15 @@ tasksRouter.patch("/tasks/:id", requireEditor, async (req, res, next) => {
         if (d.status === "done") {
           return res.status(400).json({ error: "Move it to Review first — only an admin can mark it Completed." });
         }
+        // Once work has started there's no going back to To Do — an admin parks
+        // it with Hold instead. To Do is only the pre-start state.
+        if (prior.status === "in_progress" && d.status === "todo") {
+          return res.status(403).json({ error: "Once work has started, a task can't go back to To Do — an admin can put it on Hold instead." });
+        }
+        // A held task is frozen until an admin resumes it (clears the hold).
+        if (prior.on_hold && req.role !== "admin") {
+          return res.status(403).json({ error: "This task is on hold — an admin needs to resume it first." });
+        }
         const myEditorId = await callerEditorId(req);
         if (!prior.editor_id || myEditorId !== prior.editor_id) {
           return res.status(403).json({ error: "Only the person this task is assigned to can change its status." });
@@ -381,6 +392,32 @@ tasksRouter.patch("/tasks/:id", requireEditor, async (req, res, next) => {
       push("status", d.status);
       // Stamp/clear completion time as status moves in/out of "done".
       sets.push(`completed_at = case when $${params.length} = 'done' then coalesce(completed_at, now()) else null end`);
+    }
+
+    // Admin Hold / Resume — parks an in-progress task (it stays In Progress,
+    // just flagged) and pauses its time-budget countdown; resuming picks the
+    // clock back up from where it left off. Only an admin can do either.
+    if (d.onHold !== undefined && d.onHold !== prior.on_hold) {
+      if (req.role !== "admin") {
+        return res.status(403).json({ error: "Only an admin can put a task on hold or resume it." });
+      }
+      if (d.onHold) {
+        // Pause: bank whatever's elapsed and stop the clock (mirrors Review).
+        if (prior.budget_started_at && prior.budget_hours != null) {
+          const elapsedSec = Math.max(0, (Date.now() - new Date(prior.budget_started_at).getTime()) / 1000);
+          push("budget_used_seconds", Number(prior.budget_used_seconds ?? 0) + elapsedSec);
+          push("budget_started_at", null);
+        }
+        push("on_hold", true);
+      } else {
+        // Resume: restart the countdown from what was banked (mirrors accept).
+        if (prior.budget_hours != null) {
+          const usedSec = Number(prior.budget_used_seconds ?? 0);
+          push("budget_started_at", new Date(Date.now() - usedSec * 1000));
+          push("budget_used_seconds", 0);
+        }
+        push("on_hold", false);
+      }
     }
 
     // Manually linking a task to a post — turns it into a Social Media task

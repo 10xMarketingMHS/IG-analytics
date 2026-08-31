@@ -262,6 +262,10 @@ export function TasksPage() {
     if (!canWrite || target === t.status) return false;
     if (t.status === "review") return isAdmin && (target === "done" || target === "in_progress");
     if (target === "done") return false; // must go through review
+    // Once work has started it can't go back to To Do — an admin parks it with
+    // Hold instead. And a held task is frozen until an admin resumes it.
+    if (t.status === "in_progress" && target === "todo") return false;
+    if (t.on_hold && !isAdmin) return false;
     return isOwner(t);
   }
   const canMoveStatus = (t: Task) => canWrite && (t.status === "review" ? isAdmin : isOwner(t));
@@ -440,6 +444,17 @@ export function TasksPage() {
       toast.error(err instanceof ApiError ? err.message : "Could not update task.");
     } finally {
       setPending((p) => { const n = { ...p }; delete n[t.id]; return n; });
+    }
+  }
+
+  // Admin-only Hold / Resume — parks an in-progress task (stays In Progress,
+  // badge shown, timer paused) or lifts the hold and resumes the clock.
+  async function toggleHold(t: Task, next: boolean) {
+    try {
+      await api(`/tasks/${t.id}`, { method: "PATCH", body: JSON.stringify({ onHold: next }) });
+      await refetch();
+    } catch (err) {
+      toast.error(err instanceof ApiError ? err.message : "Could not update hold.");
     }
   }
 
@@ -728,6 +743,11 @@ export function TasksPage() {
                         </button>
                       </div>
                       <div className="task-title">{t.title}</div>
+                      {t.on_hold && (
+                        <div className="task-hold-badge" title="An admin put this task on hold — its timer is paused">
+                          ⏸ On hold
+                        </div>
+                      )}
                       {t.pending_note && (
                         <div className="task-rework-note" title={t.pending_note}>
                           📝 Rework: {t.pending_note}
@@ -802,7 +822,16 @@ export function TasksPage() {
                       {(() => {
                         const canPrev = ci > 0 && canTransition(t, COLUMNS[ci - 1].key);
                         const canNext = ci < COLUMNS.length - 1 && canTransition(t, COLUMNS[ci + 1].key);
-                        if (!canPrev && !canNext) {
+                        // Admin can park (Hold) or resume an in-progress task —
+                        // it stays In Progress; Hold pauses its timer.
+                        const holdCtrl = isAdmin && t.status === "in_progress" ? (
+                          t.on_hold ? (
+                            <button className="linkbtn" onClick={() => toggleHold(t, false)}>▶ Resume</button>
+                          ) : (
+                            <button className="linkbtn" onClick={() => toggleHold(t, true)}>⏸ Hold</button>
+                          )
+                        ) : null;
+                        if (!canPrev && !canNext && !holdCtrl) {
                           // In review but this isn't an admin's view — nothing
                           // to do here but wait.
                           return t.status === "review" ? (
@@ -818,6 +847,7 @@ export function TasksPage() {
                                 ← {COLUMNS[ci - 1].label}
                               </button>
                             )}
+                            {holdCtrl}
                             {canNext && (
                               <button className="linkbtn" onClick={() => move(t, COLUMNS[ci + 1].key)}>
                                 {COLUMNS[ci + 1].label} →
