@@ -5,12 +5,12 @@ export const breaksRouter = Router();
 
 // Office breaks: lunch (45m) + two tea breaks (15m each) = 75m/day, shared
 // across however many tasks are running — pausing stops all of them at once.
-// A break can't be ended before 5 minutes in (stops break/resume spam), and
+// A break can be ended at any time — there's no minimum duration. It also
 // auto-caps at the daily total — once used_seconds would exceed it, the
 // break is treated as already over from that point on, without needing a
 // live timer anywhere (see resolveBreak below).
 const DAILY_CAP_SECONDS = 75 * 60;
-const MIN_BREAK_SECONDS = 5 * 60;
+const MIN_BREAK_SECONDS = 0;
 
 async function callerEditorId(req) {
   const { rows } = await pool.query("select editor_id from app_user where id = $1", [req.user.sub]);
@@ -102,12 +102,7 @@ breaksRouter.post("/break/end", async (req, res, next) => {
       return res.json({ ...state, dailyCapSeconds: DAILY_CAP_SECONDS, minBreakSeconds: MIN_BREAK_SECONDS });
     }
     const elapsed = (Date.now() - new Date(state.startedAt).getTime()) / 1000;
-    // Force-allow ending early only once the daily cap is basically spent —
-    // otherwise hold to the 5-minute floor so pause/resume can't be spammed.
-    if (elapsed < MIN_BREAK_SECONDS && state.remainingSeconds > (MIN_BREAK_SECONDS - elapsed)) {
-      const waitSeconds = Math.ceil(MIN_BREAK_SECONDS - elapsed);
-      return res.status(409).json({ error: `Breaks are at least 5 minutes — ${waitSeconds}s to go.` });
-    }
+    // A break can be ended at any time — no minimum duration.
     const usedSeconds = Math.min(DAILY_CAP_SECONDS, state.usedSeconds + elapsed);
     const today = new Date().toISOString().slice(0, 10);
     await pool.query(
