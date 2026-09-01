@@ -1601,15 +1601,28 @@ function TaskPanel({ mode, task, canWrite, editors, channels, onClose, onChanged
   const [category, setCategory] = useState<TaskCategory | null>(null);
   const editCategory = task ? taskCategory(task) : null;
   const activeCategory: TaskCategory | null = creating ? category : editCategory;
-  // Content types come from the admin taxonomy (Settings → Task Settings),
-  // scoped to the active category — picking one drives the task's points + timer.
-  const contentTypeChoices = (contentFormats ?? []).filter((f) => f.active && f.category === activeCategory);
+  // Content types come from the admin taxonomy (Settings → Task Settings). When
+  // a category is chosen we scope to it; before that (create, nothing picked)
+  // we offer every active type so the dropdown is usable right away — picking
+  // one then sets the category from that type (see onPickContentType).
+  const contentTypeChoices = (contentFormats ?? []).filter(
+    (f) => f.active && (activeCategory ? f.category === activeCategory : true),
+  );
   useEffect(() => { setTitle(task?.title ?? ""); setDescription(task?.description ?? ""); }, [task?.id]);
   // Picking/switching category in create mode clears a now-invalid content type
   // (each category has its own list).
   function pickCategory(next: TaskCategory) {
     setCategory(next);
     setDraft((d) => ({ ...d, content_format_id: null }));
+  }
+  // Choosing a content type also settles the category (Reel → Social, Ad Video
+  // → Ads) when one hasn't been picked yet, so the two never disagree.
+  function onPickContentType(id: string | null) {
+    set("content_format_id", "contentFormatId", id);
+    if (creating && id) {
+      const f = (contentFormats ?? []).find((x) => x.id === id);
+      if (f?.category && f.category !== category) setCategory(f.category);
+    }
   }
 
   // Self vs. Assign toggle for new tasks — most tasks anyone creates (admin
@@ -1782,9 +1795,9 @@ function TaskPanel({ mode, task, canWrite, editors, channels, onClose, onChanged
           {/* Always a dropdown; its options are the content types configured in
               Task Settings for the active category. Disabled until a category
               is picked (create mode). */}
-          <select className="t" disabled={ro || (creating && !activeCategory)} value={cur.content_format_id ?? ""} onChange={(e) => set("content_format_id", "contentFormatId", e.target.value || null)}>
-            <option value="">{creating && !activeCategory ? "Pick a category first" : "—"}</option>
-            {contentTypeChoices.map((f) => (<option key={f.id} value={f.id}>{f.icon} {f.name}</option>))}
+          <select className="t" disabled={ro} value={cur.content_format_id ?? ""} onChange={(e) => onPickContentType(e.target.value || null)}>
+            <option value="">—</option>
+            {contentTypeChoices.map((f) => (<option key={f.id} value={f.id}>{f.icon} {f.name}{!activeCategory ? ` · ${CATEGORY_LABEL[f.category ?? "social"]}` : ""}</option>))}
           </select>
         </Row>
         {!creating && (
