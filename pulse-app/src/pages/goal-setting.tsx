@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
-import { api, ApiError } from "@/lib/api";
+import { api, ApiError, API_BASE } from "@/lib/api";
 import { useWorkspaces } from "@/lib/workspaces-context";
 import { useEditors } from "@/lib/use-editors";
 
@@ -21,6 +21,28 @@ const round1 = (n: number) => Math.round(n * 10) / 10;
 function thisMonthStr() {
   const d = new Date();
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
+}
+// "2026-09" → "September 2026" (this app accumulates >1 year of history).
+function fmtMonth(ym: string) {
+  const [y, m] = ym.split("-").map(Number);
+  return new Date(y, (m || 1) - 1, 1).toLocaleDateString(undefined, { month: "long", year: "numeric" });
+}
+async function exportMonth(ym: string): Promise<void> {
+  try {
+    const res = await fetch(`${API_BASE}/goals/export?month=${ym}`, { credentials: "include" });
+    if (!res.ok) { toast.error("Export failed."); return; }
+    const blob = await res.blob();
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `goal-setting-${ym}.xlsx`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
+  } catch {
+    toast.error("Export failed.");
+  }
 }
 const CAT_LABEL: Record<string, string> = { social: "Social", ad: "Ads", service: "Service" };
 
@@ -44,6 +66,15 @@ export function GoalSettingSection() {
   const [month, setMonth] = useState(thisMonthStr());
   const [view, setView] = useState<"goals" | "performance">("goals");
   const [editorId, setEditorId] = useState<string>("");
+  // Periods that actually have goal data — drives the Performance picker + export.
+  const [dataMonths, setDataMonths] = useState<string[]>([]);
+  useEffect(() => {
+    if (isAdmin) api<{ months: string[] }>("/goals/months").then((d) => setDataMonths(d.months)).catch(() => {});
+  }, [isAdmin]);
+  // When viewing Performance, snap to a month that has data if the current one doesn't.
+  useEffect(() => {
+    if (view === "performance" && dataMonths.length && !dataMonths.includes(month)) setMonth(dataMonths[0]);
+  }, [view, dataMonths]); // eslint-disable-line react-hooks/exhaustive-deps
 
   if (!isAdmin) {
     return (
@@ -67,15 +98,29 @@ export function GoalSettingSection() {
           <button type="button" className={view === "goals" ? "on" : ""} onClick={() => setView("goals")}>🎯 Set Goals</button>
           <button type="button" className={view === "performance" ? "on" : ""} onClick={() => setView("performance")}>📈 Performance</button>
         </div>
-        <label className="f" style={{ margin: 0 }}>Month{" "}
-          <input className="t" style={{ maxWidth: 160, display: "inline-block" }} type="month" value={month} onChange={(e) => setMonth(e.target.value)} />
-        </label>
+        {view === "goals" ? (
+          <label className="f" style={{ margin: 0 }}>Month{" "}
+            <input className="t" style={{ maxWidth: 160, display: "inline-block" }} type="month" value={month} onChange={(e) => setMonth(e.target.value)} />
+          </label>
+        ) : (
+          <label className="f" style={{ margin: 0 }}>Month{" "}
+            <select className="t" style={{ maxWidth: 200, display: "inline-block" }} value={month} onChange={(e) => setMonth(e.target.value)} disabled={dataMonths.length === 0}>
+              {dataMonths.length === 0 ? <option value="">No goal data yet</option>
+                : dataMonths.map((m) => (<option key={m} value={m}>{fmtMonth(m)}</option>))}
+            </select>
+          </label>
+        )}
         <label className="f" style={{ margin: 0 }}>Editor{" "}
           <select className="t" style={{ maxWidth: 200, display: "inline-block" }} value={editorId} onChange={(e) => setEditorId(e.target.value)}>
             <option value="">Select an editor…</option>
             {activeEditors.map((e) => (<option key={e.id} value={e.id}>{e.name}</option>))}
           </select>
         </label>
+        {view === "performance" && (
+          <button type="button" className="btn btn-primary" style={{ marginLeft: "auto" }}
+            disabled={!dataMonths.includes(month)}
+            onClick={() => exportMonth(month)}>⬇ Export .xlsx</button>
+        )}
       </div>
 
       {!editorId ? (

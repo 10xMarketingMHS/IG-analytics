@@ -1,5 +1,6 @@
 import { Router } from "express";
 import { z } from "zod";
+import ExcelJS from "exceljs";
 import { pool } from "../db.js";
 import { requireAdmin } from "../resolve-workspace.js";
 import { resolveBudgetHours } from "./tasks.js";
@@ -38,6 +39,15 @@ async function effectiveCapacity(orgId, editorId, month) {
 }
 
 const capHours = (c) => Number(c.working_days) * Number(c.hours_per_day);
+
+// Utilization status bands — mirror goal-setting.tsx (util < 75 Available,
+// ≤ 95 Near Capacity, else Overloaded). argb fills for the exported Status cell.
+function statusFor(util) {
+  if (util < 75) return { label: "Available", fill: "FFDCFCE7" };
+  if (util <= 95) return { label: "Near Capacity", fill: "FFFEF3C7" };
+  return { label: "Overloaded", fill: "FFFEE2E2" };
+}
+const round1 = (n) => Math.round(n * 10) / 10;
 
 // GET /goals?editorId=&month= — the goal-setting form for one editor+month:
 // every active content type with its JC (blank = no goal) and JPH (stored goal
@@ -214,6 +224,115 @@ goalsRouter.get("/goals/performance", requireAdmin, async (req, res, next) => {
       };
     });
     res.json({ month, rows });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// GET /goals/months — the period_months that actually have goal data, newest
+// first, so the export/performance picker only offers real periods.
+goalsRouter.get("/goals/months", requireAdmin, async (req, res, next) => {
+  try {
+    const { rows } = await pool.query(
+      "select distinct to_char(period_month, 'YYYY-MM') m from editor_goal where org_id=$1 order by m desc",
+      [req.orgId],
+    );
+    res.json({ months: rows.map((r) => r.m) });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// GET /goals/export?month=YYYY-MM — a two-sheet .xlsx for the month (Goal
+// Setting + Performance), all editors. Admin-only. A month with no goals still
+// returns a valid workbook (headers only), never a 500.
+goalsRouter.get("/goals/export", requireAdmin, async (req, res, next) => {
+  const monthIn = req.query.month;
+  if (!monthIn) return res.status(400).json({ error: "month is required." });
+  try {
+    const { rows: mrow } = await pool.query("select date_trunc('month', ($1||'-01')::date)::date m", [String(monthIn).slice(0, 7)]);
+    const month = mrow[0].m;
+    const monthStr = String(monthIn).slice(0, 7);
+
+    const { rows: goals } = await pool.query(
+      `select g.editor_id, e.name editor_name, g.content_format_id, cf.name cf_name,
+              cf.category, cf.sort_order, g.jc, g.jph
+         from editor_goal g
+         join editor e on e.id = g.editor_id
+         join task_content_format cf on cf.id = g.content_format_id
+        where g.org_id=$1 and g.period_month=$2
+        order by e.name, cf.category, cf.sort_order, cf.name`,
+      [req.orgId, month],
+    );
+    const { rows: actuals } = await pool.query(
+      `select editor_id, content_format_id, count(*)::int actual
+         from task
+        where org_id=$1 and status='done' and content_format_id is not null
+          and completed_at >= $2 and completed_at < ($2::date + interval '1 month')
+        group by editor_id, content_format_id`,
+      [req.orgId, month],
+    );
+    const actualBy = new Map(actuals.map((a) => [`${a.editor_id}:${a.content_format_id}`, a.actual]));
+
+    // Editors (in name order) and the content types that have any goal this
+    // month (in their configured order) — both derived from the data, dynamic.
+    const editors = [];
+    const seenEd = new Set();
+    const ctypes = [];
+    const seenCt = new Set();
+    for (const g of goals) {
+      if (!seenEd.has(g.editor_id)) { seenEd.add(g.editor_id); editors.push({ id: g.editor_id, name: g.editor_name }); }
+      if (!seenCt.has(g.content_format_id)) { seenCt.add(g.content_format_id); ctypes.push({ id: g.content_format_id, name: g.cf_name }); }
+    }
+    const goalBy = new Map(goals.map((g) => [`${g.editor_id}:${g.content_format_id}`, g]));
+
+    const wb = new ExcelJS.Workbook();
+    wb.creator = "Pulse";
+
+    // --- Sheet 1: Goal Setting (wide, one row per editor) ---
+    const s1 = wb.addWorksheet("Goal Setting");
+    const s1head = ["Editor Name", "Monthly Capacity (Hrs)", "Planned Hours", "Balance Hours", "Utilization %", "Status"];
+    for (const ct of ctypes) { s1head.push(`${ct.name} JC`, `${ct.name} JPH`); }
+    s1.addRow(s1head);
+    for (const ed of editors) {
+      const own = goals.filter((g) => g.editor_id === ed.id);
+      const planned = own.reduce((s, g) => s + Number(g.jc) * Number(g.jph), 0);
+      const cap = await effectiveCapacity(req.orgId, ed.id, month);
+      const capH = capHours(cap);
+      const util = capH > 0 ? (planned / capH) * 100 : 0;
+      const st = statusFor(util);
+      const row = [ed.name, round1(capH), round1(planned), round1(capH - planned), round1(util), st.label];
+      for (const ct of ctypes) {
+        const g = goalBy.get(`${ed.id}:${ct.id}`);
+        row.push(g ? Number(g.jc) : null, g ? Number(g.jph) : null);
+      }
+      const added = s1.addRow(row);
+      added.getCell(6).fill = { type: "pattern", pattern: "solid", fgColor: { argb: st.fill } };
+    }
+
+    // --- Sheet 2: Performance (one row per editor × content type with a goal) ---
+    const s2 = wb.addWorksheet("Performance");
+    s2.addRow(["Editor Name", "Content Type", "Goal JC", "Actual JC", "Goal Hours", "Actual Hours", "Balance", "Achievement %"]);
+    for (const g of goals) {
+      const goalJC = Number(g.jc), jph = Number(g.jph);
+      const actualJC = actualBy.get(`${g.editor_id}:${g.content_format_id}`) ?? 0;
+      const goalHours = goalJC * jph, actualHours = actualJC * jph;
+      s2.addRow([
+        g.editor_name, g.cf_name, goalJC, actualJC,
+        round1(goalHours), round1(actualHours), round1(goalHours - actualHours),
+        goalJC > 0 ? round1((actualJC / goalJC) * 100) : null,
+      ]);
+    }
+
+    for (const sh of [s1, s2]) {
+      sh.getRow(1).font = { bold: true };
+      sh.columns.forEach((c) => { c.width = Math.max(12, (c.values ?? []).reduce((m, v) => Math.max(m, String(v ?? "").length + 2), 12)); });
+    }
+
+    const buf = await wb.xlsx.writeBuffer();
+    res.setHeader("Content-Type", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
+    res.setHeader("Content-Disposition", `attachment; filename="goal-setting-${monthStr}.xlsx"`);
+    res.send(Buffer.from(buf));
   } catch (err) {
     next(err);
   }
