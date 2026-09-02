@@ -1,5 +1,10 @@
 import type { Editor, Task } from "@/lib/types";
 
+// Admin tasks are an admin-only personal category with no scoring — they must
+// never contribute points or count toward completed volume in any ranking.
+// Excluded (not scored as zero) at every aggregation, here and in leaderboard.tsx.
+export const isScorableTask = (t: Task): boolean => t.task_type !== "admin";
+
 // ---- Points Formula (locked spec) — timeliness only, no efficiency/hours- ----
 // worked component. base_points is an admin-set value per content format
 // (Reels/Poster/etc. — see Settings → Task Settings → Points per format),
@@ -45,7 +50,7 @@ function rankRowsInRange(editors: Editor[], tasks: Task[], fromYmd: string, toYm
   return editors
     .map((e) => {
       const own = tasks.filter((t) => {
-        if (t.editor_id !== e.id || !t.completed_at) return false;
+        if (t.editor_id !== e.id || !t.completed_at || !isScorableTask(t)) return false;
         const day = ymd(new Date(t.completed_at));
         return day >= fromYmd && day <= toYmd;
       });

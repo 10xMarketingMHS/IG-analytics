@@ -4,7 +4,7 @@ import { useEditors } from "@/lib/use-editors";
 import { useResource } from "@/lib/use-resource";
 import { useTasks } from "@/lib/use-tasks";
 import { rangeFor, inRange, compactNum } from "@/lib/date-range";
-import { ymd, taskPoints } from "@/lib/task-points";
+import { ymd, taskPoints, isScorableTask } from "@/lib/task-points";
 import type { Post, Editor, Task } from "@/lib/types";
 
 type Period = "month" | "all";
@@ -114,7 +114,7 @@ function buildSeries(mode: PathMode, month: string, editors: Editor[], posts: Po
     }
   } else {
     for (const t of tasks) {
-      if (!t.editor_id || !t.completed_at) continue;
+      if (!t.editor_id || !t.completed_at || !isScorableTask(t)) continue;
       const comp = ymd(new Date(t.completed_at)); // local calendar day of completion
       if (comp.slice(0, 7) !== month) continue;
       events.push({ e: t.editor_id, day: comp, pts: taskPoints(t) });
@@ -327,7 +327,7 @@ export function LeaderboardPage() {
     return editors
       .map((editor) => {
         const own = tasks.filter(
-          (t) => t.editor_id === editor.id && t.completed_at && ymd(new Date(t.completed_at)).slice(0, 7) === thisMonth,
+          (t) => t.editor_id === editor.id && t.completed_at && isScorableTask(t) && ymd(new Date(t.completed_at)).slice(0, 7) === thisMonth,
         );
         const points = own.reduce((sum, t) => sum + taskPoints(t), 0);
         return { editor, points, completed: own.length };

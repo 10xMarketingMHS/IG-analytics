@@ -17,7 +17,7 @@ const PRIORITY = ["low", "medium", "high"];
 // "emergency" was dropped — priority=high already covers urgency. "social"
 // and "ad" each carry a secondary id alongside the task's own TID — see
 // nextTaskRef() below.
-const TASK_TYPE = ["content", "short_task", "general", "social", "ad"];
+const TASK_TYPE = ["content", "short_task", "general", "social", "ad", "admin"];
 const PLATFORMS = ["instagram", "facebook", "youtube"];
 
 // Type-specific extras for social/ad tasks — small and varying enough per
@@ -208,30 +208,44 @@ tasksRouter.post("/tasks", requireEditor, async (req, res, next) => {
   }
   const d = parsed.data;
   try {
-    const status = d.status ?? "todo";
-    const assigneeId = d.editorId ?? null;
+    // This endpoint is for manual tasks only (auto-created ones are inserted
+    // directly by syncPostTask) — default to "general".
+    const taskType = d.taskType ?? "general";
+    // "admin" is an admin-only, lightweight personal category: no project, no
+    // content format, no timer, self-assigned to the creating admin, and it
+    // starts In Progress (the one deviation from "new tasks start in To Do").
+    const isAdminTask = taskType === "admin";
+    if (isAdminTask && req.role !== "admin") {
+      return res.status(403).json({ error: "Only an admin can create an Admin task." });
+    }
+    const callerEid = await callerEditorId(req);
+    const assigneeId = isAdminTask ? callerEid : (d.editorId ?? null);
+    const status = isAdminTask ? "in_progress" : (d.status ?? "todo");
+    const contentFormatId = isAdminTask ? null : (d.contentFormatId ?? null);
+    // Admin tasks may optionally belong to a brand (Project) — they just never
+    // get a content type, SID/AID or timer.
+    const channelId = d.channelId ?? null;
+    // Social and Paid Ad tasks are numbered per brand, so they must belong to
+    // one (a Project) — enforce it up front rather than minting an orphan id.
+    if ((taskType === "social" || taskType === "ad") && !channelId) {
+      return res.status(400).json({ error: "Pick a Project (brand) — Social and Ads tasks are numbered per brand." });
+    }
     // Assigning to yourself accepts immediately — no separate approval needed
     // — but that's still an "accept" moment: the office-hours check just runs
     // client-side after this response instead of before it (see startAt).
     // Assigning to someone else needs their explicit accept before anything
-    // starts (POST /tasks/:id/accept), where the check runs up front.
-    const accepted = !assigneeId || (await callerEditorId(req)) === assigneeId;
-    const budgetHours = await resolveBudgetHours(req.orgId, assigneeId, d.contentFormatId ?? null);
+    // starts (POST /tasks/:id/accept). Admin tasks are always self-assigned, so
+    // always accepted, and have no timer to gate anyway.
+    const accepted = !assigneeId || callerEid === assigneeId;
+    // Admin tasks carry no time tracking at all — skip the budget lookup.
+    const budgetHours = isAdminTask ? null : await resolveBudgetHours(req.orgId, assigneeId, contentFormatId);
     const hasBudget = accepted && budgetHours != null;
     const budgetStartedAt = hasBudget ? (d.startAt ? new Date(d.startAt) : new Date()) : null;
-    // This endpoint is for manual tasks only (auto-created ones are inserted
-    // directly by syncPostTask) — default to "general".
-    const taskType = d.taskType ?? "general";
-    // Social and Paid Ad tasks are numbered per brand, so they must belong to
-    // one (a Project) — enforce it up front rather than minting an orphan id.
-    if ((taskType === "social" || taskType === "ad") && !d.channelId) {
-      return res.status(400).json({ error: "Pick a Project (brand) — Social and Ads tasks are numbered per brand." });
-    }
     // Every task gets an org-wide TID (internal key); a Social task also gets a
-    // per-brand SID, a Paid Ad task a per-brand AID.
+    // per-brand SID, a Paid Ad task a per-brand AID. Admin tasks get a TID only.
     const tid = await nextTaskRef(req.orgId, "tid");
-    const sid = taskType === "social" ? await nextBrandTaskRef(d.channelId, "sid") : null;
-    const adId = taskType === "ad" ? await nextBrandTaskRef(d.channelId, "adid") : null;
+    const sid = taskType === "social" ? await nextBrandTaskRef(channelId, "sid") : null;
+    const adId = taskType === "ad" ? await nextBrandTaskRef(channelId, "adid") : null;
     // Atomically claim the next per-org Task ID (serial, "TASK-####") and
     // insert in one statement, alongside the TID/SID/AdID system above —
     // both id schemes point at the same row.
@@ -248,7 +262,7 @@ tasksRouter.post("/tasks", requireEditor, async (req, res, next) => {
       [
         req.orgId,
         assigneeId,
-        d.channelId ?? null,
+        channelId,
         d.title,
         d.description ?? "",
         status,
@@ -256,7 +270,7 @@ tasksRouter.post("/tasks", requireEditor, async (req, res, next) => {
         d.dueDate || null,
         d.recurrence ?? "none",
         taskType,
-        d.contentFormatId ?? null,
+        contentFormatId,
         budgetHours,
         accepted,
         budgetStartedAt,

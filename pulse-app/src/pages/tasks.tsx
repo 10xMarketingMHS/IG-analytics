@@ -40,8 +40,9 @@ const TYPE_LABEL: Record<TaskType, string> = {
   general: "General",
   social: "Social Media",
   ad: "Paid Ad",
+  admin: "Admin",
 };
-const TYPE_ICON: Record<TaskType, string> = { content: "📄", short_task: "⚡", general: "🗒️", social: "📱", ad: "📢" };
+const TYPE_ICON: Record<TaskType, string> = { content: "📄", short_task: "⚡", general: "🗒️", social: "📱", ad: "📢", admin: "🛠️" };
 // Task types selectable in the Add/Edit Task modal — "content" is reserved
 // for auto-created (post-linked) tasks, not offered here.
 const SELECTABLE_TASK_TYPES: TaskType[] = ["general", "short_task", "social", "ad"];
@@ -76,12 +77,13 @@ const CONTENT_LABEL = (v: string | null) => CONTENT_TYPES.find((c) => c.value ==
 // A board task is created under one of two categories — Social or Ads — which
 // drives its per-brand id (SID vs AID) and gates the Content Type list: pick a
 // category first, then only its content types are offered.
-type TaskCategory = "social" | "ad";
-const CATEGORY_LABEL: Record<TaskCategory, string> = { social: "Social", ad: "Ads" };
+type TaskCategory = "social" | "ad" | "admin";
+const CATEGORY_LABEL: Record<TaskCategory, string> = { social: "Social", ad: "Ads", admin: "Admin" };
 // A task's category, inferred from its task_type (null for legacy general/short
-// tasks that predate the Social/Ads split).
+// tasks that predate the Social/Ads split). "admin" is an admin-only category
+// with no project/content-type/timer/scoring.
 const taskCategory = (t: Pick<Task, "task_type">): TaskCategory | null =>
-  t.task_type === "social" ? "social" : t.task_type === "ad" ? "ad" : null;
+  t.task_type === "social" ? "social" : t.task_type === "ad" ? "ad" : t.task_type === "admin" ? "admin" : null;
 // Display normalizer for the secondary id — old rows stored the "AdID-" prefix,
 // new ones store "AID-"; show them all as "AID-".
 const showId = (v: string | null | undefined) => (v ? v.replace(/^AdID/i, "AID") : v);
@@ -1601,6 +1603,12 @@ function TaskPanel({ mode, task, canWrite, editors, channels, onClose, onChanged
   const [category, setCategory] = useState<TaskCategory | null>(null);
   const editCategory = task ? taskCategory(task) : null;
   const activeCategory: TaskCategory | null = creating ? category : editCategory;
+  // Admin tasks (admin-only) are a bare personal category: only Title +
+  // Description, no project / assignee / due / priority / content type /
+  // attachments, self-assigned, and they start In Progress. `adminTask` gates
+  // the create form; `adminEdit` handles an existing admin task being viewed.
+  const adminTask = creating && category === "admin";
+  const adminEdit = !creating && editCategory === "admin";
   // Content types come from the admin taxonomy (Settings → Task Settings). When
   // a category is chosen we scope to it; before that (create, nothing picked)
   // we offer every active type so the dropdown is usable right away — picking
@@ -1660,7 +1668,8 @@ function TaskPanel({ mode, task, canWrite, editors, channels, onClose, onChanged
   }
   // A board task must declare its category and belong to a brand (Project) —
   // that's what its per-brand SID/AID is numbered against.
-  const canCreate = Boolean(title.trim() && category && draft.channel_id);
+  // Admin tasks need no project; every other category is numbered per brand.
+  const canCreate = Boolean(title.trim() && category && (category === "admin" || draft.channel_id));
   async function create() {
     if (!canCreate || busy) return;
     setBusy(true);
@@ -1730,6 +1739,7 @@ function TaskPanel({ mode, task, canWrite, editors, channels, onClose, onChanged
             <div className="seg assign-mode-seg">
               <button type="button" className={category === "social" ? "on" : ""} onClick={() => pickCategory("social")}>📣 Social</button>
               <button type="button" className={category === "ad" ? "on" : ""} onClick={() => pickCategory("ad")}>💰 Ads</button>
+              {isAdmin && <button type="button" className={category === "admin" ? "on" : ""} onClick={() => pickCategory("admin")}>🛠️ Admin</button>}
             </div>
           </Row>
         )}
@@ -1740,28 +1750,35 @@ function TaskPanel({ mode, task, canWrite, editors, channels, onClose, onChanged
           </select>
         </Row>
         <Row label="Assignee">
-          {/* Only admins can assign work to someone else. Everyone else creates
-              tasks for themselves — no Assign option. */}
-          {creating && canSelfAssign && isAdmin && (
-            <div className="seg assign-mode-seg">
-              <button type="button" className={assignMode === "self" ? "on" : ""} onClick={() => setMode("self")}>🙋 Myself</button>
-              <button type="button" className={assignMode === "assign" ? "on" : ""} onClick={() => setMode("assign")}>👥 Assign</button>
-            </div>
-          )}
-          {creating ? (
-            isAdmin && assignMode === "assign" ? (
-              <select className="t" disabled={ro} value={cur.editor_id ?? ""} onChange={(e) => set("editor_id", "editorId", e.target.value || null)}>
-                <option value="">Unassigned</option>
-                {editors.map((ed) => (<option key={ed.id} value={ed.id}>{ed.name}</option>))}
-              </select>
-            ) : (
-              <div className="t autofield">{editors.find((ed) => ed.id === user?.editorId)?.name ?? "Myself"}</div>
-            )
+          {adminTask || adminEdit ? (
+            /* Admin tasks are always self-assigned — no Assign option. */
+            <div className="t autofield">{editors.find((ed) => ed.id === user?.editorId)?.name ?? "Myself"}</div>
           ) : (
-            <select className="t" disabled={ro} value={cur.editor_id ?? ""} onChange={(e) => set("editor_id", "editorId", e.target.value || null)}>
-              <option value="">Unassigned</option>
-              {editors.map((ed) => (<option key={ed.id} value={ed.id}>{ed.name}</option>))}
-            </select>
+            <>
+              {/* Only admins can assign work to someone else. Everyone else
+                  creates tasks for themselves — no Assign option. */}
+              {creating && canSelfAssign && isAdmin && (
+                <div className="seg assign-mode-seg">
+                  <button type="button" className={assignMode === "self" ? "on" : ""} onClick={() => setMode("self")}>🙋 Myself</button>
+                  <button type="button" className={assignMode === "assign" ? "on" : ""} onClick={() => setMode("assign")}>👥 Assign</button>
+                </div>
+              )}
+              {creating ? (
+                isAdmin && assignMode === "assign" ? (
+                  <select className="t" disabled={ro} value={cur.editor_id ?? ""} onChange={(e) => set("editor_id", "editorId", e.target.value || null)}>
+                    <option value="">Unassigned</option>
+                    {editors.map((ed) => (<option key={ed.id} value={ed.id}>{ed.name}</option>))}
+                  </select>
+                ) : (
+                  <div className="t autofield">{editors.find((ed) => ed.id === user?.editorId)?.name ?? "Myself"}</div>
+                )
+              ) : (
+                <select className="t" disabled={ro} value={cur.editor_id ?? ""} onChange={(e) => set("editor_id", "editorId", e.target.value || null)}>
+                  <option value="">Unassigned</option>
+                  {editors.map((ed) => (<option key={ed.id} value={ed.id}>{ed.name}</option>))}
+                </select>
+              )}
+            </>
           )}
         </Row>
         <Row label="Due Date"><input className="t" type="date" disabled={ro} value={cur.due_date ?? ""} onChange={(e) => set("due_date", "dueDate", e.target.value || null)} /></Row>
@@ -1791,16 +1808,18 @@ function TaskPanel({ mode, task, canWrite, editors, channels, onClose, onChanged
             </div>
           </Row>
         )}
-        <Row label="Content Type">
-          {/* Always a dropdown; its options are the content types configured in
-              Task Settings for the active category. Disabled until a category
-              is picked (create mode). */}
-          <select className="t" disabled={ro} value={cur.content_format_id ?? ""} onChange={(e) => onPickContentType(e.target.value || null)}>
-            <option value="">—</option>
-            {contentTypeChoices.map((f) => (<option key={f.id} value={f.id}>{f.icon} {f.name}{!activeCategory ? ` · ${CATEGORY_LABEL[f.category ?? "social"]}` : ""}</option>))}
-          </select>
-        </Row>
-        {!creating && (
+        {!(adminTask || adminEdit) && (
+          <Row label="Content Type">
+            {/* Always a dropdown; its options are the content types configured in
+                Task Settings for the active category. Disabled until a category
+                is picked (create mode). */}
+            <select className="t" disabled={ro} value={cur.content_format_id ?? ""} onChange={(e) => onPickContentType(e.target.value || null)}>
+              <option value="">—</option>
+              {contentTypeChoices.map((f) => (<option key={f.id} value={f.id}>{f.icon} {f.name}{!activeCategory ? ` · ${CATEGORY_LABEL[f.category ?? "social"]}` : ""}</option>))}
+            </select>
+          </Row>
+        )}
+        {!creating && !adminEdit && (
           <Row label="Repeat">
             <select className="t" disabled={ro} value={task!.recurrence} onChange={(e) => patch({ recurrence: e.target.value })}>
               <option value="none">Doesn't repeat</option><option value="daily">🔁 Daily</option><option value="weekly">🔁 Weekly</option>
@@ -1809,12 +1828,15 @@ function TaskPanel({ mode, task, canWrite, editors, channels, onClose, onChanged
         )}
       </div>
 
-      <Attachments links={cur.attachments} readOnly={ro} onChange={(next) => set("attachments", "attachments", next)} />
+      {!(adminTask || adminEdit) && (
+        <Attachments links={cur.attachments} readOnly={ro} onChange={(next) => set("attachments", "attachments", next)} />
+      )}
 
       {creating ? (
         <div className="formfoot" style={{ marginTop: 14 }}>
           <div className="hint" style={{ margin: 0, flex: 1 }}>
-            {!category ? "Choose a category — Social or Ads — to begin."
+            {!category ? `Choose a category — Social or Ads${isAdmin ? " or Admin" : ""} — to begin.`
+              : adminTask ? (!title.trim() ? "Add a title — Admin tasks need nothing else." : "Admin task — starts In Progress, just for you.")
               : !draft.channel_id ? "Pick a Project (brand) — Social/Ads tasks are numbered per brand."
               : !title.trim() ? "Add a task title."
               : "Checklist & comments become available after you create the task."}

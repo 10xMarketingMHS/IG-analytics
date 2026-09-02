@@ -109,7 +109,7 @@ export type TaskPriority = "low" | "medium" | "high";
 // reserved for auto-created (post-linked) tasks and isn't user-selectable.
 // "emergency" was dropped — priority "high" already covers urgency. "social"
 // and "ad" each carry a secondary id (SID/AdID) alongside the task's own TID.
-export type TaskType = "content" | "short_task" | "general" | "social" | "ad";
+export type TaskType = "content" | "short_task" | "general" | "social" | "ad" | "admin";
 
 // Type-specific extras for social/ad tasks — optional, only meaningful when
 // task_type is "social" or "ad" respectively.
