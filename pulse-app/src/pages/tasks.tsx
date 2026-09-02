@@ -41,8 +41,9 @@ const TYPE_LABEL: Record<TaskType, string> = {
   social: "Social Media",
   ad: "Paid Ad",
   admin: "Admin",
+  service: "Service",
 };
-const TYPE_ICON: Record<TaskType, string> = { content: "📄", short_task: "⚡", general: "🗒️", social: "📱", ad: "📢", admin: "🛠️" };
+const TYPE_ICON: Record<TaskType, string> = { content: "📄", short_task: "⚡", general: "🗒️", social: "📱", ad: "📢", admin: "🛠️", service: "🧰" };
 // Task types selectable in the Add/Edit Task modal — "content" is reserved
 // for auto-created (post-linked) tasks, not offered here.
 const SELECTABLE_TASK_TYPES: TaskType[] = ["general", "short_task", "social", "ad"];
@@ -77,13 +78,18 @@ const CONTENT_LABEL = (v: string | null) => CONTENT_TYPES.find((c) => c.value ==
 // A board task is created under one of two categories — Social or Ads — which
 // drives its per-brand id (SID vs AID) and gates the Content Type list: pick a
 // category first, then only its content types are offered.
-type TaskCategory = "social" | "ad" | "admin";
-const CATEGORY_LABEL: Record<TaskCategory, string> = { social: "Social", ad: "Ads", admin: "Admin" };
+type TaskCategory = "social" | "ad" | "service" | "admin";
+const CATEGORY_LABEL: Record<TaskCategory, string> = { social: "Social", ad: "Ads", service: "Service", admin: "Admin" };
 // A task's category, inferred from its task_type (null for legacy general/short
-// tasks that predate the Social/Ads split). "admin" is an admin-only category
-// with no project/content-type/timer/scoring.
+// tasks that predate the Social/Ads split). "service" is a full peer of
+// Social/Ads; "admin" is an admin-only category with no project/content-type/
+// timer/scoring.
 const taskCategory = (t: Pick<Task, "task_type">): TaskCategory | null =>
-  t.task_type === "social" ? "social" : t.task_type === "ad" ? "ad" : t.task_type === "admin" ? "admin" : null;
+  t.task_type === "social" ? "social"
+    : t.task_type === "ad" ? "ad"
+    : t.task_type === "service" ? "service"
+    : t.task_type === "admin" ? "admin"
+    : null;
 // Display normalizer for the secondary id — old rows stored the "AdID-" prefix,
 // new ones store "AID-"; show them all as "AID-".
 const showId = (v: string | null | undefined) => (v ? v.replace(/^AdID/i, "AID") : v);
@@ -375,7 +381,8 @@ export function TasksPage() {
             (t.description ?? "").toLowerCase().includes(q) ||
             t.tid?.toLowerCase().includes(q) ||
             t.sid?.toLowerCase().includes(q) ||
-            t.ad_id?.toLowerCase().includes(q);
+            t.ad_id?.toLowerCase().includes(q) ||
+            t.svid?.toLowerCase().includes(q);
           if (!hit) return false;
         }
         return true;
@@ -568,7 +575,7 @@ export function TasksPage() {
         <div className="search" style={{ maxWidth: 420 }}>
           🔎
           <input
-            placeholder="Search by TID / SID / AdID / title…"
+            placeholder="Search by TID / SID / AID / SVID / title…"
             value={search}
             onChange={(e) => setSearch(e.target.value)}
           />
@@ -756,6 +763,7 @@ export function TasksPage() {
                           {t.tid && <span>{t.tid}</span>}
                           {t.sid && <><span className="dot-sep">·</span><span>{showId(t.sid)}</span></>}
                           {t.ad_id && <><span className="dot-sep">·</span><span>{showId(t.ad_id)}</span></>}
+                          {t.svid && <><span className="dot-sep">·</span><span>{t.svid}</span></>}
                           {t.revision > 1 && <><span className="dot-sep">·</span><span title="Sent back for rework" style={{ color: "var(--amber)" }}>Rev {t.revision}</span></>}
                         </div>
                       )}
@@ -1249,6 +1257,7 @@ export function TaskModal({
           {task.tid && <span>{task.tid}</span>}
           {task.sid && <><span className="dot-sep">·</span><span>{showId(task.sid)}</span></>}
           {task.ad_id && <><span className="dot-sep">·</span><span>{showId(task.ad_id)}</span></>}
+          {task.svid && <><span className="dot-sep">·</span><span>{task.svid}</span></>}
         </div>
       )}
       <form onSubmit={submit}>
@@ -1719,6 +1728,7 @@ function TaskPanel({ mode, task, canWrite, editors, channels, onClose, onChanged
           {task!.tid && <span className="task-code">{task!.tid}</span>}
           {task!.sid && <span className="task-code">{showId(task!.sid)}</span>}
           {task!.ad_id && <span className="task-code">{showId(task!.ad_id)}</span>}
+          {task!.svid && <span className="task-code">{task!.svid}</span>}
         </div>
       )}
       {!creating && task!.pending_note && (
@@ -1739,6 +1749,7 @@ function TaskPanel({ mode, task, canWrite, editors, channels, onClose, onChanged
             <div className="seg assign-mode-seg">
               <button type="button" className={category === "social" ? "on" : ""} onClick={() => pickCategory("social")}>📣 Social</button>
               <button type="button" className={category === "ad" ? "on" : ""} onClick={() => pickCategory("ad")}>💰 Ads</button>
+              <button type="button" className={category === "service" ? "on" : ""} onClick={() => pickCategory("service")}>🧰 Service</button>
               {isAdmin && <button type="button" className={category === "admin" ? "on" : ""} onClick={() => pickCategory("admin")}>🛠️ Admin</button>}
             </div>
           </Row>
@@ -2109,6 +2120,7 @@ function TaskList({ tasks, onOpen }: { tasks: Task[]; onOpen: (t: Task) => void 
                     {t.tid && <span className="task-code">{t.tid}</span>}
                     {t.sid && <span className="task-code">{showId(t.sid)}</span>}
                     {t.ad_id && <span className="task-code">{showId(t.ad_id)}</span>}
+                    {t.svid && <span className="task-code">{t.svid}</span>}
                   </td>
                   <td>{t.content_format_name ? <span className="task-ctype">{t.content_format_icon} {t.content_format_name}</span> : t.content_type ? <span className="task-ctype">{CONTENT_LABEL(t.content_type)}</span> : <span className="st dim">—</span>}</td>
                   <td>{t.editor_name ? <Assignee name={t.editor_name} image={t.editor_image} /> : <span className="st dim">—</span>}</td>

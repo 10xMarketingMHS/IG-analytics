@@ -11,7 +11,7 @@ const Schema = z.object({
   // Which category (Social vs Ads) this content type belongs to — a format
   // lives in exactly one, and the task-creation dropdown pulls the chosen
   // category's list. Required on create; not editable afterward.
-  category: z.enum(["social", "ad"]).optional(),
+  category: z.enum(["social", "ad", "service"]).optional(),
   // Points Formula base_points for this format — how much a task in it is
   // worth before the on-time/late timing multiplier applies. Independent of
   // budget_hours (task-rules.js) — a format's point value and its time
@@ -38,8 +38,8 @@ contentFormatsRouter.post("/content-formats", requireAdmin, async (req, res, nex
   const parsed = Schema.safeParse(req.body);
   if (!parsed.success) return res.status(400).json({ error: "Give the format a name." });
   const category = parsed.data.category;
-  if (category !== "social" && category !== "ad") {
-    return res.status(400).json({ error: "Pick a category (Social or Ads) for this content type." });
+  if (category !== "social" && category !== "ad" && category !== "service") {
+    return res.status(400).json({ error: "Pick a category (Social, Ads or Service) for this content type." });
   }
   try {
     // Sort order is per category, so each list numbers from 1 independently.

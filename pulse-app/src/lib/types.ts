@@ -109,7 +109,7 @@ export type TaskPriority = "low" | "medium" | "high";
 // reserved for auto-created (post-linked) tasks and isn't user-selectable.
 // "emergency" was dropped — priority "high" already covers urgency. "social"
 // and "ad" each carry a secondary id (SID/AdID) alongside the task's own TID.
-export type TaskType = "content" | "short_task" | "general" | "social" | "ad" | "admin";
+export type TaskType = "content" | "short_task" | "general" | "social" | "ad" | "admin" | "service";
 
 // Type-specific extras for social/ad tasks — optional, only meaningful when
 // task_type is "social" or "ad" respectively.
@@ -130,9 +130,9 @@ export type ContentFormatDef = {
   icon: string;
   sort_order: number;
   active: boolean;
-  // Social vs Ads — the category this content type belongs to (null only for
-  // retired legacy formats that predate the split).
-  category: "social" | "ad" | null;
+  // Social / Ads / Service — the category this content type belongs to (null
+  // only for retired legacy formats that predate the split).
+  category: "social" | "ad" | "service" | null;
   // Points Formula base_points for this format — independent of budget_hours
   // (task_time_rule). See taskPoints() in leaderboard.tsx.
   points: number;
@@ -167,6 +167,7 @@ export type Task = {
   tid: string | null;
   sid: string | null;
   ad_id: string | null;
+  svid: string | null;
   meta: TaskMeta;
   // Bumps every time an admin sends it back from Review for rework — see
   // TaskReviewLogEntry for the note that came with each bump.

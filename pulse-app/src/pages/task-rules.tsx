@@ -22,7 +22,7 @@ export function TaskRulesSection() {
   const { contentFormats, refetch: refetchFormats } = useContentFormats();
   const [rules, setRules] = useState<TaskTimeRule[] | null>(null);
   // Which category's formats + overrides are on screen — toggled at the top.
-  const [activeCat, setActiveCat] = useState<"social" | "ad">("social");
+  const [activeCat, setActiveCat] = useState<"social" | "ad" | "service">("social");
 
   const load = useCallback(() => {
     api<{ rules: TaskTimeRule[] }>("/task-time-rules")
@@ -72,7 +72,7 @@ export function TaskRulesSection() {
       toast.error(err instanceof ApiError ? err.message : errorMsg);
     }
   }
-  async function addFormat(name: string, icon: string, category: "social" | "ad") {
+  async function addFormat(name: string, icon: string, category: "social" | "ad" | "service") {
     try {
       await api("/content-formats", { method: "POST", body: JSON.stringify({ name, icon, category }) });
       await refetchFormats();
@@ -97,9 +97,10 @@ export function TaskRulesSection() {
 
   // One Social section and one Ads section — each is a self-contained content
   // formats table + per-person overrides grid, scoped to that category's list.
-  const CATEGORIES: { key: "social" | "ad"; label: string }[] = [
+  const CATEGORIES: { key: "social" | "ad" | "service"; label: string }[] = [
     { key: "social", label: "Social" },
     { key: "ad", label: "Ads" },
+    { key: "service", label: "Service" },
   ];
 
   return (

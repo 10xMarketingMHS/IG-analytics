@@ -16,7 +16,7 @@ import type { Task, TaskType } from "@/lib/types";
 // work actually lives; a manually-typed "social" task is the exception,
 // not the rule, so both count as the same "Social" pipeline.
 type TypeFilter = "all" | "social" | "ad";
-const TYPE_ICON: Record<TaskType, string> = { content: "📄", short_task: "⚡", general: "🗒️", social: "📱", ad: "📢", admin: "🛠️" };
+const TYPE_ICON: Record<TaskType, string> = { content: "📄", short_task: "⚡", general: "🗒️", social: "📱", ad: "📢", admin: "🛠️", service: "🧰" };
 function pipelineBucket(t: Task): "social" | "ad" | null {
   if (t.task_type === "ad") return "ad";
   if (t.task_type === "content" || t.task_type === "social") return "social";
