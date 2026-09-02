@@ -1,0 +1,220 @@
+import { Router } from "express";
+import { z } from "zod";
+import { pool } from "../db.js";
+import { requireAdmin } from "../resolve-workspace.js";
+import { resolveBudgetHours } from "./tasks.js";
+
+export const goalsRouter = Router();
+
+// Goal Setting — individual monthly capacity planning + performance tracking.
+// Admin-only. Fully independent of Task Points / the leaderboard: nothing here
+// feeds scoring. JPH = hours-per-job (the content type's time budget), and
+// planned hours = Σ(JC × JPH). The jph is snapshotted onto each editor_goal row
+// at save time, so later time-budget edits never rewrite past months' numbers.
+
+const DEFAULT_CAPACITY = { working_days: 22, hours_per_day: 8 };
+
+// Effective monthly capacity for an editor: their own override → the org-wide
+// default for that month → carry-forward (most recent org default before it) →
+// a constant. Returns the numbers plus which source they came from.
+async function effectiveCapacity(orgId, editorId, month) {
+  const q = (sql, params) => pool.query(sql, params);
+  let r = await q(
+    "select working_days, hours_per_day from editor_capacity where org_id=$1 and editor_id=$2 and period_month=$3",
+    [orgId, editorId, month],
+  );
+  if (r.rows[0]) return { ...r.rows[0], source: "editor" };
+  r = await q(
+    "select working_days, hours_per_day from editor_capacity where org_id=$1 and editor_id is null and period_month=$2",
+    [orgId, month],
+  );
+  if (r.rows[0]) return { ...r.rows[0], source: "org" };
+  r = await q(
+    "select working_days, hours_per_day from editor_capacity where org_id=$1 and editor_id is null and period_month < $2 order by period_month desc limit 1",
+    [orgId, month],
+  );
+  if (r.rows[0]) return { ...r.rows[0], source: "carry" };
+  return { ...DEFAULT_CAPACITY, source: "default" };
+}
+
+const capHours = (c) => Number(c.working_days) * Number(c.hours_per_day);
+
+// GET /goals?editorId=&month= — the goal-setting form for one editor+month:
+// every active content type with its JC (blank = no goal) and JPH (stored goal
+// jph, else pre-filled from the content type's time budget), plus the editor's
+// effective capacity.
+goalsRouter.get("/goals", requireAdmin, async (req, res, next) => {
+  const editorId = req.query.editorId;
+  const monthIn = req.query.month;
+  if (!editorId || !monthIn) return res.status(400).json({ error: "editorId and month are required." });
+  try {
+    const { rows: mrow } = await pool.query("select date_trunc('month', $1::date)::date m", [monthIn]);
+    const month = mrow[0].m;
+    const { rows: formats } = await pool.query(
+      "select id, name, icon, category, sort_order from task_content_format where org_id=$1 and active order by category, sort_order, name",
+      [req.orgId],
+    );
+    const { rows: goals } = await pool.query(
+      "select content_format_id, jc, jph from editor_goal where org_id=$1 and editor_id=$2 and period_month=$3",
+      [req.orgId, editorId, month],
+    );
+    const goalBy = new Map(goals.map((g) => [g.content_format_id, g]));
+    const rows = [];
+    for (const f of formats) {
+      const g = goalBy.get(f.id);
+      // Pre-fill JPH from the content type's time budget when no goal exists yet.
+      const budget = g ? null : await resolveBudgetHours(req.orgId, editorId, f.id);
+      rows.push({
+        contentFormatId: f.id, name: f.name, icon: f.icon, category: f.category,
+        jc: g ? Number(g.jc) : null,
+        jph: g ? Number(g.jph) : (budget != null ? Number(budget) : 0),
+      });
+    }
+    const cap = await effectiveCapacity(req.orgId, editorId, month);
+    const orgDefault = (await pool.query(
+      "select working_days, hours_per_day from editor_capacity where org_id=$1 and editor_id is null and period_month=$2",
+      [req.orgId, month],
+    )).rows[0] ?? null;
+    const editorOverride = (await pool.query(
+      "select working_days, hours_per_day from editor_capacity where org_id=$1 and editor_id=$2 and period_month=$3",
+      [req.orgId, editorId, month],
+    )).rows[0] ?? null;
+    res.json({
+      month,
+      capacity: { workingDays: Number(cap.working_days), hoursPerDay: Number(cap.hours_per_day), hours: capHours(cap), source: cap.source },
+      orgDefault: orgDefault && { workingDays: Number(orgDefault.working_days), hoursPerDay: Number(orgDefault.hours_per_day) },
+      editorOverride: editorOverride && { workingDays: Number(editorOverride.working_days), hoursPerDay: Number(editorOverride.hours_per_day) },
+      rows,
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
+const CapacitySchema = z.object({
+  scope: z.enum(["org", "editor"]),
+  editorId: z.string().uuid().optional(),
+  month: z.string(),
+  workingDays: z.number().int().min(0).max(31),
+  hoursPerDay: z.number().min(0).max(24),
+});
+
+// PUT /goals/capacity — set the org-wide default (scope 'org') or one editor's
+// override (scope 'editor') for a month.
+goalsRouter.put("/goals/capacity", requireAdmin, async (req, res, next) => {
+  const parsed = CapacitySchema.safeParse(req.body);
+  if (!parsed.success) return res.status(400).json({ error: "Invalid capacity." });
+  const d = parsed.data;
+  if (d.scope === "editor" && !d.editorId) return res.status(400).json({ error: "editorId is required for an editor override." });
+  try {
+    const { rows: mrow } = await pool.query("select date_trunc('month', $1::date)::date m", [d.month]);
+    const month = mrow[0].m;
+    const editorId = d.scope === "editor" ? d.editorId : null;
+    // Upsert — the two scopes have separate partial unique indexes, so update-
+    // else-insert keeps it simple across both.
+    const upd = await pool.query(
+      `update editor_capacity set working_days=$4, hours_per_day=$5, updated_at=now()
+        where org_id=$1 and period_month=$2 and editor_id is not distinct from $3`,
+      [req.orgId, month, editorId, d.workingDays, d.hoursPerDay],
+    );
+    if (upd.rowCount === 0) {
+      await pool.query(
+        "insert into editor_capacity (org_id, editor_id, period_month, working_days, hours_per_day) values ($1,$2,$3,$4,$5)",
+        [req.orgId, editorId, month, d.workingDays, d.hoursPerDay],
+      );
+    }
+    res.json({ ok: true });
+  } catch (err) {
+    next(err);
+  }
+});
+
+const GoalsSchema = z.object({
+  editorId: z.string().uuid(),
+  month: z.string(),
+  goals: z.array(z.object({
+    contentFormatId: z.string().uuid(),
+    jc: z.number().int().min(0).nullable(),
+    jph: z.number().min(0),
+  })),
+});
+
+// PUT /goals — save one editor's goals for a month. A row with jc = null means
+// "no goal for this type" and is deleted; otherwise it's upserted with its
+// snapshotted jph.
+goalsRouter.put("/goals", requireAdmin, async (req, res, next) => {
+  const parsed = GoalsSchema.safeParse(req.body);
+  if (!parsed.success) return res.status(400).json({ error: "Invalid goals." });
+  const d = parsed.data;
+  try {
+    const { rows: mrow } = await pool.query("select date_trunc('month', $1::date)::date m", [d.month]);
+    const month = mrow[0].m;
+    for (const g of d.goals) {
+      if (g.jc == null) {
+        await pool.query(
+          "delete from editor_goal where org_id=$1 and editor_id=$2 and content_format_id=$3 and period_month=$4",
+          [req.orgId, d.editorId, g.contentFormatId, month],
+        );
+      } else {
+        await pool.query(
+          `insert into editor_goal (org_id, editor_id, content_format_id, period_month, jc, jph)
+           values ($1,$2,$3,$4,$5,$6)
+           on conflict (org_id, editor_id, content_format_id, period_month)
+           do update set jc = excluded.jc, jph = excluded.jph, updated_at = now()`,
+          [req.orgId, d.editorId, g.contentFormatId, month, g.jc, g.jph],
+        );
+      }
+    }
+    res.json({ ok: true });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// GET /goals/performance?editorId=&month= — read-only monthly performance:
+// Goal JC vs Actual JC (completed tasks of that content type in the month),
+// with Goal/Actual hours from the SAME stored jph, balance and achievement %.
+goalsRouter.get("/goals/performance", requireAdmin, async (req, res, next) => {
+  const editorId = req.query.editorId;
+  const monthIn = req.query.month;
+  if (!editorId || !monthIn) return res.status(400).json({ error: "editorId and month are required." });
+  try {
+    const { rows: mrow } = await pool.query("select date_trunc('month', $1::date)::date m", [monthIn]);
+    const month = mrow[0].m;
+    const { rows: goals } = await pool.query(
+      `select g.content_format_id, g.jc, g.jph, cf.name, cf.icon, cf.category
+         from editor_goal g join task_content_format cf on cf.id = g.content_format_id
+        where g.org_id=$1 and g.editor_id=$2 and g.period_month=$3
+        order by cf.category, cf.sort_order, cf.name`,
+      [req.orgId, editorId, month],
+    );
+    // Actual completed counts per content type this month (admin tasks have a
+    // null content_format_id, so they never appear here).
+    const { rows: actuals } = await pool.query(
+      `select content_format_id, count(*)::int actual
+         from task
+        where org_id=$1 and editor_id=$2 and status='done' and content_format_id is not null
+          and completed_at >= $3 and completed_at < ($3::date + interval '1 month')
+        group by content_format_id`,
+      [req.orgId, editorId, month],
+    );
+    const actualBy = new Map(actuals.map((a) => [a.content_format_id, a.actual]));
+    const rows = goals.map((g) => {
+      const goalJC = Number(g.jc);
+      const jph = Number(g.jph);
+      const actualJC = actualBy.get(g.content_format_id) ?? 0;
+      const goalHours = goalJC * jph;
+      const actualHours = actualJC * jph;
+      return {
+        contentFormatId: g.content_format_id, name: g.name, icon: g.icon, category: g.category,
+        goalJC, actualJC, jph,
+        goalHours, actualHours,
+        balance: goalHours - actualHours,
+        achievement: goalJC > 0 ? (actualJC / goalJC) * 100 : null,
+      };
+    });
+    res.json({ month, rows });
+  } catch (err) {
+    next(err);
+  }
+});

@@ -7,6 +7,7 @@ import { useWorkspaces } from "@/lib/workspaces-context";
 import { TaskRulesSection } from "@/pages/task-rules";
 import { ChannelsSection } from "@/pages/channels";
 import { TeamsSection } from "@/pages/teams";
+import { GoalSettingSection } from "@/pages/goal-setting";
 
 const REEL_WEIGHTS: [string, number][] = [
   ["Views", 20], ["Like rate", 15], ["Comment rate", 25], ["Share rate", 25], ["Save rate", 15],
@@ -23,11 +24,12 @@ const CAROUSEL_WEIGHTS: [string, number][] = [
 // this just avoids surfacing a tab that would immediately say "no access."
 // /channels, /task-rules, /teams still route here (old links keep working),
 // just pre-selecting the matching tab instead of their own page.
-type SettingsTab = "content" | "tasks" | "channels" | "team";
+type SettingsTab = "content" | "tasks" | "channels" | "team" | "goals";
 const TAB_FOR_PATH: Record<string, SettingsTab> = {
   "/task-rules": "tasks",
   "/channels": "channels",
   "/teams": "team",
+  "/goals": "goals",
 };
 
 export function SettingsPage() {
@@ -42,6 +44,7 @@ export function SettingsPage() {
       [
         { key: "content" as const, label: "Content & Scoring", show: true },
         { key: "tasks" as const, label: "Task Settings", show: isAdmin },
+        { key: "goals" as const, label: "Goal Setting", show: isAdmin },
         { key: "channels" as const, label: "Channels & Integrations", show: true },
         { key: "team" as const, label: "Team", show: isAdmin },
       ].filter((t) => t.show),
@@ -211,6 +214,7 @@ export function SettingsPage() {
       )}
 
       {tab === "tasks" && <TaskRulesSection />}
+      {tab === "goals" && <GoalSettingSection />}
       {tab === "channels" && <ChannelsSection />}
       {tab === "team" && <TeamsSection />}
     </section>
