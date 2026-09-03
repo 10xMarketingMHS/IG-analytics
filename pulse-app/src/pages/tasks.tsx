@@ -749,7 +749,7 @@ export function TasksPage() {
                       </div>
                       <div className="task-title">{t.title}</div>
                       {t.on_hold && (
-                        <div className="task-hold-badge" title="An admin put this task on hold — its timer is paused">
+                        <div className="task-hold-badge" title={t.held_by_name ? `Held by ${t.held_by_name} — its timer is paused` : "This task is on hold — its timer is paused"}>
                           ⏸ On hold
                         </div>
                       )}
@@ -828,9 +828,11 @@ export function TasksPage() {
                       {(() => {
                         const canPrev = ci > 0 && canTransition(t, COLUMNS[ci - 1].key);
                         const canNext = ci < COLUMNS.length - 1 && canTransition(t, COLUMNS[ci + 1].key);
-                        // Admin can park (Hold) or resume an in-progress task —
-                        // it stays In Progress; Hold pauses its timer.
-                        const holdCtrl = isAdmin && t.status === "in_progress" ? (
+                        // An admin, or the task's own assignee, can park (Hold)
+                        // or resume an in-progress task — it stays In Progress;
+                        // Hold pauses its timer. Same "is this mine" check the
+                        // forward-move buttons use (isOwner).
+                        const holdCtrl = (isAdmin || isOwner(t)) && t.status === "in_progress" ? (
                           t.on_hold ? (
                             <button className="linkbtn" onClick={() => toggleHold(t, false)}>▶ Resume</button>
                           ) : (

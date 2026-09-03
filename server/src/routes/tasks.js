@@ -97,9 +97,10 @@ const SELECT = `
          t.tid, t.sid, t.ad_id, t.svid, t.meta, t.revision, t.pending_note,
          t.content_format_id, cf.name as content_format_name, cf.icon as content_format_icon,
          cf.points as content_format_points,
-         t.budget_hours, t.budget_started_at, t.accepted, t.on_hold, t.created_at, t.completed_at,
+         t.budget_hours, t.budget_started_at, t.accepted, t.on_hold, t.held_by, t.created_at, t.completed_at,
          t.content_type, t.platforms, t.attachments,
          e.name as editor_name, e.image_url as editor_image,
+         coalesce(hu.name, hu.email) as held_by_name,
          -- The assignee's break, so the client can offset the countdown by
          -- however long they've been (or are currently) on break — a break
          -- pauses every one of their running timers at once, computed here
@@ -116,7 +117,8 @@ const SELECT = `
     left join workspace w on w.id = t.channel_id
     left join post p on p.id = t.post_id
     left join platform pl on pl.id = p.platform_id
-    left join task_content_format cf on cf.id = t.content_format_id`;
+    left join task_content_format cf on cf.id = t.content_format_id
+    left join app_user hu on hu.id = t.held_by`;
 
 // Time-budget resolution (Phase 1): an editor's own rule for a format wins,
 // else the org-wide default, else no budget (task just has no timer).
@@ -411,12 +413,19 @@ tasksRouter.patch("/tasks/:id", requireEditor, async (req, res, next) => {
       sets.push(`completed_at = case when $${params.length} = 'done' then coalesce(completed_at, now()) else null end`);
     }
 
-    // Admin Hold / Resume — parks an in-progress task (it stays In Progress,
-    // just flagged) and pauses its time-budget countdown; resuming picks the
-    // clock back up from where it left off. Only an admin can do either.
+    // Hold / Resume — parks an in-progress task (it stays In Progress, just
+    // flagged) and pauses its time-budget countdown; resuming picks the clock
+    // back up from where it left off. Self-service: an admin OR the task's own
+    // assignee can do either. This is symmetric — release permission does NOT
+    // depend on who applied the hold (held_by is informational only), so an
+    // admin can resume an assignee's hold and vice-versa. Mirrors the exact
+    // assignee identity check the forward-status-move gate uses above.
     if (d.onHold !== undefined && d.onHold !== prior.on_hold) {
       if (req.role !== "admin") {
-        return res.status(403).json({ error: "Only an admin can put a task on hold or resume it." });
+        const myEditorId = await callerEditorId(req);
+        if (!prior.editor_id || myEditorId !== prior.editor_id) {
+          return res.status(403).json({ error: "Only an admin or the task's assignee can put it on hold or resume it." });
+        }
       }
       if (d.onHold) {
         // Pause: bank whatever's elapsed and stop the clock (mirrors Review).
@@ -426,6 +435,8 @@ tasksRouter.patch("/tasks/:id", requireEditor, async (req, res, next) => {
           push("budget_started_at", null);
         }
         push("on_hold", true);
+        // Record who applied this hold — informational, for the badge.
+        push("held_by", req.user.sub);
       } else {
         // Resume: restart the countdown from what was banked (mirrors accept).
         if (prior.budget_hours != null) {

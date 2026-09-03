@@ -191,9 +191,12 @@ export type Task = {
   // False when assigned by someone other than the assignee — the timer
   // doesn't start until they accept (POST /tasks/:id/accept).
   accepted: boolean;
-  // Admin "Hold": task is parked (stays In Progress, timer paused) until an
-  // admin resumes it.
+  // "Hold": task is parked (stays In Progress, timer paused) until an admin or
+  // the assignee resumes it. held_by/held_by_name record who applied the
+  // current hold (informational — shown on the badge).
   on_hold: boolean;
+  held_by: string | null;
+  held_by_name: string | null;
   // Social Media context — only set when post_id is set.
   post_title: string | null;
   post_permalink: string | null;
