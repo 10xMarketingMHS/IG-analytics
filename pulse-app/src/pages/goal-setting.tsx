@@ -3,6 +3,7 @@ import { toast } from "sonner";
 import { api, ApiError, API_BASE } from "@/lib/api";
 import { useWorkspaces } from "@/lib/workspaces-context";
 import { useEditors } from "@/lib/use-editors";
+import { goalPointsTotal } from "@/lib/goal-points";
 
 // Goal Setting — individual monthly capacity planning + performance tracking.
 // Admin-only; independent of Task Points / the leaderboard. JPH is hours-per-job
@@ -46,7 +47,7 @@ async function exportMonth(ym: string): Promise<void> {
 }
 const CAT_LABEL: Record<string, string> = { social: "Social", ad: "Ads", service: "Service" };
 
-type GoalRow = { contentFormatId: string; name: string; icon: string; category: string | null; jc: number | null; jph: number };
+type GoalRow = { contentFormatId: string; name: string; icon: string; category: string | null; jc: number | null; jph: number; points: number };
 type Cap = { workingDays: number; hoursPerDay: number };
 type GoalsResp = {
   month: string;
@@ -169,6 +170,15 @@ function GoalEditor({ editorId, month }: { editorId: string; month: string }) {
   const balance = capacityHours - plannedHours;
   const util = capacityHours > 0 ? (plannedHours / capacityHours) * 100 : 0;
   const status = statusFor(util);
+  // Goal points = Σ(JC × content-type points) — informational, live from the
+  // form (blank JC contributes 0). Shared with Overall Progress via goalPointsTotal.
+  const goalPoints = useMemo(
+    () => goalPointsTotal((data?.rows ?? []).map((r) => ({
+      jc: jc[r.contentFormatId]?.trim() ? Number(jc[r.contentFormatId]) : null,
+      points: r.points,
+    }))),
+    [data, jc],
+  );
 
   async function saveCapacity(scope: "org" | "editor", cap: Cap) {
     try {
@@ -254,8 +264,17 @@ function GoalEditor({ editorId, month }: { editorId: string; month: string }) {
         <div className={"home-stat " + status.cls}><div className="hs-v">{round1(util)}%</div><div className="hs-l">Utilization · {status.label}</div></div>
       </div>
 
+      {/* Goal points — a different unit (points, not hours/%), so its own card. */}
+      <div className="card pad" style={{ marginTop: 12, display: "flex", alignItems: "baseline", gap: 14, flexWrap: "wrap" }}>
+        <div className="hs-v" style={{ fontSize: 30, color: "var(--accent-ink, #7c3aed)" }}>{round1(goalPoints)}</div>
+        <div>
+          <div style={{ fontWeight: 700 }}>Goal points</div>
+          <div className="hint" style={{ margin: 0 }}>Σ (JC × the content type's points) — a target, not hours.</div>
+        </div>
+      </div>
+
       <div className="formfoot" style={{ marginTop: 16 }}>
-        <div className="hint" style={{ margin: 0, flex: 1 }}>Goals never feed scoring or rank — this is capacity planning only.</div>
+        <div className="hint" style={{ margin: 0, flex: 1 }}>This total is informational — it doesn't add to anyone's Task Points or change their rank.</div>
         <button type="button" className="btn btn-primary" disabled={busy} onClick={saveGoals}>{busy ? "Saving…" : "Save goals"}</button>
       </div>
     </>

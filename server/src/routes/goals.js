@@ -61,7 +61,7 @@ goalsRouter.get("/goals", requireAdmin, async (req, res, next) => {
     const { rows: mrow } = await pool.query("select date_trunc('month', $1::date)::date m", [monthIn]);
     const month = mrow[0].m;
     const { rows: formats } = await pool.query(
-      "select id, name, icon, category, sort_order from task_content_format where org_id=$1 and active order by category, sort_order, name",
+      "select id, name, icon, category, sort_order, points from task_content_format where org_id=$1 and active order by category, sort_order, name",
       [req.orgId],
     );
     const { rows: goals } = await pool.query(
@@ -76,6 +76,7 @@ goalsRouter.get("/goals", requireAdmin, async (req, res, next) => {
       const budget = g ? null : await resolveBudgetHours(req.orgId, editorId, f.id);
       rows.push({
         contentFormatId: f.id, name: f.name, icon: f.icon, category: f.category,
+        points: Number(f.points),
         jc: g ? Number(g.jc) : null,
         jph: g ? Number(g.jph) : (budget != null ? Number(budget) : 0),
       });
