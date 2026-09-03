@@ -3,7 +3,7 @@ import { toast } from "sonner";
 import { api, ApiError, API_BASE } from "@/lib/api";
 import { useWorkspaces } from "@/lib/workspaces-context";
 import { useEditors } from "@/lib/use-editors";
-import { goalPointsTotal } from "@/lib/goal-points";
+import { goalPointsTotal, goalBreakdown } from "@/lib/goal-points";
 
 // Goal Setting — individual monthly capacity planning + performance tracking.
 // Admin-only; independent of Task Points / the leaderboard. JPH is hours-per-job
@@ -58,14 +58,15 @@ type GoalsResp = {
 };
 type PerfRow = {
   contentFormatId: string; name: string; icon: string; category: string | null;
-  goalJC: number; actualJC: number; jph: number; goalHours: number; actualHours: number; balance: number; achievement: number | null;
+  goalJC: number; actualJC: number; jph: number; points: number; goalHours: number; actualHours: number; balance: number; achievement: number | null;
 };
+const whole = (n: number) => Math.round(n);
 
 export function GoalSettingSection() {
   const { isAdmin } = useWorkspaces();
   const { editors } = useEditors();
   const [month, setMonth] = useState(thisMonthStr());
-  const [view, setView] = useState<"goals" | "performance">("goals");
+  const [view, setView] = useState<"goals" | "performance" | "discipline">("goals");
   const [editorId, setEditorId] = useState<string>("");
   // Periods that actually have goal data — drives the Performance picker + export.
   const [dataMonths, setDataMonths] = useState<string[]>([]);
@@ -98,6 +99,7 @@ export function GoalSettingSection() {
         <div className="seg" style={{ marginBottom: 0 }}>
           <button type="button" className={view === "goals" ? "on" : ""} onClick={() => setView("goals")}>🎯 Set Goals</button>
           <button type="button" className={view === "performance" ? "on" : ""} onClick={() => setView("performance")}>📈 Performance</button>
+          <button type="button" className={view === "discipline" ? "on" : ""} onClick={() => setView("discipline")}>⚖️ Discipline</button>
         </div>
         {view === "goals" ? (
           <label className="f" style={{ margin: 0 }}>Month{" "}
@@ -111,12 +113,14 @@ export function GoalSettingSection() {
             </select>
           </label>
         )}
-        <label className="f" style={{ margin: 0 }}>Editor{" "}
-          <select className="t" style={{ maxWidth: 200, display: "inline-block" }} value={editorId} onChange={(e) => setEditorId(e.target.value)}>
-            <option value="">Select an editor…</option>
-            {activeEditors.map((e) => (<option key={e.id} value={e.id}>{e.name}</option>))}
-          </select>
-        </label>
+        {view !== "discipline" && (
+          <label className="f" style={{ margin: 0 }}>Editor{" "}
+            <select className="t" style={{ maxWidth: 200, display: "inline-block" }} value={editorId} onChange={(e) => setEditorId(e.target.value)}>
+              <option value="">Select an editor…</option>
+              {activeEditors.map((e) => (<option key={e.id} value={e.id}>{e.name}</option>))}
+            </select>
+          </label>
+        )}
         {view === "performance" && (
           <button type="button" className="btn btn-primary" style={{ marginLeft: "auto" }}
             disabled={!dataMonths.includes(month)}
@@ -124,7 +128,11 @@ export function GoalSettingSection() {
         )}
       </div>
 
-      {!editorId ? (
+      {view === "discipline" ? (
+        dataMonths.length === 0
+          ? <div className="card pad"><div className="hint">No goal data yet — set goals for a month first.</div></div>
+          : <DisciplineTab key={month} month={`${month}-01`} />
+      ) : !editorId ? (
         <div className="card pad"><div className="hint">Pick an editor to {view === "goals" ? "set their goals" : "see their performance"} for {month}.</div></div>
       ) : view === "goals" ? (
         <GoalEditor key={editorId + month} editorId={editorId} month={`${month}-01`} />
@@ -300,15 +308,31 @@ function CapInputs({ label, cap, faded, onChange, onSave }: { label: string; cap
 
 function PerformanceReport({ editorId, month }: { editorId: string; month: string }) {
   const [rows, setRows] = useState<PerfRow[] | null>(null);
+  const [discipline, setDiscipline] = useState<number | null>(null);
   useEffect(() => {
-    api<{ rows: PerfRow[] }>(`/goals/performance?editorId=${editorId}&month=${month}`)
-      .then((d) => setRows(d.rows))
+    api<{ rows: PerfRow[]; discipline: number | null }>(`/goals/performance?editorId=${editorId}&month=${month}`)
+      .then((d) => { setRows(d.rows); setDiscipline(d.discipline); })
       .catch((e) => toast.error(e instanceof ApiError ? e.message : "Couldn't load performance."));
   }, [editorId, month]);
 
   if (!rows) return <div className="card pad"><div className="hint">Loading…</div></div>;
   const tot = rows.reduce((a, r) => ({ gj: a.gj + r.goalJC, aj: a.aj + r.actualJC, gh: a.gh + r.goalHours, ah: a.ah + r.actualHours }), { gj: 0, aj: 0, gh: 0, ah: 0 });
+  const bd = goalBreakdown(rows, discipline);
   return (
+    <>
+      {/* 80/20 Overall Score breakdown */}
+      {bd ? (
+        <div className="home-stats" style={{ marginBottom: 16 }}>
+          <div className="home-stat"><div className="hs-v">{whole(bd.total)}</div><div className="hs-l">Total Goal Points</div></div>
+          <div className="home-stat accent"><div className="hs-v">{whole(bd.earned)}</div><div className="hs-l">Editor Earned (80%)</div></div>
+          <div className="home-stat info"><div className="hs-v">{whole(bd.discipline)}{bd.disciplineIsDefault ? "*" : ""}</div><div className="hs-l">Admin Discipline (20%)</div></div>
+          <div className="home-stat" style={{ borderColor: "var(--accent, #7c3aed)", borderWidth: 2 }}><div className="hs-v" style={{ color: "var(--accent-ink, #7c3aed)" }}>{whole(bd.overall)}</div><div className="hs-l">Overall Score</div></div>
+        </div>
+      ) : (
+        <div className="card pad" style={{ marginBottom: 16 }}><div className="hint">No goal set this month — nothing to score.</div></div>
+      )}
+      {bd?.disciplineIsDefault && <div className="hint" style={{ margin: "-8px 0 12px" }}>* Discipline not yet reviewed — counted at full marks ({whole(bd.ceiling)}). Set it in the Discipline tab.</div>}
+
     <div className="card pad" style={{ overflowX: "auto" }}>
       <table className="tbl">
         <thead>
@@ -352,5 +376,113 @@ function PerformanceReport({ editorId, month }: { editorId: string; month: strin
       </table>
       <div className="hint" style={{ marginTop: 10 }}>Actual JC = tasks of that content type completed by this editor this month. Actual Hours = Actual JC × the goal's stored JPH (an estimate, not timer data).</div>
     </div>
+    </>
+  );
+}
+
+// ── Discipline tab — bulk admin entry of the 20% Discipline Points per editor ──
+type DiscEd = { editorId: string; editorName: string; rows: { goalJC: number; actualJC: number; points: number }[]; discipline: number | null; note: string | null; updatedAt: string | null };
+function DisciplineTab({ month }: { month: string }) {
+  const [editors, setEditors] = useState<DiscEd[] | null>(null);
+  const [pts, setPts] = useState<Record<string, string>>({});
+  const [notes, setNotes] = useState<Record<string, string>>({});
+  const [noteOpen, setNoteOpen] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  const load = useCallback(() => {
+    api<{ editors: DiscEd[] }>(`/goals/discipline?month=${month}`)
+      .then((d) => {
+        setEditors(d.editors);
+        setPts(Object.fromEntries(d.editors.map((e) => [e.editorId, e.discipline == null ? "" : String(e.discipline)])));
+        setNotes(Object.fromEntries(d.editors.map((e) => [e.editorId, e.note ?? ""])));
+      })
+      .catch((e) => toast.error(e instanceof ApiError ? e.message : "Couldn't load discipline."));
+  }, [month]);
+  useEffect(() => { load(); }, [load]);
+
+  async function save() {
+    if (!editors) return;
+    // Client-side ceiling check.
+    for (const ed of editors) {
+      const bd = goalBreakdown(ed.rows, null);
+      const raw = pts[ed.editorId]?.trim();
+      if (raw && bd && Number(raw) > bd.ceiling + 0.001) {
+        toast.error(`${ed.editorName}: discipline points exceed the ceiling (${whole(bd.ceiling)}).`);
+        return;
+      }
+    }
+    setBusy(true);
+    try {
+      const entries = editors.map((ed) => ({
+        editorId: ed.editorId,
+        points: pts[ed.editorId]?.trim() === "" || pts[ed.editorId] == null ? null : Number(pts[ed.editorId]),
+        note: notes[ed.editorId]?.trim() || null,
+      }));
+      await api("/goals/discipline", { method: "PUT", body: JSON.stringify({ month, entries }) });
+      toast.success("Discipline points saved.");
+      load();
+    } catch (e) { toast.error(e instanceof ApiError ? e.message : "Couldn't save."); }
+    finally { setBusy(false); }
+  }
+
+  if (!editors) return <div className="card pad"><div className="hint">Loading…</div></div>;
+  return (
+    <>
+      <div className="card pad" style={{ overflowX: "auto" }}>
+        <table className="tbl">
+          <thead>
+            <tr>
+              <th>Editor</th><th style={{ textAlign: "center" }}>Total Goal Pts</th><th style={{ textAlign: "center" }}>Earned (80%)</th>
+              <th style={{ textAlign: "center" }}>Discipline (0–ceiling)</th><th style={{ textAlign: "center" }}>Overall Score</th>
+              <th style={{ textAlign: "center" }}>Note</th><th style={{ textAlign: "center" }}>Status</th>
+            </tr>
+          </thead>
+          <tbody>
+            {editors.map((ed) => {
+              const raw = pts[ed.editorId]?.trim();
+              const typed = raw === "" || raw == null ? null : Number(raw);
+              const bd = goalBreakdown(ed.rows, typed);
+              const reviewed = ed.discipline != null;
+              return (
+                <tr key={ed.editorId}>
+                  <td style={{ fontWeight: 650 }}>{ed.editorName}</td>
+                  {bd ? <>
+                    <td style={{ textAlign: "center" }}>{whole(bd.total)}</td>
+                    <td style={{ textAlign: "center" }}>{whole(bd.earned)}</td>
+                    <td style={{ textAlign: "center" }}>
+                      <input className="t" style={{ maxWidth: 90, textAlign: "center" }} type="number" min="0" step="1"
+                        placeholder={`— (≤${whole(bd.ceiling)})`} value={pts[ed.editorId] ?? ""}
+                        onChange={(e) => setPts((s) => ({ ...s, [ed.editorId]: e.target.value }))} />
+                    </td>
+                    <td style={{ textAlign: "center", fontWeight: 700, color: "var(--accent-ink, #7c3aed)" }}>{whole(bd.overall)}</td>
+                  </> : <>
+                    <td style={{ textAlign: "center" }} colSpan={4}><span className="st dim">No goal set</span>
+                      <input className="t" style={{ maxWidth: 90, textAlign: "center", marginLeft: 8 }} type="number" min="0" step="1"
+                        placeholder="—" value={pts[ed.editorId] ?? ""} onChange={(e) => setPts((s) => ({ ...s, [ed.editorId]: e.target.value }))} />
+                    </td>
+                  </>}
+                  <td style={{ textAlign: "center" }}>
+                    <button type="button" className="linkbtn" onClick={() => setNoteOpen(noteOpen === ed.editorId ? null : ed.editorId)} title={notes[ed.editorId] || "Add a note"}>📝{notes[ed.editorId]?.trim() ? "•" : ""}</button>
+                  </td>
+                  <td style={{ textAlign: "center" }}><span className={"task-statuschip " + (reviewed ? "good" : "warn")}>{reviewed ? "Reviewed" : "Pending"}</span></td>
+                </tr>
+              );
+            })}
+            {noteOpen && (
+              <tr>
+                <td colSpan={7}>
+                  <input className="t" placeholder="Note (why the deduction, optional)…" value={notes[noteOpen] ?? ""}
+                    onChange={(e) => setNotes((s) => ({ ...s, [noteOpen]: e.target.value }))} autoFocus />
+                </td>
+              </tr>
+            )}
+          </tbody>
+        </table>
+        <div className="hint" style={{ marginTop: 10 }}>Blank = not reviewed (counts at the full 20% ceiling). Enter a value only to deduct. Discipline points can't exceed an editor's 20% ceiling.</div>
+      </div>
+      <div className="formfoot" style={{ marginTop: 14 }}>
+        <div className="hint" style={{ margin: 0, flex: 1 }}>Overall Score = Earned + Discipline. Informational — it doesn't change Task Points or rank.</div>
+        <button type="button" className="btn btn-primary" disabled={busy} onClick={save}>{busy ? "Saving…" : "Save discipline"}</button>
+      </div>
+    </>
   );
 }

@@ -7,6 +7,8 @@ import { useResource } from "@/lib/use-resource";
 import { rangeFor, inRange, compactNum } from "@/lib/date-range";
 import { performanceScore, formatScore } from "@/lib/score";
 import { ymd, myRankInRange } from "@/lib/task-points";
+import { goalBreakdown } from "@/lib/goal-points";
+import { api } from "@/lib/api";
 import type { Post } from "@/lib/types";
 
 function todayStr() {
@@ -191,6 +193,8 @@ export function HomePage() {
         ))}
       </div>
 
+      <MyGoalScore />
+
       {/* Two pillars */}
       <div className="home-cols">
         {/* Operations */}
@@ -290,5 +294,39 @@ export function HomePage() {
         </div>
       </div>
     </section>
+  );
+}
+
+// The signed-in editor's own monthly goal score (Earned 80% + Discipline 20% =
+// Overall) — read-only, current month, their figures only. Hidden when they
+// have no linked editor record or no goals set this month.
+function currentMonthFirst(): string {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-01`;
+}
+function MyGoalScore() {
+  const { user } = useAuth();
+  const [data, setData] = useState<{ rows: { goalJC: number; actualJC: number; points: number }[]; discipline: number | null } | null>(null);
+  useEffect(() => {
+    if (!user?.editorId) return;
+    api<{ rows: { goalJC: number; actualJC: number; points: number }[]; discipline: number | null }>(`/goals/my-breakdown?month=${currentMonthFirst()}`)
+      .then((d) => setData(d))
+      .catch(() => {});
+  }, [user?.editorId]);
+  if (!user?.editorId || !data) return null;
+  const bd = goalBreakdown(data.rows, data.discipline);
+  if (!bd) return null; // no goals assigned this month
+  const w = (n: number) => Math.round(n);
+  return (
+    <>
+      <div className="home-colhead" style={{ marginTop: 4 }}>
+        <span className="hc-tag ops">This month</span><h3>Your goal score</h3>
+      </div>
+      <div className="home-stats" style={{ marginBottom: 18 }}>
+        <div className="home-stat accent"><div className="hs-v">{w(bd.earned)}</div><div className="hs-l">Earned (80%)</div></div>
+        <div className="home-stat info"><div className="hs-v">{w(bd.discipline)}{bd.disciplineIsDefault ? "*" : ""}</div><div className="hs-l">Discipline (20%){bd.disciplineIsDefault ? " · full marks" : ""}</div></div>
+        <div className="home-stat"><div className="hs-v">{w(bd.overall)}</div><div className="hs-l">Overall / {w(bd.total)}</div></div>
+      </div>
+    </>
   );
 }

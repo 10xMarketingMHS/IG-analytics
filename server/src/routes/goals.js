@@ -2,7 +2,7 @@ import { Router } from "express";
 import { z } from "zod";
 import ExcelJS from "exceljs";
 import { pool } from "../db.js";
-import { requireAdmin } from "../resolve-workspace.js";
+import { requireAdmin, requireEditor } from "../resolve-workspace.js";
 import { resolveBudgetHours } from "./tasks.js";
 
 export const goalsRouter = Router();
@@ -193,7 +193,7 @@ goalsRouter.get("/goals/performance", requireAdmin, async (req, res, next) => {
     const { rows: mrow } = await pool.query("select date_trunc('month', $1::date)::date m", [monthIn]);
     const month = mrow[0].m;
     const { rows: goals } = await pool.query(
-      `select g.content_format_id, g.jc, g.jph, cf.name, cf.icon, cf.category
+      `select g.content_format_id, g.jc, g.jph, cf.name, cf.icon, cf.category, cf.points
          from editor_goal g join task_content_format cf on cf.id = g.content_format_id
         where g.org_id=$1 and g.editor_id=$2 and g.period_month=$3
         order by cf.category, cf.sort_order, cf.name`,
@@ -218,13 +218,22 @@ goalsRouter.get("/goals/performance", requireAdmin, async (req, res, next) => {
       const actualHours = actualJC * jph;
       return {
         contentFormatId: g.content_format_id, name: g.name, icon: g.icon, category: g.category,
-        goalJC, actualJC, jph,
+        goalJC, actualJC, jph, points: Number(g.points),
         goalHours, actualHours,
         balance: goalHours - actualHours,
         achievement: goalJC > 0 ? (actualJC / goalJC) * 100 : null,
       };
     });
-    res.json({ month, rows });
+    // Stored Admin Discipline Points for this editor+month (null = not reviewed).
+    const disc = (await pool.query(
+      "select points, note from editor_discipline_points where org_id=$1 and editor_id=$2 and period_month=$3",
+      [req.orgId, editorId, month],
+    )).rows[0];
+    res.json({
+      month, rows,
+      discipline: disc && disc.points != null ? Number(disc.points) : null,
+      note: disc?.note ?? null,
+    });
   } catch (err) {
     next(err);
   }
@@ -334,6 +343,151 @@ goalsRouter.get("/goals/export", requireAdmin, async (req, res, next) => {
     res.setHeader("Content-Type", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
     res.setHeader("Content-Disposition", `attachment; filename="goal-setting-${monthStr}.xlsx"`);
     res.send(Buffer.from(buf));
+  } catch (err) {
+    next(err);
+  }
+});
+
+// GET /goals/discipline?month= — admin bulk view: one entry per active editor
+// with the raw per-type goal/actual/points data (frontend computes Total/Earned/
+// Overall via the shared goalBreakdown), plus the stored Discipline Points/note.
+goalsRouter.get("/goals/discipline", requireAdmin, async (req, res, next) => {
+  const monthIn = req.query.month;
+  if (!monthIn) return res.status(400).json({ error: "month is required." });
+  try {
+    const { rows: mrow } = await pool.query("select date_trunc('month', $1::date)::date m", [monthIn]);
+    const month = mrow[0].m;
+    const { rows: editors } = await pool.query(
+      "select id, name from editor where org_id=$1 and active order by name", [req.orgId],
+    );
+    const { rows: goals } = await pool.query(
+      `select g.editor_id, g.content_format_id, g.jc, cf.points
+         from editor_goal g join task_content_format cf on cf.id = g.content_format_id
+        where g.org_id=$1 and g.period_month=$2`,
+      [req.orgId, month],
+    );
+    const { rows: actuals } = await pool.query(
+      `select editor_id, content_format_id, count(*)::int actual
+         from task
+        where org_id=$1 and status='done' and content_format_id is not null
+          and completed_at >= $2 and completed_at < ($2::date + interval '1 month')
+        group by editor_id, content_format_id`,
+      [req.orgId, month],
+    );
+    const { rows: disc } = await pool.query(
+      "select editor_id, points, note, updated_at from editor_discipline_points where org_id=$1 and period_month=$2",
+      [req.orgId, month],
+    );
+    const actualBy = new Map(actuals.map((a) => [`${a.editor_id}:${a.content_format_id}`, a.actual]));
+    const discBy = new Map(disc.map((d) => [d.editor_id, d]));
+    const goalsByEd = new Map();
+    for (const g of goals) {
+      if (!goalsByEd.has(g.editor_id)) goalsByEd.set(g.editor_id, []);
+      goalsByEd.get(g.editor_id).push({
+        goalJC: Number(g.jc),
+        actualJC: actualBy.get(`${g.editor_id}:${g.content_format_id}`) ?? 0,
+        points: Number(g.points),
+      });
+    }
+    res.json({
+      month,
+      editors: editors.map((e) => {
+        const d = discBy.get(e.id);
+        return {
+          editorId: e.id, editorName: e.name,
+          rows: goalsByEd.get(e.id) ?? [],
+          discipline: d && d.points != null ? Number(d.points) : null,
+          note: d?.note ?? null,
+          updatedAt: d?.updated_at ?? null,
+        };
+      }),
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
+const DisciplineSchema = z.object({
+  month: z.string(),
+  entries: z.array(z.object({
+    editorId: z.string().uuid(),
+    points: z.number().min(0).nullable(),
+    note: z.string().max(2000).nullable().optional(),
+  })),
+});
+
+// PUT /goals/discipline — admin bulk save. Each points value is validated
+// server-side against that editor's live 20% ceiling (0.2 × Total Goal Points).
+goalsRouter.put("/goals/discipline", requireAdmin, async (req, res, next) => {
+  const parsed = DisciplineSchema.safeParse(req.body);
+  if (!parsed.success) return res.status(400).json({ error: "Invalid discipline entries." });
+  const d = parsed.data;
+  try {
+    const { rows: mrow } = await pool.query("select date_trunc('month', $1::date)::date m", [d.month]);
+    const month = mrow[0].m;
+    for (const e of d.entries) {
+      if (e.points != null) {
+        const { rows } = await pool.query(
+          `select coalesce(sum(g.jc * cf.points), 0) total
+             from editor_goal g join task_content_format cf on cf.id = g.content_format_id
+            where g.org_id=$1 and g.editor_id=$2 and g.period_month=$3`,
+          [req.orgId, e.editorId, month],
+        );
+        const ceiling = 0.2 * Number(rows[0].total);
+        // small epsilon for float noise
+        if (e.points > ceiling + 0.001) {
+          return res.status(400).json({ error: `Discipline points exceed the ceiling (${Math.round(ceiling)}) for one editor.` });
+        }
+      }
+      await pool.query(
+        `insert into editor_discipline_points (org_id, editor_id, period_month, points, note, updated_by, updated_at)
+         values ($1,$2,$3,$4,$5,$6, now())
+         on conflict (org_id, editor_id, period_month)
+         do update set points = excluded.points, note = excluded.note, updated_by = excluded.updated_by, updated_at = now()`,
+        [req.orgId, e.editorId, month, e.points, e.note ?? null, req.user.sub],
+      );
+    }
+    res.json({ ok: true });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// GET /goals/my-breakdown?month= — the caller's OWN raw goal/actual/points data
+// + stored discipline for the month (My Day). Editor-facing, read-only; never
+// exposes anyone else's figures.
+goalsRouter.get("/goals/my-breakdown", requireEditor, async (req, res, next) => {
+  const monthIn = req.query.month;
+  if (!monthIn) return res.status(400).json({ error: "month is required." });
+  try {
+    const editorId = (await pool.query("select editor_id from app_user where id=$1", [req.user.sub])).rows[0]?.editor_id;
+    if (!editorId) return res.json({ month: monthIn, rows: [], discipline: null, note: null, unlinked: true });
+    const { rows: mrow } = await pool.query("select date_trunc('month', $1::date)::date m", [monthIn]);
+    const month = mrow[0].m;
+    const { rows: goals } = await pool.query(
+      `select g.content_format_id, g.jc, cf.points
+         from editor_goal g join task_content_format cf on cf.id = g.content_format_id
+        where g.org_id=$1 and g.editor_id=$2 and g.period_month=$3`,
+      [req.orgId, editorId, month],
+    );
+    const { rows: actuals } = await pool.query(
+      `select content_format_id, count(*)::int actual from task
+        where org_id=$1 and editor_id=$2 and status='done' and content_format_id is not null
+          and completed_at >= $3 and completed_at < ($3::date + interval '1 month')
+        group by content_format_id`,
+      [req.orgId, editorId, month],
+    );
+    const actualBy = new Map(actuals.map((a) => [a.content_format_id, a.actual]));
+    const disc = (await pool.query(
+      "select points, note from editor_discipline_points where org_id=$1 and editor_id=$2 and period_month=$3",
+      [req.orgId, editorId, month],
+    )).rows[0];
+    res.json({
+      month,
+      rows: goals.map((g) => ({ goalJC: Number(g.jc), actualJC: actualBy.get(g.content_format_id) ?? 0, points: Number(g.points) })),
+      discipline: disc && disc.points != null ? Number(disc.points) : null,
+      note: disc?.note ?? null,
+    });
   } catch (err) {
     next(err);
   }
