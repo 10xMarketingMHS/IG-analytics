@@ -7,7 +7,7 @@ import { useResource } from "@/lib/use-resource";
 import { rangeFor, inRange, compactNum } from "@/lib/date-range";
 import { performanceScore, formatScore } from "@/lib/score";
 import { ymd, myRankInRange } from "@/lib/task-points";
-import { goalBreakdown } from "@/lib/goal-points";
+import { goalBreakdown, DISCIPLINE_CRITERIA, type Ratings } from "@/lib/goal-points";
 import { api } from "@/lib/api";
 import type { Post } from "@/lib/types";
 
@@ -306,15 +306,15 @@ function currentMonthFirst(): string {
 }
 function MyGoalScore() {
   const { user } = useAuth();
-  const [data, setData] = useState<{ rows: { goalJC: number; actualJC: number; points: number }[]; discipline: number | null } | null>(null);
+  const [data, setData] = useState<{ rows: { goalJC: number; actualJC: number; points: number }[]; ratings: Ratings } | null>(null);
   useEffect(() => {
     if (!user?.editorId) return;
-    api<{ rows: { goalJC: number; actualJC: number; points: number }[]; discipline: number | null }>(`/goals/my-breakdown?month=${currentMonthFirst()}`)
+    api<{ rows: { goalJC: number; actualJC: number; points: number }[]; ratings: Ratings }>(`/goals/my-breakdown?month=${currentMonthFirst()}`)
       .then((d) => setData(d))
       .catch(() => {});
   }, [user?.editorId]);
   if (!user?.editorId || !data) return null;
-  const bd = goalBreakdown(data.rows, data.discipline);
+  const bd = goalBreakdown(data.rows, data.ratings ?? {});
   if (!bd) return null; // no goals assigned this month
   const w = (n: number) => Math.round(n);
   return (
@@ -322,10 +322,20 @@ function MyGoalScore() {
       <div className="home-colhead" style={{ marginTop: 4 }}>
         <span className="hc-tag ops">This month</span><h3>Your goal score</h3>
       </div>
-      <div className="home-stats" style={{ marginBottom: 18 }}>
+      <div className="home-stats" style={{ marginBottom: 10 }}>
         <div className="home-stat accent"><div className="hs-v">{w(bd.earned)}</div><div className="hs-l">Earned (80%)</div></div>
-        <div className="home-stat info"><div className="hs-v">{w(bd.discipline)}{bd.disciplineIsDefault ? "*" : ""}</div><div className="hs-l">Discipline (20%){bd.disciplineIsDefault ? " · full marks" : ""}</div></div>
+        <div className="home-stat info"><div className="hs-v">{w(bd.discipline)}{!bd.reviewed ? "*" : ""}</div><div className="hs-l">Discipline (20%)</div></div>
         <div className="home-stat"><div className="hs-v">{w(bd.overall)}</div><div className="hs-l">Overall / {w(bd.total)}</div></div>
+      </div>
+      {/* The 5 criteria behind the discipline number — "where did I lose points". */}
+      <div className="card pad" style={{ marginBottom: 18, display: "flex", gap: 18, flexWrap: "wrap", fontSize: 12.5 }}>
+        {DISCIPLINE_CRITERIA.map((c) => {
+          const v = data.ratings?.[c.key];
+          return (
+            <span key={c.key}>{c.label}: <b>{v == null ? "5" : v}</b>/5{v == null ? <span className="st dim"> (default)</span> : ""}</span>
+          );
+        })}
+        {!bd.reviewed && <span className="st dim">* not yet fully reviewed</span>}
       </div>
     </>
   );

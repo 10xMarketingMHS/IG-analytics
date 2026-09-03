@@ -1,9 +1,9 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { Fragment, useCallback, useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
 import { api, ApiError, API_BASE } from "@/lib/api";
 import { useWorkspaces } from "@/lib/workspaces-context";
 import { useEditors } from "@/lib/use-editors";
-import { goalPointsTotal, goalBreakdown } from "@/lib/goal-points";
+import { goalPointsTotal, goalBreakdown, DISCIPLINE_CRITERIA, type Ratings } from "@/lib/goal-points";
 
 // Goal Setting — individual monthly capacity planning + performance tracking.
 // Admin-only; independent of Task Points / the leaderboard. JPH is hours-per-job
@@ -306,32 +306,56 @@ function CapInputs({ label, cap, faded, onChange, onSave }: { label: string; cap
   );
 }
 
+// Read-only 0–5 star display / picker.
+function StarRating({ value, onChange, readOnly }: { value: number | null; onChange?: (v: number | null) => void; readOnly?: boolean }) {
+  return (
+    <span style={{ display: "inline-flex", gap: 1, alignItems: "center" }}>
+      {[1, 2, 3, 4, 5].map((n) => (
+        <button key={n} type="button" disabled={readOnly}
+          onClick={() => onChange?.(value === n ? null : n)}
+          style={{ background: "none", border: 0, padding: 0, lineHeight: 1, fontSize: 16, cursor: readOnly ? "default" : "pointer", color: value != null && n <= value ? "#f59e0b" : "var(--border2, #cbd5e1)" }}
+          title={`${n}/5`}>★</button>
+      ))}
+      {value == null && <span className="st dim" style={{ marginLeft: 4, fontSize: 11 }}>not set</span>}
+    </span>
+  );
+}
+
 function PerformanceReport({ editorId, month }: { editorId: string; month: string }) {
   const [rows, setRows] = useState<PerfRow[] | null>(null);
-  const [discipline, setDiscipline] = useState<number | null>(null);
+  const [ratings, setRatings] = useState<Ratings>({});
   useEffect(() => {
-    api<{ rows: PerfRow[]; discipline: number | null }>(`/goals/performance?editorId=${editorId}&month=${month}`)
-      .then((d) => { setRows(d.rows); setDiscipline(d.discipline); })
+    api<{ rows: PerfRow[]; ratings: Ratings }>(`/goals/performance?editorId=${editorId}&month=${month}`)
+      .then((d) => { setRows(d.rows); setRatings(d.ratings ?? {}); })
       .catch((e) => toast.error(e instanceof ApiError ? e.message : "Couldn't load performance."));
   }, [editorId, month]);
 
   if (!rows) return <div className="card pad"><div className="hint">Loading…</div></div>;
   const tot = rows.reduce((a, r) => ({ gj: a.gj + r.goalJC, aj: a.aj + r.actualJC, gh: a.gh + r.goalHours, ah: a.ah + r.actualHours }), { gj: 0, aj: 0, gh: 0, ah: 0 });
-  const bd = goalBreakdown(rows, discipline);
+  const bd = goalBreakdown(rows, ratings);
   return (
     <>
       {/* 80/20 Overall Score breakdown */}
-      {bd ? (
-        <div className="home-stats" style={{ marginBottom: 16 }}>
+      {bd ? (<>
+        <div className="home-stats" style={{ marginBottom: 12 }}>
           <div className="home-stat"><div className="hs-v">{whole(bd.total)}</div><div className="hs-l">Total Goal Points</div></div>
           <div className="home-stat accent"><div className="hs-v">{whole(bd.earned)}</div><div className="hs-l">Editor Earned (80%)</div></div>
-          <div className="home-stat info"><div className="hs-v">{whole(bd.discipline)}{bd.disciplineIsDefault ? "*" : ""}</div><div className="hs-l">Admin Discipline (20%)</div></div>
+          <div className="home-stat info"><div className="hs-v">{whole(bd.discipline)}{!bd.reviewed ? "*" : ""}</div><div className="hs-l">Admin Discipline (20%)</div></div>
           <div className="home-stat" style={{ borderColor: "var(--accent, #7c3aed)", borderWidth: 2 }}><div className="hs-v" style={{ color: "var(--accent-ink, #7c3aed)" }}>{whole(bd.overall)}</div><div className="hs-l">Overall Score</div></div>
         </div>
-      ) : (
+        {/* the 5 criterion ratings behind the Discipline number */}
+        <div className="card pad" style={{ marginBottom: 16, display: "flex", gap: 20, flexWrap: "wrap" }}>
+          {DISCIPLINE_CRITERIA.map((c) => (
+            <div key={c.key} style={{ display: "flex", flexDirection: "column", gap: 2 }}>
+              <span className="f" style={{ margin: 0 }}>{c.label}</span>
+              <StarRating value={ratings[c.key] ?? null} readOnly />
+            </div>
+          ))}
+          {!bd.reviewed && <div className="hint" style={{ margin: 0, alignSelf: "flex-end" }}>* Unrated criteria count at full marks (5) until set in the Discipline tab.</div>}
+        </div>
+      </>) : (
         <div className="card pad" style={{ marginBottom: 16 }}><div className="hint">No goal set this month — nothing to score.</div></div>
       )}
-      {bd?.disciplineIsDefault && <div className="hint" style={{ margin: "-8px 0 12px" }}>* Discipline not yet reviewed — counted at full marks ({whole(bd.ceiling)}). Set it in the Discipline tab.</div>}
 
     <div className="card pad" style={{ overflowX: "auto" }}>
       <table className="tbl">
@@ -381,44 +405,34 @@ function PerformanceReport({ editorId, month }: { editorId: string; month: strin
 }
 
 // ── Discipline tab — bulk admin entry of the 20% Discipline Points per editor ──
-type DiscEd = { editorId: string; editorName: string; rows: { goalJC: number; actualJC: number; points: number }[]; discipline: number | null; note: string | null; updatedAt: string | null };
+type DiscEd = { editorId: string; editorName: string; rows: { goalJC: number; actualJC: number; points: number }[]; ratings: Ratings; note: string | null; updatedAt: string | null };
 function DisciplineTab({ month }: { month: string }) {
   const [editors, setEditors] = useState<DiscEd[] | null>(null);
-  const [pts, setPts] = useState<Record<string, string>>({});
+  const [ratings, setRatings] = useState<Record<string, Ratings>>({});
   const [notes, setNotes] = useState<Record<string, string>>({});
-  const [noteOpen, setNoteOpen] = useState<string | null>(null);
+  const [expanded, setExpanded] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const load = useCallback(() => {
     api<{ editors: DiscEd[] }>(`/goals/discipline?month=${month}`)
       .then((d) => {
         setEditors(d.editors);
-        setPts(Object.fromEntries(d.editors.map((e) => [e.editorId, e.discipline == null ? "" : String(e.discipline)])));
+        setRatings(Object.fromEntries(d.editors.map((e) => [e.editorId, { ...e.ratings }])));
         setNotes(Object.fromEntries(d.editors.map((e) => [e.editorId, e.note ?? ""])));
       })
       .catch((e) => toast.error(e instanceof ApiError ? e.message : "Couldn't load discipline."));
   }, [month]);
   useEffect(() => { load(); }, [load]);
 
+  const setRate = (edId: string, key: string, v: number | null) =>
+    setRatings((s) => ({ ...s, [edId]: { ...s[edId], [key]: v } }));
+
   async function save() {
     if (!editors) return;
-    // Client-side ceiling check.
-    for (const ed of editors) {
-      const bd = goalBreakdown(ed.rows, null);
-      const raw = pts[ed.editorId]?.trim();
-      if (raw && bd && Number(raw) > bd.ceiling + 0.001) {
-        toast.error(`${ed.editorName}: discipline points exceed the ceiling (${whole(bd.ceiling)}).`);
-        return;
-      }
-    }
     setBusy(true);
     try {
-      const entries = editors.map((ed) => ({
-        editorId: ed.editorId,
-        points: pts[ed.editorId]?.trim() === "" || pts[ed.editorId] == null ? null : Number(pts[ed.editorId]),
-        note: notes[ed.editorId]?.trim() || null,
-      }));
+      const entries = editors.map((ed) => ({ editorId: ed.editorId, ratings: ratings[ed.editorId] ?? {}, note: notes[ed.editorId]?.trim() || null }));
       await api("/goals/discipline", { method: "PUT", body: JSON.stringify({ month, entries }) });
-      toast.success("Discipline points saved.");
+      toast.success("Discipline ratings saved.");
       load();
     } catch (e) { toast.error(e instanceof ApiError ? e.message : "Couldn't save."); }
     finally { setBusy(false); }
@@ -431,53 +445,53 @@ function DisciplineTab({ month }: { month: string }) {
         <table className="tbl">
           <thead>
             <tr>
-              <th>Editor</th><th style={{ textAlign: "center" }}>Total Goal Pts</th><th style={{ textAlign: "center" }}>Earned (80%)</th>
-              <th style={{ textAlign: "center" }}>Discipline (0–ceiling)</th><th style={{ textAlign: "center" }}>Overall Score</th>
-              <th style={{ textAlign: "center" }}>Note</th><th style={{ textAlign: "center" }}>Status</th>
+              <th></th><th>Editor</th><th style={{ textAlign: "center" }}>Total Goal Pts</th><th style={{ textAlign: "center" }}>Earned (80%)</th>
+              <th style={{ textAlign: "center" }}>Discipline (20%)</th><th style={{ textAlign: "center" }}>Overall Score</th>
+              <th style={{ textAlign: "center" }}>Status</th>
             </tr>
           </thead>
           <tbody>
             {editors.map((ed) => {
-              const raw = pts[ed.editorId]?.trim();
-              const typed = raw === "" || raw == null ? null : Number(raw);
-              const bd = goalBreakdown(ed.rows, typed);
-              const reviewed = ed.discipline != null;
+              const r = ratings[ed.editorId] ?? {};
+              const bd = goalBreakdown(ed.rows, r);
+              const isOpen = expanded === ed.editorId;
               return (
-                <tr key={ed.editorId}>
-                  <td style={{ fontWeight: 650 }}>{ed.editorName}</td>
-                  {bd ? <>
-                    <td style={{ textAlign: "center" }}>{whole(bd.total)}</td>
-                    <td style={{ textAlign: "center" }}>{whole(bd.earned)}</td>
-                    <td style={{ textAlign: "center" }}>
-                      <input className="t" style={{ maxWidth: 90, textAlign: "center" }} type="number" min="0" step="1"
-                        placeholder={`— (≤${whole(bd.ceiling)})`} value={pts[ed.editorId] ?? ""}
-                        onChange={(e) => setPts((s) => ({ ...s, [ed.editorId]: e.target.value }))} />
-                    </td>
-                    <td style={{ textAlign: "center", fontWeight: 700, color: "var(--accent-ink, #7c3aed)" }}>{whole(bd.overall)}</td>
-                  </> : <>
-                    <td style={{ textAlign: "center" }} colSpan={4}><span className="st dim">No goal set</span>
-                      <input className="t" style={{ maxWidth: 90, textAlign: "center", marginLeft: 8 }} type="number" min="0" step="1"
-                        placeholder="—" value={pts[ed.editorId] ?? ""} onChange={(e) => setPts((s) => ({ ...s, [ed.editorId]: e.target.value }))} />
-                    </td>
-                  </>}
-                  <td style={{ textAlign: "center" }}>
-                    <button type="button" className="linkbtn" onClick={() => setNoteOpen(noteOpen === ed.editorId ? null : ed.editorId)} title={notes[ed.editorId] || "Add a note"}>📝{notes[ed.editorId]?.trim() ? "•" : ""}</button>
-                  </td>
-                  <td style={{ textAlign: "center" }}><span className={"task-statuschip " + (reviewed ? "good" : "warn")}>{reviewed ? "Reviewed" : "Pending"}</span></td>
-                </tr>
+                <Fragment key={ed.editorId}>
+                  <tr className="clickrow" onClick={() => setExpanded(isOpen ? null : ed.editorId)}>
+                    <td style={{ width: 24, color: "var(--muted)" }}>{isOpen ? "▾" : "▸"}</td>
+                    <td style={{ fontWeight: 650 }}>{ed.editorName}</td>
+                    {bd ? <>
+                      <td style={{ textAlign: "center" }}>{whole(bd.total)}</td>
+                      <td style={{ textAlign: "center" }}>{whole(bd.earned)}</td>
+                      <td style={{ textAlign: "center" }}>{whole(bd.discipline)}<span className="st dim" style={{ fontSize: 10 }}> /{whole(bd.ceiling)}</span></td>
+                      <td style={{ textAlign: "center", fontWeight: 700, color: "var(--accent-ink, #7c3aed)" }}>{whole(bd.overall)}</td>
+                    </> : (
+                      <td style={{ textAlign: "center" }} colSpan={4}><span className="st dim">No goal set</span></td>
+                    )}
+                    <td style={{ textAlign: "center" }}><span className={"task-statuschip " + (bd?.reviewed ? "good" : "warn")}>{bd?.reviewed ? "Reviewed" : "Pending"}</span></td>
+                  </tr>
+                  {isOpen && (
+                    <tr>
+                      <td colSpan={7} onClick={(e) => e.stopPropagation()}>
+                        <div style={{ display: "flex", gap: 26, flexWrap: "wrap", padding: "6px 4px 10px" }}>
+                          {DISCIPLINE_CRITERIA.map((c) => (
+                            <div key={c.key} style={{ display: "flex", flexDirection: "column", gap: 3 }}>
+                              <span className="f" style={{ margin: 0 }}>{c.label}</span>
+                              <StarRating value={r[c.key] ?? null} onChange={(v) => setRate(ed.editorId, c.key, v)} />
+                            </div>
+                          ))}
+                        </div>
+                        <input className="t" placeholder="Note — why any deductions (covers all 5, optional)…"
+                          value={notes[ed.editorId] ?? ""} onChange={(e) => setNotes((s) => ({ ...s, [ed.editorId]: e.target.value }))} />
+                      </td>
+                    </tr>
+                  )}
+                </Fragment>
               );
             })}
-            {noteOpen && (
-              <tr>
-                <td colSpan={7}>
-                  <input className="t" placeholder="Note (why the deduction, optional)…" value={notes[noteOpen] ?? ""}
-                    onChange={(e) => setNotes((s) => ({ ...s, [noteOpen]: e.target.value }))} autoFocus />
-                </td>
-              </tr>
-            )}
           </tbody>
         </table>
-        <div className="hint" style={{ marginTop: 10 }}>Blank = not reviewed (counts at the full 20% ceiling). Enter a value only to deduct. Discipline points can't exceed an editor's 20% ceiling.</div>
+        <div className="hint" style={{ marginTop: 10 }}>Click a row to rate the 5 criteria (0–5 each). Unrated criteria count at full marks (5) — dock only when necessary. Discipline = (Σ ratings ÷ 25) × the 20% ceiling.</div>
       </div>
       <div className="formfoot" style={{ marginTop: 14 }}>
         <div className="hint" style={{ margin: 0, flex: 1 }}>Overall Score = Earned + Discipline. Informational — it doesn't change Task Points or rank.</div>
