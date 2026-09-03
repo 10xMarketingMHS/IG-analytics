@@ -43,7 +43,7 @@ function metaFor(pathname: string): [string, string] {
 
 export function AppShell() {
   const { user, logout } = useAuth();
-  const { active, isAdmin } = useWorkspaces();
+  const { active, isAdmin, hasPermission } = useWorkspaces();
   const { editors } = useEditors();
   const { theme, toggle } = useTheme();
   const location = useLocation();
@@ -93,7 +93,7 @@ export function AppShell() {
           {NAV_SECTIONS.map((section) => (
             <div key={section.key}>
               {section.label && <div className="navsec">{section.label}</div>}
-              {NAV_ITEMS.filter((i) => i.section === section.key && (!i.adminOnly || isAdmin)).map((item) => (
+              {NAV_ITEMS.filter((i) => i.section === section.key && (!i.adminOnly || isAdmin || (i.permission && hasPermission(i.permission)))).map((item) => (
                 <NavLink
                   key={item.href}
                   to={item.href}
@@ -172,7 +172,7 @@ export function AppShell() {
           <button className="btn icon" title="Theme" onClick={toggle}>
             {theme === "dark" ? "☀️" : "🌙"}
           </button>
-          {isAdmin && (
+          {(isAdmin || hasPermission("create_post")) && (
             <button
               className="btn btn-primary add-post-btn"
               onClick={() => navigate("/posts/new", { state: { backgroundLocation: location } })}

@@ -2,6 +2,7 @@ import { Router } from "express";
 import { z } from "zod";
 import { pool } from "../db.js";
 import { requireEditor } from "../resolve-workspace.js";
+import { requirePermission } from "../permissions.js";
 import { logActivity } from "../activity.js";
 import { resolveBudgetHours, nextTaskRef } from "./tasks.js";
 
@@ -193,7 +194,9 @@ postsRouter.get("/posts/:id", async (req, res, next) => {
   }
 });
 
-postsRouter.post("/posts", requireEditor, async (req, res, next) => {
+// Admin/editor by role, OR a viewer holding the create_post grant. A grant-only
+// creator is self-scoped below (they can only assign the post to themselves).
+postsRouter.post("/posts", requirePermission("create_post", { alsoAllow: ["editor"], message: "You don't have permission to create posts." }), async (req, res, next) => {
   const parsed = CreatePostSchema.safeParse(req.body);
   if (!parsed.success) {
     return res.status(400).json({ error: parsed.error.flatten().fieldErrors });
@@ -201,6 +204,15 @@ postsRouter.post("/posts", requireEditor, async (req, res, next) => {
   const p = parsed.data;
 
   try {
+    // create_post is self-scoped: a grant-only creator can only ever assign the
+    // auto-created task to THEMSELVES. Force the editor to their own record
+    // (null if they aren't linked to one → the post is simply left unassigned),
+    // never someone else's — this is the one place creating a post would
+    // otherwise reach into another user's task queue.
+    if (req.viaGrant?.create_post) {
+      const { rows: u } = await pool.query("select editor_id from app_user where id = $1", [req.user.sub]);
+      p.editorId = u[0]?.editor_id ?? null;
+    }
     // Target channel: the chosen one (validated to belong to the org) or the
     // active channel. Prevents writing into a channel outside your org.
     let targetWs = req.workspaceId;

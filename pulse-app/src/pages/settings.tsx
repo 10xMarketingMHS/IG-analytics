@@ -8,6 +8,7 @@ import { TaskRulesSection } from "@/pages/task-rules";
 import { ChannelsSection } from "@/pages/channels";
 import { TeamsSection } from "@/pages/teams";
 import { GoalSettingSection } from "@/pages/goal-setting";
+import { AccessSection } from "@/pages/access";
 
 const REEL_WEIGHTS: [string, number][] = [
   ["Views", 20], ["Like rate", 15], ["Comment rate", 25], ["Share rate", 25], ["Save rate", 15],
@@ -24,7 +25,7 @@ const CAROUSEL_WEIGHTS: [string, number][] = [
 // this just avoids surfacing a tab that would immediately say "no access."
 // /channels, /task-rules, /teams still route here (old links keep working),
 // just pre-selecting the matching tab instead of their own page.
-type SettingsTab = "content" | "tasks" | "channels" | "team" | "goals";
+type SettingsTab = "content" | "tasks" | "channels" | "team" | "goals" | "access";
 const TAB_FOR_PATH: Record<string, SettingsTab> = {
   "/task-rules": "tasks",
   "/channels": "channels",
@@ -34,21 +35,25 @@ const TAB_FOR_PATH: Record<string, SettingsTab> = {
 
 export function SettingsPage() {
   const { taxonomy, loading, refetch } = useTaxonomy();
-  const { isAdmin } = useWorkspaces();
+  const { isAdmin, hasPermission } = useWorkspaces();
   const location = useLocation();
   const [pillarId, setPillarId] = useState("");
   const [tab, setTab] = useState<SettingsTab>(() => TAB_FOR_PATH[location.pathname] ?? "content");
+  // A goal_setting_access grant-holder can VIEW Goal Setting (self-scoped,
+  // read-only) — unlock the tab for them, not just the underlying API.
+  const canViewGoals = isAdmin || hasPermission("goal_setting_access");
 
   const TABS = useMemo(
     () =>
       [
         { key: "content" as const, label: "Content & Scoring", show: true },
         { key: "tasks" as const, label: "Task Settings", show: isAdmin },
-        { key: "goals" as const, label: "Goal Setting", show: isAdmin },
+        { key: "goals" as const, label: "Goal Setting", show: canViewGoals },
         { key: "channels" as const, label: "Channels & Integrations", show: true },
         { key: "team" as const, label: "Team", show: isAdmin },
+        { key: "access" as const, label: "Access", show: isAdmin },
       ].filter((t) => t.show),
-    [isAdmin],
+    [isAdmin, canViewGoals],
   );
 
   async function add(path: string, body: object, label: string) {
@@ -217,6 +222,7 @@ export function SettingsPage() {
       {tab === "goals" && <GoalSettingSection />}
       {tab === "channels" && <ChannelsSection />}
       {tab === "team" && <TeamsSection />}
+      {tab === "access" && <AccessSection />}
     </section>
   );
 }

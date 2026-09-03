@@ -18,6 +18,9 @@ export type NavItem = {
   // Hidden from the sidebar (and its topbar shortcut, where one exists) for
   // anyone who isn't an admin.
   adminOnly?: boolean;
+  // An adminOnly item may also be shown to holders of this permission grant
+  // (Settings → Access) — e.g. Add Post for a create_post grantee.
+  permission?: "create_post" | "goal_setting_access";
 };
 
 export const NAV_ITEMS: NavItem[] = [
@@ -34,7 +37,7 @@ export const NAV_ITEMS: NavItem[] = [
   { title: "Social & Ads Pipeline", href: "/metrics", icon: "🎬", section: "Tasks" },
   // Social Media, Activity — hidden from the sidebar per request; routes/
   // pages still exist.
-  { title: "Add Post", href: "/posts/new", icon: "➕", section: "Manage", adminOnly: true },
+  { title: "Add Post", href: "/posts/new", icon: "➕", section: "Manage", adminOnly: true, permission: "create_post" },
   { title: "Posts", href: "/posts", icon: "🗂️", section: "Manage", showBadge: true },
   // Task Settings, Channels, and Teams are tabs inside Settings now, not
   // separate sidebar links — one place for all admin configuration.

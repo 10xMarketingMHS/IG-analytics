@@ -3,6 +3,7 @@ import { z } from "zod";
 import ExcelJS from "exceljs";
 import { pool } from "../db.js";
 import { requireAdmin, requireEditor } from "../resolve-workspace.js";
+import { requirePermission } from "../permissions.js";
 import { resolveBudgetHours } from "./tasks.js";
 
 export const goalsRouter = Router();
@@ -55,12 +56,23 @@ const CRITERIA = ["punctuality", "quality_responsibility", "behaviour", "attenda
 const RATINGS_SELECT = CRITERIA.join(", ");
 const ratingsOf = (row) => Object.fromEntries(CRITERIA.map((k) => [k, row && row[k] != null ? Number(row[k]) : null]));
 
+// goal_setting_access is a READ-ONLY, strictly self-scoped grant: a grant-holder
+// (non-admin) may only ever view their OWN editor's goals. When the caller
+// reached the route on the grant, force the target to their own editor_id
+// (ignoring any requested editorId); an admin's requested editorId is honored.
+async function scopedEditorId(req, requestedEditorId) {
+  if (!req.viaGrant?.goal_setting_access) return requestedEditorId;
+  const { rows } = await pool.query("select editor_id from app_user where id=$1", [req.user.sub]);
+  return rows[0]?.editor_id ?? null;
+}
+const GOAL_VIEW = { message: "You don't have access to Goal Setting." };
+
 // GET /goals?editorId=&month= — the goal-setting form for one editor+month:
 // every active content type with its JC (blank = no goal) and JPH (stored goal
 // jph, else pre-filled from the content type's time budget), plus the editor's
 // effective capacity.
-goalsRouter.get("/goals", requireAdmin, async (req, res, next) => {
-  const editorId = req.query.editorId;
+goalsRouter.get("/goals", requirePermission("goal_setting_access", GOAL_VIEW), async (req, res, next) => {
+  const editorId = await scopedEditorId(req, req.query.editorId);
   const monthIn = req.query.month;
   if (!editorId || !monthIn) return res.status(400).json({ error: "editorId and month are required." });
   try {
@@ -191,8 +203,8 @@ goalsRouter.put("/goals", requireAdmin, async (req, res, next) => {
 // GET /goals/performance?editorId=&month= — read-only monthly performance:
 // Goal JC vs Actual JC (completed tasks of that content type in the month),
 // with Goal/Actual hours from the SAME stored jph, balance and achievement %.
-goalsRouter.get("/goals/performance", requireAdmin, async (req, res, next) => {
-  const editorId = req.query.editorId;
+goalsRouter.get("/goals/performance", requirePermission("goal_setting_access", GOAL_VIEW), async (req, res, next) => {
+  const editorId = await scopedEditorId(req, req.query.editorId);
   const monthIn = req.query.month;
   if (!editorId || !monthIn) return res.status(400).json({ error: "editorId and month are required." });
   try {
@@ -243,12 +255,20 @@ goalsRouter.get("/goals/performance", requireAdmin, async (req, res, next) => {
 
 // GET /goals/months — the period_months that actually have goal data, newest
 // first, so the export/performance picker only offers real periods.
-goalsRouter.get("/goals/months", requireAdmin, async (req, res, next) => {
+goalsRouter.get("/goals/months", requirePermission("goal_setting_access", GOAL_VIEW), async (req, res, next) => {
   try {
-    const { rows } = await pool.query(
-      "select distinct to_char(period_month, 'YYYY-MM') m from editor_goal where org_id=$1 order by m desc",
-      [req.orgId],
-    );
+    // Self-scoped for grant-holders: only the months THEY have goals in — never
+    // a hint of which other editors have data.
+    const self = req.viaGrant?.goal_setting_access ? await scopedEditorId(req, null) : null;
+    const { rows } = self
+      ? await pool.query(
+          "select distinct to_char(period_month, 'YYYY-MM') m from editor_goal where org_id=$1 and editor_id=$2 order by m desc",
+          [req.orgId, self],
+        )
+      : await pool.query(
+          "select distinct to_char(period_month, 'YYYY-MM') m from editor_goal where org_id=$1 order by m desc",
+          [req.orgId],
+        );
     res.json({ months: rows.map((r) => r.m) });
   } catch (err) {
     next(err);

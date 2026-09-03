@@ -3,6 +3,7 @@ import { toast } from "sonner";
 import { api, ApiError, API_BASE } from "@/lib/api";
 import { useWorkspaces } from "@/lib/workspaces-context";
 import { useEditors } from "@/lib/use-editors";
+import { useAuth } from "@/lib/auth-context";
 import { goalPointsTotal, goalBreakdown, DISCIPLINE_CRITERIA, type Ratings } from "@/lib/goal-points";
 
 // Goal Setting — individual monthly capacity planning + performance tracking.
@@ -63,26 +64,48 @@ type PerfRow = {
 const whole = (n: number) => Math.round(n);
 
 export function GoalSettingSection() {
-  const { isAdmin } = useWorkspaces();
+  const { isAdmin, hasPermission } = useWorkspaces();
   const { editors } = useEditors();
+  const { user } = useAuth();
   const [month, setMonth] = useState(thisMonthStr());
   const [view, setView] = useState<"goals" | "performance" | "discipline">("goals");
   const [editorId, setEditorId] = useState<string>("");
+  // A goal_setting_access grant-holder (non-admin): read-only, locked to their
+  // OWN editor. No user picker, no Discipline tab (that shows the whole team),
+  // no export, no editing — a simplified, self-scoped view of the same pages.
+  const viewerOnly = !isAdmin && hasPermission("goal_setting_access");
+  const canView = isAdmin || viewerOnly;
   // Periods that actually have goal data — drives the Performance picker + export.
   const [dataMonths, setDataMonths] = useState<string[]>([]);
   useEffect(() => {
-    if (isAdmin) api<{ months: string[] }>("/goals/months").then((d) => setDataMonths(d.months)).catch(() => {});
-  }, [isAdmin]);
+    if (canView) api<{ months: string[] }>("/goals/months").then((d) => setDataMonths(d.months)).catch(() => {});
+  }, [canView]);
+  // A viewer is always locked to their own editor record.
+  useEffect(() => {
+    if (viewerOnly) setEditorId(user?.editorId ?? "");
+  }, [viewerOnly, user?.editorId]);
+  // A viewer can never land on the admin-only Discipline tab.
+  useEffect(() => {
+    if (viewerOnly && view === "discipline") setView("goals");
+  }, [viewerOnly, view]);
   // When viewing Performance, snap to a month that has data if the current one doesn't.
   useEffect(() => {
     if (view === "performance" && dataMonths.length && !dataMonths.includes(month)) setMonth(dataMonths[0]);
   }, [view, dataMonths]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  if (!isAdmin) {
+  if (!canView) {
     return (
       <>
         <div className="sectitle"><span className="dot" />Goal Setting<span className="s">monthly capacity & performance</span></div>
         <div className="card pad" style={{ color: "var(--muted)", fontSize: 13 }}>Only admins can set and review monthly goals.</div>
+      </>
+    );
+  }
+  if (viewerOnly && !user?.editorId) {
+    return (
+      <>
+        <div className="sectitle"><span className="dot" />Goal Setting<span className="s">your monthly goals & performance</span></div>
+        <div className="card pad" style={{ color: "var(--muted)", fontSize: 13 }}>Your account isn't linked to a team member yet, so there are no goals to show. Ask an admin to link you under Settings → Team.</div>
       </>
     );
   }
@@ -93,13 +116,13 @@ export function GoalSettingSection() {
     <>
       <div className="sectitle">
         <span className="dot" />Goal Setting
-        <span className="s">monthly job-count targets, capacity & performance — per editor</span>
+        <span className="s">{viewerOnly ? "your monthly goals & performance — read-only" : "monthly job-count targets, capacity & performance — per editor"}</span>
       </div>
       <div className="card pad" style={{ display: "flex", gap: 12, alignItems: "center", flexWrap: "wrap" }}>
         <div className="seg" style={{ marginBottom: 0 }}>
           <button type="button" className={view === "goals" ? "on" : ""} onClick={() => setView("goals")}>🎯 Set Goals</button>
           <button type="button" className={view === "performance" ? "on" : ""} onClick={() => setView("performance")}>📈 Performance</button>
-          <button type="button" className={view === "discipline" ? "on" : ""} onClick={() => setView("discipline")}>⚖️ Discipline</button>
+          {!viewerOnly && <button type="button" className={view === "discipline" ? "on" : ""} onClick={() => setView("discipline")}>⚖️ Discipline</button>}
         </div>
         {view === "goals" ? (
           <label className="f" style={{ margin: 0 }}>Month{" "}
@@ -113,7 +136,7 @@ export function GoalSettingSection() {
             </select>
           </label>
         )}
-        {view !== "discipline" && (
+        {!viewerOnly && view !== "discipline" && (
           <label className="f" style={{ margin: 0 }}>Editor{" "}
             <select className="t" style={{ maxWidth: 200, display: "inline-block" }} value={editorId} onChange={(e) => setEditorId(e.target.value)}>
               <option value="">Select an editor…</option>
@@ -121,7 +144,7 @@ export function GoalSettingSection() {
             </select>
           </label>
         )}
-        {view === "performance" && (
+        {!viewerOnly && view === "performance" && (
           <button type="button" className="btn btn-primary" style={{ marginLeft: "auto" }}
             disabled={!dataMonths.includes(month)}
             onClick={() => exportMonth(month)}>⬇ Export .xlsx</button>
@@ -135,7 +158,7 @@ export function GoalSettingSection() {
       ) : !editorId ? (
         <div className="card pad"><div className="hint">Pick an editor to {view === "goals" ? "set their goals" : "see their performance"} for {month}.</div></div>
       ) : view === "goals" ? (
-        <GoalEditor key={editorId + month} editorId={editorId} month={`${month}-01`} />
+        <GoalEditor key={editorId + month} editorId={editorId} month={`${month}-01`} readOnly={viewerOnly} />
       ) : (
         <PerformanceReport key={editorId + month} editorId={editorId} month={`${month}-01`} />
       )}
@@ -143,7 +166,7 @@ export function GoalSettingSection() {
   );
 }
 
-function GoalEditor({ editorId, month }: { editorId: string; month: string }) {
+function GoalEditor({ editorId, month, readOnly }: { editorId: string; month: string; readOnly?: boolean }) {
   const [data, setData] = useState<GoalsResp | null>(null);
   const [jc, setJc] = useState<Record<string, string>>({});
   const [jph, setJph] = useState<Record<string, string>>({});
@@ -219,13 +242,14 @@ function GoalEditor({ editorId, month }: { editorId: string; month: string }) {
       <div className="card pad" style={{ marginBottom: 16 }}>
         <div className="sectitle" style={{ marginTop: 0 }}><span className="dot" />Monthly capacity<span className="s">working days × hours/day = capacity hours</span></div>
         <div style={{ display: "flex", gap: 24, flexWrap: "wrap", alignItems: "flex-end" }}>
-          <CapInputs label={`Org default (${month.slice(0, 7)})`} cap={orgCap} onChange={setOrgCap} onSave={() => saveCapacity("org", orgCap)} />
+          <CapInputs label={`Org default (${month.slice(0, 7)})`} cap={orgCap} onChange={setOrgCap} onSave={() => saveCapacity("org", orgCap)} readOnly={readOnly} />
           <CapInputs
             label="This editor (override)"
             cap={override ?? { workingDays: orgCap.workingDays, hoursPerDay: orgCap.hoursPerDay }}
             faded={!override}
             onChange={setOverride}
             onSave={() => override && saveCapacity("editor", override)}
+            readOnly={readOnly}
           />
           <div className="hint" style={{ margin: 0 }}>
             Source: <b>{data.capacity.source}</b> · Effective capacity <b>{round1(capacityHours)} h</b>
@@ -248,11 +272,11 @@ function GoalEditor({ editorId, month }: { editorId: string; month: string }) {
                 <tr key={r.contentFormatId}>
                   <td>{r.icon} {r.name} {r.category && <span className="st dim">· {CAT_LABEL[r.category] ?? r.category}</span>}</td>
                   <td style={{ textAlign: "center" }}>
-                    <input className="t" style={{ maxWidth: 90, textAlign: "center" }} type="number" min="0" placeholder="—"
+                    <input className="t" style={{ maxWidth: 90, textAlign: "center" }} type="number" min="0" placeholder="—" disabled={readOnly}
                       value={jc[r.contentFormatId] ?? ""} onChange={(e) => setJc((s) => ({ ...s, [r.contentFormatId]: e.target.value }))} />
                   </td>
                   <td style={{ textAlign: "center" }}>
-                    <input className="t" style={{ maxWidth: 90, textAlign: "center" }} type="number" min="0" step="0.25"
+                    <input className="t" style={{ maxWidth: 90, textAlign: "center" }} type="number" min="0" step="0.25" disabled={readOnly}
                       value={jph[r.contentFormatId] ?? ""} onChange={(e) => setJph((s) => ({ ...s, [r.contentFormatId]: e.target.value }))} />
                   </td>
                   <td style={{ textAlign: "center", fontWeight: 650 }}>{round1(planned)}</td>
@@ -261,7 +285,9 @@ function GoalEditor({ editorId, month }: { editorId: string; month: string }) {
             })}
           </tbody>
         </table>
-        <div className="hint" style={{ marginTop: 10 }}>Leave JC blank for a type this editor has no goal for this month. JPH pre-fills from the content type's time budget — edit if this editor differs.</div>
+        <div className="hint" style={{ marginTop: 10 }}>{readOnly
+          ? "These are your goals for the month, set by an admin. This view is read-only."
+          : "Leave JC blank for a type this editor has no goal for this month. JPH pre-fills from the content type's time budget — edit if this editor differs."}</div>
       </div>
 
       {/* Summary */}
@@ -283,24 +309,24 @@ function GoalEditor({ editorId, month }: { editorId: string; month: string }) {
 
       <div className="formfoot" style={{ marginTop: 16 }}>
         <div className="hint" style={{ margin: 0, flex: 1 }}>This total is informational — it doesn't add to anyone's Task Points or change their rank.</div>
-        <button type="button" className="btn btn-primary" disabled={busy} onClick={saveGoals}>{busy ? "Saving…" : "Save goals"}</button>
+        {!readOnly && <button type="button" className="btn btn-primary" disabled={busy} onClick={saveGoals}>{busy ? "Saving…" : "Save goals"}</button>}
       </div>
     </>
   );
 }
 
-function CapInputs({ label, cap, faded, onChange, onSave }: { label: string; cap: Cap; faded?: boolean; onChange: (c: Cap) => void; onSave: () => void }) {
+function CapInputs({ label, cap, faded, onChange, onSave, readOnly }: { label: string; cap: Cap; faded?: boolean; onChange: (c: Cap) => void; onSave: () => void; readOnly?: boolean }) {
   return (
     <div style={{ opacity: faded ? 0.7 : 1 }}>
       <div className="f" style={{ marginBottom: 4 }}>{label}</div>
       <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
-        <input className="t" style={{ maxWidth: 90 }} type="number" min="0" max="31" value={cap.workingDays}
+        <input className="t" style={{ maxWidth: 90 }} type="number" min="0" max="31" value={cap.workingDays} disabled={readOnly}
           onChange={(e) => onChange({ ...cap, workingDays: Number(e.target.value) })} title="Working days" />
         <span className="st dim">days ×</span>
-        <input className="t" style={{ maxWidth: 80 }} type="number" min="0" max="24" step="0.5" value={cap.hoursPerDay}
+        <input className="t" style={{ maxWidth: 80 }} type="number" min="0" max="24" step="0.5" value={cap.hoursPerDay} disabled={readOnly}
           onChange={(e) => onChange({ ...cap, hoursPerDay: Number(e.target.value) })} title="Hours per day" />
         <span className="st dim">h/day</span>
-        <button type="button" className="btn btn-sm" onClick={onSave}>Save</button>
+        {!readOnly && <button type="button" className="btn btn-sm" onClick={onSave}>Save</button>}
       </div>
     </div>
   );

@@ -13,17 +13,25 @@ import {
 } from "@/lib/api";
 import { useAuth } from "@/lib/auth-context";
 
+// Per-user permission grants (Settings → Access) — additive on top of role.
+export type PermissionKey = "create_post" | "goal_setting_access";
+
 export type Workspace = {
   id: string;
   name: string;
   logo_url: string | null;
   role?: "admin" | "editor" | "viewer";
+  // Active grants the current user holds in this workspace's org.
+  permissions?: PermissionKey[];
 };
 
 type WorkspacesContextValue = {
   workspaces: Workspace[];
   active: Workspace | null;
   isAdmin: boolean;
+  // True if the caller is an admin OR holds an active grant for `key`. The
+  // real gate is server-side; this only drives UI affordance.
+  hasPermission: (key: PermissionKey) => boolean;
   loading: boolean;
   switchTo: (id: string) => void;
   createWorkspace: (name: string) => Promise<void>;
@@ -101,10 +109,14 @@ export function WorkspacesProvider({ children }: { children: ReactNode }) {
 
   const active = workspaces.find((w) => w.id === activeId) ?? workspaces[0] ?? null;
   const isAdmin = active?.role === "admin";
+  const hasPermission = useCallback(
+    (key: PermissionKey) => isAdmin || (active?.permissions?.includes(key) ?? false),
+    [isAdmin, active?.permissions],
+  );
 
   return (
     <WorkspacesContext.Provider
-      value={{ workspaces, active, isAdmin, loading, switchTo, createWorkspace, renameWorkspace, refresh: load }}
+      value={{ workspaces, active, isAdmin, hasPermission, loading, switchTo, createWorkspace, renameWorkspace, refresh: load }}
     >
       {children}
     </WorkspacesContext.Provider>

@@ -11,7 +11,12 @@ export const workspacesRouter = Router();
 workspacesRouter.get("/workspaces", async (req, res, next) => {
   try {
     const { rows } = await pool.query(
-      `select w.id, w.name, w.logo_url, m.role
+      `select w.id, w.name, w.logo_url, m.role,
+              coalesce((
+                select array_agg(g.permission_key)
+                from user_permission_grant g
+                where g.org_id = w.org_id and g.user_id = m.user_id and g.revoked_at is null
+              ), '{}') as permissions
        from workspace w
        join membership m on m.workspace_id = w.id
        where m.user_id = $1
