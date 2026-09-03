@@ -5,6 +5,7 @@ import { useResource } from "@/lib/use-resource";
 import { useTasks } from "@/lib/use-tasks";
 import { rangeFor, inRange, compactNum } from "@/lib/date-range";
 import { ymd, taskPoints, isScorableTask } from "@/lib/task-points";
+import { Avatar, ringColorOf } from "@/lib/editor-visuals";
 import type { Post, Editor, Task } from "@/lib/types";
 
 type Period = "month" | "all";
@@ -13,31 +14,6 @@ type Tab = "social" | "house" | "path";
 type Row = { editor: Editor; reels: number; carousels: number; views: number; points: number };
 type HouseRow = { editor: Editor; points: number; completed: number };
 
-const AV_GRADIENTS = [
-  "linear-gradient(135deg,#7c3aed,#a855f7)",
-  "linear-gradient(135deg,#8b5cf6,#22d3ee)",
-  "linear-gradient(135deg,#a855f7,#f472b6)",
-  "linear-gradient(135deg,#ec4899,#8b5cf6)",
-  "linear-gradient(135deg,#6366f1,#22d3ee)",
-  "linear-gradient(135deg,#f59e0b,#a855f7)",
-];
-function gradFor(name: string) {
-  let h = 0;
-  for (const c of name) h = (h * 31 + c.charCodeAt(0)) >>> 0;
-  return AV_GRADIENTS[h % AV_GRADIENTS.length];
-}
-
-function Avatar({ editor }: { editor: Editor }) {
-  if (editor.image_url) {
-    return <img className="lb-ava" src={editor.image_url} alt={editor.name} />;
-  }
-  return (
-    <div className="lb-ava" style={{ background: gradFor(editor.name) }}>
-      {editor.name.charAt(0).toUpperCase()}
-    </div>
-  );
-}
-
 // Weighted engagement across an editor's reels & carousels.
 function pointsOf(p: Post) {
   return p.likes + 2 * p.comments + 3 * p.shares + 3 * p.saves;
@@ -45,7 +21,6 @@ function pointsOf(p: Post) {
 
 // ---- Progress Path (rank-over-time bump chart, per calendar month, daily) ----
 type PathMode = "content" | "task";
-const PATH_COLORS = ["#ef4444", "#3b82f6", "#10b981", "#f59e0b", "#8b5cf6", "#ec4899", "#06b6d4", "#84cc16", "#f97316", "#6366f1", "#14b8a6", "#e11d48"];
 const MON = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
 function labelMonth(m: string) {
   const [y, mo] = m.split("-");
@@ -180,7 +155,7 @@ function ProgressPath({ mode, month, editors, posts, tasks }: { mode: PathMode; 
   const yFor = (rank: number) => padTop + (rank - 0.5) * rowH;
   // The x-axis always spans the full month; a degenerate 1-day axis pins to centre.
   const xFor = (i: number) => (axisLen <= 1 ? (plotLeft + plotRight) / 2 : plotLeft + (i / (axisLen - 1)) * (plotRight - plotLeft));
-  const colorOf = (id: string) => PATH_COLORS[editors.findIndex((x) => x.id === id) % PATH_COLORS.length];
+  const colorOf = (id: string) => ringColorOf(editors, id);
 
   const p = Math.max(0, Math.min(progress, Math.max(0, dataLen - 1)));
   const full = Math.floor(p);

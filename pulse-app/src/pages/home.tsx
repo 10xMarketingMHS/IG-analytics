@@ -9,6 +9,7 @@ import { performanceScore, formatScore } from "@/lib/score";
 import { ymd, myRankInRange } from "@/lib/task-points";
 import { goalBreakdown, DISCIPLINE_CRITERIA, type Ratings } from "@/lib/goal-points";
 import { api } from "@/lib/api";
+import { TopPerformerTicker } from "@/components/top-performer-ticker";
 import type { Post } from "@/lib/types";
 
 function todayStr() {
@@ -135,6 +136,9 @@ export function HomePage() {
 
   return (
     <section className="screen">
+      {/* Top Performer of the Month — celebratory ticker above everything. */}
+      <TopPerformerTicker />
+
       {/* Hero */}
       <div className="home-hero">
         <div>

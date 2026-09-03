@@ -59,6 +59,23 @@ function rankRowsInRange(editors: Editor[], tasks: Task[], fromYmd: string, toYm
     .sort((a, b) => b.points - a.points || b.completed - a.completed);
 }
 
+// The top editors in a window, ranked by Task Points — same aggregation the
+// Media House Leaders board uses, sliced for the My Day "Top Performer" ticker.
+// Only net-positive performers appear (points > 0): this is a celebratory
+// banner, so someone sitting at 0, or net-negative from finishing everything
+// late, is left off rather than paraded as a "top performer".
+export function topEditorsInRange(
+  editors: Editor[],
+  tasks: Task[],
+  fromYmd: string,
+  toYmd: string,
+  limit: number,
+): RankRow[] {
+  return rankRowsInRange(editors, tasks, fromYmd, toYmd)
+    .filter((r) => r.points > 0)
+    .slice(0, limit);
+}
+
 // One person's standing in a window: their points/completed count always come
 // back (even at 0), but `rank` is null until they've actually completed
 // something in that window — matching how the Media House Leaders board

@@ -582,6 +582,46 @@ main{min-width:0;display:flex;flex-direction:column}
   white-space:nowrap;padding:0 6px}
 @media(max-width:760px){.score-strip{flex-direction:column}.score-strip-link{align-self:flex-start}}
 
+/* ---- Top Performer of the Month ticker (My Day, above the hero) ---- */
+.tpf{display:flex;align-items:stretch;gap:14px;margin-bottom:20px;padding:10px 12px;border-radius:18px;overflow:hidden;
+  background:linear-gradient(120deg,rgba(124,58,237,.20),rgba(168,85,247,.10) 55%,rgba(245,196,81,.08));
+  border:1px solid var(--glass-brd);backdrop-filter:blur(16px) saturate(140%);-webkit-backdrop-filter:blur(16px) saturate(140%)}
+/* Fixed, non-scrolling label on the left. */
+.tpf-label{flex:none;display:flex;align-items:center;gap:10px;padding:4px 14px 4px 6px;text-decoration:none;
+  border-right:1px solid var(--glass-brd)}
+.tpf-trophy{font-size:24px;line-height:1;filter:drop-shadow(0 2px 6px rgba(245,196,81,.5))}
+.tpf-label-txt{display:flex;flex-direction:column;font-weight:800;font-size:14px;color:var(--text);line-height:1.15;white-space:nowrap}
+.tpf-label-sub{font-size:10.5px;font-weight:700;color:var(--accent-ink);text-transform:uppercase;letter-spacing:.5px}
+/* Scrolling strip. Edge fades hint at more content beyond the viewport. */
+.tpf-viewport{flex:1;min-width:0;overflow:hidden;position:relative;display:flex;align-items:center;
+  -webkit-mask-image:linear-gradient(90deg,transparent,#000 24px,#000 calc(100% - 24px),transparent);
+  mask-image:linear-gradient(90deg,transparent,#000 24px,#000 calc(100% - 24px),transparent)}
+.tpf-track{display:flex;gap:12px;width:max-content;will-change:transform}
+.tpf-copy{display:flex;gap:12px}
+.tpf-track--scroll{animation:tpf-marquee linear infinite}
+.tpf:hover .tpf-track--scroll,.tpf-track--scroll:focus-within{animation-play-state:paused}
+@keyframes tpf-marquee{from{transform:translateX(0)}to{transform:translateX(-50%)}}
+.tpf-card{flex:none;display:flex;align-items:center;gap:9px;padding:6px 14px 6px 8px;border-radius:999px;text-decoration:none;
+  background:var(--panel);border:1px solid var(--border);transition:transform .2s,box-shadow .2s}
+.tpf-card:hover{transform:translateY(-2px);box-shadow:0 6px 16px rgba(60,20,120,.14)}
+.tpf-rank{font-size:15px;font-weight:800;color:var(--muted);min-width:20px;text-align:center}
+.tpf-ava{flex:none;border-radius:12px;padding:2px;background:var(--ring,var(--accent));display:grid;box-shadow:0 0 10px -2px var(--ring,var(--accent))}
+.tpf-card .lb-ava{width:34px;height:34px;border-radius:10px;font-size:14px}
+.tpf-meta{display:flex;flex-direction:column;line-height:1.15;white-space:nowrap}
+.tpf-name{font-size:13.5px;font-weight:700;color:var(--text)}
+.tpf-pts{font-size:11.5px;font-weight:700;color:var(--accent-ink)}
+/* #1 — gold accent, a touch larger. */
+.tpf-card--gold{padding:6px 18px 6px 9px;background:linear-gradient(150deg,rgba(245,196,81,.22),var(--panel) 62%);
+  border-color:rgba(245,196,81,.6);box-shadow:0 0 16px -4px rgba(245,196,81,.55)}
+.tpf-card--gold .tpf-name{font-size:15px}
+.tpf-card--gold .lb-ava{width:42px;height:42px;border-radius:12px;font-size:16px}
+.tpf-card--gold .tpf-rank{font-size:18px}
+.tpf-more{flex:none;align-self:center;display:grid;place-items:center;width:28px;height:28px;border-radius:9px;
+  font-size:16px;font-weight:800;color:var(--accent-ink);text-decoration:none;background:var(--accent-weak);transition:transform .2s}
+.tpf-more:hover{transform:translateX(2px)}
+@media (prefers-reduced-motion: reduce){.tpf-track{animation:none!important}}
+@media(max-width:640px){.tpf-label-txt{font-size:12.5px}.tpf-trophy{font-size:20px}}
+
 .home-cols{display:grid;grid-template-columns:1fr 1fr;gap:22px;margin-top:20px;align-items:start}
 @media(max-width:900px){.home-cols{grid-template-columns:1fr}}
 .home-colhead{display:flex;align-items:center;gap:11px;margin:0 2px 12px}
