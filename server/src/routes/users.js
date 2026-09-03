@@ -3,6 +3,7 @@ import bcrypt from "bcryptjs";
 import { z } from "zod";
 import { pool } from "../db.js";
 import { requireAdmin, clearMembershipCache } from "../resolve-workspace.js";
+import { requirePermission } from "../permissions.js";
 
 export const usersRouter = Router();
 
@@ -15,7 +16,9 @@ const ROLES = ["admin", "editor", "viewer"];
 // integrations) for non-admins.
 
 // List the members of the active workspace with their role.
-usersRouter.get("/users", requireAdmin, async (req, res, next) => {
+// Readable by admins and by access_manage grantees (they need the member list
+// to populate the Access picker). Mutations below stay admin-only (Team).
+usersRouter.get("/users", requirePermission("access_manage"), async (req, res, next) => {
   try {
     const { rows } = await pool.query(
       `select u.id, u.email, u.name, u.active, u.editor_id, m.role

@@ -10,9 +10,20 @@ import type { PermissionKey } from "@/lib/workspaces-context";
 
 type UserRow = { id: string; email: string; name: string | null; active: boolean; editor_id: string | null; role: "admin" | "editor" | "viewer" };
 
-const PERMISSIONS: { key: PermissionKey; label: string; desc: string }[] = [
-  { key: "create_post", label: "Create posts", desc: "Add posts via Add Post. Any editing task it creates is always assigned to them — never to anyone else." },
-  { key: "goal_setting_access", label: "View Goal Setting", desc: "Read-only access to their own Set Goals & Performance. Cannot edit targets or award discipline points." },
+// Two groups: self-scoped grants (only ever act on the grantee's own data) and
+// admin-capability grants (act as admin for one feature — cross-user/org power).
+const PERMISSIONS: { key: PermissionKey; label: string; desc: string; scope: "self" | "admin" }[] = [
+  { key: "create_post", label: "Create posts", scope: "self", desc: "Add posts via Add Post. Any editing task it creates is always assigned to them — never to anyone else." },
+  { key: "goal_setting_access", label: "View Goal Setting", scope: "self", desc: "Read-only access to their OWN Set Goals & Performance. Cannot edit targets or award discipline." },
+  { key: "task_settings", label: "Task Settings", scope: "admin", desc: "Manage content formats, points per format, and time budgets — org-wide, affects everyone's scoring." },
+  { key: "channels", label: "Channels & Integrations", scope: "admin", desc: "Add/rename/delete channels and connect Instagram, Facebook & YouTube." },
+  { key: "content_taxonomy", label: "Content Taxonomy", scope: "admin", desc: "Edit the shared pillars, avatars, content types and formats." },
+  { key: "access_manage", label: "Manage Access", scope: "admin", desc: "Grant or revoke permissions for other users. ⚠️ Lets them extend their own access too." },
+  { key: "assign_tasks", label: "Assign tasks", scope: "admin", desc: "Assign tasks to other editors (not just themselves) when creating a task." },
+  { key: "resolve_tasks", label: "Resolve reviews", scope: "admin", desc: "Approve or send back any task sitting in Review." },
+  { key: "hold_tasks", label: "Hold any task", scope: "admin", desc: "Put on hold / resume anyone's task, not only their own." },
+  { key: "edit_goals", label: "Edit Goals", scope: "admin", desc: "Set and edit any editor's goals and capacity." },
+  { key: "discipline", label: "Discipline", scope: "admin", desc: "Award discipline ratings for any editor (the whole-team Discipline table)." },
 ];
 
 export function AccessSection() {
@@ -77,23 +88,30 @@ export function AccessSection() {
         <div className="card pad"><div className="hint">Loading…</div></div>
       ) : (
         <div className="card pad">
-          <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
-            {PERMISSIONS.map((p) => (
-              <label key={p.key} style={{ display: "flex", gap: 12, alignItems: "flex-start", cursor: "pointer" }}>
-                <input
-                  type="checkbox"
-                  checked={!!checked[p.key]}
-                  onChange={(e) => setChecked((c) => ({ ...c, [p.key]: e.target.checked }))}
-                  style={{ marginTop: 3, width: 18, height: 18, flex: "none" }}
-                />
-                <span>
-                  <span style={{ fontWeight: 700, fontSize: 14 }}>{p.label}</span>
-                  <span style={{ display: "block", fontSize: 12.5, color: "var(--muted)", marginTop: 2 }}>{p.desc}</span>
-                </span>
-              </label>
-            ))}
-          </div>
-          <div style={{ marginTop: 18 }}>
+          {(["self", "admin"] as const).map((scope) => (
+            <div key={scope} style={{ marginBottom: 18 }}>
+              <div className="f" style={{ marginBottom: 10 }}>
+                {scope === "self" ? "Self-scoped — acts only on the user's own data" : "Admin capabilities — power over other users' data & org settings"}
+              </div>
+              <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+                {PERMISSIONS.filter((p) => p.scope === scope).map((p) => (
+                  <label key={p.key} style={{ display: "flex", gap: 12, alignItems: "flex-start", cursor: "pointer" }}>
+                    <input
+                      type="checkbox"
+                      checked={!!checked[p.key]}
+                      onChange={(e) => setChecked((c) => ({ ...c, [p.key]: e.target.checked }))}
+                      style={{ marginTop: 3, width: 18, height: 18, flex: "none" }}
+                    />
+                    <span>
+                      <span style={{ fontWeight: 700, fontSize: 14 }}>{p.label}</span>
+                      <span style={{ display: "block", fontSize: 12.5, color: "var(--muted)", marginTop: 2 }}>{p.desc}</span>
+                    </span>
+                  </label>
+                ))}
+              </div>
+            </div>
+          ))}
+          <div>
             <button className="btn btn-primary" disabled={saving} onClick={save}>{saving ? "Saving…" : "Save access"}</button>
           </div>
         </div>

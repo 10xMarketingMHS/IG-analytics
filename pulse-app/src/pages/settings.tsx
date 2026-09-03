@@ -39,21 +39,27 @@ export function SettingsPage() {
   const location = useLocation();
   const [pillarId, setPillarId] = useState("");
   const [tab, setTab] = useState<SettingsTab>(() => TAB_FOR_PATH[location.pathname] ?? "content");
-  // A goal_setting_access grant-holder can VIEW Goal Setting (self-scoped,
-  // read-only) — unlock the tab for them, not just the underlying API.
-  const canViewGoals = isAdmin || hasPermission("goal_setting_access");
+  // Grant-holders unlock the matching tab (not just the underlying API). Goal
+  // Setting opens to a read-only self view (goal_setting_access) or full
+  // edit/discipline grants.
+  const canViewGoals = isAdmin || hasPermission("goal_setting_access") || hasPermission("edit_goals") || hasPermission("discipline");
+  const canTaskSettings = hasPermission("task_settings");
+  const canAccess = hasPermission("access_manage");
+  // Content & Scoring tab is visible to everyone (read-only); editing the shared
+  // taxonomy needs admin or the content_taxonomy grant.
+  const canEditTaxonomy = hasPermission("content_taxonomy");
 
   const TABS = useMemo(
     () =>
       [
         { key: "content" as const, label: "Content & Scoring", show: true },
-        { key: "tasks" as const, label: "Task Settings", show: isAdmin },
+        { key: "tasks" as const, label: "Task Settings", show: canTaskSettings },
         { key: "goals" as const, label: "Goal Setting", show: canViewGoals },
         { key: "channels" as const, label: "Channels & Integrations", show: true },
         { key: "team" as const, label: "Team", show: isAdmin },
-        { key: "access" as const, label: "Access", show: isAdmin },
+        { key: "access" as const, label: "Access", show: canAccess },
       ].filter((t) => t.show),
-    [isAdmin, canViewGoals],
+    [isAdmin, canViewGoals, canTaskSettings, canAccess],
   );
 
   async function add(path: string, body: object, label: string) {
@@ -127,12 +133,12 @@ export function SettingsPage() {
                 {taxonomy.pillars.map((p) => (
                   <span className="taxchip" key={p.id}>
                     <span className="taxserial">P{p.serial}</span>{p.name}
-                    {isAdmin && (
+                    {canEditTaxonomy && (
                       <span className="x" title="Delete pillar" onClick={() => remove(`/pillars/${p.id}`, p.name, "Pillar")}>×</span>
                     )}
                   </span>
                 ))}
-                {isAdmin && <button className="addchip" onClick={addPillar}>＋ Add</button>}
+                {canEditTaxonomy && <button className="addchip" onClick={addPillar}>＋ Add</button>}
               </div>
 
               <label className="f" style={{ marginTop: 14 }}>Audience Avatars</label>
@@ -140,12 +146,12 @@ export function SettingsPage() {
                 {taxonomy.avatars.map((a) => (
                   <span className="taxchip" key={a.id}>
                     {a.name}
-                    {isAdmin && (
+                    {canEditTaxonomy && (
                       <span className="x" title="Delete avatar" onClick={() => remove(`/avatars/${a.id}`, a.name, "Avatar")}>×</span>
                     )}
                   </span>
                 ))}
-                {isAdmin && <button className="addchip" onClick={addAvatar}>＋ Add</button>}
+                {canEditTaxonomy && <button className="addchip" onClick={addAvatar}>＋ Add</button>}
               </div>
 
               <label className="f" style={{ marginTop: 18 }}>Content Types — per pillar</label>
@@ -158,12 +164,12 @@ export function SettingsPage() {
                 {cts.map((c) => (
                   <span className="taxchip" key={c.id}>
                     <span className="taxserial">T{c.serial}</span>{c.name}
-                    {isAdmin && (
+                    {canEditTaxonomy && (
                       <span className="x" title="Delete content type" onClick={() => remove(`/content-types/${c.id}`, c.name, "Content type")}>×</span>
                     )}
                   </span>
                 ))}
-                {isAdmin && <button className="addchip" onClick={addContentType}>＋ Add</button>}
+                {canEditTaxonomy && <button className="addchip" onClick={addContentType}>＋ Add</button>}
               </div>
 
               <label className="f" style={{ marginTop: 18 }}>Formats — channel-wide (fully selectable on every pillar)</label>
@@ -172,16 +178,16 @@ export function SettingsPage() {
                   <span className="taxchip" key={f.id}>
                     <span className="taxserial">F{f.serial}</span>{f.name}
                     <span className={"ptbadge " + (f.post_type === "reel" ? "pt-reel" : "pt-car")} style={{ fontSize: 10 }}>{f.post_type}</span>
-                    {isAdmin && (
+                    {canEditTaxonomy && (
                       <span className="x" title="Delete format" onClick={() => remove(`/formats/${f.id}`, f.name, "Format")}>×</span>
                     )}
                   </span>
                 ))}
-                {isAdmin && <button className="addchip" onClick={addFormat}>＋ Add</button>}
+                {canEditTaxonomy && <button className="addchip" onClick={addFormat}>＋ Add</button>}
               </div>
 
               <div className="hint" style={{ marginTop: 12 }}>
-                {isAdmin
+                {canEditTaxonomy
                   ? "Pillars (P#) and their Content Types (T#) nest; Formats (F#) are shared across the whole channel. Numbers are permanent — deleting one won't renumber the rest. Deleting an item still used by posts is blocked — reassign those posts first."
                   : "Only admins can add or remove taxonomy items."}
               </div>

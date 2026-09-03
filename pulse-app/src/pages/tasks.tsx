@@ -255,8 +255,11 @@ export function TasksPage() {
   const { editors } = useEditors();
   const { contentFormats } = useContentFormats();
   const { user } = useAuth();
-  const { active, workspaces, isAdmin } = useWorkspaces();
+  const { active, workspaces, isAdmin, hasPermission } = useWorkspaces();
   const role = active?.role;
+  // Access grants that give admin-like reach over other people's tasks.
+  const canResolve = isAdmin || hasPermission("resolve_tasks"); // approve/send back reviews
+  const canHoldAny = isAdmin || hasPermission("hold_tasks");    // hold/resume anyone's task
   // Viewers are read-only (the backend already 403s their writes); hide the
   // status-move controls from them so the affordance matches the permission.
   const canWrite = active?.role !== "viewer";
@@ -267,7 +270,7 @@ export function TasksPage() {
   // in_progress for rework. The backend enforces this too.
   function canTransition(t: Task, target: TaskStatus): boolean {
     if (!canWrite || target === t.status) return false;
-    if (t.status === "review") return isAdmin && (target === "done" || target === "in_progress");
+    if (t.status === "review") return canResolve && (target === "done" || target === "in_progress");
     if (target === "done") return false; // must go through review
     // Once work has started it can't go back to To Do — an admin parks it with
     // Hold instead. And a held task is frozen until an admin resumes it.
@@ -275,7 +278,7 @@ export function TasksPage() {
     if (t.on_hold && !isAdmin) return false;
     return isOwner(t);
   }
-  const canMoveStatus = (t: Task) => canWrite && (t.status === "review" ? isAdmin : isOwner(t));
+  const canMoveStatus = (t: Task) => canWrite && (t.status === "review" ? canResolve : isOwner(t));
 
   const [filterEditor, setFilterEditor] = useState("");
   const [filterType, setFilterType] = useState<TaskType | "">("");
@@ -832,7 +835,7 @@ export function TasksPage() {
                         // or resume an in-progress task — it stays In Progress;
                         // Hold pauses its timer. Same "is this mine" check the
                         // forward-move buttons use (isOwner).
-                        const holdCtrl = (isAdmin || isOwner(t)) && t.status === "in_progress" ? (
+                        const holdCtrl = (isAdmin || isOwner(t) || canHoldAny) && t.status === "in_progress" ? (
                           t.on_hold ? (
                             <button className="linkbtn" onClick={() => toggleHold(t, false)}>▶ Resume</button>
                           ) : (
@@ -1598,7 +1601,10 @@ function TaskPanel({ mode, task, canWrite, editors, channels, onClose, onChanged
 }) {
   const creating = mode === "create";
   const { user } = useAuth();
-  const { isAdmin } = useWorkspaces();
+  const { isAdmin, hasPermission } = useWorkspaces();
+  // Access grants: assign tasks to others, and resolve reviews.
+  const canAssign = isAdmin || hasPermission("assign_tasks");
+  const canResolve = isAdmin || hasPermission("resolve_tasks");
   const ro = !canWrite;
   const { contentFormats } = useContentFormats();
   const [draft, setDraft] = useState<{
@@ -1704,7 +1710,7 @@ function TaskPanel({ mode, task, canWrite, editors, channels, onClose, onChanged
   const statusOptions = COLUMNS.filter((c) => {
     if (creating || !task) return true;
     if (c.key === task.status) return true;
-    if (task.status === "review") return isAdmin && c.key === "done";
+    if (task.status === "review") return canResolve && c.key === "done";
     return c.key !== "done" && !!user?.editorId && task.editor_id === user.editorId;
   });
 
@@ -1768,16 +1774,16 @@ function TaskPanel({ mode, task, canWrite, editors, channels, onClose, onChanged
             <div className="t autofield">{editors.find((ed) => ed.id === user?.editorId)?.name ?? "Myself"}</div>
           ) : (
             <>
-              {/* Only admins can assign work to someone else. Everyone else
-                  creates tasks for themselves — no Assign option. */}
-              {creating && canSelfAssign && isAdmin && (
+              {/* Admins — and assign_tasks grantees — can assign work to someone
+                  else. Everyone else creates tasks for themselves only. */}
+              {creating && canSelfAssign && canAssign && (
                 <div className="seg assign-mode-seg">
                   <button type="button" className={assignMode === "self" ? "on" : ""} onClick={() => setMode("self")}>🙋 Myself</button>
                   <button type="button" className={assignMode === "assign" ? "on" : ""} onClick={() => setMode("assign")}>👥 Assign</button>
                 </div>
               )}
               {creating ? (
-                isAdmin && assignMode === "assign" ? (
+                canAssign && assignMode === "assign" ? (
                   <select className="t" disabled={ro} value={cur.editor_id ?? ""} onChange={(e) => set("editor_id", "editorId", e.target.value || null)}>
                     <option value="">Unassigned</option>
                     {editors.map((ed) => (<option key={ed.id} value={ed.id}>{ed.name}</option>))}

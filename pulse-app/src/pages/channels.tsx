@@ -48,7 +48,9 @@ function relTime(iso: string | null) {
 // Rendered as one tab inside the master Settings page (see settings.tsx) —
 // no outer <section className="screen"> here, that's Settings' job.
 export function ChannelsSection() {
-  const { workspaces, active, isAdmin, refresh, switchTo } = useWorkspaces();
+  const { workspaces, active, isAdmin, hasPermission, refresh, switchTo } = useWorkspaces();
+  // Admin, or a channels grantee — manage channels & connect integrations.
+  const canManage = isAdmin || hasPermission("channels");
   const [params, setParams] = useSearchParams();
   const { data: platData } = useResource<{ platforms: Platform[] }>("/platforms");
   const { data: acctData, refetch } = useResource<{ accounts: Account[] }>("/accounts?channel=all");
@@ -347,7 +349,7 @@ export function ChannelsSection() {
               <button className="btn btn-primary btn-sm" disabled={syncing === acc.id} onClick={() => syncPlatform(acc.id, p)}>
                 {syncing === acc.id ? "Syncing…" : "🔄 Sync"}
               </button>
-              {isAdmin && <button className="btn btn-sm" onClick={() => disconnect(conn.id, `${meta.label}${conn.external_name ? " " + conn.external_name : ""}`)}>Disconnect</button>}
+              {canManage && <button className="btn btn-sm" onClick={() => disconnect(conn.id, `${meta.label}${conn.external_name ? " " + conn.external_name : ""}`)}>Disconnect</button>}
             </div>
           </>
         ) : (
@@ -358,7 +360,7 @@ export function ChannelsSection() {
                 {ready
                   ? "Connect to pull live metrics onto this channel's posts"
                   : p === "youtube"
-                    ? (isAdmin ? "Add the org YouTube API key here, then connect this channel" : "An admin must add the org YouTube API key first")
+                    ? (canManage ? "Add the org YouTube API key here, then connect this channel" : "An admin must add the org YouTube API key first")
                     : "Set the Meta app keys / token on the server first"}
               </span>
             </div>
@@ -366,8 +368,8 @@ export function ChannelsSection() {
               className="btn btn-primary btn-sm"
               /* YouTube's "not ready" is fixable in-app (enter the key), so admins
                  can open it even before a key exists. IG/FB need server config. */
-              disabled={(p === "youtube" ? !isAdmin : (!ready || !isAdmin)) || connecting === acc.id}
-              title={!isAdmin ? "Admins only" : (p !== "youtube" && !ready) ? "Not configured on the server" : `Connect ${meta.label}`}
+              disabled={(p === "youtube" ? !canManage : (!ready || !canManage)) || connecting === acc.id}
+              title={!canManage ? "Admins only" : (p !== "youtube" && !ready) ? "Not configured on the server" : `Connect ${meta.label}`}
               onClick={() => setConnectFor({ account: acc, platform: p })}
             >
               {connecting === acc.id ? "Connecting…" : "Connect"}
@@ -382,7 +384,7 @@ export function ChannelsSection() {
     <>
       <div className="hint" style={{ marginBottom: 16 }}>
         🌐 Add brand channels, choose which platforms each is on, and connect Instagram or YouTube to pull live metrics — all in one place.
-        {!isAdmin && <span style={{ color: "var(--amber)", marginLeft: 6 }}>· Read-only (admins can edit).</span>}
+        {!canManage && <span style={{ color: "var(--amber)", marginLeft: 6 }}>· Read-only (admins can edit).</span>}
       </div>
 
       {/* YouTube key is org-wide (one key), so surface the gap ONCE here — not as
@@ -393,7 +395,7 @@ export function ChannelsSection() {
           <div>
             <b>YouTube isn't set up yet.</b>
             <div className="hint" style={{ margin: "4px 0 0" }}>
-              {isAdmin
+              {canManage
                 ? "One-time, org-wide: click Connect on any channel's YouTube column and paste your YouTube Data API key. After that, connect any number of channels by URL — no server config."
                 : "An admin needs to add the org's YouTube API key once (from a channel's YouTube Connect), then channels can be connected."}
             </div>
@@ -429,7 +431,7 @@ export function ChannelsSection() {
           onToggle={(v) => setStatuses((s) => { const n = new Set(s); if (n.has(v)) n.delete(v); else n.add(v); return n; })}
         />
         <span className="chan-total">{visibleChannels.length} channel{visibleChannels.length === 1 ? "" : "s"}</span>
-        {isAdmin && (
+        {canManage && (
           <div className="chan-add">
             <input
               className="t"
@@ -484,7 +486,7 @@ export function ChannelsSection() {
                       <tr className="exp-row">
                         <td className="exp-cell" colSpan={6}>
                           <div className="exp-inner" onClick={(e) => e.stopPropagation()}>
-                            {isAdmin && (
+                            {canManage && (
                               <div className="exp-head">
                                 <input
                                   className="chan-name"
@@ -509,8 +511,8 @@ export function ChannelsSection() {
                                     key={p.id}
                                     className={"chan-chip" + (pon ? " on" : "") + (locked ? " locked" : "")}
                                     style={pon ? { background: brand?.bg } : undefined}
-                                    onClick={() => isAdmin && !locked && toggle(w.id, p)}
-                                    disabled={!isAdmin || locked}
+                                    onClick={() => canManage && !locked && toggle(w.id, p)}
+                                    disabled={!canManage || locked}
                                     title={locked
                                       ? `${brand?.label ?? p.name} has posts on this channel — remove them before disabling`
                                       : pon ? `Disable ${brand?.label ?? p.name}` : `Enable ${brand?.label ?? p.name}`}

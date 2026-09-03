@@ -1,8 +1,7 @@
 import { Router } from "express";
 import { z } from "zod";
 import { pool } from "../db.js";
-import { requireAdmin } from "../resolve-workspace.js";
-import { PERMISSION_KEYS, activeGrants } from "../permissions.js";
+import { PERMISSION_KEYS, activeGrants, requirePermission } from "../permissions.js";
 
 // Settings → Access — admin-only management of per-user permission grants.
 // The user picker is served by the existing GET /users (workspace members);
@@ -11,7 +10,7 @@ export const accessRouter = Router();
 
 // GET /access/grants?userId= — the active permission keys held by one user,
 // so the Access checklist can show current state (checked = active grant).
-accessRouter.get("/access/grants", requireAdmin, async (req, res, next) => {
+accessRouter.get("/access/grants", requirePermission("access_manage"), async (req, res, next) => {
   const userId = req.query.userId;
   if (!userId) return res.status(400).json({ error: "userId is required." });
   try {
@@ -30,7 +29,7 @@ const SaveSchema = z.object({
 // PUT /access/grants — apply a user's desired permission state. New permissions
 // insert a grant (granted_by/granted_at set); un-ticked ones that were active
 // get soft-revoked (revoked_at set), never hard-deleted — history stays intact.
-accessRouter.put("/access/grants", requireAdmin, async (req, res, next) => {
+accessRouter.put("/access/grants", requirePermission("access_manage"), async (req, res, next) => {
   const parsed = SaveSchema.safeParse(req.body);
   if (!parsed.success) return res.status(400).json({ error: "Invalid grant payload." });
   const { userId, permissions } = parsed.data;

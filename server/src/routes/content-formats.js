@@ -1,7 +1,7 @@
 import { Router } from "express";
 import { z } from "zod";
 import { pool } from "../db.js";
-import { requireAdmin } from "../resolve-workspace.js";
+import { requirePermission } from "../permissions.js";
 
 export const contentFormatsRouter = Router();
 
@@ -34,7 +34,7 @@ contentFormatsRouter.get("/content-formats", async (req, res, next) => {
   }
 });
 
-contentFormatsRouter.post("/content-formats", requireAdmin, async (req, res, next) => {
+contentFormatsRouter.post("/content-formats", requirePermission("task_settings"), async (req, res, next) => {
   const parsed = Schema.safeParse(req.body);
   if (!parsed.success) return res.status(400).json({ error: "Give the format a name." });
   const category = parsed.data.category;
@@ -59,7 +59,7 @@ contentFormatsRouter.post("/content-formats", requireAdmin, async (req, res, nex
   }
 });
 
-contentFormatsRouter.patch("/content-formats/:id", requireAdmin, async (req, res, next) => {
+contentFormatsRouter.patch("/content-formats/:id", requirePermission("task_settings"), async (req, res, next) => {
   const parsed = Schema.partial().safeParse(req.body);
   if (!parsed.success) return res.status(400).json({ error: "Invalid update." });
   const sets = [];
@@ -85,7 +85,7 @@ contentFormatsRouter.patch("/content-formats/:id", requireAdmin, async (req, res
 
 // Soft-delete — tasks and rules already using it keep displaying correctly
 // (name/icon still resolve); it just stops being offered for new ones.
-contentFormatsRouter.delete("/content-formats/:id", requireAdmin, async (req, res, next) => {
+contentFormatsRouter.delete("/content-formats/:id", requirePermission("task_settings"), async (req, res, next) => {
   try {
     const { rowCount } = await pool.query(
       "update task_content_format set active = false where id = $1 and org_id = $2",

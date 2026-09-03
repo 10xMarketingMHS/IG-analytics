@@ -3,7 +3,7 @@ import { z } from "zod";
 import { pool } from "../db.js";
 import { createWorkspace } from "../bootstrap.js";
 import { logActivity } from "../activity.js";
-import { requireAdmin } from "../resolve-workspace.js";
+import { requirePermission } from "../permissions.js";
 
 export const workspacesRouter = Router();
 
@@ -32,7 +32,7 @@ workspacesRouter.get("/workspaces", async (req, res, next) => {
 const NameSchema = z.object({ name: z.string().trim().min(1).max(80) });
 
 // Create a new workspace — the creator becomes its admin.
-workspacesRouter.post("/workspaces", requireAdmin, async (req, res, next) => {
+workspacesRouter.post("/workspaces", requirePermission("channels"), async (req, res, next) => {
   const parsed = NameSchema.safeParse(req.body);
   if (!parsed.success) {
     return res.status(400).json({ error: "Workspace name is required." });
@@ -83,7 +83,7 @@ workspacesRouter.post("/workspaces", requireAdmin, async (req, res, next) => {
 });
 
 // Rename a workspace the user is an admin of.
-workspacesRouter.patch("/workspaces/:id", requireAdmin, async (req, res, next) => {
+workspacesRouter.patch("/workspaces/:id", requirePermission("channels"), async (req, res, next) => {
   const parsed = NameSchema.safeParse(req.body);
   if (!parsed.success) {
     return res.status(400).json({ error: "Workspace name is required." });
@@ -94,7 +94,7 @@ workspacesRouter.patch("/workspaces/:id", requireAdmin, async (req, res, next) =
        where id = $2
          and exists (
            select 1 from membership m
-           where m.workspace_id = workspace.id and m.user_id = $3 and m.role = 'admin'
+           where m.workspace_id = workspace.id and m.user_id = $3
          )
        returning id, name, logo_url`,
       [parsed.data.name, req.params.id, req.user.sub],
@@ -110,14 +110,14 @@ workspacesRouter.patch("/workspaces/:id", requireAdmin, async (req, res, next) =
 // accounts, taxonomy, memberships & Instagram connections; keeps the shared
 // team (editors are reassigned to another channel) and keeps tasks (their
 // channel link is just cleared). Refuses to delete the org's only channel.
-workspacesRouter.delete("/workspaces/:id", requireAdmin, async (req, res, next) => {
+workspacesRouter.delete("/workspaces/:id", requirePermission("channels"), async (req, res, next) => {
   const client = await pool.connect();
   try {
     await client.query("BEGIN");
     const ws = (await client.query(
       `select w.id, w.org_id from workspace w
        join membership m on m.workspace_id = w.id
-       where w.id = $1 and m.user_id = $2 and m.role = 'admin'`,
+       where w.id = $1 and m.user_id = $2`,
       [req.params.id, req.user.sub],
     )).rows[0];
     if (!ws) {

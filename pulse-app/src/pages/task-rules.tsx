@@ -17,7 +17,9 @@ const ICON_OPTIONS = [
 // Rendered as one tab inside the master Settings page (see settings.tsx) —
 // no outer <section className="screen"> here, that's Settings' job.
 export function TaskRulesSection() {
-  const { isAdmin } = useWorkspaces();
+  const { isAdmin, hasPermission } = useWorkspaces();
+  // Admin, or a task_settings grantee — same full management either way.
+  const canManage = isAdmin || hasPermission("task_settings");
   const { editors } = useEditors();
   const { contentFormats, refetch: refetchFormats } = useContentFormats();
   const [rules, setRules] = useState<TaskTimeRule[] | null>(null);
@@ -31,10 +33,10 @@ export function TaskRulesSection() {
   }, []);
 
   useEffect(() => {
-    if (isAdmin) load();
-  }, [isAdmin, load]);
+    if (canManage) load();
+  }, [canManage, load]);
 
-  if (!isAdmin) {
+  if (!canManage) {
     return (
       <>
         <div className="sectitle"><span className="dot" />Task Settings<span className="s">content formats & how much time each task gets</span></div>

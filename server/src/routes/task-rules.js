@@ -1,7 +1,7 @@
 import { Router } from "express";
 import { z } from "zod";
 import { pool } from "../db.js";
-import { requireAdmin } from "../resolve-workspace.js";
+import { requirePermission } from "../permissions.js";
 
 export const taskRulesRouter = Router();
 
@@ -24,7 +24,7 @@ const SELECT = `
 
 // List every rule for the org — global defaults (editor_id null) and
 // per-editor overrides, newest-updated first within each format.
-taskRulesRouter.get("/task-time-rules", requireAdmin, async (req, res, next) => {
+taskRulesRouter.get("/task-time-rules", requirePermission("task_settings"), async (req, res, next) => {
   try {
     const { rows } = await pool.query(
       `${SELECT} where r.org_id = $1 order by cf.sort_order, cf.name, e.name nulls first`,
@@ -44,7 +44,7 @@ const RuleSchema = z.object({
 
 // Upsert — one row per (org, format, editor|global). Setting a rule for a
 // format+editor that already has one just updates its hours.
-taskRulesRouter.post("/task-time-rules", requireAdmin, async (req, res, next) => {
+taskRulesRouter.post("/task-time-rules", requirePermission("task_settings"), async (req, res, next) => {
   const parsed = RuleSchema.safeParse(req.body);
   if (!parsed.success) {
     return res.status(400).json({ error: parsed.error.flatten().fieldErrors });
@@ -79,7 +79,7 @@ taskRulesRouter.post("/task-time-rules", requireAdmin, async (req, res, next) =>
   }
 });
 
-taskRulesRouter.delete("/task-time-rules/:id", requireAdmin, async (req, res, next) => {
+taskRulesRouter.delete("/task-time-rules/:id", requirePermission("task_settings"), async (req, res, next) => {
   try {
     const { rowCount } = await pool.query(
       "delete from task_time_rule where id = $1 and org_id = $2",

@@ -1,7 +1,7 @@
 import { Router } from "express";
 import { z } from "zod";
 import { pool } from "../db.js";
-import { requireAdmin } from "../resolve-workspace.js";
+import { requirePermission } from "../permissions.js";
 
 export const taxonomyRouter = Router();
 
@@ -46,7 +46,7 @@ function handleDeleteError(err, res, next, label) {
   next(err);
 }
 
-taxonomyRouter.post("/pillars", requireAdmin, async (req, res, next) => {
+taxonomyRouter.post("/pillars", requirePermission("content_taxonomy"), async (req, res, next) => {
   const p = validate(PillarSchema, req.body, res);
   if (!p) return;
   try {
@@ -63,7 +63,7 @@ taxonomyRouter.post("/pillars", requireAdmin, async (req, res, next) => {
   }
 });
 
-taxonomyRouter.delete("/pillars/:id", requireAdmin, async (req, res, next) => {
+taxonomyRouter.delete("/pillars/:id", requirePermission("content_taxonomy"), async (req, res, next) => {
   try {
     const { rowCount } = await pool.query(
       "delete from pillar where id = $1 and workspace_id = $2",
@@ -76,7 +76,7 @@ taxonomyRouter.delete("/pillars/:id", requireAdmin, async (req, res, next) => {
   }
 });
 
-taxonomyRouter.post("/avatars", requireAdmin, async (req, res, next) => {
+taxonomyRouter.post("/avatars", requirePermission("content_taxonomy"), async (req, res, next) => {
   const p = validate(AvatarSchema, req.body, res);
   if (!p) return;
   try {
@@ -92,7 +92,7 @@ taxonomyRouter.post("/avatars", requireAdmin, async (req, res, next) => {
   }
 });
 
-taxonomyRouter.delete("/avatars/:id", requireAdmin, async (req, res, next) => {
+taxonomyRouter.delete("/avatars/:id", requirePermission("content_taxonomy"), async (req, res, next) => {
   try {
     const { rowCount } = await pool.query(
       "delete from avatar where id = $1 and workspace_id = $2",
@@ -105,7 +105,7 @@ taxonomyRouter.delete("/avatars/:id", requireAdmin, async (req, res, next) => {
   }
 });
 
-taxonomyRouter.post("/content-types", requireAdmin, async (req, res, next) => {
+taxonomyRouter.post("/content-types", requirePermission("content_taxonomy"), async (req, res, next) => {
   const p = validate(ContentTypeSchema, req.body, res);
   if (!p) return;
   try {
@@ -122,7 +122,7 @@ taxonomyRouter.post("/content-types", requireAdmin, async (req, res, next) => {
   }
 });
 
-taxonomyRouter.delete("/content-types/:id", requireAdmin, async (req, res, next) => {
+taxonomyRouter.delete("/content-types/:id", requirePermission("content_taxonomy"), async (req, res, next) => {
   try {
     const { rowCount } = await pool.query(
       "delete from content_type where id = $1 and workspace_id = $2",
@@ -135,7 +135,7 @@ taxonomyRouter.delete("/content-types/:id", requireAdmin, async (req, res, next)
   }
 });
 
-taxonomyRouter.post("/formats", requireAdmin, async (req, res, next) => {
+taxonomyRouter.post("/formats", requirePermission("content_taxonomy"), async (req, res, next) => {
   const p = validate(FormatSchema, req.body, res);
   if (!p) return;
   try {
@@ -152,7 +152,7 @@ taxonomyRouter.post("/formats", requireAdmin, async (req, res, next) => {
   }
 });
 
-taxonomyRouter.delete("/formats/:id", requireAdmin, async (req, res, next) => {
+taxonomyRouter.delete("/formats/:id", requirePermission("content_taxonomy"), async (req, res, next) => {
   try {
     const { rowCount } = await pool.query(
       "delete from format where id = $1 and workspace_id = $2",

@@ -14,7 +14,19 @@ import {
 import { useAuth } from "@/lib/auth-context";
 
 // Per-user permission grants (Settings → Access) — additive on top of role.
-export type PermissionKey = "create_post" | "goal_setting_access";
+// Keep in sync with server/src/permissions.js PERMISSION_KEYS.
+export type PermissionKey =
+  | "create_post"
+  | "goal_setting_access"
+  | "task_settings"
+  | "channels"
+  | "content_taxonomy"
+  | "access_manage"
+  | "assign_tasks"
+  | "resolve_tasks"
+  | "hold_tasks"
+  | "edit_goals"
+  | "discipline";
 
 export type Workspace = {
   id: string;

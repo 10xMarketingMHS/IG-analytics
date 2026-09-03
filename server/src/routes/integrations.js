@@ -2,7 +2,8 @@ import { Router } from "express";
 import { z } from "zod";
 import { pool } from "../db.js";
 import { config } from "../config.js";
-import { requireAdmin, requireEditor } from "../resolve-workspace.js";
+import { requireEditor } from "../resolve-workspace.js";
+import { requirePermission } from "../permissions.js";
 import { encryptToken, decryptToken, encryptionReady, signState, verifyState } from "../crypto.js";
 import { logActivity } from "../activity.js";
 import * as ig from "../integrations/instagram.js";
@@ -138,7 +139,7 @@ integrationsRouter.get("/integrations/connections", async (req, res, next) => {
 });
 
 // Step 1: start OAuth for a specific Pulse account (channel × Instagram).
-integrationsRouter.get("/integrations/instagram/connect", requireAdmin, async (req, res, next) => {
+integrationsRouter.get("/integrations/instagram/connect", requirePermission("channels"), async (req, res, next) => {
   try {
     if (!ig.metaConfigured()) return backToIntegrations(res, { error: "not_configured" });
     if (!encryptionReady()) return backToIntegrations(res, { error: "no_encryption" });
@@ -214,7 +215,7 @@ integrationsRouter.get("/integrations/instagram/callback", async (req, res, next
 // the Instagram account the token can see and links it to the Pulse account.
 // Stores the sentinel 'SYSTEM' instead of a token (the token lives in env).
 const ConnectSchema = z.object({ accountId: z.string().uuid() });
-integrationsRouter.post("/integrations/instagram/connect-system", requireAdmin, async (req, res, next) => {
+integrationsRouter.post("/integrations/instagram/connect-system", requirePermission("channels"), async (req, res, next) => {
   const parsed = ConnectSchema.safeParse(req.body);
   if (!parsed.success) return res.status(400).json({ error: "accountId is required" });
   if (!ig.systemTokenConfigured()) {
@@ -277,7 +278,7 @@ integrationsRouter.post("/integrations/instagram/connect-system", requireAdmin, 
 // second brand under a different system user). Validated, then stored ENCRYPTED
 // in the DB — so every account can carry its own token, no shared env var.
 const ConnectTokenSchema = z.object({ accountId: z.string().uuid(), token: z.string().min(20) });
-integrationsRouter.post("/integrations/instagram/connect-token", requireAdmin, async (req, res, next) => {
+integrationsRouter.post("/integrations/instagram/connect-token", requirePermission("channels"), async (req, res, next) => {
   const parsed = ConnectTokenSchema.safeParse(req.body);
   if (!parsed.success) return res.status(400).json({ error: "accountId and a token are required" });
   if (!encryptionReady()) {
@@ -339,7 +340,7 @@ const SyncSchema = z.object({ accountId: z.string().uuid() });
 
 // One-click Facebook connect via the server system token. Picks the Page (by the
 // channel's handle, else the only one) and stores its own connection row.
-integrationsRouter.post("/integrations/facebook/connect-system", requireAdmin, async (req, res, next) => {
+integrationsRouter.post("/integrations/facebook/connect-system", requirePermission("channels"), async (req, res, next) => {
   const parsed = ConnectSchema.safeParse(req.body);
   if (!parsed.success) return res.status(400).json({ error: "accountId is required" });
   if (!ig.systemTokenConfigured()) {
@@ -378,7 +379,7 @@ integrationsRouter.post("/integrations/facebook/connect-system", requireAdmin, a
 });
 
 // Per-account Facebook connect via a pasted token — stores the resolved Page token.
-integrationsRouter.post("/integrations/facebook/connect-token", requireAdmin, async (req, res, next) => {
+integrationsRouter.post("/integrations/facebook/connect-token", requirePermission("channels"), async (req, res, next) => {
   const parsed = ConnectTokenSchema.safeParse(req.body);
   if (!parsed.success) return res.status(400).json({ error: "accountId and a token are required" });
   if (!encryptionReady()) {
@@ -488,7 +489,7 @@ integrationsRouter.post("/integrations/facebook/sync", requireEditor, async (req
 // Set/replace the org's YouTube key — validated with a real call before storing,
 // so a bad key fails visibly and is never saved. Admin-only.
 const YtKeySchema = z.object({ key: z.string().min(10) });
-integrationsRouter.post("/integrations/youtube/key", requireAdmin, async (req, res, next) => {
+integrationsRouter.post("/integrations/youtube/key", requirePermission("channels"), async (req, res, next) => {
   const parsed = YtKeySchema.safeParse(req.body);
   if (!parsed.success) return res.status(400).json({ error: "A YouTube API key is required." });
   if (!encryptionReady()) {
@@ -503,7 +504,7 @@ integrationsRouter.post("/integrations/youtube/key", requireAdmin, async (req, r
 });
 // Remove the org's YouTube key (channels stay connected but can't sync until a
 // new key is set). Admin-only.
-integrationsRouter.delete("/integrations/youtube/key", requireAdmin, async (req, res, next) => {
+integrationsRouter.delete("/integrations/youtube/key", requirePermission("channels"), async (req, res, next) => {
   try {
     await pool.query("update org set youtube_api_key_enc = null where id = $1", [req.orgId]);
     res.status(204).end();
@@ -512,7 +513,7 @@ integrationsRouter.delete("/integrations/youtube/key", requireAdmin, async (req,
 
 // ===== YouTube connect (Y-A) — resolve a channel via the org key, no OAuth =====
 const YtConnectSchema = z.object({ accountId: z.string().uuid(), channel: z.string().min(1) });
-integrationsRouter.post("/integrations/youtube/connect", requireAdmin, async (req, res, next) => {
+integrationsRouter.post("/integrations/youtube/connect", requirePermission("channels"), async (req, res, next) => {
   const parsed = YtConnectSchema.safeParse(req.body);
   if (!parsed.success) return res.status(400).json({ error: "accountId and a channel URL/handle are required" });
   const ytKey = await getYoutubeKey(req.orgId);
@@ -715,7 +716,7 @@ integrationsRouter.post("/integrations/youtube/sync", requireEditor, async (req,
   }
 });
 
-integrationsRouter.delete("/integrations/connections/:id", requireAdmin, async (req, res, next) => {
+integrationsRouter.delete("/integrations/connections/:id", requirePermission("channels"), async (req, res, next) => {
   try {
     const { rowCount } = await pool.query(
       "delete from platform_connection where id = $1 and org_id = $2",

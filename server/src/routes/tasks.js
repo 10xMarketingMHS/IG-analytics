@@ -2,6 +2,7 @@ import { Router } from "express";
 import { z } from "zod";
 import { pool } from "../db.js";
 import { requireEditor } from "../resolve-workspace.js";
+import { hasActiveGrant } from "../permissions.js";
 import { logActivity } from "../activity.js";
 
 export const tasksRouter = Router();
@@ -358,7 +359,9 @@ tasksRouter.patch("/tasks/:id", requireEditor, async (req, res, next) => {
     let reviewNote = null;
     if (d.status !== undefined && d.status !== prior.status) {
       if (prior.status === "review") {
-        if (req.role !== "admin") {
+        // Resolving a review (approve into done, or send back for rework) is an
+        // admin power — or a resolve_tasks grantee acting with the same reach.
+        if (req.role !== "admin" && !(await hasActiveGrant(req.orgId, req.user.sub, "resolve_tasks"))) {
           return res.status(403).json({ error: "Only an admin can approve or send back a task in review." });
         }
         if (d.status !== "done" && d.status !== "in_progress") {
@@ -419,9 +422,10 @@ tasksRouter.patch("/tasks/:id", requireEditor, async (req, res, next) => {
     // assignee can do either. This is symmetric — release permission does NOT
     // depend on who applied the hold (held_by is informational only), so an
     // admin can resume an assignee's hold and vice-versa. Mirrors the exact
-    // assignee identity check the forward-status-move gate uses above.
+    // assignee identity check the forward-status-move gate uses above. A
+    // hold_tasks grantee gets admin-like reach — hold/resume ANY task.
     if (d.onHold !== undefined && d.onHold !== prior.on_hold) {
-      if (req.role !== "admin") {
+      if (req.role !== "admin" && !(await hasActiveGrant(req.orgId, req.user.sub, "hold_tasks"))) {
         const myEditorId = await callerEditorId(req);
         if (!prior.editor_id || myEditorId !== prior.editor_id) {
           return res.status(403).json({ error: "Only an admin or the task's assignee can put it on hold or resume it." });

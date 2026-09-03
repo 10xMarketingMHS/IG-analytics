@@ -70,24 +70,30 @@ export function GoalSettingSection() {
   const [month, setMonth] = useState(thisMonthStr());
   const [view, setView] = useState<"goals" | "performance" | "discipline">("goals");
   const [editorId, setEditorId] = useState<string>("");
-  // A goal_setting_access grant-holder (non-admin): read-only, locked to their
-  // OWN editor. No user picker, no Discipline tab (that shows the whole team),
-  // no export, no editing — a simplified, self-scoped view of the same pages.
-  const viewerOnly = !isAdmin && hasPermission("goal_setting_access");
-  const canView = isAdmin || viewerOnly;
+  // Three layered grants, additive on top of admin:
+  //  - edit_goals: full write of Set Goals + Performance, any editor (picker).
+  //  - discipline: the whole-team Discipline bulk table.
+  //  - goal_setting_access: read-only view of their OWN goals — only meaningful
+  //    when they can't already fully edit.
+  const canEdit = isAdmin || hasPermission("edit_goals");
+  const canDiscipline = isAdmin || hasPermission("discipline");
+  const viewerOnly = !canEdit && hasPermission("goal_setting_access");
+  const canGoalsTab = canEdit || viewerOnly; // Set Goals + Performance
+  const canView = canGoalsTab || canDiscipline;
   // Periods that actually have goal data — drives the Performance picker + export.
   const [dataMonths, setDataMonths] = useState<string[]>([]);
   useEffect(() => {
     if (canView) api<{ months: string[] }>("/goals/months").then((d) => setDataMonths(d.months)).catch(() => {});
   }, [canView]);
-  // A viewer is always locked to their own editor record.
+  // A read-only viewer is always locked to their own editor record.
   useEffect(() => {
     if (viewerOnly) setEditorId(user?.editorId ?? "");
   }, [viewerOnly, user?.editorId]);
-  // A viewer can never land on the admin-only Discipline tab.
+  // Keep the active tab within what this user is allowed to see.
   useEffect(() => {
-    if (viewerOnly && view === "discipline") setView("goals");
-  }, [viewerOnly, view]);
+    if (view === "discipline" && !canDiscipline) setView("goals");
+    else if (view !== "discipline" && !canGoalsTab) setView("discipline");
+  }, [view, canDiscipline, canGoalsTab]);
   // When viewing Performance, snap to a month that has data if the current one doesn't.
   useEffect(() => {
     if (view === "performance" && dataMonths.length && !dataMonths.includes(month)) setMonth(dataMonths[0]);
@@ -120,9 +126,9 @@ export function GoalSettingSection() {
       </div>
       <div className="card pad" style={{ display: "flex", gap: 12, alignItems: "center", flexWrap: "wrap" }}>
         <div className="seg" style={{ marginBottom: 0 }}>
-          <button type="button" className={view === "goals" ? "on" : ""} onClick={() => setView("goals")}>🎯 Set Goals</button>
-          <button type="button" className={view === "performance" ? "on" : ""} onClick={() => setView("performance")}>📈 Performance</button>
-          {!viewerOnly && <button type="button" className={view === "discipline" ? "on" : ""} onClick={() => setView("discipline")}>⚖️ Discipline</button>}
+          {canGoalsTab && <button type="button" className={view === "goals" ? "on" : ""} onClick={() => setView("goals")}>🎯 Set Goals</button>}
+          {canGoalsTab && <button type="button" className={view === "performance" ? "on" : ""} onClick={() => setView("performance")}>📈 Performance</button>}
+          {canDiscipline && <button type="button" className={view === "discipline" ? "on" : ""} onClick={() => setView("discipline")}>⚖️ Discipline</button>}
         </div>
         {view === "goals" ? (
           <label className="f" style={{ margin: 0 }}>Month{" "}
@@ -144,7 +150,7 @@ export function GoalSettingSection() {
             </select>
           </label>
         )}
-        {!viewerOnly && view === "performance" && (
+        {isAdmin && view === "performance" && (
           <button type="button" className="btn btn-primary" style={{ marginLeft: "auto" }}
             disabled={!dataMonths.includes(month)}
             onClick={() => exportMonth(month)}>⬇ Export .xlsx</button>
@@ -158,7 +164,7 @@ export function GoalSettingSection() {
       ) : !editorId ? (
         <div className="card pad"><div className="hint">Pick an editor to {view === "goals" ? "set their goals" : "see their performance"} for {month}.</div></div>
       ) : view === "goals" ? (
-        <GoalEditor key={editorId + month} editorId={editorId} month={`${month}-01`} readOnly={viewerOnly} />
+        <GoalEditor key={editorId + month} editorId={editorId} month={`${month}-01`} readOnly={!canEdit} />
       ) : (
         <PerformanceReport key={editorId + month} editorId={editorId} month={`${month}-01`} />
       )}

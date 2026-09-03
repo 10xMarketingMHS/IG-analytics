@@ -1,7 +1,7 @@
 import { Router } from "express";
 import { z } from "zod";
 import { pool } from "../db.js";
-import { requireAdmin } from "../resolve-workspace.js";
+import { requirePermission } from "../permissions.js";
 
 export const platformsRouter = Router();
 
@@ -56,7 +56,7 @@ const AccountSchema = z.object({
 });
 
 // Enable a platform on a channel (creates the account).
-platformsRouter.post("/accounts", requireAdmin, async (req, res, next) => {
+platformsRouter.post("/accounts", requirePermission("channels"), async (req, res, next) => {
   const parsed = AccountSchema.safeParse(req.body);
   if (!parsed.success) {
     return res.status(400).json({ error: parsed.error.flatten().fieldErrors });
@@ -84,7 +84,7 @@ platformsRouter.post("/accounts", requireAdmin, async (req, res, next) => {
 });
 
 // Disable a platform on a channel. Blocked if that account already has posts.
-platformsRouter.delete("/accounts/:id", requireAdmin, async (req, res, next) => {
+platformsRouter.delete("/accounts/:id", requirePermission("channels"), async (req, res, next) => {
   try {
     const acc = await pool.query(
       "select workspace_id, platform_id from account where id = $1 and org_id = $2",
