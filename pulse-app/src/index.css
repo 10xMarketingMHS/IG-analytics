@@ -980,7 +980,17 @@ select.mini{font-family:inherit;font-size:12.5px;font-weight:700;color:var(--tex
 .pp-controls{display:flex;align-items:center;gap:12px;margin-left:auto;flex-wrap:wrap}
 .pp-month{max-width:170px}
 .pp-note{font-size:12px;font-weight:600;color:var(--amber-ink,#b45309);background:var(--amber-weak,rgba(245,158,11,.12));border:1px solid var(--amber-weak,rgba(245,158,11,.25));border-radius:8px;padding:6px 11px;margin:8px 0 0;display:inline-block}
-.lb-head-house,.lb-row-house{grid-template-columns:110px 1fr 124px 104px}
+.lb-head-house,.lb-row-house{grid-template-columns:110px 1fr 100px 160px 104px}
+/* Media House Leaders — Goal column: target number + % + completion bar. */
+.lb-goal{display:flex;flex-direction:column;gap:5px;padding-right:14px}
+.lb-goal-top{display:flex;align-items:baseline;justify-content:space-between;gap:8px;font-variant-numeric:tabular-nums}
+.lb-goal-num{font-size:13px;font-weight:700;color:var(--text)}
+.lb-goal-pct{font-size:11.5px;font-weight:700;color:var(--muted)}
+.lb-goal-bar{height:6px;border-radius:999px;background:var(--panel2);border:1px solid var(--border);overflow:hidden}
+.lb-goal-fill{height:100%;border-radius:inherit;background:linear-gradient(90deg,var(--accent),var(--indigo,#6366f1))}
+.lb-goal-none{color:var(--faint);font-size:13px}
+.lb-teamgoal{margin-top:14px;font-size:13px;color:var(--muted);text-align:right;padding-right:22px}
+.lb-teamgoal b{color:var(--text);font-variant-numeric:tabular-nums}
 .lb-statbar{display:flex;align-items:center;gap:16px;margin:0 0 16px}
 .lb-statbar h3{margin:0;font-size:20px;letter-spacing:-.3px}
 .lb-toggle{display:inline-flex;background:var(--panel2);border:1px solid var(--border);border-radius:12px;padding:4px;gap:4px}

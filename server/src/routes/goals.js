@@ -73,6 +73,31 @@ async function scopedEditorId(req, requestedEditorId) {
 const GOAL_VIEW_KEYS = ["goal_setting_access", "edit_goals", "discipline"];
 const GOAL_VIEW = { message: "You don't have access to Goal Setting." };
 
+// GET /goals/totals?month=YYYY-MM — each editor's Goal Points total for the
+// month: Σ(jc × the content type's points), the same figure Goal Setting's
+// "Goal points" shows. Powers the Goal column on the Media House Leaders board,
+// so it's readable by any workspace member (like the board itself) — no admin
+// gate. Editors with no goals that month simply don't appear. Defaults to the
+// current calendar month when no month is given.
+goalsRouter.get("/goals/totals", async (req, res, next) => {
+  try {
+    const monthIn = req.query.month || new Date().toISOString().slice(0, 10);
+    const { rows: mrow } = await pool.query("select date_trunc('month', $1::date)::date m", [monthIn]);
+    const month = mrow[0].m;
+    const { rows } = await pool.query(
+      `select g.editor_id as "editorId", coalesce(sum(g.jc * cf.points), 0)::float as "goalPoints"
+         from editor_goal g
+         join task_content_format cf on cf.id = g.content_format_id
+        where g.org_id = $1 and g.period_month = $2
+        group by g.editor_id`,
+      [req.orgId, month],
+    );
+    res.json({ month, totals: rows });
+  } catch (err) {
+    next(err);
+  }
+});
+
 // GET /goals?editorId=&month= — the goal-setting form for one editor+month:
 // every active content type with its JC (blank = no goal) and JPH (stored goal
 // jph, else pre-filled from the content type's time budget), plus the editor's

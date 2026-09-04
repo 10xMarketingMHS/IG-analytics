@@ -13,7 +13,7 @@ type Period = "month" | "all";
 type Tab = "social" | "house" | "path";
 
 type Row = { editor: Editor; reels: number; carousels: number; views: number; points: number };
-type HouseRow = { editor: Editor; points: number; completed: number };
+type HouseRow = { editor: Editor; points: number; completed: number; goal: number };
 
 // Weighted engagement across an editor's reels & carousels.
 function pointsOf(p: Post) {
@@ -255,6 +255,23 @@ function Laurel({ rank, variant }: { rank: number; variant: "gold" | "silver" | 
   );
 }
 
+// Media House Leaders Goal column: the month's Goal Points target (Σ jc × the
+// content type's points, from Goal Setting) plus a completion bar (Points ÷
+// Goal, capped at 100%). No goal set → a dash.
+function GoalCell({ points, goal }: { points: number; goal: number }) {
+  if (goal <= 0) return <span className="lb-goal-none">—</span>;
+  const pct = Math.max(0, Math.min(100, (points / goal) * 100));
+  return (
+    <div className="lb-goal">
+      <div className="lb-goal-top">
+        <span className="lb-goal-num">{Math.round(goal).toLocaleString()}</span>
+        <span className="lb-goal-pct">{Math.round(pct)}%</span>
+      </div>
+      <div className="lb-goal-bar"><div className="lb-goal-fill" style={{ width: `${pct}%` }} /></div>
+    </div>
+  );
+}
+
 export function LeaderboardPage() {
   const { editors } = useEditors();
   // Social ranking spans every channel in the Media House.
@@ -262,10 +279,21 @@ export function LeaderboardPage() {
   // Editor rankings & the progress path are performance — exclude collab mirrors.
   const posts = postData?.posts?.filter((p) => !p.is_collab_mirror) ?? null;
   const { tasks } = useTasks();
+  // Per-editor Goal Points (Σ jc × points) for the current month — powers the
+  // Goal column + completion on Media House Leaders. Readable by any member.
+  const goalMonth = ymd(new Date()).slice(0, 7) + "-01";
+  const { data: goalData } = useResource<{ totals: { editorId: string; goalPoints: number }[] }>(`/goals/totals?month=${goalMonth}`);
+  const goalByEditor = useMemo(() => {
+    const m = new Map<string, number>();
+    for (const g of goalData?.totals ?? []) m.set(g.editorId, g.goalPoints);
+    return m;
+  }, [goalData]);
   const [tab, setTab] = useState<Tab>("social");
   const [period, setPeriod] = useState<Period>("month");
   // Progress Path: content-points vs task-completion mode + selected month.
-  const [pathMode, setPathMode] = useState<PathMode>("content");
+  // Progress Path is task-completion only — the old "Content points" mode was
+  // removed, so this is locked to "task" (no toggle).
+  const pathMode: PathMode = "task";
   const [pathMonth, setPathMonth] = useState<string>("");
 
   // ---- Social Media Leaders ----
@@ -306,14 +334,16 @@ export function LeaderboardPage() {
           (t) => t.editor_id === editor.id && t.completed_at && isScorableTask(t) && ymd(new Date(t.completed_at)).slice(0, 7) === thisMonth,
         );
         const points = own.reduce((sum, t) => sum + taskPoints(t), 0);
-        return { editor, points, completed: own.length };
+        return { editor, points, completed: own.length, goal: goalByEditor.get(editor.id) ?? 0 };
       })
       // Rank by points, then by volume completed (fair tiebreak).
       .sort((a, b) => b.points - a.points || b.completed - a.completed);
-  }, [editors, tasks]);
+  }, [editors, tasks, goalByEditor]);
 
   const houseRanked = houseRows.filter((r) => r.completed > 0);
   const houseUnranked = houseRows.filter((r) => r.completed === 0);
+  // Team-wide Goal total (pts) — sum across everyone with a goal this month.
+  const houseTeamGoal = houseRows.reduce((s, r) => s + r.goal, 0);
 
   // ---- Progress Path: month options depend on the active mode ----
   const pathMonths = useMemo(
@@ -439,10 +469,6 @@ export function LeaderboardPage() {
           <div className="lb-statbar">
             <h3>Progress path · {effectiveMonth ? labelMonth(effectiveMonth) : "—"}</h3>
             <div className="pp-controls">
-              <div className="lb-toggle">
-                <button className={pathMode === "content" ? "on" : ""} onClick={() => setPathMode("content")}>Content points</button>
-                <button className={pathMode === "task" ? "on" : ""} onClick={() => setPathMode("task")}>Task completion</button>
-              </div>
               <select className="t pp-month" value={effectiveMonth} onChange={(e) => setPathMonth(e.target.value)} disabled={pathMonths.length === 0} aria-label="Select month">
                 {pathMonths.length === 0 && <option value="">No data</option>}
                 {pathMonths.map((m) => <option key={m} value={m}>{labelMonth(m)}</option>)}
@@ -450,20 +476,16 @@ export function LeaderboardPage() {
             </div>
           </div>
           <div className="hint" style={{ margin: "0 0 4px" }}>
-            {pathMode === "content"
-              ? "Editors climb as their published Reels & Carousels earn points. Resets each month."
-              : "On time earns full points, 1 day late half, 2 days late none, 3+ days late costs the task's full points back. Resets each month."}
+            On time earns full points, 1 day late half, 2 days late none, 3+ days late costs the task's full points back. Resets each month.
           </div>
           {monthFellBack && (
             <div className="pp-note">
-              No {pathMode === "task" ? "task" : "content"} data for {labelMonth(pathMonth)} — showing {labelMonth(effectiveMonth)}.
+              No task data for {labelMonth(pathMonth)} — showing {labelMonth(effectiveMonth)}.
             </div>
           )}
           {pathMonths.length === 0 ? (
             <div className="hint" style={{ marginTop: 12 }}>
-              {pathMode === "content"
-                ? "No published posts with an assigned editor yet — the path fills in as content ships."
-                : "No assigned tasks with due dates yet — the path fills in as work gets scheduled and completed."}
+              No assigned tasks with due dates yet — the path fills in as work gets scheduled and completed.
             </div>
           ) : pathShown.shown.length === 0 ? (
             <div className="hint" style={{ marginTop: 12 }}>
@@ -472,7 +494,7 @@ export function LeaderboardPage() {
           ) : (
             <>
               <ProgressPath mode={pathMode} month={effectiveMonth} editors={pathShown.shown} posts={posts} tasks={tasks ?? []} />
-              {pathMode === "task" && pathShown.excluded.length > 0 && (
+              {pathShown.excluded.length > 0 && (
                 <div className="hint" style={{ marginTop: 10 }}>
                   Not shown: {pathShown.excluded.map((e) => e.name).join(", ")} — no tasks assigned in {labelMonth(effectiveMonth)}.
                 </div>
@@ -493,6 +515,7 @@ export function LeaderboardPage() {
                 <div>Position</div>
                 <div>Team member</div>
                 <div className="lb-hidesm" style={{ textAlign: "right", paddingRight: 24 }}>Completed</div>
+                <div className="lb-hidesm">Goal · progress</div>
                 <div style={{ textAlign: "right", paddingRight: 22 }}>Points</div>
               </div>
               <div className="lb-list">
@@ -506,6 +529,7 @@ export function LeaderboardPage() {
                       <div className="who"><b>{r.editor.name}</b><small>{r.editor.designation || "Editor"}</small></div>
                     </div>
                     <div className="lb-cell num lb-hidesm">{r.completed}</div>
+                    <div className="lb-cell lb-hidesm"><GoalCell points={r.points} goal={r.goal} /></div>
                     <div className="lb-points">{r.points.toFixed(1)}</div>
                   </div>
                 ))}
@@ -516,11 +540,14 @@ export function LeaderboardPage() {
                       <Avatar editor={r.editor} />
                       <div className="who"><b>{r.editor.name}</b><small>{r.editor.designation || "Editor"}</small></div>
                     </div>
-                    <div className="lb-cell lb-hidesm" style={{ gridColumn: "3 / span 2" }}>No tasks completed this month</div>
+                    <div className="lb-cell lb-hidesm" style={{ gridColumn: "3 / span 3" }}>No tasks completed this month</div>
                   </div>
                 ))}
               </div>
             </div>
+            {houseTeamGoal > 0 && (
+              <div className="lb-teamgoal">Team Goal · <b>{Math.round(houseTeamGoal).toLocaleString()}</b> pts this month</div>
+            )}
             {houseRanked.length === 0 && (
               <div className="hint" style={{ marginTop: 14 }}>
                 No tasks completed this month yet. Assign tasks on the{" "}
