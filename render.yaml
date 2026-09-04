@@ -12,6 +12,12 @@ services:
     envVars:
       - key: NODE_ENV
         value: production
+      # Supabase's session pooler caps the whole project at 15 clients. Keep each
+      # instance small so a rolling deploy (old + new overlap) stays well under
+      # it: 3 → two overlapping instances = 6, leaving headroom for migrations
+      # and local dev that share the same database.
+      - key: DB_POOL_MAX
+        value: "3"
       # The values below are secret — enter them in the Render dashboard when
       # prompted (they are NOT stored in this file / git).
       - key: DATABASE_URL

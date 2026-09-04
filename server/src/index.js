@@ -83,9 +83,26 @@ app.use((err, _req, res, _next) => {
   res.status(500).json({ error: "Internal server error" });
 });
 
-const workspaceId = await ensureBootstrapped();
-
+// Start listening FIRST, then bootstrap — never block the health check on a DB
+// query. Supabase's session pooler caps the whole project at 15 clients; during
+// a rolling deploy the old instance still holds its connections, so a fresh
+// instance can briefly fail to grab one. If we `await` a DB call before
+// listen(), that new instance never answers /api/health and Render marks the
+// whole deploy failed (EMAXCONNSESSION). Listening immediately lets the health
+// check pass; bootstrap runs in the background and simply retries once the old
+// instance drains and connections free up.
 app.listen(config.PORT, () => {
   console.log(`Pulse API listening on http://localhost:${config.PORT}`);
-  console.log(`Default workspace: ${workspaceId}`);
 });
+
+async function bootstrapWithRetry(attempt = 1) {
+  try {
+    const workspaceId = await ensureBootstrapped();
+    console.log(`Default workspace: ${workspaceId}`);
+  } catch (err) {
+    const delayMs = Math.min(30_000, 2_000 * attempt);
+    console.error(`Bootstrap attempt ${attempt} failed (retrying in ${delayMs}ms):`, err.message);
+    setTimeout(() => bootstrapWithRetry(attempt + 1), delayMs).unref();
+  }
+}
+bootstrapWithRetry();
