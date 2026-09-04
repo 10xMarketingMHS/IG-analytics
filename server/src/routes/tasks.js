@@ -66,6 +66,9 @@ const TaskSchema = z.object({
   attachments: z.array(z.object({ url: z.string().url(), label: z.string().max(120).optional() })).optional(),
   // Admin Hold / Resume — parks an in-progress task and pauses its timer.
   onHold: z.boolean().optional(),
+  // Delivery Link — URL to the completed deliverable. Same http/https URL
+  // validation Posts' link uses; "" or null clears it. Not for admin tasks.
+  deliveryLink: z.union([z.string().url(), z.literal(""), z.null()]).optional(),
 });
 
 // Every task gets an org-wide TID as an internal key (no longer shown in the
@@ -99,7 +102,7 @@ const SELECT = `
          t.content_format_id, cf.name as content_format_name, cf.icon as content_format_icon,
          cf.points as content_format_points,
          t.budget_hours, t.budget_started_at, t.accepted, t.on_hold, t.held_by, t.created_at, t.completed_at,
-         t.content_type, t.platforms, t.attachments,
+         t.content_type, t.platforms, t.attachments, t.delivery_link,
          e.name as editor_name, e.image_url as editor_image,
          coalesce(hu.name, hu.email) as held_by_name,
          -- The assignee's break, so the client can offset the countdown by
@@ -337,7 +340,7 @@ tasksRouter.patch("/tasks/:id", requireEditor, async (req, res, next) => {
     // Capture prior state so we can spawn the next occurrence on completion,
     // guard task_type for post-linked tasks, and re-resolve the time budget.
     const prior = (await pool.query(
-      "select status, recurrence, post_id, editor_id, channel_id, content_format_id, accepted, budget_hours, budget_started_at, budget_used_seconds, on_hold, sid, ad_id, svid, revision from task where id = $1 and org_id = $2",
+      "select status, recurrence, post_id, editor_id, channel_id, content_format_id, accepted, budget_hours, budget_started_at, budget_used_seconds, on_hold, sid, ad_id, svid, revision, task_type from task where id = $1 and org_id = $2",
       [req.params.id, req.orgId],
     )).rows[0];
     if (!prior) return res.status(404).json({ error: "Task not found" });
@@ -450,6 +453,23 @@ tasksRouter.patch("/tasks/:id", requireEditor, async (req, res, next) => {
         }
         push("on_hold", false);
       }
+    }
+
+    // Delivery Link — URL to the completed deliverable. Never on admin tasks
+    // (they carry no content-related fields), and writable only by the task's
+    // assignee or an admin (viewers can't reach this endpoint at all —
+    // requireEditor). "" / null clears it.
+    if (d.deliveryLink !== undefined) {
+      if (prior.task_type === "admin") {
+        return res.status(400).json({ error: "Admin tasks don't have a delivery link." });
+      }
+      if (req.role !== "admin") {
+        const myEditorId = await callerEditorId(req);
+        if (!prior.editor_id || myEditorId !== prior.editor_id) {
+          return res.status(403).json({ error: "Only the task's assignee or an admin can set the delivery link." });
+        }
+      }
+      push("delivery_link", d.deliveryLink ? d.deliveryLink : null);
     }
 
     // Manually linking a task to a post — turns it into a Social Media task

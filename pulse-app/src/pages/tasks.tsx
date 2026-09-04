@@ -1606,6 +1606,10 @@ function TaskPanel({ mode, task, canWrite, editors, channels, onClose, onChanged
   const canAssign = isAdmin || hasPermission("assign_tasks");
   const canResolve = isAdmin || hasPermission("resolve_tasks");
   const ro = !canWrite;
+  // Delivery Link is writable by the task's assignee or an admin (mirrors the
+  // server check); everyone else who can open the panel sees it read-only.
+  const isOwnerTask = !!user?.editorId && task?.editor_id === user.editorId;
+  const canEditDelivery = !ro && (isAdmin || isOwnerTask);
   const { contentFormats } = useContentFormats();
   const [draft, setDraft] = useState<{
     channel_id: string | null; editor_id: string | null; due_date: string | null; priority: string;
@@ -1867,6 +1871,7 @@ function TaskPanel({ mode, task, canWrite, editors, channels, onClose, onChanged
         <>
           {!task!.post_id && <LinkPostControl taskId={task!.id} onLinked={onChanged} />}
           <Checklist taskId={task!.id} readOnly={ro} onChanged={onChanged} />
+          {!adminEdit && <DeliveryLink task={task!} canEdit={canEditDelivery} onChanged={onChanged} />}
           <ReviewHistory taskId={task!.id} />
           <Comments taskId={task!.id} />
         </>
@@ -1983,6 +1988,83 @@ function Checklist({ taskId, readOnly = false, onChanged }: { taskId: string; re
           <input className="t" placeholder="Add checklist item…" value={newTitle} onChange={(e) => setNewTitle(e.target.value)}
             onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); add(); } }} />
           <button type="button" className="btn" onClick={add} disabled={!newTitle.trim()}>Add</button>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function isValidHttpUrl(s: string): boolean {
+  try {
+    const u = new URL(s);
+    return u.protocol === "http:" || u.protocol === "https:";
+  } catch {
+    return false;
+  }
+}
+
+// Delivery Link — the URL of the completed deliverable, shown directly below the
+// checklist. Empty state (for someone who can edit) is an input + Save; once set
+// it's a clickable link + Edit. Read-only viewers see the link if present, or
+// nothing when empty. Admin tasks never render this (handled by the caller).
+function DeliveryLink({ task, canEdit, onChanged }: { task: Task; canEdit: boolean; onChanged?: () => void }) {
+  const [saved, setSaved] = useState(task.delivery_link ?? "");
+  const [value, setValue] = useState(task.delivery_link ?? "");
+  const [editing, setEditing] = useState(false);
+  const [busy, setBusy] = useState(false);
+
+  async function save() {
+    const v = value.trim();
+    if (v && !isValidHttpUrl(v)) {
+      toast.error("Enter a valid link starting with http:// or https://");
+      return;
+    }
+    setBusy(true);
+    try {
+      await api(`/tasks/${task.id}`, { method: "PATCH", body: JSON.stringify({ deliveryLink: v || null }) });
+      setSaved(v);
+      setEditing(false);
+      onChanged?.();
+      toast.success(v ? "Delivery link saved." : "Delivery link cleared.");
+    } catch (e) {
+      toast.error(e instanceof ApiError ? e.message : "Couldn't save the delivery link.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  // Read-only: show the link if there is one, otherwise render nothing.
+  if (!canEdit) {
+    if (!saved) return null;
+    return (
+      <div className="field">
+        <label className="f">Delivery Link</label>
+        <a className="delivery-link" href={saved} target="_blank" rel="noopener noreferrer">🔗 {saved}</a>
+      </div>
+    );
+  }
+
+  const showInput = editing || !saved;
+  return (
+    <div className="field">
+      <label className="f">Delivery Link</label>
+      {showInput ? (
+        <div className="chk-add">
+          <input
+            className="t"
+            type="url"
+            placeholder="https://… link to the delivered asset"
+            value={value}
+            onChange={(e) => setValue(e.target.value)}
+            onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); save(); } }}
+          />
+          <button type="button" className="btn btn-primary" onClick={save} disabled={busy}>{busy ? "Saving…" : "Save"}</button>
+          {saved && <button type="button" className="btn" onClick={() => { setValue(saved); setEditing(false); }}>Cancel</button>}
+        </div>
+      ) : (
+        <div className="delivery-row">
+          <a className="delivery-link" href={saved} target="_blank" rel="noopener noreferrer">🔗 {saved}</a>
+          <button type="button" className="btn btn-sm" onClick={() => setEditing(true)}>Edit</button>
         </div>
       )}
     </div>

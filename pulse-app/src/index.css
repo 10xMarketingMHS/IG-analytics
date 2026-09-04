@@ -324,6 +324,10 @@ main{min-width:0;display:flex;flex-direction:column}
 .chk-del:hover{color:var(--rose);background:rgba(225,29,72,.12)}
 .chk-add{display:flex;gap:8px}
 .chk-add .t{flex:1}
+/* Delivery Link — saved-state row: the link + an Edit button. */
+.delivery-row{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+.delivery-link{color:var(--accent-ink);font-size:13px;font-weight:600;text-decoration:none;word-break:break-all;flex:1;min-width:0}
+.delivery-link:hover{text-decoration:underline}
 .task-recur{font-size:11px}
 /* comments */
 .cmt-list{display:flex;flex-direction:column;gap:12px;margin-bottom:12px;max-height:230px;overflow-y:auto}

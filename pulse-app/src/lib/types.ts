@@ -156,6 +156,8 @@ export type Task = {
   content_type: string | null;
   platforms: string[];
   attachments: TaskAttachment[];
+  // URL to the completed deliverable (distinct from a post's permalink).
+  delivery_link: string | null;
   editor_name: string | null;
   editor_image: string | null;
   channel_name: string | null;
