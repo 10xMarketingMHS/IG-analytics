@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useAuth } from "@/lib/auth-context";
 import { useBreakState } from "@/lib/break-context";
 
@@ -45,9 +45,26 @@ const TICKS = Array.from({ length: 48 }, (_, i) => {
 
 export function BreakOverlay() {
   const { user } = useAuth();
-  const { status, displayRemaining } = useBreakState();
+  const { status, displayRemaining, busy, end } = useBreakState();
   const onBreak = !!status?.onBreak;
   const [dismissed, setDismissed] = useState(false);
+
+  // "Start Work" — ends the break via the exact same action the corner widget
+  // uses (end()). The shared break state then flips onBreak → false, which
+  // unmounts this overlay the same way the time-cap auto-close does. A ref
+  // guards against a rapid double-click firing two /break/end calls (the button
+  // is also disabled while busy); if the break auto-expired at the same instant,
+  // the server treats /break/end as a successful no-op, so this still just closes.
+  const endingRef = useRef(false);
+  async function startWork() {
+    if (endingRef.current || busy) return;
+    endingRef.current = true;
+    try {
+      await end();
+    } catch {
+      endingRef.current = false; // re-enable on failure; on success the overlay unmounts
+    }
+  }
 
   // A fresh break re-opens the card even if the last one was dismissed.
   useEffect(() => { if (onBreak) setDismissed(false); }, [onBreak]);
@@ -164,6 +181,10 @@ export function BreakOverlay() {
         </div>
 
         <div className="brk-quote"><span className="qm l">“</span>{quote}<span className="qm r">”</span></div>
+
+        <button type="button" className="brk-startwork" onClick={startWork} disabled={busy}>
+          {busy ? "Ending break…" : "▶ Start Work"}
+        </button>
       </div>
     </div>
   );

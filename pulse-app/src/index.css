@@ -1365,6 +1365,14 @@ img.lb-ava{object-fit:cover}
 .brk-quote{position:relative;margin-top:22px;font-size:15px;line-height:1.5;color:#c4b5fd;font-style:italic;padding:0 26px}
 .brk-quote .qm{font-style:normal;font-size:34px;line-height:0;color:#a855f7;opacity:.55;vertical-align:-6px}
 .brk-quote .qm.l{margin-right:6px}.brk-quote .qm.r{margin-left:6px}
+/* "Start Work" — end the break early and get back to it. */
+.brk-startwork{position:relative;z-index:3;margin-top:24px;border:0;cursor:pointer;font-family:inherit;
+  font-weight:800;font-size:15.5px;letter-spacing:.2px;color:#fff;padding:13px 34px;border-radius:999px;
+  background:linear-gradient(135deg,#34d399,#a855f7);box-shadow:0 12px 28px rgba(168,85,247,.42);
+  transition:transform .15s ease,box-shadow .15s ease,opacity .15s ease}
+.brk-startwork:hover:not(:disabled){transform:translateY(-2px);box-shadow:0 16px 34px rgba(168,85,247,.55)}
+.brk-startwork:active:not(:disabled){transform:translateY(0)}
+.brk-startwork:disabled{opacity:.6;cursor:default}
 .brk-glyphs{position:absolute;inset:-40px;pointer-events:none;overflow:visible}
 .brk-gy{position:absolute;font-weight:700;opacity:.9;animation:brk-float 5s ease-in-out infinite;filter:drop-shadow(0 0 7px currentColor)}
 @keyframes brk-float{0%,100%{transform:translateY(0) rotate(var(--r,0deg));opacity:.55}50%{transform:translateY(-14px) rotate(var(--r,0deg));opacity:1}}
