@@ -1362,12 +1362,14 @@ img.lb-ava{object-fit:cover}
 }
 
 /* ---- Boot splash — 10X Media House logo intro on a real page load ---- */
-/* Fixed full-viewport overlay above everything (incl. the router). Solid black
-   to match the video's own black frame; the app mounts underneath at the same
-   time, so this only sits on top until the clip fades. */
+/* Fixed full-viewport overlay above everything (incl. the router). The clip is
+   transparent (alpha), so the backdrop is the app's theme background — dark in
+   Dark Mode, light in Light Mode — set before first paint by the inline script
+   in index.html so there's no flash. The app mounts underneath simultaneously,
+   so this only sits on top until the clip fades. */
 .boot-splash{
   position:fixed; inset:0; z-index:9999;
-  background:#000;
+  background:var(--bg);
   display:grid; place-items:center;
   opacity:1; transition:opacity 400ms ease;
 }

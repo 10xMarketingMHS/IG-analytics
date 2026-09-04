@@ -9,6 +9,21 @@
       name="description"
       content="Instagram content analytics platform for DF Foods Marketing."
     />
+    <!-- Set the theme before first paint so the boot splash (and the app) render
+         in the right theme immediately — no light/dark flash while React mounts.
+         Mirrors theme-provider.tsx: key "pulse-theme", default "dark". -->
+    <script>
+      (function () {
+        try {
+          document.documentElement.setAttribute(
+            "data-theme",
+            localStorage.getItem("pulse-theme") || "dark"
+          );
+        } catch (e) {
+          document.documentElement.setAttribute("data-theme", "dark");
+        }
+      })();
+    </script>
   </head>
   <body>
     <div id="root"></div>
