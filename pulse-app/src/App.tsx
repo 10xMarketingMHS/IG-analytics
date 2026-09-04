@@ -12,6 +12,7 @@ import { AuthProvider } from "@/lib/auth-context";
 import { WorkspacesProvider } from "@/lib/workspaces-context";
 import { ThemeProvider } from "@/components/theme-provider";
 import { ProtectedRoute } from "@/components/protected-route";
+import { Loader } from "@/components/loader";
 import { AppShell } from "@/components/app-shell";
 import { Modal } from "@/components/modal";
 import { Toaster } from "@/components/ui/sonner";
@@ -77,7 +78,7 @@ function AppRoutes() {
             <Route
               path="/trends"
               element={
-                <Suspense fallback={<div className="screen"><div className="card pad hint">Loading trends…</div></div>}>
+                <Suspense fallback={<div className="screen"><Loader label="Loading trends…" /></div>}>
                   <TrendsPage />
                 </Suspense>
               }

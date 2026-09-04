@@ -9,7 +9,6 @@ import { useCallback, useEffect, useRef, useState } from "react";
 // starts fetching underneath it simultaneously, so by the time the video fades
 // out My Day is already sitting there ready.
 
-const VIDEO_SRC = "/media/10x-media-house-logo.mp4";
 const FADE_MS = 400; // opacity transition length — keep in sync with the CSS.
 const START_TIMEOUT_MS = 3000; // if playback hasn't begun by now, bail out.
 
@@ -59,14 +58,17 @@ export function BootSplash() {
       <video
         ref={videoRef}
         className="boot-splash-video"
-        src={VIDEO_SRC}
         autoPlay
         muted
         playsInline
         preload="auto"
         onEnded={finish}
         onError={finish}
-      />
+      >
+        {/* Alpha animation — VP9-alpha WebM (Chrome/Firefox/Edge). Browsers that
+            can't decode it fall through to onError, which skips the splash. */}
+        <source src="/media/10x-loader.webm" type="video/webm" />
+      </video>
     </div>
   );
 }

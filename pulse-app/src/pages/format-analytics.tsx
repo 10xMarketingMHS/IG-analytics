@@ -1,4 +1,5 @@
 import { useMemo } from "react";
+import { Loader } from "@/components/loader";
 import { useNavigate, useParams } from "react-router-dom";
 import { useTaxonomy } from "@/lib/use-taxonomy";
 import { usePosts } from "@/lib/use-posts";
@@ -76,7 +77,7 @@ export function FormatAnalyticsPage() {
       </div>
 
       {posts === null ? (
-        <div className="hint">Loading…</div>
+        <Loader label="Loading…" />
       ) : n === 0 ? (
         <div className="card pad" style={{ color: "var(--muted)", fontSize: 13 }}>
           No published {label.toLowerCase()} posts yet. Publish some {label.toLowerCase()}s and log their

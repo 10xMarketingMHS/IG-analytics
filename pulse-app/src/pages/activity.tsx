@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
+import { Loader } from "@/components/loader";
 import { useResource } from "@/lib/use-resource";
 import { markActivitySeen } from "@/lib/activity-seen";
 import type { Activity, ActivityVerb } from "@/lib/types";
@@ -80,7 +81,7 @@ export function ActivityPage() {
       </div>
 
       {loading ? (
-        <div className="card pad hint">Loading activity…</div>
+        <Loader label="Loading activity…" />
       ) : groups.length === 0 ? (
         <div className="card pad home-empty">🔔 No activity yet — actions across Media House will show up here.</div>
       ) : (

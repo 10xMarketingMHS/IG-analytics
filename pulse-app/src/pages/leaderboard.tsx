@@ -1,4 +1,5 @@
 import { useEffect, useLayoutEffect, useMemo, useState } from "react";
+import { Loader } from "@/components/loader";
 import { Link } from "react-router-dom";
 import { useEditors } from "@/lib/use-editors";
 import { useResource } from "@/lib/use-resource";
@@ -371,7 +372,7 @@ export function LeaderboardPage() {
       </div>
 
       {loading ? (
-        <div className="hint">Loading…</div>
+        <Loader label="Loading…" />
       ) : editors.length === 0 ? (
         <div className="card pad" style={{ color: "var(--muted)", fontSize: 13 }}>
           No team members yet. Add your team in{" "}

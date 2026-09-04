@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
+import { Loader } from "@/components/loader";
 import { Link, useNavigate, useLocation } from "react-router-dom";
 import { useTasks } from "@/lib/use-tasks";
 import { useAuth } from "@/lib/auth-context";
@@ -208,7 +209,7 @@ export function HomePage() {
           </div>
           <div className="card pad">
             {loading ? (
-              <div className="hint">Loading…</div>
+              <Loader label="Loading…" />
             ) : ops.needAction.length === 0 ? (
               <div className="home-empty">🎉 All caught up — no overdue or due-today tasks.</div>
             ) : (
@@ -277,7 +278,7 @@ export function HomePage() {
           </div>
           <div className="card pad">
             {loading ? (
-              <div className="hint">Loading…</div>
+              <Loader label="Loading…" />
             ) : analytics.top ? (
               <div className="topmover">
                 <div className="tm-rank">🥇</div>

@@ -1,4 +1,5 @@
 import { useMemo, useState } from "react";
+import { Loader } from "@/components/loader";
 import { useTasks } from "@/lib/use-tasks";
 import { useEditors } from "@/lib/use-editors";
 import type { Task, TaskType } from "@/lib/types";
@@ -151,7 +152,7 @@ export function MetricsPage() {
   const socialCount = rows.filter((t) => pipelineBucket(t) === "social").length;
   const adCount = rows.filter((t) => pipelineBucket(t) === "ad").length;
 
-  if (allTasks === null) return <section className="screen"><div className="hint">Loading…</div></section>;
+  if (allTasks === null) return <section className="screen"><Loader label="Loading…" /></section>;
 
   return (
     <section className="screen">

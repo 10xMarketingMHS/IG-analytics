@@ -1379,3 +1379,12 @@ img.lb-ava{object-fit:cover}
   object-fit:contain;
   display:block;
 }
+
+/* ---- Branded loading animation (shared <Loader>) ---- */
+/* The alpha clip composites over whatever's behind it. Full-screen variant is
+   the app-boot loader (auth gate, Suspense fallback); the plain variant drops
+   into a page/section placeholder. */
+.loader{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:10px;padding:28px 16px;min-height:120px}
+.loader--full{position:fixed;inset:0;background:var(--bg);z-index:50;padding:0}
+.loader-video{height:auto;display:block;max-width:60vw}
+.loader-label{font-size:13px;color:var(--muted);letter-spacing:.2px}

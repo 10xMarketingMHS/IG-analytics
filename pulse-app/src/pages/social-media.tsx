@@ -1,4 +1,5 @@
 import { useMemo, useState } from "react";
+import { Loader } from "@/components/loader";
 import { useResource } from "@/lib/use-resource";
 import { useEditors } from "@/lib/use-editors";
 import { useAuth } from "@/lib/auth-context";
@@ -58,7 +59,7 @@ export function SocialMediaPage() {
   return (
     <section className="screen">
       {tasks === null ? (
-        <div className="hint">Loading…</div>
+        <Loader label="Loading…" />
       ) : tasks.length === 0 ? (
         <div className="card pad" style={{ color: "var(--muted)", fontSize: 13.5 }}>
           No Social Media tasks yet. These show up automatically when an editor is assigned to a post — or
