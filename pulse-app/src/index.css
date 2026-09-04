@@ -1360,3 +1360,22 @@ img.lb-ava{object-fit:cover}
 @media screen and (max-width:600px){
   .brk-card{padding:26px 22px 30px}.brk-title{font-size:38px}.brk-num{font-size:66px}.brk-colon{font-size:52px}
 }
+
+/* ---- Boot splash — 10X Media House logo intro on a real page load ---- */
+/* Fixed full-viewport overlay above everything (incl. the router). Solid black
+   to match the video's own black frame; the app mounts underneath at the same
+   time, so this only sits on top until the clip fades. */
+.boot-splash{
+  position:fixed; inset:0; z-index:9999;
+  background:#000;
+  display:grid; place-items:center;
+  opacity:1; transition:opacity 400ms ease;
+}
+.boot-splash--fading{opacity:0}
+/* contain, never cover — the clip is 16:9 with centered logo text; cropping on
+   a non-16:9 window would clip the wordmark. */
+.boot-splash-video{
+  width:100%; height:100%;
+  object-fit:contain;
+  display:block;
+}
