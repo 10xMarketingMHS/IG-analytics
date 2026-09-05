@@ -11,7 +11,6 @@ import { ymd, myRankInRange, topEditorsInRange } from "@/lib/task-points";
 import { breakOffsetMs, DAILY_BREAK_CAP_SEC } from "@/lib/task-timing";
 import { goalBreakdown, DISCIPLINE_CRITERIA, type Ratings } from "@/lib/goal-points";
 import { Avatar } from "@/lib/editor-visuals";
-import { quoteOfDay } from "@/lib/quotes";
 import { api } from "@/lib/api";
 import type { Editor, Post, Task, TaskStatus, TaskType } from "@/lib/types";
 
@@ -113,7 +112,6 @@ export function HomePage() {
     return () => clearInterval(id);
   }, []);
   const dateStr = now.toLocaleDateString("en-GB", { weekday: "short", day: "numeric", month: "short", year: "numeric" });
-  const quote = quoteOfDay(now);
 
   const ops = useMemo(() => {
     // My Day is personal for EVERYONE, admins included — each person's own view
@@ -264,7 +262,6 @@ export function HomePage() {
             <div className="mh-date">{dateStr}</div>
             <h2 className="mh-greet">{greeting(now)}{firstName ? `, ${firstName}` : ""} 👋</h2>
             <div className="mh-greetsub">Let's make today legendary!</div>
-            <div className="mh-quote"><span className="mh-quote-i">👑</span><i>"{quote}"</i></div>
           </div>
         </div>
         {/* Real Media House top 3 this month, as name/points cards over the
