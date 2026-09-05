@@ -485,7 +485,7 @@ function RankCharacter({ rank }: { rank: number | null }) {
   if (!rank || rank > 3 || broken) return null;
   return (
     <div className="tp-char">
-      <img src={`/media/rank-${rank}.png`} alt={`Rank ${rank} character`} onError={() => setBroken(true)} />
+      <img src={`/media/rank-${rank}.png`} alt={`Rank ${rank} character`} width={600} height={800} decoding="async" onError={() => setBroken(true)} />
     </div>
   );
 }

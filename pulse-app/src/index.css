@@ -718,8 +718,8 @@ main{min-width:0;display:flex;flex-direction:column}
 .tp-panel{display:flex;flex-direction:column}
 .tp-rankbadge{margin-left:auto;font-size:12px;font-weight:900;color:#fff;background:var(--grad);padding:3px 11px;border-radius:999px;
   box-shadow:0 6px 16px -4px rgba(139,92,246,.6)}
-.tp-body{display:flex;align-items:center;gap:16px;flex:1}
-.tp-left{flex:1;min-width:0;display:flex;align-items:center;gap:18px}
+.tp-body{position:relative;display:flex;align-items:center;gap:16px;flex:1;padding-right:158px}
+.tp-left{flex:1;min-width:0;display:flex;align-items:center;gap:16px}
 .tp-ring{position:relative;flex:none;width:120px;height:120px}
 .tp-ring svg{width:100%;height:100%}
 .tp-ring-bg{fill:none;stroke:var(--border);stroke-width:10}
@@ -733,13 +733,19 @@ main{min-width:0;display:flex;flex-direction:column}
 .tp-si{flex:none;font-size:16px}
 .tp-stat span{display:flex;flex-direction:column;line-height:1.1}
 .tp-stat b{font-size:17px;font-weight:800}
-.tp-stat small{font-size:11px;color:var(--muted);font-weight:600}
+.tp-stat small{font-size:11px;color:var(--muted);font-weight:600;white-space:nowrap}
 .tp-stat small i{font-style:normal;color:var(--faint,var(--muted));cursor:help}
-.tp-char{flex:none;width:150px;align-self:stretch;display:flex;align-items:flex-end;justify-content:center}
-.tp-char img{max-width:100%;max-height:190px;object-fit:contain;filter:drop-shadow(0 12px 24px rgba(0,0,0,.35))}
+/* Rank character — anchored to the card's right edge, upper body only; the
+   lower half fades smoothly into the card (mask gradient). Positioned/masked
+   with GPU-cheap properties so it stays snappy. */
+.tp-char{position:absolute;right:-18px;top:-10px;bottom:-14px;width:178px;pointer-events:none;
+  display:flex;align-items:flex-start;justify-content:center;overflow:hidden;
+  -webkit-mask-image:linear-gradient(to bottom,#000 54%,rgba(0,0,0,.4) 76%,transparent 93%);
+          mask-image:linear-gradient(to bottom,#000 54%,rgba(0,0,0,.4) 76%,transparent 93%)}
+.tp-char img{width:100%;height:auto;object-fit:contain;object-position:top center}
 .tp-goalbar{height:8px;border-radius:999px;background:var(--panel2);overflow:hidden;margin-top:14px}
 .tp-goalbar-fill{height:100%;border-radius:999px;background:var(--grad);transition:width .7s ease}
-@media(max-width:520px){.tp-char{display:none}.tp-left{flex-wrap:wrap}}
+@media(max-width:560px){.tp-body{padding-right:0}.tp-char{display:none}.tp-left{flex-wrap:wrap}}
 
 /* ---- Three cards (This Week / This Month / Achievements) ---- */
 .myday-grid3{display:grid;grid-template-columns:repeat(3,1fr);gap:18px;margin-bottom:6px}
