@@ -1,20 +1,13 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useAuth } from "@/lib/auth-context";
 import { useBreakState } from "@/lib/break-context";
+import { randomQuote } from "@/lib/quotes";
 
 // A full-screen celebratory card that appears whenever the user is on a break —
 // mirrors the same break state the corner widget uses (useBreak) and counts the
 // remaining break budget down live. There's no minimize/cancel: the only way
 // out is "Start Work", which ends the break (and resumes the paused timers). It
 // also auto-closes when the break hits the daily cap on its own.
-
-const QUOTES = [
-  "Rest is not a reward, it's what makes you get better.",
-  "Almost everything works again if you unplug it for a few minutes — including you.",
-  "Take rest; a field that has rested gives a bountiful crop.",
-  "Your calm mind is the ultimate weapon against your challenges.",
-  "Sometimes the most productive thing you can do is step away.",
-];
 
 // Deterministic scatter of floating glyphs around the card (glyph, colour, left%,
 // top%, rotation, delay, size) — fixed so it doesn't reshuffle every render.
@@ -72,7 +65,7 @@ export function BreakOverlay() {
   // A fresh break re-opens the card (reset the closed state on a new break).
   useEffect(() => { if (onBreak) setClosing(false); }, [onBreak]);
   // One quote per break session, stable while it's shown.
-  const quote = useMemo(() => QUOTES[Math.floor(Math.random() * QUOTES.length)], [onBreak]);
+  const quote = useMemo(() => randomQuote(), [onBreak]);
 
   if (!user || !onBreak || closing || status?.unlinked) return null;
 

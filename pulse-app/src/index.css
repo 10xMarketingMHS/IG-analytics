@@ -626,6 +626,142 @@ main{min-width:0;display:flex;flex-direction:column}
 @media (prefers-reduced-motion: reduce){.tpf-track{animation:none!important}}
 @media(max-width:640px){.tpf-label-txt{font-size:12.5px}.tpf-trophy{font-size:20px}}
 
+/* ==== My Day redesign (hero banner + gamified personal panels) ==== */
+/* ---- Hero banner ---- */
+.myday-hero{position:relative;border-radius:22px;overflow:hidden;margin-bottom:18px;min-height:340px;
+  /* Fallback gradient shows through until /media/myday-banner.mp4 exists. */
+  background:linear-gradient(120deg,#3b1d6e 0%,#6d28d9 42%,#a855f7 72%,#f0abfc 100%)}
+.mh-video{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;z-index:0}
+.mh-scrim{position:absolute;inset:0;z-index:1;
+  background:linear-gradient(90deg,rgba(10,7,20,.82) 0%,rgba(10,7,20,.42) 34%,rgba(10,7,20,.30) 62%,rgba(10,7,20,.70) 100%),
+    linear-gradient(180deg,rgba(10,7,20,.30),rgba(10,7,20,.10) 30%,rgba(10,7,20,.55))}
+.mh-inner{position:relative;z-index:2;display:flex;justify-content:space-between;align-items:flex-start;gap:20px;
+  padding:30px 34px;min-height:340px}
+.mh-left{max-width:52%}
+.mh-headline{margin:0;font-size:44px;line-height:.98;font-weight:900;letter-spacing:-1.4px;color:#fff;font-style:italic;
+  text-shadow:0 4px 24px rgba(0,0,0,.35)}
+.mh-headline-g{background:linear-gradient(90deg,#c084fc,#e9d5ff);-webkit-background-clip:text;background-clip:text;-webkit-text-fill-color:transparent}
+.mh-tag{margin:14px 0 20px;font-size:15px;font-weight:600;color:rgba(255,255,255,.9);line-height:1.4;text-shadow:0 2px 10px rgba(0,0,0,.4)}
+.mh-cta{font-size:14px;padding:11px 22px;box-shadow:0 10px 30px -6px rgba(139,92,246,.7)}
+.mh-right{text-align:right;max-width:44%;display:flex;flex-direction:column;align-items:flex-end}
+.mh-date{font-size:12px;font-weight:700;color:rgba(255,255,255,.75);letter-spacing:.3px;text-shadow:0 1px 6px rgba(0,0,0,.5)}
+.mh-greet{margin:6px 0 0;font-size:27px;font-weight:800;letter-spacing:-.5px;color:#fff;text-shadow:0 3px 16px rgba(0,0,0,.4)}
+.mh-greetsub{font-size:13.5px;font-weight:600;color:rgba(255,255,255,.82);margin-top:2px;text-shadow:0 2px 8px rgba(0,0,0,.4)}
+.mh-quote{margin-top:18px;max-width:280px;padding:13px 16px;border-radius:14px;font-size:13.5px;line-height:1.45;color:#fff;
+  background:rgba(255,255,255,.12);border:1px solid rgba(255,255,255,.22);backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px);
+  box-shadow:0 12px 34px -12px rgba(0,0,0,.5)}
+.mh-quote i{font-style:italic}
+.mh-quote-i{display:block;font-size:16px;margin-bottom:4px;filter:drop-shadow(0 2px 6px rgba(245,196,81,.5))}
+@media(max-width:820px){
+  .mh-inner{flex-direction:column;min-height:0}
+  .mh-left,.mh-right{max-width:100%}
+  .mh-right{text-align:left;align-items:flex-start;margin-top:22px}
+  .mh-quote{margin-left:0}
+  .mh-headline{font-size:36px}
+}
+
+/* ---- Attention strip (restyled) ---- */
+.myday-stats{display:grid;grid-template-columns:repeat(4,1fr);gap:14px;margin-bottom:18px}
+@media(max-width:760px){.myday-stats{grid-template-columns:1fr 1fr}}
+.myday-stat{display:flex;align-items:center;gap:13px;text-align:left;font:inherit;color:inherit;cursor:pointer;
+  background:var(--panel);border:1px solid var(--border);border-left:4px solid var(--accent);border-radius:16px;
+  padding:15px 16px;transition:transform .16s,box-shadow .16s,border-color .16s;box-shadow:var(--shadow)}
+.myday-stat:hover{transform:translateY(-3px);box-shadow:0 18px 40px rgba(90,40,180,.20)}
+.myday-stat .ms-ic{flex:none;width:42px;height:42px;border-radius:13px;display:grid;place-items:center;font-size:19px;
+  background:var(--accent-weak)}
+.myday-stat .ms-body{display:flex;flex-direction:column;min-width:0}
+.myday-stat .ms-v{font-size:26px;font-weight:800;line-height:1.05}
+.myday-stat .ms-l{font-size:12.5px;font-weight:600;color:var(--muted)}
+.myday-stat.danger{border-left-color:#f43f5e}.myday-stat.danger .ms-ic{background:rgba(244,63,94,.14)}.myday-stat.danger .ms-v{color:#fb7185}
+.myday-stat.warn{border-left-color:#f59e0b}.myday-stat.warn .ms-ic{background:rgba(245,158,11,.14)}.myday-stat.warn .ms-v{color:#f59e0b}
+.myday-stat.accent{border-left-color:var(--accent)}.myday-stat.accent .ms-v{color:var(--accent-ink)}
+.myday-stat.info{border-left-color:#3b82f6}.myday-stat.info .ms-ic{background:rgba(59,130,246,.14)}.myday-stat.info .ms-v{color:#60a5fa}
+
+/* ---- Two-panel row (Today's Tasks + Today's Progress) ---- */
+.myday-grid2{display:grid;grid-template-columns:1fr 1fr;gap:18px;margin-bottom:18px;align-items:stretch}
+@media(max-width:900px){.myday-grid2{grid-template-columns:1fr}}
+.myday-panel{padding:18px 18px 16px}
+.mp-head{display:flex;align-items:center;gap:10px;margin-bottom:14px}
+.mp-head h3{margin:0;font-size:16px;letter-spacing:-.3px;display:flex;align-items:center;gap:8px}
+.mp-ic{font-size:17px}
+.mp-link{margin-left:auto;font-size:12.5px;font-weight:700;color:var(--accent-ink);text-decoration:none}
+.mp-link:hover{text-decoration:underline}
+
+/* Today's Tasks */
+.tt-pills{display:flex;flex-wrap:wrap;gap:8px;margin-bottom:14px}
+.tt-pill{display:inline-flex;align-items:center;gap:7px;border:1px solid var(--border);background:var(--panel2);
+  color:var(--muted);font-weight:700;font-size:12px;padding:6px 11px;border-radius:999px;cursor:pointer;transition:.14s}
+.tt-pill:hover{border-color:var(--accent);color:var(--text)}
+.tt-pill.active{background:var(--grad);color:#fff;border-color:transparent}
+.tt-pill-n{font-size:11px;font-weight:800;padding:0 6px;border-radius:999px;background:rgba(255,255,255,.25)}
+.tt-pill:not(.active) .tt-pill-n{background:var(--accent-weak);color:var(--accent-ink)}
+.tt-list{display:flex;flex-direction:column;gap:8px}
+.tt-row{display:flex;align-items:center;gap:12px;width:100%;text-align:left;font:inherit;color:inherit;cursor:pointer;
+  background:var(--panel2);border:1px solid var(--border2);border-radius:13px;padding:11px 13px;transition:.14s}
+.tt-row:hover{border-color:var(--accent);transform:translateX(2px)}
+.tt-check{flex:none;width:20px;height:20px;border-radius:50%;border:2px solid var(--border);background:transparent}
+.tt-row:hover .tt-check{border-color:var(--accent)}
+.tt-main{flex:1;min-width:0;display:flex;align-items:center;gap:10px}
+.tt-title{font-size:13.5px;font-weight:650;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.tt-tag{flex:none;font-size:10.5px;font-weight:800;padding:2px 9px;border-radius:999px;letter-spacing:.02em}
+.tt-tag.t-content{background:rgba(16,163,74,.16);color:#22c55e}
+.tt-tag.t-social{background:rgba(244,114,182,.16);color:#f472b6}
+.tt-tag.t-ad{background:rgba(245,158,11,.16);color:#f59e0b}
+.tt-tag.t-admin{background:rgba(249,115,22,.16);color:#fb923c}
+.tt-tag.t-quick{background:rgba(34,211,238,.16);color:#22d3ee}
+.tt-tag.t-service{background:var(--accent-weak);color:var(--accent-ink)}
+.tt-tag.t-general{background:rgba(148,163,184,.18);color:#94a3b8}
+.tt-pts{flex:none;font-size:12.5px;font-weight:800;color:var(--accent-ink)}
+.tt-go{flex:none;font-size:18px;font-weight:800;color:var(--faint,var(--muted));line-height:1}
+
+/* Today's Progress */
+.tp-panel{display:flex;flex-direction:column}
+.tp-rankbadge{margin-left:auto;font-size:12px;font-weight:900;color:#fff;background:var(--grad);padding:3px 11px;border-radius:999px;
+  box-shadow:0 6px 16px -4px rgba(139,92,246,.6)}
+.tp-body{display:flex;align-items:center;gap:16px;flex:1}
+.tp-left{flex:1;min-width:0;display:flex;align-items:center;gap:18px}
+.tp-ring{position:relative;flex:none;width:120px;height:120px}
+.tp-ring svg{width:100%;height:100%}
+.tp-ring-bg{fill:none;stroke:var(--border);stroke-width:10}
+.tp-ring-fg{fill:none;stroke:var(--accent);stroke-width:10;stroke-linecap:round;transition:stroke-dashoffset .7s ease}
+.tp-ring-c{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;line-height:1}
+.tp-ring-c b{font-size:26px;font-weight:800}
+.tp-ring-c b span{font-size:15px;color:var(--muted);font-weight:700}
+.tp-ring-c small{font-size:10.5px;color:var(--muted);margin-top:3px}
+.tp-stats{display:flex;flex-direction:column;gap:13px}
+.tp-stat{display:flex;align-items:center;gap:10px}
+.tp-si{flex:none;font-size:16px}
+.tp-stat span{display:flex;flex-direction:column;line-height:1.1}
+.tp-stat b{font-size:17px;font-weight:800}
+.tp-stat small{font-size:11px;color:var(--muted);font-weight:600}
+.tp-stat small i{font-style:normal;color:var(--faint,var(--muted));cursor:help}
+.tp-char{flex:none;width:150px;align-self:stretch;display:flex;align-items:flex-end;justify-content:center}
+.tp-char img{max-width:100%;max-height:190px;object-fit:contain;filter:drop-shadow(0 12px 24px rgba(0,0,0,.35))}
+.tp-goalbar{height:8px;border-radius:999px;background:var(--panel2);overflow:hidden;margin-top:14px}
+.tp-goalbar-fill{height:100%;border-radius:999px;background:var(--grad);transition:width .7s ease}
+@media(max-width:520px){.tp-char{display:none}.tp-left{flex-wrap:wrap}}
+
+/* ---- Three cards (This Week / This Month / Achievements) ---- */
+.myday-grid3{display:grid;grid-template-columns:repeat(3,1fr);gap:18px;margin-bottom:6px}
+@media(max-width:820px){.myday-grid3{grid-template-columns:1fr}}
+.myday-scorecard{padding:16px 17px}
+.msc-head{display:flex;align-items:center;gap:9px;font-size:14px;font-weight:800;margin-bottom:12px}
+.msc-ic{font-size:16px}
+.msc-link{margin-left:auto;font-size:12px;font-weight:700;color:var(--accent-ink);text-decoration:none}
+.msc-link:hover{text-decoration:underline}
+.msc-body{display:flex;align-items:flex-end;justify-content:space-between;gap:10px}
+.msc-pts{font-size:28px;font-weight:800;letter-spacing:-.5px}
+.msc-pts span{font-size:14px;color:var(--muted);font-weight:700}
+.msc-sub{font-size:11.5px;color:var(--muted);font-weight:600;margin-top:1px}
+.msc-rank{font-size:30px;font-weight:800;line-height:1}
+.msc-bar{height:8px;border-radius:999px;background:var(--panel2);overflow:hidden;margin-top:12px}
+.msc-bar-fill{height:100%;border-radius:999px;background:linear-gradient(90deg,#f59e0b,#f5b301);transition:width .7s ease}
+.myday-scorecard.ach .ach-row{display:flex;gap:12px;margin:2px 0 12px}
+.ach-badge{width:46px;height:46px;border-radius:14px;display:grid;place-items:center;font-size:20px;
+  background:var(--accent-weak);border:1px solid var(--border)}
+.ach-badge.locked{filter:grayscale(1);opacity:.5}
+.ach-note{font-size:11.5px;color:var(--muted);font-weight:600;text-align:center}
+
 .home-cols{display:grid;grid-template-columns:1fr 1fr;gap:22px;margin-top:20px;align-items:start}
 @media(max-width:900px){.home-cols{grid-template-columns:1fr}}
 .home-colhead{display:flex;align-items:center;gap:11px;margin:0 2px 12px}
