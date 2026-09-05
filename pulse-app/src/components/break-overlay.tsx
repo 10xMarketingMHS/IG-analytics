@@ -3,9 +3,10 @@ import { useAuth } from "@/lib/auth-context";
 import { useBreakState } from "@/lib/break-context";
 
 // A full-screen celebratory card that appears whenever the user is on a break —
-// mirrors the same break state the corner widget uses (useBreak), counts the
-// remaining break budget down live, and can be dismissed (the break keeps
-// running; the corner widget stays). Auto-closes when the break ends.
+// mirrors the same break state the corner widget uses (useBreak) and counts the
+// remaining break budget down live. There's no minimize/cancel: the only way
+// out is "Start Work", which ends the break (and resumes the paused timers). It
+// also auto-closes when the break hits the daily cap on its own.
 
 const QUOTES = [
   "Rest is not a reward, it's what makes you get better.",
@@ -45,33 +46,35 @@ const TICKS = Array.from({ length: 48 }, (_, i) => {
 
 export function BreakOverlay() {
   const { user } = useAuth();
-  const { status, displayRemaining, busy, end } = useBreakState();
+  const { status, displayRemaining, end } = useBreakState();
   const onBreak = !!status?.onBreak;
-  const [dismissed, setDismissed] = useState(false);
-
-  // "Start Work" — ends the break via the exact same action the corner widget
-  // uses (end()). The shared break state then flips onBreak → false, which
-  // unmounts this overlay the same way the time-cap auto-close does. A ref
-  // guards against a rapid double-click firing two /break/end calls (the button
-  // is also disabled while busy); if the break auto-expired at the same instant,
-  // the server treats /break/end as a successful no-op, so this still just closes.
+  // The card can ONLY be closed by "Start Work" — there's no minimize/cancel.
+  // Clicking it hides the card immediately (optimistic), then ends the break in
+  // the background; the shared state's onBreak → false keeps it closed and
+  // resumes the paused task timers (existing end-break logic).
+  const [closing, setClosing] = useState(false);
   const endingRef = useRef(false);
   async function startWork() {
-    if (endingRef.current || busy) return;
+    if (endingRef.current) return;
     endingRef.current = true;
+    setClosing(true); // disappear right away — don't wait on the network round-trip
     try {
       await end();
     } catch {
-      endingRef.current = false; // re-enable on failure; on success the overlay unmounts
+      // On a real failure re-show so the user can retry; the server treats an
+      // already-ended break as a successful no-op, so a same-instant auto-expire
+      // still just closes cleanly.
+      setClosing(false);
+      endingRef.current = false;
     }
   }
 
-  // A fresh break re-opens the card even if the last one was dismissed.
-  useEffect(() => { if (onBreak) setDismissed(false); }, [onBreak]);
+  // A fresh break re-opens the card (reset the closed state on a new break).
+  useEffect(() => { if (onBreak) setClosing(false); }, [onBreak]);
   // One quote per break session, stable while it's shown.
   const quote = useMemo(() => QUOTES[Math.floor(Math.random() * QUOTES.length)], [onBreak]);
 
-  if (!user || !onBreak || dismissed || status?.unlinked) return null;
+  if (!user || !onBreak || closing || status?.unlinked) return null;
 
   const cap = status?.dailyCapSeconds ?? 75 * 60;
   const remaining = Math.max(0, Math.round(displayRemaining ?? status?.remainingSeconds ?? 0));
@@ -90,9 +93,8 @@ export function BreakOverlay() {
   const arcD = `M ${sx} ${sy} A ${R} ${R} 0 ${frac > 0.5 ? 1 : 0} 1 ${ex} ${ey}`;
 
   return (
-    <div className="brk-scrim" onClick={() => setDismissed(true)}>
-      <div className="brk-card" onClick={(e) => e.stopPropagation()}>
-        <button className="brk-x" title="Minimize — your break keeps running" onClick={() => setDismissed(true)}>✕</button>
+    <div className="brk-scrim">
+      <div className="brk-card">
 
         <div className="brk-glyphs" aria-hidden>
           {GLYPHS.map(([ch, color, x, y, rot, delay, size], i) => (
@@ -182,9 +184,7 @@ export function BreakOverlay() {
 
         <div className="brk-quote"><span className="qm l">“</span>{quote}<span className="qm r">”</span></div>
 
-        <button type="button" className="brk-startwork" onClick={startWork} disabled={busy}>
-          {busy ? "Ending break…" : "▶ Start Work"}
-        </button>
+        <button type="button" className="brk-startwork" onClick={startWork}>▶ Start Work</button>
       </div>
     </div>
   );
