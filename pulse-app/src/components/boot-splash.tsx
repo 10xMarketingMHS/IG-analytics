@@ -31,6 +31,13 @@ export function BootSplash() {
     finishedRef.current = true;
     setFading(true);
     window.setTimeout(() => setVisible(false), FADE_MS);
+    // Signal the app that the splash is done, so the My Day hero intro clip
+    // waits and plays AFTER the splash instead of behind it. Fired as the
+    // splash starts fading so the intro can pick up during the crossfade.
+    try {
+      (window as unknown as { __pulseBootDone?: boolean }).__pulseBootDone = true;
+      window.dispatchEvent(new Event("pulse:bootdone"));
+    } catch { /* non-browser / older env — the hero has its own safety timeout */ }
   }, []);
 
   useEffect(() => {

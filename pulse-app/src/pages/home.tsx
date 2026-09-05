@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Loader } from "@/components/loader";
 import { Link, useNavigate } from "react-router-dom";
 import { useTasks } from "@/lib/use-tasks";
@@ -225,14 +225,11 @@ export function HomePage() {
 
   return (
     <section className="screen myday">
-      {/* Hero banner — one shared looping video + text overlay, identical for
-          every role. The video is decorative; a gradient shows through until
-          the asset (/media/myday-banner.mp4) is present, and a scrim keeps the
-          text legible whatever the video is doing. */}
+      {/* Hero banner — a shared intro→loop video + text overlay, identical for
+          every role. The video is decorative; a gradient shows through until the
+          assets are present, and a scrim keeps the text legible. */}
       <div className="myday-hero">
-        <video className="mh-video" autoPlay muted loop playsInline preload="auto" aria-hidden>
-          <source src="/media/myday-banner.mp4" type="video/mp4" />
-        </video>
+        <HeroVideo />
         <div className="mh-scrim" />
         <div className="mh-inner">
           <div className="mh-left">
@@ -361,6 +358,93 @@ export function HomePage() {
         </div>
       </div>
     </section>
+  );
+}
+
+// Hero banner video — an intro clip that plays ONCE per page load, then hands
+// off to a loop clip that plays forever. Both muted/inline (autoplay-safe). The
+// intro is gated on the boot splash finishing, so on a hard refresh it plays
+// AFTER the 10X splash rather than hidden behind it; on in-app navigation (no
+// splash) it starts immediately. When the intro ends (or is missing/unplayable)
+// the loop is revealed and played from its first frame. If neither asset exists,
+// the hero's gradient background shows through. Files:
+//   /media/myday-intro.mp4  — plays once, after the boot splash
+//   /media/myday-loop.mp4   — loops continuously afterwards
+function HeroVideo() {
+  const [phase, setPhase] = useState<"intro" | "loop">("intro");
+  const [introReady, setIntroReady] = useState(false);
+  const introRef = useRef<HTMLVideoElement>(null);
+  const loopRef = useRef<HTMLVideoElement>(null);
+
+  // Hand off to the loop clip: reveal it and play from the start. Called when the
+  // intro ends, and also if the intro is missing/unplayable so we never stall on
+  // a frozen first frame.
+  const startLoop = () => {
+    setPhase("loop");
+    const v = loopRef.current;
+    if (v) {
+      try {
+        v.currentTime = 0;
+        const p = v.play();
+        if (p && typeof p.catch === "function") p.catch(() => {});
+      } catch { /* autoplay may be blocked; the gradient still shows */ }
+    }
+  };
+
+  // Wait for the boot splash before playing the intro. If there's no splash
+  // (in-app nav, reduced motion, or it already finished) start right away; a
+  // safety timeout guarantees the intro never waits forever.
+  useEffect(() => {
+    const w = window as unknown as { __pulseBootDone?: boolean };
+    if (w.__pulseBootDone || !document.querySelector(".boot-splash")) {
+      setIntroReady(true);
+      return;
+    }
+    const on = () => setIntroReady(true);
+    window.addEventListener("pulse:bootdone", on, { once: true });
+    const t = window.setTimeout(() => setIntroReady(true), 4500);
+    return () => { window.removeEventListener("pulse:bootdone", on); window.clearTimeout(t); };
+  }, []);
+
+  // Once allowed, play the intro from the top; fall through to the loop if it
+  // can't play.
+  useEffect(() => {
+    if (!introReady || phase !== "intro") return;
+    const v = introRef.current;
+    if (!v) return;
+    try {
+      v.currentTime = 0;
+      const p = v.play();
+      if (p && typeof p.catch === "function") p.catch(startLoop);
+    } catch { startLoop(); }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [introReady, phase]);
+
+  // Both clips stay mounted so the hand-off is a true opacity crossfade — the
+  // intro's last frame dissolves into the (already-decoded, already-playing)
+  // loop with no gap where the gradient could flash through. The loop sits
+  // underneath; the intro fades out on top of it.
+  return (
+    <>
+      <video
+        ref={loopRef}
+        className="mh-video mh-video-loop"
+        muted loop playsInline preload="auto" aria-hidden
+        style={{ opacity: phase === "loop" ? 1 : 0 }}
+      >
+        <source src="/media/myday-loop.mp4" type="video/mp4" />
+      </video>
+      <video
+        ref={introRef}
+        className="mh-video mh-video-intro"
+        muted playsInline preload="auto" aria-hidden
+        onEnded={startLoop}
+        onError={startLoop}
+        style={{ opacity: phase === "intro" ? 1 : 0 }}
+      >
+        <source src="/media/myday-intro.mp4" type="video/mp4" />
+      </video>
+    </>
   );
 }
 
