@@ -7,12 +7,13 @@ import { useEditors } from "@/lib/use-editors";
 import { useResource } from "@/lib/use-resource";
 import { rangeFor, inRange, compactNum } from "@/lib/date-range";
 import { performanceScore, formatScore } from "@/lib/score";
-import { ymd, myRankInRange } from "@/lib/task-points";
+import { ymd, myRankInRange, topEditorsInRange } from "@/lib/task-points";
 import { breakOffsetMs, DAILY_BREAK_CAP_SEC } from "@/lib/task-timing";
 import { goalBreakdown, DISCIPLINE_CRITERIA, type Ratings } from "@/lib/goal-points";
+import { Avatar } from "@/lib/editor-visuals";
 import { quoteOfDay } from "@/lib/quotes";
 import { api } from "@/lib/api";
-import type { Post, Task, TaskStatus, TaskType } from "@/lib/types";
+import type { Editor, Post, Task, TaskStatus, TaskType } from "@/lib/types";
 
 // DF Foods runs a 6-day week (Mon–Sat) — used to spread the monthly Goal Points
 // target across the month for the (provisional) Daily Goal pace. Change this one
@@ -149,6 +150,16 @@ export function HomePage() {
   }, [editors, tasks, today, user?.editorId]);
   const monthRank = scoreWindows?.month.rank ?? null;
 
+  // The Media House top 3 this month (same org-scoped Task Points ranking as the
+  // leaderboard) — shown as name/points cards over the hero video's podium.
+  const podium = useMemo(() => {
+    if (!editors || !tasks) return { first: null, second: null, third: null };
+    const withEditor = topEditorsInRange(editors, tasks, monthStartStr(), today, 3)
+      .map((row) => ({ row, editor: editors.find((e) => e.id === row.editorId) }))
+      .filter((x): x is { row: typeof x.row; editor: Editor } => !!x.editor);
+    return { first: withEditor[0] ?? null, second: withEditor[1] ?? null, third: withEditor[2] ?? null };
+  }, [editors, tasks, today]);
+
   // Focus time today — a derived approximation (there is no stored focus metric):
   // the sum of each of the viewer's tasks' budget-clock time that elapsed TODAY
   // (budget_started_at → completed_at/now), minus the day's break time. Labeled
@@ -223,6 +234,18 @@ export function HomePage() {
     { label: "In review", value: pipeline.in_review, tone: "info", to: "/metrics", icon: "👁️" },
   ];
 
+  // One podium name/points card (gold styling for #1). Null slot → nothing.
+  const podCard = (entry: { row: { points: number }; editor: Editor } | null, gold = false) =>
+    entry ? (
+      <div className={"mh-pod-card" + (gold ? " gold" : "")}>
+        <Avatar editor={entry.editor} />
+        <div className="mh-pod-meta">
+          <span className="mh-pod-name">{entry.editor.name}</span>
+          <span className="mh-pod-pts">{Math.round(entry.row.points).toLocaleString()} pts</span>
+        </div>
+      </div>
+    ) : null;
+
   return (
     <section className="screen myday">
       {/* Hero banner — a shared intro→loop video + text overlay, identical for
@@ -244,6 +267,16 @@ export function HomePage() {
             <div className="mh-quote"><span className="mh-quote-i">👑</span><i>"{quote}"</i></div>
           </div>
         </div>
+        {/* Real Media House top 3 this month, as name/points cards over the
+            video's podium (2 left · 1 centre · 3 right). Hidden when nobody has
+            scored yet. */}
+        {(podium.first || podium.second || podium.third) && (
+          <div className="mh-podium">
+            <div className="mh-pod-slot">{podCard(podium.second)}</div>
+            <div className="mh-pod-slot mh-pod-center">{podCard(podium.first, true)}</div>
+            <div className="mh-pod-slot">{podCard(podium.third)}</div>
+          </div>
+        )}
       </div>
 
       {!user?.editorId && (
