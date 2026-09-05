@@ -715,37 +715,38 @@ main{min-width:0;display:flex;flex-direction:column}
 .tt-go{flex:none;font-size:18px;font-weight:800;color:var(--faint,var(--muted));line-height:1}
 
 /* Today's Progress */
-.tp-panel{display:flex;flex-direction:column}
-.tp-rankbadge{margin-left:auto;font-size:12px;font-weight:900;color:#fff;background:var(--grad);padding:3px 11px;border-radius:999px;
+.prog-panel{display:flex;flex-direction:column}
+.prog-rankbadge{margin-left:auto;font-size:12px;font-weight:900;color:#fff;background:var(--grad);padding:3px 11px;border-radius:999px;
   box-shadow:0 6px 16px -4px rgba(139,92,246,.6)}
-.tp-body{position:relative;display:flex;align-items:center;gap:16px;flex:1;padding-right:158px}
-.tp-left{flex:1;min-width:0;display:flex;align-items:center;gap:16px}
-.tp-ring{position:relative;flex:none;width:120px;height:120px}
-.tp-ring svg{width:100%;height:100%}
-.tp-ring-bg{fill:none;stroke:var(--border);stroke-width:10}
-.tp-ring-fg{fill:none;stroke:var(--accent);stroke-width:10;stroke-linecap:round;transition:stroke-dashoffset .7s ease}
-.tp-ring-c{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;line-height:1}
-.tp-ring-c b{font-size:26px;font-weight:800}
-.tp-ring-c b span{font-size:15px;color:var(--muted);font-weight:700}
-.tp-ring-c small{font-size:10.5px;color:var(--muted);margin-top:3px}
-.tp-stats{display:flex;flex-direction:column;gap:13px}
-.tp-stat{display:flex;align-items:center;gap:10px}
-.tp-si{flex:none;font-size:16px}
-.tp-stat span{display:flex;flex-direction:column;line-height:1.1}
-.tp-stat b{font-size:17px;font-weight:800}
-.tp-stat small{font-size:11px;color:var(--muted);font-weight:600;white-space:nowrap}
-.tp-stat small i{font-style:normal;color:var(--faint,var(--muted));cursor:help}
+.prog-body{position:relative;display:flex;align-items:center;justify-content:flex-start;gap:22px;flex:1;
+  min-height:184px;padding-right:180px}
+.prog-left{flex:1;min-width:0;display:flex;align-items:center;justify-content:space-evenly;gap:20px}
+.prog-ring{position:relative;flex:none;width:134px;height:134px}
+.prog-ring svg{width:100%;height:100%}
+.prog-ring-bg{fill:none;stroke:var(--border);stroke-width:9}
+.prog-ring-fg{fill:none;stroke:var(--accent);stroke-width:9;stroke-linecap:round;transition:stroke-dashoffset .7s ease}
+.prog-ring-c{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;line-height:1}
+.prog-ring-c b{font-size:30px;font-weight:800}
+.prog-ring-c b span{font-size:16px;color:var(--muted);font-weight:700}
+.prog-ring-c small{font-size:11px;color:var(--muted);margin-top:4px}
+.prog-stats{display:flex;flex-direction:column;gap:20px}
+.prog-stat{display:flex;align-items:center;gap:11px}
+.prog-si{flex:none;font-size:17px}
+.prog-stat span{display:flex;flex-direction:column;line-height:1.12}
+.prog-stat b{font-size:19px;font-weight:800}
+.prog-stat small{font-size:11px;color:var(--muted);font-weight:600;white-space:nowrap}
+.prog-stat small i{font-style:normal;color:var(--faint,var(--muted));cursor:help}
 /* Rank character — anchored to the card's right edge, upper body only; the
    lower half fades smoothly into the card (mask gradient). Positioned/masked
    with GPU-cheap properties so it stays snappy. */
-.tp-char{position:absolute;right:-18px;top:-10px;bottom:-14px;width:178px;pointer-events:none;
+.prog-char{position:absolute;right:-18px;top:-14px;bottom:-16px;width:208px;pointer-events:none;
   display:flex;align-items:flex-start;justify-content:center;overflow:hidden;
-  -webkit-mask-image:linear-gradient(to bottom,#000 54%,rgba(0,0,0,.4) 76%,transparent 93%);
-          mask-image:linear-gradient(to bottom,#000 54%,rgba(0,0,0,.4) 76%,transparent 93%)}
-.tp-char img{width:100%;height:auto;object-fit:contain;object-position:top center}
-.tp-goalbar{height:8px;border-radius:999px;background:var(--panel2);overflow:hidden;margin-top:14px}
-.tp-goalbar-fill{height:100%;border-radius:999px;background:var(--grad);transition:width .7s ease}
-@media(max-width:560px){.tp-body{padding-right:0}.tp-char{display:none}.tp-left{flex-wrap:wrap}}
+  -webkit-mask-image:linear-gradient(to bottom,#000 60%,rgba(0,0,0,.4) 80%,transparent 96%);
+          mask-image:linear-gradient(to bottom,#000 60%,rgba(0,0,0,.4) 80%,transparent 96%)}
+.prog-char img{width:100%;height:auto;object-fit:contain;object-position:top center}
+.prog-goalbar{height:8px;border-radius:999px;background:var(--panel2);overflow:hidden;margin-top:14px}
+.prog-goalbar-fill{height:100%;border-radius:999px;background:var(--grad);transition:width .7s ease}
+@media(max-width:560px){.prog-body{padding-right:0}.prog-char{display:none}.prog-left{flex-wrap:wrap}}
 
 /* ---- Three cards (This Week / This Month / Achievements) ---- */
 .myday-grid3{display:grid;grid-template-columns:repeat(3,1fr);gap:18px;margin-bottom:6px}

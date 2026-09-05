@@ -12,7 +12,6 @@ import { breakOffsetMs, DAILY_BREAK_CAP_SEC } from "@/lib/task-timing";
 import { goalBreakdown, DISCIPLINE_CRITERIA, type Ratings } from "@/lib/goal-points";
 import { quoteOfDay } from "@/lib/quotes";
 import { api } from "@/lib/api";
-import { TopPerformerTicker } from "@/components/top-performer-ticker";
 import type { Post, Task, TaskStatus, TaskType } from "@/lib/types";
 
 // DF Foods runs a 6-day week (Mon–Sat) — used to spread the monthly Goal Points
@@ -226,9 +225,6 @@ export function HomePage() {
 
   return (
     <section className="screen myday">
-      {/* Top Performer of the Month — celebratory ticker above everything. */}
-      <TopPerformerTicker />
-
       {/* Hero banner — one shared looping video + text overlay, identical for
           every role. The video is decorative; a gradient shows through until
           the asset (/media/myday-banner.mp4) is present, and a scrim keeps the
@@ -438,38 +434,38 @@ function TodaysProgress({
   const C = 2 * Math.PI * R;
 
   return (
-    <div className="card myday-panel tp-panel">
+    <div className="card myday-panel prog-panel">
       <div className="mp-head">
         <h3><span className="mp-ic">🌱</span> Today's Progress</h3>
-        {monthRank && monthRank <= 3 && <span className="tp-rankbadge">#{monthRank}</span>}
+        {monthRank && monthRank <= 3 && <span className="prog-rankbadge">#{monthRank}</span>}
       </div>
-      <div className="tp-body">
-        <div className="tp-left">
-          <div className="tp-ring">
+      <div className="prog-body">
+        <div className="prog-left">
+          <div className="prog-ring">
             <svg viewBox="0 0 120 120" aria-hidden>
-              <circle cx="60" cy="60" r={R} className="tp-ring-bg" />
+              <circle cx="60" cy="60" r={R} className="prog-ring-bg" />
               <circle
-                cx="60" cy="60" r={R} className="tp-ring-fg"
+                cx="60" cy="60" r={R} className="prog-ring-fg"
                 strokeDasharray={C} strokeDashoffset={C * (1 - frac)}
                 transform="rotate(-90 60 60)"
               />
             </svg>
-            <div className="tp-ring-c">
+            <div className="prog-ring-c">
               <b>{completedToday}<span>/{total}</span></b>
               <small>tasks done</small>
             </div>
           </div>
-          <div className="tp-stats">
-            <div className="tp-stat"><span className="tp-si">⭐</span><span><b>{Math.round(pointsToday)}</b><small>Points today</small></span></div>
-            <div className="tp-stat"><span className="tp-si">⚡</span><span><b>{hoursMins(focusSeconds)}</b><small>Focus time <i title="Approximate — derived from task time budgets, not a tracked metric.">≈</i></small></span></div>
-            <div className="tp-stat"><span className="tp-si">🎯</span><span><b>{dailyGoalPct == null ? "—" : dailyGoalPct + "%"}</b><small>Daily goal{dailyGoalPct != null ? <i title="Provisional: today's points vs the month's goal spread across working days."> *</i> : ""}</small></span></div>
+          <div className="prog-stats">
+            <div className="prog-stat"><span className="prog-si">⭐</span><span><b>{Math.round(pointsToday)}</b><small>Points today</small></span></div>
+            <div className="prog-stat"><span className="prog-si">⚡</span><span><b>{hoursMins(focusSeconds)}</b><small>Focus time <i title="Approximate — derived from task time budgets, not a tracked metric.">≈</i></small></span></div>
+            <div className="prog-stat"><span className="prog-si">🎯</span><span><b>{dailyGoalPct == null ? "—" : dailyGoalPct + "%"}</b><small>Daily goal{dailyGoalPct != null ? <i title="Provisional: today's points vs the month's goal spread across working days."> *</i> : ""}</small></span></div>
           </div>
         </div>
         <RankCharacter rank={monthRank} />
       </div>
       {dailyGoalPct != null && (
-        <div className="tp-goalbar">
-          <div className="tp-goalbar-fill" style={{ width: `${Math.min(100, dailyGoalPct)}%` }} />
+        <div className="prog-goalbar">
+          <div className="prog-goalbar-fill" style={{ width: `${Math.min(100, dailyGoalPct)}%` }} />
         </div>
       )}
     </div>
@@ -484,7 +480,7 @@ function RankCharacter({ rank }: { rank: number | null }) {
   useEffect(() => setBroken(false), [rank]);
   if (!rank || rank > 3 || broken) return null;
   return (
-    <div className="tp-char">
+    <div className="prog-char">
       <img src={`/media/rank-${rank}.png`} alt={`Rank ${rank} character`} width={600} height={800} decoding="async" onError={() => setBroken(true)} />
     </div>
   );
