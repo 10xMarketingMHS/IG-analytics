@@ -1329,7 +1329,7 @@ img.lb-ava{object-fit:cover}
 .tp-leader-title{font-size:12px;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .tp-rankhead{font-size:12px;font-weight:800;letter-spacing:.03em;text-transform:uppercase;color:var(--muted);margin:20px 2px 10px}
 .tp-rank{padding:6px 6px}
-.tp-row{display:flex;align-items:center;gap:14px;padding:12px 12px;border-radius:12px}
+.tp-row{display:flex;align-items:flex-start;gap:14px;padding:13px 12px;border-radius:12px}
 .tp-row+.tp-row{border-top:1px solid var(--border)}
 .tp-row:hover{background:var(--panel2)}
 .tp-rank-n{width:26px;height:26px;border-radius:8px;display:grid;place-items:center;font-weight:800;font-size:13px;flex:none;background:var(--panel2);color:var(--muted)}
@@ -1340,8 +1340,13 @@ img.lb-ava{object-fit:cover}
 .tp-row-title{font-weight:700;font-size:14px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .tp-row-meta{font-size:12px;color:var(--muted);display:flex;gap:6px;margin-top:2px}
 .tp-type{font-weight:700;color:var(--accent-ink);background:var(--accent-weak);padding:1px 8px;border-radius:999px;font-size:11px}
+/* Full per-reel metric breakdown under the title — wraps on narrow widths. */
+.tp-row-metrics{display:flex;flex-wrap:wrap;gap:5px 14px;margin-top:8px;font-size:12px;color:var(--muted)}
+.tp-row-metrics span{display:inline-flex;align-items:center;gap:4px;white-space:nowrap}
+.tp-row-metrics i{font-style:normal;font-size:12px;opacity:.85}
+.tp-row-metrics b{color:var(--text);font-weight:750}
 .tp-row-stats{display:flex;gap:14px;align-items:center;font-size:12.5px;color:var(--muted);flex:none}
-.tp-score{font-weight:800;color:var(--text)}
+.tp-score{font-weight:800;color:var(--text);font-size:15px}
 
 /* ============================================================
    TRENDS (Phase 4 analytics)

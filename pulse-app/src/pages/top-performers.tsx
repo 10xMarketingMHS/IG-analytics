@@ -149,11 +149,19 @@ export function TopPerformersPage() {
                         <span className="tp-type">{TYPE_LABEL[p.post_type] ?? p.post_type}</span>
                         {p.channel_name && <span>· {p.channel_name}</span>}
                       </div>
+                      {/* Full metric breakdown for this reel. */}
+                      <div className="tp-row-metrics">
+                        <span><i>👁️</i> Views <b>{compactNum(p.views)}</b></span>
+                        <span><i>📡</i> Reach <b>{compactNum(p.reach)}</b></span>
+                        <span><i>❤️</i> Likes <b>{compactNum(p.likes)}</b></span>
+                        <span><i>💬</i> Comments <b>{compactNum(p.comments)}</b></span>
+                        <span><i>🔁</i> Shares <b>{compactNum(p.shares)}</b></span>
+                        <span><i>🔖</i> Saves <b>{compactNum(p.saves)}</b></span>
+                        <span><i>⚡</i> Eng <b>{engRate(p).toFixed(1)}%</b></span>
+                      </div>
                     </div>
                     <div className="tp-row-stats">
-                      <span>👁️ {compactNum(p.views)}</span>
-                      <span>🔖 {compactNum(p.saves)}</span>
-                      <span className="tp-score">★ {formatScore(p)}</span>
+                      <span className="tp-score" title="Performance Score">★ {formatScore(p)}</span>
                     </div>
                   </div>
                 ))}
