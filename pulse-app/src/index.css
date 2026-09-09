@@ -140,6 +140,7 @@ main{min-width:0;display:flex;flex-direction:column}
 .bulk-tbl select:focus,.bulk-tbl input:focus{outline:none;border-color:var(--accent);box-shadow:0 0 0 2px var(--accent-weak)}
 .bulk-tbl select:disabled{opacity:.5;cursor:not-allowed}
 .bulk-actions{white-space:nowrap;text-align:center}
+.bulk-actions button+button{margin-left:5px}
 .bulk-actions button{border:1px solid var(--border);background:var(--panel2);border-radius:8px;padding:5px 8px;
   cursor:pointer;font-size:12px;margin:0 2px}
 .bulk-actions button:hover{border-color:var(--accent)}

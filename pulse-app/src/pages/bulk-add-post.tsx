@@ -229,6 +229,28 @@ export function BulkAddPostPage({ onClose }: { onClose?: () => void } = {}) {
   function addRow(cardId: string) {
     setCards((cs) => cs.map((c) => (c.id === cardId ? { ...c, rows: [...c.rows, blankRow(platformsFor(c.channelId)[0]?.id ?? "")] } : c)));
   }
+  // Duplicate a row — copies all its field values into a fresh row inserted
+  // right below it. The copy is always a plain, standalone row: it never
+  // inherits collab linkage (that would clone a mirror), so the user can set a
+  // collab on it independently if they want.
+  function dupRow(cardId: string, key: string) {
+    setCards((cs) => cs.map((c) => {
+      if (c.id !== cardId) return c;
+      const idx = c.rows.findIndex((r) => r.key === key);
+      if (idx < 0) return c;
+      const copy: Row = {
+        ...c.rows[idx],
+        key: newKey(),
+        collabChannelId: "",
+        collabGroupId: undefined,
+        isMirror: false,
+        overrides: undefined,
+      };
+      const rows = [...c.rows];
+      rows.splice(idx + 1, 0, copy);
+      return { ...c, rows };
+    }));
+  }
   // Delete a row, cleaning up any collab link it participates in.
   function delRow(cardId: string, key: string) {
     const card = cards.find((c) => c.id === cardId);
@@ -439,6 +461,9 @@ export function BulkAddPostPage({ onClose }: { onClose?: () => void } = {}) {
                             </select>
                           </td>
                           <td className="bulk-actions">
+                            {!r.isMirror && (
+                              <button title="Duplicate row" onClick={() => dupRow(card.id, r.key)}>⧉</button>
+                            )}
                             <button title="Delete row" onClick={() => delRow(card.id, r.key)} disabled={card.rows.length === 1 && !r.isMirror}>🗑</button>
                           </td>
                         </tr>
