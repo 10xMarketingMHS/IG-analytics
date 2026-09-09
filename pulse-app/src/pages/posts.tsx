@@ -19,11 +19,12 @@ const TYPE_OPTS: Array<[string, string]> = [["reel", "🎬 Reels"], ["carousel",
 
 // ---- Customizable table columns ----
 type ColKey =
-  | "date" | "channel" | "title" | "editor" | "pillar" | "type" | "avatar" | "link"
+  | "date" | "channel" | "platform" | "title" | "editor" | "pillar" | "type" | "avatar" | "link"
   | "collab" | "views" | "likes" | "comments" | "shares" | "saves" | "reach" | "score" | "status" | "source";
 const COLUMNS: { key: ColKey; label: string; num?: boolean }[] = [
   { key: "date", label: "Date" },
   { key: "channel", label: "Channel" },
+  { key: "platform", label: "Platform" },
   { key: "title", label: "Title / Format" },
   { key: "editor", label: "Editor" },
   { key: "pillar", label: "Pillar" },
@@ -42,7 +43,7 @@ const COLUMNS: { key: ColKey; label: string; num?: boolean }[] = [
   { key: "source", label: "Source" },
 ];
 const COL_META = Object.fromEntries(COLUMNS.map((c) => [c.key, c])) as Record<ColKey, { key: ColKey; label: string; num?: boolean }>;
-const DEFAULT_VISIBLE: ColKey[] = ["date", "channel", "title", "editor", "pillar", "type", "views", "saves", "score", "status"];
+const DEFAULT_VISIBLE: ColKey[] = ["date", "channel", "platform", "title", "editor", "pillar", "type", "views", "saves", "score", "status"];
 const COLS_STORAGE_KEY = "pulse:postsColumns";
 
 type ColCfg = { key: ColKey; visible: boolean };
@@ -57,9 +58,22 @@ function loadCols(): ColCfg[] {
     if (raw) {
       const saved = JSON.parse(raw) as ColCfg[];
       const known = new Set(COLUMNS.map((c) => c.key));
-      const seen = new Set(saved.map((s) => s.key));
       const merged = saved.filter((s) => known.has(s.key));
-      for (const c of COLUMNS) if (!seen.has(c.key)) merged.push({ key: c.key, visible: false });
+      // Columns added in a newer release aren't in the saved config. Insert each
+      // at its natural position (right after its preceding column in COLUMNS)
+      // rather than dumping it at the end, and adopt its default visibility — so
+      // a new default-on column (e.g. Platform) lands next to Channel and is
+      // actually seen, instead of appended off-screen or silently hidden.
+      const vis = new Set(DEFAULT_VISIBLE);
+      COLUMNS.forEach((c, ci) => {
+        if (merged.some((m) => m.key === c.key)) return;
+        let insertAt = merged.length;
+        for (let k = ci - 1; k >= 0; k--) {
+          const idx = merged.findIndex((m) => m.key === COLUMNS[k].key);
+          if (idx >= 0) { insertAt = idx + 1; break; }
+        }
+        merged.splice(insertAt, 0, { key: c.key, visible: vis.has(c.key) });
+      });
       return merged;
     }
   } catch { /* ignore malformed storage */ }
@@ -117,6 +131,7 @@ export function PostsPage() {
   const editorName = (id: string | null) => (id ? editors?.find((e) => e.id === id)?.name ?? "—" : "—");
   const channelName = (id: string | null | undefined) => (id ? workspaces.find((w) => w.id === id)?.name ?? "—" : "—");
   const platformKey = (id: string | null) => (id ? platData?.platforms.find((p) => p.id === id)?.key : undefined);
+  const platformName = (id: string | null) => (id ? platData?.platforms.find((p) => p.id === id)?.name ?? "—" : "—");
 
   // Posts in the selected date window — counts + all categorical filters apply on top.
   const scoped = useMemo(
@@ -220,6 +235,12 @@ export function PostsPage() {
           </b>
           <div style={{ fontSize: 11, color: "var(--muted)" }}>{formatName(p.format_id)}</div>
         </>
+      );
+      case "platform": return (
+        <span className="plat-cell">
+          <span className="ch-ic">{PLATFORM_ICON[platformKey(p.platform_id) ?? ""] ?? "📱"}</span>
+          {platformName(p.platform_id)}
+        </span>
       );
       case "editor": return editorName(p.editor_id);
       case "pillar": return <span className="tag">{pillarName(p.pillar_id)}</span>;
