@@ -2,7 +2,6 @@ import { useMemo, useState } from "react";
 import { useResource } from "@/lib/use-resource";
 import { useWorkspaces } from "@/lib/workspaces-context";
 import { rangeFor, inRange, compactNum, type RangeKey } from "@/lib/date-range";
-import { performanceScore, formatScore } from "@/lib/score";
 import type { Post, Platform } from "@/lib/types";
 
 const PLATFORM_ICON: Record<string, string> = { instagram: "📸", facebook: "👍", youtube: "▶️" };
@@ -77,7 +76,7 @@ export function TopPerformersPage() {
       ) : (
         sections.map(({ platform, posts }) => {
           const types = Array.from(new Set(posts.map((p) => p.post_type))).filter(Boolean);
-          const rankedByScore = [...posts].sort((a, b) => performanceScore(b) - performanceScore(a));
+          const rankedByEng = [...posts].sort((a, b) => engRate(b) - engRate(a));
           const leaders: { label: string; icon: string; post: P | null; val: (p: Post) => string }[] = [
             { label: "Most Views", icon: "👁️", post: top(posts, (p) => p.views), val: (p) => compactNum(p.views) },
             { label: "Most Reach", icon: "📡", post: top(posts, (p) => p.reach), val: (p) => compactNum(p.reach) },
@@ -99,7 +98,7 @@ export function TopPerformersPage() {
               {/* Best of each content type */}
               <div className="grid g2">
                 {types.map((t) => {
-                  const best = top(posts.filter((p) => p.post_type === t), performanceScore);
+                  const best = top(posts.filter((p) => p.post_type === t), engRate);
                   const label = TYPE_LABEL[t] ?? t;
                   return (
                     <div className="spot2" key={t}>
@@ -109,9 +108,9 @@ export function TopPerformersPage() {
                           <div className="tt">{best.title}</div>
                           {best.channel_name && <span className="tag">{best.channel_name}</span>}
                           <div className="st" style={{ marginTop: 10 }}>
-                            <span>Score <b>{formatScore(best)}</b></span>
-                            <span>Views <b>{compactNum(best.views)}</b></span>
                             <span>Eng <b>{engRate(best).toFixed(1)}%</b></span>
+                            <span>Views <b>{compactNum(best.views)}</b></span>
+                            <span>Saves <b>{compactNum(best.saves)}</b></span>
                           </div>
                         </>
                       ) : (
@@ -137,10 +136,10 @@ export function TopPerformersPage() {
                 ))}
               </div>
 
-              {/* Ranked top 5 by Performance Score */}
-              <div className="tp-rankhead">Top posts by Performance Score</div>
+              {/* Ranked top 5 by Engagement Rate */}
+              <div className="tp-rankhead">Top posts by Engagement Rate</div>
               <div className="card tp-rank">
-                {rankedByScore.slice(0, 5).map((p, i) => (
+                {rankedByEng.slice(0, 5).map((p, i) => (
                   <div className="tp-row" key={p.id}>
                     <span className={"tp-rank-n r" + (i + 1)}>{i + 1}</span>
                     <div className="tp-row-main">
@@ -157,11 +156,10 @@ export function TopPerformersPage() {
                         <span><i>💬</i> Comments <b>{compactNum(p.comments)}</b></span>
                         <span><i>🔁</i> Shares <b>{compactNum(p.shares)}</b></span>
                         <span><i>🔖</i> Saves <b>{compactNum(p.saves)}</b></span>
-                        <span><i>⚡</i> Eng <b>{engRate(p).toFixed(1)}%</b></span>
                       </div>
                     </div>
                     <div className="tp-row-stats">
-                      <span className="tp-score" title="Performance Score">★ {formatScore(p)}</span>
+                      <span className="tp-score" title="Engagement Rate">⚡ {engRate(p).toFixed(1)}%</span>
                     </div>
                   </div>
                 ))}
@@ -173,7 +171,7 @@ export function TopPerformersPage() {
 
       {!noData && !loading && (
         <div className="demo-note" style={{ marginTop: 18 }}>
-          ↪ Best content is ranked by <b>Performance Score</b> (view/like/comment/share/save rates over reach), computed
+          ↪ Best content is ranked by <b>Engagement Rate</b> (likes + comments + shares + saves ÷ reach), computed
           separately per platform. Facebook &amp; YouTube appear here automatically once they have published posts.
         </div>
       )}
