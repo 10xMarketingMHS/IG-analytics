@@ -9,6 +9,7 @@ import { ChannelsSection } from "@/pages/channels";
 import { TeamsSection } from "@/pages/teams";
 import { GoalSettingSection } from "@/pages/goal-setting";
 import { EodOversightSection } from "@/pages/eod-oversight";
+import { ManagementPerformanceSettings } from "@/pages/management-performance";
 import { AccessSection } from "@/pages/access";
 
 const REEL_WEIGHTS: [string, number][] = [
@@ -26,7 +27,7 @@ const CAROUSEL_WEIGHTS: [string, number][] = [
 // this just avoids surfacing a tab that would immediately say "no access."
 // /channels, /task-rules, /teams still route here (old links keep working),
 // just pre-selecting the matching tab instead of their own page.
-type SettingsTab = "content" | "tasks" | "channels" | "team" | "goals" | "eod" | "access";
+type SettingsTab = "content" | "tasks" | "channels" | "team" | "goals" | "eod" | "mp" | "access";
 const TAB_FOR_PATH: Record<string, SettingsTab> = {
   "/task-rules": "tasks",
   "/channels": "channels",
@@ -59,6 +60,7 @@ export function SettingsPage() {
         { key: "channels" as const, label: "Channels & Integrations", show: true },
         { key: "team" as const, label: "Team", show: isAdmin },
         { key: "eod" as const, label: "EOD", show: isAdmin },
+        { key: "mp" as const, label: "Management Performance", show: isAdmin },
         { key: "access" as const, label: "Access", show: canAccess },
       ].filter((t) => t.show),
     [isAdmin, canViewGoals, canTaskSettings, canAccess],
@@ -231,6 +233,7 @@ export function SettingsPage() {
       {tab === "channels" && <ChannelsSection />}
       {tab === "team" && <TeamsSection />}
       {tab === "eod" && <EodOversightSection />}
+      {tab === "mp" && <ManagementPerformanceSettings />}
       {tab === "access" && <AccessSection />}
     </section>
   );

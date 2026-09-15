@@ -2,6 +2,8 @@ import { useEffect, useLayoutEffect, useMemo, useState } from "react";
 import { Loader } from "@/components/loader";
 import { Link } from "react-router-dom";
 import { useEditors } from "@/lib/use-editors";
+import { useWorkspaces } from "@/lib/workspaces-context";
+import { ManagementPerformanceBoard } from "@/pages/management-performance";
 import { useResource } from "@/lib/use-resource";
 import { useTasks } from "@/lib/use-tasks";
 import { rangeFor, inRange, compactNum } from "@/lib/date-range";
@@ -10,7 +12,7 @@ import { Avatar, ringColorOf } from "@/lib/editor-visuals";
 import type { Post, Editor, Task } from "@/lib/types";
 
 type Period = "month" | "all";
-type Tab = "social" | "house" | "path";
+type Tab = "social" | "house" | "path" | "mp";
 
 type Row = { editor: Editor; reels: number; carousels: number; views: number; points: number };
 type HouseRow = { editor: Editor; points: number; completed: number; goal: number };
@@ -274,6 +276,7 @@ function GoalCell({ points, goal }: { points: number; goal: number }) {
 
 export function LeaderboardPage() {
   const { editors } = useEditors();
+  const { isAdmin } = useWorkspaces();
   // Social ranking spans every channel in the Media House.
   const { data: postData } = useResource<{ posts: Post[] }>("/posts?channel=all");
   // Editor rankings & the progress path are performance — exclude collab mirrors.
@@ -399,6 +402,11 @@ export function LeaderboardPage() {
         <button className={tab === "path" ? "on" : ""} onClick={() => setTab("path")}>
           📈 Progress Path
         </button>
+        {isAdmin && (
+          <button className={tab === "mp" ? "on" : ""} onClick={() => setTab("mp")}>
+            📊 Management Performance
+          </button>
+        )}
       </div>
 
       {loading ? (
@@ -502,6 +510,8 @@ export function LeaderboardPage() {
             </>
           )}
         </div>
+      ) : tab === "mp" ? (
+        <ManagementPerformanceBoard />
       ) : (
         <div className="lb-layout">
           <div className="lb-main">

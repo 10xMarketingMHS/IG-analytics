@@ -19,7 +19,7 @@ const DEFAULT_CAPACITY = { working_days: 22, hours_per_day: 8 };
 // Effective monthly capacity for an editor: their own override → the org-wide
 // default for that month → carry-forward (most recent org default before it) →
 // a constant. Returns the numbers plus which source they came from.
-async function effectiveCapacity(orgId, editorId, month) {
+export async function effectiveCapacity(orgId, editorId, month) {
   const q = (sql, params) => pool.query(sql, params);
   let r = await q(
     "select working_days, hours_per_day from editor_capacity where org_id=$1 and editor_id=$2 and period_month=$3",
@@ -39,7 +39,7 @@ async function effectiveCapacity(orgId, editorId, month) {
   return { ...DEFAULT_CAPACITY, source: "default" };
 }
 
-const capHours = (c) => Number(c.working_days) * Number(c.hours_per_day);
+export const capHours = (c) => Number(c.working_days) * Number(c.hours_per_day);
 
 // Utilization status bands — mirror goal-setting.tsx (util < 75 Available,
 // ≤ 95 Near Capacity, else Overloaded). argb fills for the exported Status cell.
