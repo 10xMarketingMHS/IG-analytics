@@ -660,8 +660,9 @@ function GoalCard() {
     api<MyGoal>("/management-performance/me").then(setD).catch(() => setFailed(true));
   }, []);
 
-  const hasGoal = !!d?.linked && (d.monthlyGoalHours > 0 || d.taskGoal > 0);
-  const pct = d ? Math.min(100, d.completionPct) : 0;
+  const hasGoal = !!d?.linked && d.taskGoal > 0;
+  const taskPct = d && d.taskGoal > 0 ? Math.round((d.taskAchieved / d.taskGoal) * 100) : 0;
+  const toGo = d ? Math.max(0, d.taskGoal - d.taskAchieved) : 0;
 
   return (
     <div className="card myday-scorecard goalc">
@@ -669,17 +670,17 @@ function GoalCard() {
       {!d ? (
         <div className="msc-body"><div className="msc-sub">{failed ? "Couldn't load your goal." : "Loading…"}</div></div>
       ) : !hasGoal ? (
-        <div className="msc-body"><div className="msc-sub">No monthly goal set yet.</div></div>
+        <div className="msc-body"><div className="msc-sub">No task goal set for this month yet.</div></div>
       ) : (
         <>
           <div className="msc-body">
             <div>
-              <div className="msc-pts">{d.completedHours.toFixed(1)} <span>/ {d.monthlyGoalHours.toFixed(0)} hr</span></div>
-              <div className="msc-sub">{d.taskGoal > 0 ? `${d.taskAchieved} / ${d.taskGoal} tasks done` : `${d.remainingHours.toFixed(0)} hr remaining`}</div>
+              <div className="msc-pts">{d.taskAchieved} <span>/ {d.taskGoal} tasks</span></div>
+              <div className="msc-sub">{toGo > 0 ? `${toGo} to go` : "goal reached 🎉"}</div>
             </div>
-            <div className="msc-rank">{d.completionPct}%</div>
+            <div className="msc-rank">{taskPct}%</div>
           </div>
-          <div className="msc-bar"><div className="msc-bar-fill" style={{ width: `${pct}%` }} /></div>
+          <div className="msc-bar"><div className="msc-bar-fill" style={{ width: `${Math.min(100, taskPct)}%` }} /></div>
         </>
       )}
     </div>
