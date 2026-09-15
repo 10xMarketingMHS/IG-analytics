@@ -288,6 +288,38 @@ managementPerformanceRouter.get("/management-performance", requireAdmin, async (
   } catch (err) { next(err); }
 });
 
+// GET /management-performance/me — the CALLER's own current-month goal vs
+// achieved (hours + tasks). Self-scoped, so it needs no admin role — any
+// signed-in user gets only their own linked editor's figures. Read-only: it
+// never writes a snapshot (that stays the admin board's job). Declared before
+// /:editorId so "me" isn't captured as an editor id.
+managementPerformanceRouter.get("/management-performance/me", async (req, res, next) => {
+  try {
+    const { rows } = await pool.query("select editor_id from app_user where id = $1", [req.user.sub]);
+    const eid = rows[0]?.editor_id;
+    if (!eid) return res.json({ linked: false });
+    const monthFirst = thisMonthFirst();
+    const [hoursMap, taskCounts, cap] = await Promise.all([
+      completedHoursByEditor(req.orgId, monthFirst),
+      taskCountsByEditor(req.orgId, monthFirst),
+      effectiveCapacity(req.orgId, eid, monthFirst),
+    ]);
+    const goalHours = capHours(cap);
+    const completedHours = round1(hoursMap.get(eid) ?? 0);
+    const tc = taskCounts.get(eid) || { goal: 0, achieved: 0 };
+    res.json({
+      linked: true,
+      month: monthFirst.slice(0, 7),
+      monthlyGoalHours: round1(goalHours),
+      completedHours,
+      remainingHours: round1(Math.max(0, goalHours - completedHours)),
+      completionPct: goalHours > 0 ? round1((completedHours / goalHours) * 100) : 0,
+      taskGoal: tc.goal,
+      taskAchieved: tc.achieved,
+    });
+  } catch (err) { next(err); }
+});
+
 // GET /management-performance/:editorId?month=YYYY-MM — one editor's detail:
 // the month's figures + previous months' snapshot history + Start/End EOD
 // session history (DISPLAY ONLY — never part of the completed-hours calc).

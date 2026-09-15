@@ -343,7 +343,7 @@ export function HomePage() {
         <div className="myday-grid3">
           <ScoreCard icon="🎯" title="This Week" window={scoreWindows.week} />
           <ScoreCard icon="👑" title="This Month" window={scoreWindows.month} />
-          <AchievementsCard />
+          <GoalCard />
         </div>
       )}
 
@@ -645,17 +645,43 @@ function ScoreCard({ icon, title, window: w }: { icon: string; title: string; wi
   );
 }
 
-// ---- Achievements: no unlock system exists yet — every badge stays locked. ----
-function AchievementsCard() {
+// ---- Monthly Goal: the signed-in user's own current-month goal vs achieved
+// (real tracked hours + task counts), self-scoped so no admin role is needed.
+// Replaces the old placeholder Achievements card. ----
+type MyGoal = {
+  linked: boolean;
+  monthlyGoalHours: number; completedHours: number; remainingHours: number; completionPct: number;
+  taskGoal: number; taskAchieved: number;
+};
+function GoalCard() {
+  const [d, setD] = useState<MyGoal | null>(null);
+  const [failed, setFailed] = useState(false);
+  useEffect(() => {
+    api<MyGoal>("/management-performance/me").then(setD).catch(() => setFailed(true));
+  }, []);
+
+  const hasGoal = !!d?.linked && (d.monthlyGoalHours > 0 || d.taskGoal > 0);
+  const pct = d ? Math.min(100, d.completionPct) : 0;
+
   return (
-    <div className="card myday-scorecard ach">
-      <div className="msc-head"><span className="msc-ic">🏆</span>Achievements</div>
-      <div className="ach-row">
-        {["⚡", "🎬", "🏆", "🔒"].map((b, i) => (
-          <span key={i} className="ach-badge locked">{b}</span>
-        ))}
-      </div>
-      <div className="ach-note">Complete more tasks to unlock new badges!</div>
+    <div className="card myday-scorecard goalc">
+      <div className="msc-head"><span className="msc-ic">🎯</span>Monthly Goal</div>
+      {!d ? (
+        <div className="msc-body"><div className="msc-sub">{failed ? "Couldn't load your goal." : "Loading…"}</div></div>
+      ) : !hasGoal ? (
+        <div className="msc-body"><div className="msc-sub">No monthly goal set yet.</div></div>
+      ) : (
+        <>
+          <div className="msc-body">
+            <div>
+              <div className="msc-pts">{d.completedHours.toFixed(1)} <span>/ {d.monthlyGoalHours.toFixed(0)} hr</span></div>
+              <div className="msc-sub">{d.taskGoal > 0 ? `${d.taskAchieved} / ${d.taskGoal} tasks done` : `${d.remainingHours.toFixed(0)} hr remaining`}</div>
+            </div>
+            <div className="msc-rank">{d.completionPct}%</div>
+          </div>
+          <div className="msc-bar"><div className="msc-bar-fill" style={{ width: `${pct}%` }} /></div>
+        </>
+      )}
     </div>
   );
 }
