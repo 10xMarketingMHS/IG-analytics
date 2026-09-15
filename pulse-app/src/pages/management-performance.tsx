@@ -1,7 +1,6 @@
-import { useEffect, useState } from "react";
+import { Fragment, useEffect, useState } from "react";
 import { toast } from "sonner";
 import { api, ApiError } from "@/lib/api";
-import { Modal } from "@/components/modal";
 
 // Management Performance (EPI / MPI / LPI). Admin-only. Two surfaces share this
 // file: a Settings config section (thresholds) and a Leaderboard tab (per-editor
@@ -133,7 +132,7 @@ export function ManagementPerformanceBoard() {
   const [months, setMonths] = useState<string[]>([]);
   const [data, setData] = useState<{ rows: BoardRow[]; thresholds: Thresholds; orgDefaultGoalHours: number; isCurrent?: boolean } | null>(null);
   const [loading, setLoading] = useState(true);
-  const [openEditor, setOpenEditor] = useState<{ id: string; name: string } | null>(null);
+  const [openId, setOpenId] = useState<string | null>(null);
 
   useEffect(() => {
     api<{ months: string[] }>("/management-performance/months").then((d) => setMonths(d.months)).catch(() => {});
@@ -185,30 +184,43 @@ export function ManagementPerformanceBoard() {
         <div style={{ overflowX: "auto" }}>
           <table className="tbl mp-tbl">
             <thead>
-              <tr><th>Employee</th><th className="num">Monthly Goal</th><th className="num">Completed</th><th className="num">Remaining</th><th>Performance</th></tr>
+              <tr><th>Employee</th><th className="num">Goal</th><th className="num">Achieved</th><th className="num">Remaining</th><th>Performance</th></tr>
             </thead>
             <tbody>
-              {rows.map((r) => (
-                <tr key={r.editorId} className="mp-row" onClick={() => setOpenEditor({ id: r.editorId, name: r.name ?? "Editor" })}>
-                  <td>
-                    <div className="mp-emp">
-                      {r.imageUrl ? <img className="mp-emp-img" src={r.imageUrl} alt="" /> : <span className="mp-emp-ini">{(r.name ?? "?").charAt(0).toUpperCase()}</span>}
-                      <div><b style={{ fontWeight: 650 }}>{r.name ?? "—"}</b><small>{r.designation || "Editor"}</small></div>
-                    </div>
-                  </td>
-                  <td className="num">{hrs(r.monthlyGoalHours)}</td>
-                  <td className="num"><b>{hrs(r.completedHours)}</b><span className="mp-pct">{r.completionPct}%</span></td>
-                  <td className="num">{hrs(r.remainingHours)}</td>
-                  <td><LevelBadge level={r.level} /></td>
-                </tr>
-              ))}
+              {rows.map((r) => {
+                const isOpen = openId === r.editorId;
+                return (
+                  <Fragment key={r.editorId}>
+                    <tr
+                      className={"mp-row" + (isOpen ? " open" : "")}
+                      onClick={() => setOpenId(isOpen ? null : r.editorId)}
+                      aria-expanded={isOpen}
+                    >
+                      <td>
+                        <div className="mp-emp">
+                          <span className={"mp-caret" + (isOpen ? " open" : "")} aria-hidden>▸</span>
+                          {r.imageUrl ? <img className="mp-emp-img" src={r.imageUrl} alt="" /> : <span className="mp-emp-ini">{(r.name ?? "?").charAt(0).toUpperCase()}</span>}
+                          <div><b style={{ fontWeight: 650 }}>{r.name ?? "—"}</b><small>{r.designation || "Editor"}</small></div>
+                        </div>
+                      </td>
+                      <td className="num">{hrs(r.monthlyGoalHours)}</td>
+                      <td className="num"><b>{hrs(r.completedHours)}</b><span className="mp-pct">{r.completionPct}%</span></td>
+                      <td className="num">{hrs(r.remainingHours)}</td>
+                      <td><LevelBadge level={r.level} /></td>
+                    </tr>
+                    {isOpen && (
+                      <tr className="mp-expand-row">
+                        <td colSpan={5}>
+                          <PerformanceDetailInline editorId={r.editorId} month={month} />
+                        </td>
+                      </tr>
+                    )}
+                  </Fragment>
+                );
+              })}
             </tbody>
           </table>
         </div>
-      )}
-
-      {openEditor && (
-        <PerformanceDetailModal editorId={openEditor.id} month={month} onClose={() => setOpenEditor(null)} />
       )}
     </div>
   );
@@ -229,12 +241,17 @@ function fmtClock(iso: string | null) {
   return iso ? new Date(iso).toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" }) : "—";
 }
 
-function PerformanceDetailModal({ editorId, month, onClose }: { editorId: string; month: string; onClose: () => void }) {
+function PerformanceDetailInline({ editorId, month }: { editorId: string; month: string }) {
   const [d, setD] = useState<DetailResp | null>(null);
   const [err, setErr] = useState(false);
 
   useEffect(() => {
-    api<DetailResp>(`/management-performance/${editorId}?month=${month}`).then(setD).catch(() => setErr(true));
+    let active = true;
+    setD(null); setErr(false);
+    api<DetailResp>(`/management-performance/${editorId}?month=${month}`)
+      .then((x) => { if (active) setD(x); })
+      .catch(() => { if (active) setErr(true); });
+    return () => { active = false; };
   }, [editorId, month]);
 
   // Describe the band using the thresholds ACTUALLY APPLIED to this snapshot
@@ -244,34 +261,26 @@ function PerformanceDetailModal({ editorId, month, onClose }: { editorId: string
   const applied = d?.thresholdsUsed && d.thresholdsUsed.epiMinPct != null && d.thresholdsUsed.mpiMinPct != null
     ? (d.thresholdsUsed as Thresholds)
     : d?.thresholds;
-  const bandText = applied
-    ? d!.level === "EPI" ? `≥ ${applied.epiMinPct}% of goal`
-      : d!.level === "MPI" ? `${applied.mpiMinPct}%–${(applied.epiMinPct - 0.01).toFixed(2)}% of goal`
+  const bandText = applied && d
+    ? d.level === "EPI" ? `≥ ${applied.epiMinPct}% of goal`
+      : d.level === "MPI" ? `${applied.mpiMinPct}%–${(applied.epiMinPct - 0.01).toFixed(2)}% of goal`
         : `below ${applied.mpiMinPct}% of goal`
     : "";
 
-  return (
-    <Modal onClose={onClose} variant="drawer" title={d?.editor.name ?? "Performance"} wide>
-      {err ? (
-        <div className="hint">Couldn't load this editor's performance.</div>
-      ) : !d ? (
-        <div className="hint">Loading…</div>
-      ) : (
-        <div className="mp-detail">
-          <div className="mp-detail-head">
-            {d.editor.imageUrl ? <img className="mp-emp-img lg" src={d.editor.imageUrl} alt="" /> : <span className="mp-emp-ini lg">{(d.editor.name ?? "?").charAt(0).toUpperCase()}</span>}
-            <div>
-              <div className="mp-detail-name">{d.editor.name}</div>
-              <div className="hint" style={{ margin: 0 }}>{d.editor.designation || "Editor"} · {fmtMonth(d.month)}</div>
-            </div>
-            <div style={{ marginLeft: "auto" }}><LevelBadge level={d.level} /></div>
-          </div>
+  if (err) return <div className="mp-detail"><div className="hint">Couldn't load this editor's performance.</div></div>;
+  if (!d) return <div className="mp-detail"><div className="hint">Loading…</div></div>;
 
-          <div className="mp-stats">
-            <div className="mp-stat"><span>Monthly Goal</span><b>{hrs(d.monthlyGoalHours)}</b></div>
-            <div className="mp-stat"><span>Completed Hours</span><b>{hrs(d.completedHours)}</b></div>
-            <div className="mp-stat"><span>Remaining</span><b>{hrs(d.remainingHours)}</b></div>
-            <div className="mp-stat"><span>Completion</span><b>{d.completionPct}%</b></div>
+  return (
+        <div className="mp-detail">
+          {/* Goal vs Achieved, front and centre */}
+          <div className="mp-ga">
+            <div className="mp-ga-item"><span>Goal</span><b>{hrs(d.monthlyGoalHours)}</b></div>
+            <div className="mp-ga-arrow" aria-hidden>→</div>
+            <div className="mp-ga-item achieved"><span>Achieved</span><b>{hrs(d.completedHours)}</b></div>
+            <div className="mp-ga-meta">
+              <LevelBadge level={d.level} />
+              <span className="mp-ga-sub">{d.completionPct}% of goal · {hrs(d.remainingHours)} remaining</span>
+            </div>
           </div>
 
           <div className="mp-progress">
@@ -325,7 +334,5 @@ function PerformanceDetailModal({ editorId, month, onClose }: { editorId: string
             )}
           </div>
         </div>
-      )}
-    </Modal>
   );
 }
