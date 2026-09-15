@@ -11,7 +11,6 @@ import { rangeFor, inRange, compactNum } from "@/lib/date-range";
 import { performanceScore, formatScore } from "@/lib/score";
 import { ymd, myRankInRange, topEditorsInRange } from "@/lib/task-points";
 import { breakOffsetMs, DAILY_BREAK_CAP_SEC } from "@/lib/task-timing";
-import { goalBreakdown, DISCIPLINE_CRITERIA, type Ratings } from "@/lib/goal-points";
 import { Avatar } from "@/lib/editor-visuals";
 import { api } from "@/lib/api";
 import type { Editor, Post, Task, TaskStatus, TaskType } from "@/lib/types";
@@ -346,8 +345,6 @@ export function HomePage() {
           <GoalCard />
         </div>
       )}
-
-      <MyGoalScore />
 
       {/* Existing operational + analytics detail — kept below the redesigned
           personal panels (no mockup equivalent, still useful). */}
@@ -687,46 +684,3 @@ function GoalCard() {
   );
 }
 
-// The signed-in editor's own monthly goal score (Earned 80% + Discipline 20% =
-// Overall) — read-only, current month, their figures only. Hidden when they
-// have no linked editor record or no goals set this month.
-function currentMonthFirst(): string {
-  const d = new Date();
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-01`;
-}
-function MyGoalScore() {
-  const { user } = useAuth();
-  const [data, setData] = useState<{ rows: { goalJC: number; actualJC: number; points: number }[]; ratings: Ratings } | null>(null);
-  useEffect(() => {
-    if (!user?.editorId) return;
-    api<{ rows: { goalJC: number; actualJC: number; points: number }[]; ratings: Ratings }>(`/goals/my-breakdown?month=${currentMonthFirst()}`)
-      .then((d) => setData(d))
-      .catch(() => {});
-  }, [user?.editorId]);
-  if (!user?.editorId || !data) return null;
-  const bd = goalBreakdown(data.rows, data.ratings ?? {});
-  if (!bd) return null; // no goals assigned this month
-  const w = (n: number) => Math.round(n);
-  return (
-    <>
-      <div className="home-colhead" style={{ marginTop: 4 }}>
-        <span className="hc-tag ops">This month</span><h3>Your goal score</h3>
-      </div>
-      <div className="home-stats" style={{ marginBottom: 10 }}>
-        <div className="home-stat accent"><div className="hs-v">{w(bd.earned)}</div><div className="hs-l">Earned (80%)</div></div>
-        <div className="home-stat info"><div className="hs-v">{w(bd.discipline)}{!bd.reviewed ? "*" : ""}</div><div className="hs-l">Discipline (20%)</div></div>
-        <div className="home-stat"><div className="hs-v">{w(bd.overall)}</div><div className="hs-l">Overall / {w(bd.total)}</div></div>
-      </div>
-      {/* The 5 criteria behind the discipline number — "where did I lose points". */}
-      <div className="card pad" style={{ marginBottom: 18, display: "flex", gap: 18, flexWrap: "wrap", fontSize: 12.5 }}>
-        {DISCIPLINE_CRITERIA.map((c) => {
-          const v = data.ratings?.[c.key];
-          return (
-            <span key={c.key}>{c.label}: <b>{v == null ? "5" : v}</b>/5{v == null ? <span className="st dim"> (default)</span> : ""}</span>
-          );
-        })}
-        {!bd.reviewed && <span className="st dim">* not yet fully reviewed</span>}
-      </div>
-    </>
-  );
-}
