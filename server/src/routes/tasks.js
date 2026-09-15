@@ -2,6 +2,7 @@ import { Router } from "express";
 import { z } from "zod";
 import { pool } from "../db.js";
 import { requireEditor } from "../resolve-workspace.js";
+import { requireActiveEod } from "./eod.js";
 import { hasActiveGrant } from "../permissions.js";
 import { logActivity } from "../activity.js";
 
@@ -207,7 +208,7 @@ tasksRouter.get("/tasks", async (req, res, next) => {
   }
 });
 
-tasksRouter.post("/tasks", requireEditor, async (req, res, next) => {
+tasksRouter.post("/tasks", requireEditor, requireActiveEod, async (req, res, next) => {
   const parsed = TaskSchema.safeParse(req.body);
   if (!parsed.success) {
     return res.status(400).json({ error: parsed.error.flatten().fieldErrors });
@@ -308,7 +309,7 @@ tasksRouter.post("/tasks", requireEditor, async (req, res, next) => {
   }
 });
 
-tasksRouter.patch("/tasks/:id", requireEditor, async (req, res, next) => {
+tasksRouter.patch("/tasks/:id", requireEditor, requireActiveEod, async (req, res, next) => {
   const parsed = TaskSchema.partial().safeParse(req.body);
   if (!parsed.success) {
     return res.status(400).json({ error: parsed.error.flatten().fieldErrors });
@@ -597,7 +598,7 @@ tasksRouter.patch("/tasks/:id", requireEditor, async (req, res, next) => {
 // now would run the budget past office close) — client computes the wall-clock
 // time since office hours are a local-time concept, not something the server
 // should guess at.
-tasksRouter.post("/tasks/:id/accept", requireEditor, async (req, res, next) => {
+tasksRouter.post("/tasks/:id/accept", requireEditor, requireActiveEod, async (req, res, next) => {
   const startAt = req.body?.startAt ? new Date(req.body.startAt) : new Date();
   if (isNaN(startAt.getTime())) return res.status(400).json({ error: "Invalid start time." });
   try {

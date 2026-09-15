@@ -22,6 +22,7 @@ import { activityRouter } from "./routes/activity.js";
 import { integrationsRouter } from "./routes/integrations.js";
 import { goalsRouter } from "./routes/goals.js";
 import { goalTrackerRouter } from "./routes/goal-tracker.js";
+import { eodRouter } from "./routes/eod.js";
 import { accessRouter } from "./routes/access.js";
 
 const app = express();
@@ -60,6 +61,7 @@ app.use("/api", requireAuth, resolveWorkspace, activityRouter);
 app.use("/api", requireAuth, resolveWorkspace, integrationsRouter);
 app.use("/api", requireAuth, resolveWorkspace, goalsRouter);
 app.use("/api", requireAuth, resolveWorkspace, goalTrackerRouter);
+app.use("/api", requireAuth, resolveWorkspace, eodRouter);
 app.use("/api", requireAuth, resolveWorkspace, accessRouter);
 
 // In production this one service also serves the built React app, so the whole

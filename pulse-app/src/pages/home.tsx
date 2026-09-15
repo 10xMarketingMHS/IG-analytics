@@ -3,7 +3,9 @@ import { Loader } from "@/components/loader";
 import { Link, useNavigate } from "react-router-dom";
 import { useTasks } from "@/lib/use-tasks";
 import { useAuth } from "@/lib/auth-context";
+import { useWorkspaces } from "@/lib/workspaces-context";
 import { useEditors } from "@/lib/use-editors";
+import { useEodState } from "@/lib/eod-context";
 import { useResource } from "@/lib/use-resource";
 import { rangeFor, inRange, compactNum } from "@/lib/date-range";
 import { performanceScore, formatScore } from "@/lib/score";
@@ -94,6 +96,8 @@ const STAGE_META: Record<string, { label: string; cls: string }> = {
 export function HomePage() {
   const navigate = useNavigate();
   const { user } = useAuth();
+  const { active } = useWorkspaces();
+  const { session: eodSession, end: endEod, busy: eodBusy } = useEodState();
   const { tasks } = useTasks();
   const { editors } = useEditors();
   const { data: postData } = useResource<{ posts: (Post & { channel_name?: string })[] }>("/posts?channel=all");
@@ -259,6 +263,15 @@ export function HomePage() {
             <button className="btn btn-primary mh-cta" onClick={() => navigate("/tasks")}>▶ New Task</button>
           </div>
           <div className="mh-right">
+            {active?.role === "editor" && eodSession && (
+              <button
+                className="btn mh-eod-btn"
+                onClick={() => { endEod(); }}
+                disabled={eodBusy}
+              >
+                {eodBusy ? "Ending…" : "⏹ End EOD"}
+              </button>
+            )}
             <div className="mh-date">{dateStr}</div>
             <h2 className="mh-greet">{greeting(now)}{firstName ? `, ${firstName}` : ""} 👋</h2>
             <div className="mh-greetsub">Let's make today legendary!</div>

@@ -1661,3 +1661,38 @@ img.lb-ava{object-fit:cover}
 .goalt-cardmeta{display:flex;flex-wrap:wrap;gap:6px 12px;margin-top:4px}
 .goalt-owner-tag{display:inline-flex;align-items:center;gap:4px;font-size:11.5px;font-weight:700;color:var(--accent-ink);
   background:var(--accent-weak);padding:2px 9px;border-radius:999px}
+/* ==== Start/End EOD ==== */
+/* Full-app lockout screen (editors, not clocked in) */
+.eod-gate{position:fixed;inset:0;z-index:60;display:grid;place-items:center;padding:24px;background:var(--bg);
+  background-image:radial-gradient(1200px 600px at 50% -10%,rgba(139,92,246,.18),transparent 60%)}
+.eod-gate-card{max-width:440px;width:100%;text-align:center;background:var(--panel);border:1px solid var(--border);
+  border-radius:22px;padding:40px 34px;box-shadow:var(--shadow)}
+.eod-gate-ic{font-size:52px;line-height:1;margin-bottom:8px}
+.eod-gate-h{margin:6px 0 8px;font-size:26px;font-weight:800;letter-spacing:-.5px}
+.eod-gate-p{margin:0 0 22px;font-size:14px;line-height:1.6;color:var(--muted)}
+.eod-gate-btn{font-size:15px;padding:12px 26px;box-shadow:0 12px 30px -6px rgba(139,92,246,.6)}
+/* End EOD button — My Day hero, top-right */
+.mh-eod-btn{align-self:flex-end;margin-bottom:8px;background:rgba(255,255,255,.14);border-color:rgba(255,255,255,.28);
+  color:#fff;font-weight:700;backdrop-filter:blur(8px);-webkit-backdrop-filter:blur(8px)}
+.mh-eod-btn:hover{background:rgba(255,255,255,.22);border-color:#fff;color:#fff}
+/* Summary card */
+.eod-summary{display:flex;flex-direction:column;gap:14px}
+.eod-sum-top{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;
+  background:var(--panel2);border:1px solid var(--border);border-radius:13px;padding:13px 15px}
+.eod-sum-hours{font-size:14px;font-weight:800}
+.eod-sum-ratio{font-size:13px;color:var(--muted);font-weight:600}
+.eod-sum-ratio b{font-size:20px;color:var(--text)}
+.eod-sum-ratio span{font-size:15px;color:var(--muted)}
+.eod-sum-groups{display:flex;flex-direction:column;gap:8px}
+.eod-sum-row{display:flex;align-items:center;gap:11px;font-size:14px}
+.eod-sum-n{flex:none;min-width:26px;height:26px;padding:0 6px;border-radius:8px;display:grid;place-items:center;
+  font-weight:800;font-size:13px;background:var(--accent-weak);color:var(--accent-ink)}
+.eod-sum-reportlabel{font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.4px;color:var(--muted);margin-top:2px}
+.eod-sum-report{margin:0;background:var(--panel2);border:1px solid var(--border);border-radius:11px;padding:12px 14px;
+  font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:12.5px;line-height:1.55;color:var(--text);
+  white-space:pre-wrap;word-break:break-word;max-height:220px;overflow:auto}
+/* Oversight status badges */
+.eod-st{font-size:11.5px;font-weight:800;padding:3px 10px;border-radius:999px;white-space:nowrap}
+.eod-st.ns{background:var(--panel2);color:var(--muted);border:1px solid var(--border)}
+.eod-st.ac{background:rgba(59,130,246,.16);color:#60a5fa}
+.eod-st.cp{background:rgba(16,163,74,.18);color:#22c55e}
