@@ -36,6 +36,7 @@ import { BulkAddPostPage } from "@/pages/bulk-add-post";
 // page (see settings.tsx) — /task-rules, /channels, /teams still route here
 // so any old link keeps working, just pre-selecting the matching tab.
 import { SettingsPage } from "@/pages/settings";
+import { GoalsTrackerPage } from "@/pages/goals-tracker";
 import { FormatAnalyticsPage } from "@/pages/format-analytics";
 import { LeaderboardPage } from "@/pages/leaderboard";
 
@@ -101,6 +102,7 @@ function AppRoutes() {
             <Route path="/posts/:id/edit" element={<AddPostPage />} />
             <Route path="/analytics/:type" element={<FormatAnalyticsPage />} />
             <Route path="/settings" element={<SettingsPage />} />
+            <Route path="/goals-board" element={<GoalsTrackerPage />} />
             <Route path="/teams" element={<SettingsPage />} />
           </Route>
         </Route>
