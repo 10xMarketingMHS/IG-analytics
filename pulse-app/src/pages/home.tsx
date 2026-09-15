@@ -24,6 +24,9 @@ const WORKING_WEEK_OFF_DAY = 0; // Sunday off (0 = Sunday)
 function todayStr() {
   return ymd(new Date());
 }
+function fmtClock(iso: string): string {
+  return new Date(iso).toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" });
+}
 function greeting(now: Date) {
   const h = now.getHours();
   // Midnight-to-5am shouldn't say "Good morning" — nobody wants that at 1am.
@@ -97,7 +100,8 @@ export function HomePage() {
   const navigate = useNavigate();
   const { user } = useAuth();
   const { active } = useWorkspaces();
-  const { session: eodSession, end: endEod, busy: eodBusy } = useEodState();
+  const { session: eodSession, start: startEod, end: endEod, busy: eodBusy } = useEodState();
+  const isEditor = active?.role === "editor";
   const { tasks } = useTasks();
   const { editors } = useEditors();
   const { data: postData } = useResource<{ posts: (Post & { channel_name?: string })[] }>("/posts?channel=all");
@@ -260,18 +264,28 @@ export function HomePage() {
           <div className="mh-left">
             <h1 className="mh-headline">Small Tasks<br /><span className="mh-headline-g">Big Wins</span></h1>
             <p className="mh-tag">Create. Collaborate. Grow.<br />Level up every day.</p>
-            <button className="btn btn-primary mh-cta" onClick={() => navigate("/tasks")}>▶ New Task</button>
+            {/* Locked editor → the primary slot IS Start EOD (kept live in color
+                by .eod-live even while the rest of the app is grayscaled). Once
+                clocked in, New Task returns as primary, with End EOD secondary. */}
+            {isEditor && !eodSession ? (
+              <button className="btn btn-primary mh-cta eod-live" onClick={() => startEod()} disabled={eodBusy}>
+                {eodBusy ? "Starting…" : "▶ Start EOD"}
+              </button>
+            ) : (
+              <div className="mh-cta-row">
+                <button className="btn btn-primary mh-cta" onClick={() => navigate("/tasks")}>▶ New Task</button>
+                {isEditor && eodSession && (
+                  <>
+                    <button className="btn mh-endeod" onClick={() => endEod()} disabled={eodBusy}>
+                      {eodBusy ? "Ending…" : "⏹ End EOD"}
+                    </button>
+                    <span className="mh-clockedin">🟢 Clocked in since {fmtClock(eodSession.startedAt)}</span>
+                  </>
+                )}
+              </div>
+            )}
           </div>
           <div className="mh-right">
-            {active?.role === "editor" && eodSession && (
-              <button
-                className="btn mh-eod-btn"
-                onClick={() => { endEod(); }}
-                disabled={eodBusy}
-              >
-                {eodBusy ? "Ending…" : "⏹ End EOD"}
-              </button>
-            )}
             <div className="mh-date">{dateStr}</div>
             <h2 className="mh-greet">{greeting(now)}{firstName ? `, ${firstName}` : ""} 👋</h2>
             <div className="mh-greetsub">Let's make today legendary!</div>

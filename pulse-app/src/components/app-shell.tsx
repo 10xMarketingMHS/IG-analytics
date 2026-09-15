@@ -12,6 +12,7 @@ import { useOverdueTaskNotify } from "@/lib/use-overdue-notify";
 import { BreakWidget } from "@/components/break-widget";
 import { BreakOverlay } from "@/components/break-overlay";
 import { BreakProvider } from "@/lib/break-context";
+import { useEodState } from "@/lib/eod-context";
 import { MyProfileModal } from "@/components/my-profile-modal";
 import { useTheme } from "@/components/theme-provider";
 import type { Activity } from "@/lib/types";
@@ -44,6 +45,11 @@ function metaFor(pathname: string): [string, string] {
 export function AppShell() {
   const { user, logout } = useAuth();
   const { active, isAdmin, hasPermission } = useWorkspaces();
+  // EOD lockout: an editor with no open session gets the whole shell grayscaled
+  // and non-interactive (except a few live controls) until they Start EOD. The
+  // grayscale/disable is CSS keyed off this class; see index.css `.eod-lock`.
+  const { session: eodSession, loading: eodLoading, unlinked: eodUnlinked } = useEodState();
+  const eodLocked = active?.role === "editor" && !eodLoading && !eodUnlinked && !eodSession;
   const { editors } = useEditors();
   const { theme, toggle } = useTheme();
   const location = useLocation();
@@ -79,7 +85,7 @@ export function AppShell() {
 
   return (
     <BreakProvider>
-    <div className={"app" + (menuOpen ? " menu-open" : "")}>
+    <div className={"app" + (menuOpen ? " menu-open" : "") + (eodLocked ? " eod-lock" : "")}>
       <div className="app-backdrop" onClick={() => setMenuOpen(false)} />
       <aside>
         <div className="brand">
