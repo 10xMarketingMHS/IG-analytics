@@ -191,11 +191,19 @@ managementPerformanceRouter.get("/management-performance/months", requireAdmin, 
   } catch (err) { next(err); }
 });
 
-// Active editors for the org (all roles — matches Goal Setting's roster, since
-// the goal capacity is per-editor regardless of role).
+// Active, non-admin editors for the org — admins are hidden from this table
+// (same exclusion the EOD oversight view uses: an editor linked to any
+// admin-role membership is left out).
 async function activeEditors(orgId) {
   const { rows } = await pool.query(
-    "select id, name, designation, image_url from editor where org_id = $1 and active order by name",
+    `select id, name, designation, image_url
+       from editor e
+      where e.org_id = $1 and e.active
+        and not exists (
+          select 1 from app_user u join membership m on m.user_id = u.id
+           where u.editor_id = e.id and m.role = 'admin'
+        )
+      order by name`,
     [orgId],
   );
   return rows;
