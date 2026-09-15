@@ -139,6 +139,9 @@ export type ContentFormatDef = {
   // Points Formula base_points for this format — independent of budget_hours
   // (task_time_rule). See taskPoints() in leaderboard.tsx.
   points: number;
+  // Management-metric tag — surfaces goal-vs-achieved for this format under
+  // Key / Critical Metrics in Management Performance. null = untagged.
+  metric_tier: "key" | "critical" | null;
 };
 
 export type TaskAttachment = { url: string; label?: string };

@@ -233,7 +233,7 @@ type DetailResp = BoardRow & {
   editor: { id: string; name: string | null; designation: string | null; imageUrl: string | null };
   month: string;
   thresholds: Thresholds;
-  taskBreakdown: { contentFormatId: string; name: string; icon: string | null; category: string | null; goal: number; achieved: number }[];
+  taskBreakdown: { contentFormatId: string; name: string; icon: string | null; category: string | null; metricTier: "key" | "critical" | null; goal: number; achieved: number }[];
   history: { month: string; completedHours: number; monthlyGoalHours: number; taskGoal: number; taskAchieved: number; level: Level }[];
   eodSessions: { date: string; startedAt: string; endedAt: string | null; spanHours: number | null }[];
 };
@@ -273,6 +273,15 @@ function PerformanceDetailInline({ editorId, month }: { editorId: string; month:
   if (err) return <div className="mp-detail"><div className="hint">Couldn't load this editor's performance.</div></div>;
   if (!d) return <div className="mp-detail"><div className="hint">Loading…</div></div>;
 
+  // Overall performance against the Key / Critical Metric formats (aggregate
+  // goal vs achieved across the formats tagged with each tier).
+  const metricTiers = (["key", "critical"] as const)
+    .map((tier) => {
+      const items = d.taskBreakdown.filter((b) => b.metricTier === tier);
+      return { tier, items, goal: items.reduce((s, b) => s + b.goal, 0), achieved: items.reduce((s, b) => s + b.achieved, 0) };
+    })
+    .filter((t) => t.items.length > 0);
+
   return (
         <div className="mp-detail">
           {/* Goal vs Achieved, front and centre — Hours (drives the band) + Tasks */}
@@ -299,6 +308,23 @@ function PerformanceDetailInline({ editorId, month }: { editorId: string; month:
               </div>
             </div>
 
+            {/* Overall performance against Key / Critical Metric formats */}
+            {metricTiers.length > 0 && (
+              <div className="mp-metrics">
+                {metricTiers.map((t) => {
+                  const pct = t.goal > 0 ? Math.round((t.achieved / t.goal) * 100) : 0;
+                  return (
+                    <div key={t.tier} className={"mp-metric " + t.tier}>
+                      <span className={"mp-mtag " + t.tier}>{t.tier === "key" ? "Key Metrics" : "Critical Metrics"}</span>
+                      <div className="mp-metric-ga"><b>{t.achieved}</b> <span>of {t.goal}</span></div>
+                      <span className="mp-metric-pct">{pct}%</span>
+                      <span className="mp-metric-names">{t.items.map((i) => i.name).join(", ")}</span>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+
             {/* Per content-type breakdown of the Tasks total */}
             {d.taskBreakdown.length > 0 && (
               <div className="mp-bd">
@@ -311,6 +337,7 @@ function PerformanceDetailInline({ editorId, month }: { editorId: string; month:
                           <span className="mp-bd-fmt">
                             {b.icon && <span className="mp-bd-icon">{b.icon}</span>}
                             <span>{b.name}</span>
+                            {b.metricTier && <span className={"mp-mtag sm " + b.metricTier}>{b.metricTier === "key" ? "KEY" : "CRITICAL"}</span>}
                             {b.category && <span className="mp-bd-cat">{CAT_LABEL[b.category] ?? b.category}</span>}
                           </span>
                         </td>

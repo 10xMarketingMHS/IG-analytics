@@ -17,9 +17,12 @@ const Schema = z.object({
   // budget_hours (task-rules.js) — a format's point value and its time
   // budget are two separate admin decisions.
   points: z.number().nonnegative().max(1000).optional(),
+  // Management-metric tag: mark a format as a Key or Critical Metric so
+  // Management Performance can report goal-vs-achieved against it. null clears.
+  metric_tier: z.enum(["key", "critical"]).nullable().optional(),
 });
 
-const SELECT = "id, name, icon, sort_order, active, points, category";
+const SELECT = "id, name, icon, sort_order, active, points, category, metric_tier";
 
 // Org-wide, like editors — every channel picks from the same list.
 contentFormatsRouter.get("/content-formats", async (req, res, next) => {
@@ -48,9 +51,9 @@ contentFormatsRouter.post("/content-formats", requirePermission("task_settings")
       [req.orgId, category],
     );
     const { rows } = await pool.query(
-      `insert into task_content_format (org_id, name, icon, sort_order, category)
-       values ($1, $2, $3, $4, $5) returning ${SELECT}`,
-      [req.orgId, parsed.data.name, parsed.data.icon || "🔧", maxRow[0].n, category],
+      `insert into task_content_format (org_id, name, icon, sort_order, category, metric_tier)
+       values ($1, $2, $3, $4, $5, $6) returning ${SELECT}`,
+      [req.orgId, parsed.data.name, parsed.data.icon || "🔧", maxRow[0].n, category, parsed.data.metric_tier ?? null],
     );
     res.status(201).json({ contentFormat: rows[0] });
   } catch (err) {
@@ -67,6 +70,7 @@ contentFormatsRouter.patch("/content-formats/:id", requirePermission("task_setti
   if (parsed.data.name !== undefined) { vals.push(parsed.data.name); sets.push(`name = $${vals.length}`); }
   if (parsed.data.icon !== undefined) { vals.push(parsed.data.icon); sets.push(`icon = $${vals.length}`); }
   if (parsed.data.points !== undefined) { vals.push(parsed.data.points); sets.push(`points = $${vals.length}`); }
+  if (parsed.data.metric_tier !== undefined) { vals.push(parsed.data.metric_tier); sets.push(`metric_tier = $${vals.length}`); }
   if (!sets.length) return res.status(400).json({ error: "Nothing to update." });
   vals.push(req.params.id, req.orgId);
   try {

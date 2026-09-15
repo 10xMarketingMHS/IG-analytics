@@ -355,7 +355,7 @@ managementPerformanceRouter.get("/management-performance/:editorId", requireAdmi
              and completed_at >= $3 and completed_at < ($3::date + interval '1 month')
            group by content_format_id
         )
-        select cf.id, cf.name, cf.icon, cf.category,
+        select cf.id, cf.name, cf.icon, cf.category, cf.metric_tier,
                coalesce(g.jc, 0) as goal, coalesce(a.n, 0) as achieved
           from task_content_format cf
           left join g on g.id = cf.id
@@ -389,7 +389,7 @@ managementPerformanceRouter.get("/management-performance/:editorId", requireAdmi
       ...current,
       taskBreakdown: breakdown.map((b) => ({
         contentFormatId: b.id, name: b.name, icon: b.icon, category: b.category,
-        goal: Number(b.goal), achieved: Number(b.achieved),
+        metricTier: b.metric_tier, goal: Number(b.goal), achieved: Number(b.achieved),
       })),
       history,
       eodSessions: eodSessions.map((s) => ({ ...s, spanHours: s.spanHours == null ? null : Number(s.spanHours) })),

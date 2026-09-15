@@ -134,6 +134,7 @@ export function TaskRulesSection() {
                         <th>Format</th>
                         <th style={{ width: 110, textAlign: "center" }}>Points</th>
                         <th style={{ width: 130, textAlign: "center" }}>Time budget</th>
+                        <th style={{ width: 150, textAlign: "center" }}>Metric</th>
                         <th style={{ width: 36 }}></th>
                       </tr>
                     </thead>
@@ -146,6 +147,7 @@ export function TaskRulesSection() {
                           onIcon={(icon) => patchFormat(f.id, { icon }, "Could not change the icon.")}
                           onRename={(name) => patchFormat(f.id, { name }, "Could not rename that format.")}
                           onPoints={(points) => patchFormat(f.id, { points }, "Could not save points.")}
+                          onMetric={(metric_tier) => patchFormat(f.id, { metric_tier }, "Could not update the metric tag.")}
                           onHours={(hours) => setRule(f.id, null, hours)}
                           onClearHours={() => { const r = globalFor(f); if (r) removeRule(r.id); }}
                           onRemove={() => removeFormat(f)}
@@ -260,13 +262,14 @@ function IconPicker({ value, onPick }: { value: string; onPick: (icon: string) =
 // remove. Each field saves independently on blur/pick, same "no Save button"
 // pattern as the rest of this page.
 function FormatRow({
-  format, rule, onIcon, onRename, onPoints, onHours, onClearHours, onRemove,
+  format, rule, onIcon, onRename, onPoints, onMetric, onHours, onClearHours, onRemove,
 }: {
   format: ContentFormatDef;
   rule: TaskTimeRule | null;
   onIcon: (icon: string) => void;
   onRename: (name: string) => void;
   onPoints: (points: number) => void;
+  onMetric: (tier: "key" | "critical" | null) => void;
   onHours: (hours: number) => void;
   onClearHours: () => void;
   onRemove: () => void;
@@ -326,6 +329,19 @@ function FormatRow({
           value={hours} onChange={(e) => setHours(e.target.value)} onBlur={saveHours} onKeyDown={blurOnEnter}
         />
       </td>
+      <td style={{ textAlign: "center" }}>
+        <select
+          className="t"
+          style={{ width: 132 }}
+          value={format.metric_tier ?? ""}
+          onChange={(e) => onMetric((e.target.value || null) as "key" | "critical" | null)}
+          title="Tag this format as a Key or Critical Metric for Management Performance"
+        >
+          <option value="">— None —</option>
+          <option value="key">Key Metric</option>
+          <option value="critical">Critical Metric</option>
+        </select>
+      </td>
       <td>
         <button type="button" className="linkbtn" style={{ color: "var(--rose)" }} onClick={onRemove} title="Remove format">✕</button>
       </td>
@@ -344,7 +360,7 @@ function AddFormatRow({ onAdd }: { onAdd: (name: string, icon: string) => Promis
   if (!adding) {
     return (
       <tr>
-        <td colSpan={5} style={{ padding: "10px 8px" }}>
+        <td colSpan={6} style={{ padding: "10px 8px" }}>
           <button type="button" className="linkbtn" onClick={() => setAdding(true)}>＋ Add format</button>
         </td>
       </tr>
@@ -383,7 +399,7 @@ function AddFormatRow({ onAdd }: { onAdd: (name: string, icon: string) => Promis
           }}
         />
       </td>
-      <td colSpan={3} style={{ display: "flex", gap: 6 }}>
+      <td colSpan={4} style={{ display: "flex", gap: 6 }}>
         <button type="button" className="btn btn-sm btn-primary" disabled={saving || !name.trim()} onClick={submit}>
           {saving ? "…" : "Add"}
         </button>
