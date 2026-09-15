@@ -1761,5 +1761,12 @@ img.lb-ava{object-fit:cover}
 .mp-ga-arrow{font-size:18px;color:var(--muted);font-weight:700}
 .mp-ga-meta{margin-left:auto;display:flex;align-items:center;gap:10px;flex-wrap:wrap}
 .mp-ga-sub{font-size:12px;color:var(--muted)}
+.mp-bd{border:1px solid var(--border2);border-radius:12px;overflow:hidden}
+.mp-bd .tbl{font-size:12.5px}
+.mp-bd .tbl th{padding:8px 12px}
+.mp-bd .tbl td{padding:8px 12px}
+.mp-bd-fmt{display:inline-flex;align-items:center;gap:8px}
+.mp-bd-icon{font-size:15px}
+.mp-bd-cat{font-size:9.5px;font-weight:800;text-transform:uppercase;letter-spacing:.4px;color:var(--muted);background:var(--panel2);border:1px solid var(--border);padding:1px 6px;border-radius:6px}
 
 @media(max-width:640px){.mp-ga-meta{margin-left:0;width:100%}}

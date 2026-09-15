@@ -337,6 +337,34 @@ managementPerformanceRouter.get("/management-performance/:editorId", requireAdmi
       [req.orgId, editorId, monthFirst],
     );
 
+    // Per content-format breakdown of the Tasks total: planned jobs (jc) from
+    // Goal Setting vs completed tasks that month, for every format that has
+    // either a goal or a completion (so the rows sum to the Tasks total).
+    // Computed live from editor_goal + tasks (both stable for a closed month).
+    const { rows: breakdown } = await pool.query(
+      `with g as (
+          select content_format_id id, sum(jc)::int jc
+            from editor_goal
+           where org_id = $1 and editor_id = $2 and period_month = $3
+           group by content_format_id
+        ), a as (
+          select content_format_id id, count(*)::int n
+            from task
+           where org_id = $1 and editor_id = $2 and status = 'done'
+             and content_format_id is not null
+             and completed_at >= $3 and completed_at < ($3::date + interval '1 month')
+           group by content_format_id
+        )
+        select cf.id, cf.name, cf.icon, cf.category,
+               coalesce(g.jc, 0) as goal, coalesce(a.n, 0) as achieved
+          from task_content_format cf
+          left join g on g.id = cf.id
+          left join a on a.id = cf.id
+         where cf.id in (select id from g union select id from a)
+         order by cf.category nulls last, cf.sort_order, cf.name`,
+      [req.orgId, editorId, monthFirst],
+    );
+
     // EOD session history for the month — supplementary context, labelled
     // distinctly from task-timer hours. eod_session.date is the workday.
     const { rows: eodSessions } = await pool.query(
@@ -359,6 +387,10 @@ managementPerformanceRouter.get("/management-performance/:editorId", requireAdmi
       isCurrent,
       thresholds: thr,
       ...current,
+      taskBreakdown: breakdown.map((b) => ({
+        contentFormatId: b.id, name: b.name, icon: b.icon, category: b.category,
+        goal: Number(b.goal), achieved: Number(b.achieved),
+      })),
       history,
       eodSessions: eodSessions.map((s) => ({ ...s, spanHours: s.spanHours == null ? null : Number(s.spanHours) })),
     });

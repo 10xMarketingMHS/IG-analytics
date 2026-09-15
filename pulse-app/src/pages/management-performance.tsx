@@ -233,9 +233,12 @@ type DetailResp = BoardRow & {
   editor: { id: string; name: string | null; designation: string | null; imageUrl: string | null };
   month: string;
   thresholds: Thresholds;
+  taskBreakdown: { contentFormatId: string; name: string; icon: string | null; category: string | null; goal: number; achieved: number }[];
   history: { month: string; completedHours: number; monthlyGoalHours: number; taskGoal: number; taskAchieved: number; level: Level }[];
   eodSessions: { date: string; startedAt: string; endedAt: string | null; spanHours: number | null }[];
 };
+
+const CAT_LABEL: Record<string, string> = { social: "Social", ad: "Ads", service: "Service" };
 
 function fmtClock(iso: string | null) {
   return iso ? new Date(iso).toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" }) : "—";
@@ -295,6 +298,31 @@ function PerformanceDetailInline({ editorId, month }: { editorId: string; month:
                 </span>
               </div>
             </div>
+
+            {/* Per content-type breakdown of the Tasks total */}
+            {d.taskBreakdown.length > 0 && (
+              <div className="mp-bd">
+                <table className="tbl">
+                  <thead><tr><th>Content type</th><th className="num">Goal</th><th className="num">Achieved</th><th className="num">%</th></tr></thead>
+                  <tbody>
+                    {d.taskBreakdown.map((b) => (
+                      <tr key={b.contentFormatId}>
+                        <td>
+                          <span className="mp-bd-fmt">
+                            {b.icon && <span className="mp-bd-icon">{b.icon}</span>}
+                            <span>{b.name}</span>
+                            {b.category && <span className="mp-bd-cat">{CAT_LABEL[b.category] ?? b.category}</span>}
+                          </span>
+                        </td>
+                        <td className="num">{b.goal}</td>
+                        <td className="num"><b>{b.achieved}</b></td>
+                        <td className="num">{b.goal > 0 ? `${Math.round((b.achieved / b.goal) * 100)}%` : "—"}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
           </div>
 
           <div className="mp-progress">
