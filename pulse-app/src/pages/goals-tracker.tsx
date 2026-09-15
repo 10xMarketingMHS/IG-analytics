@@ -1,10 +1,11 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 import {
   ResponsiveContainer, LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ReferenceLine,
 } from "recharts";
 import { api, ApiError } from "@/lib/api";
 import { useWorkspaces } from "@/lib/workspaces-context";
+import { useAuth } from "@/lib/auth-context";
 import { Modal } from "@/components/modal";
 
 // Goals — admin-only manual goal-tracking dashboard. Every number is entered by
@@ -22,11 +23,14 @@ type Goal = {
   currentValue: number;
   channelId: string | null;
   channelName?: string | null;
+  ownerId: string | null;
+  ownerName?: string | null;
   deadline: string | null; // YYYY-MM-DD
   createdAt: string;
   updateCount?: number;
 };
 type GoalUpdate = { id: string; value: number; note: string | null; updatedAt: string; byName: string | null };
+type Admin = { id: string; name: string | null; email: string };
 
 const TYPE_META: Record<GoalType, { label: string; icon: string; cls: string }> = {
   revenue: { label: "Revenue", icon: "💰", cls: "rev" },
@@ -95,35 +99,66 @@ export function GoalsTrackerPage() {
 
 export function GoalsTrackerSection() {
   const { isAdmin } = useWorkspaces();
+  const { user } = useAuth();
   const [goals, setGoals] = useState<Goal[] | null>(null);
+  const [admins, setAdmins] = useState<Admin[]>([]);
   const [filter, setFilter] = useState<"all" | GoalType>("all");
+  const [owner, setOwner] = useState<string>("all"); // "all" or an admin's user id
+  const didInit = useRef(false);
   const [creating, setCreating] = useState(false);
   const [openId, setOpenId] = useState<string | null>(null);
 
   const load = async () => {
     try {
-      const d = await api<{ goals: Goal[] }>("/goal-tracker");
-      setGoals(d.goals);
+      const [g, a] = await Promise.all([
+        api<{ goals: Goal[] }>("/goal-tracker"),
+        api<{ admins: Admin[] }>("/goal-tracker/admins").catch(() => ({ admins: [] as Admin[] })),
+      ]);
+      setGoals(g.goals);
+      setAdmins(a.admins);
     } catch {
       setGoals([]);
     }
   };
   useEffect(() => { if (isAdmin) load(); }, [isAdmin]);
 
+  // Open on the current admin's own goals by default (once we know who they are).
+  useEffect(() => {
+    if (!didInit.current && user?.id && admins.some((a) => a.id === user.id)) {
+      setOwner(user.id);
+      didInit.current = true;
+    }
+  }, [user?.id, admins]);
+
+  const byOwner = (goals ?? []).filter((g) => owner === "all" || g.ownerId === owner);
   const counts = useMemo(() => {
-    const c: Record<string, number> = { all: goals?.length ?? 0 };
-    for (const g of goals ?? []) c[g.type] = (c[g.type] ?? 0) + 1;
+    const c: Record<string, number> = { all: byOwner.length };
+    for (const g of byOwner) c[g.type] = (c[g.type] ?? 0) + 1;
     return c;
-  }, [goals]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [goals, owner]);
 
   if (!isAdmin) {
     return <div className="card pad" style={{ color: "var(--muted)" }}>Goals is available to admins only.</div>;
   }
 
-  const shown = (goals ?? []).filter((g) => filter === "all" || g.type === filter);
+  const shown = byOwner.filter((g) => filter === "all" || g.type === filter);
+  const ownerLabel = owner === "all" ? "All admins" : (admins.find((a) => a.id === owner)?.name ?? "—");
 
   return (
     <div className="goalt">
+      {/* Whose goals are we viewing — pick an admin (or all). */}
+      <div className="goalt-owner">
+        <span className="goalt-owner-l">Admin</span>
+        <select className="t goalt-owner-sel" value={owner} onChange={(e) => { setOwner(e.target.value); didInit.current = true; }}>
+          <option value="all">All admins</option>
+          {admins.map((a) => <option key={a.id} value={a.id}>{a.name ?? a.email}</option>)}
+        </select>
+        <span className="goalt-owner-hint">
+          {owner === "all" ? "Viewing everyone's goals" : `Viewing ${ownerLabel}'s goals`}
+        </span>
+      </div>
+
       <div className="goalt-head">
         <div className="goalt-pills">
           {(["all", ...TYPE_ORDER] as const).map((k) => (
@@ -140,7 +175,9 @@ export function GoalsTrackerSection() {
         <div className="card pad hint">Loading goals…</div>
       ) : shown.length === 0 ? (
         <div className="card pad home-empty">
-          {goals.length === 0 ? "No goals yet — create one with ＋ New Goal." : "No goals of this type."}
+          {goals.length === 0
+            ? "No goals yet — create one with ＋ New Goal."
+            : owner === "all" ? "No goals of this type." : `No goals for ${ownerLabel} yet.`}
         </div>
       ) : (
         <div className="goalt-grid">
@@ -156,7 +193,10 @@ export function GoalsTrackerSection() {
                   <span className={"goalt-status " + STATUS_META[st].cls}>{STATUS_META[st].label}</span>
                 </div>
                 <div className="goalt-title">{g.title}</div>
-                {g.channelName && <div className="goalt-scope">🌐 {g.channelName}</div>}
+                <div className="goalt-cardmeta">
+                  {owner === "all" && g.ownerName && <span className="goalt-owner-tag">👤 {g.ownerName}</span>}
+                  {g.channelName && <span className="goalt-scope">🌐 {g.channelName}</span>}
+                </div>
                 <div className="goalt-bar"><div className="goalt-bar-fill" style={{ width: `${Math.min(100, pct)}%` }} /></div>
                 <div className="goalt-nums">
                   <span><b>{fmtVal(g.currentValue, g.unitLabel)}</b><small>Achieved</small></span>
@@ -171,14 +211,21 @@ export function GoalsTrackerSection() {
         </div>
       )}
 
-      {creating && <CreateGoalModal onClose={() => setCreating(false)} onCreated={() => { setCreating(false); load(); }} />}
+      {creating && (
+        <CreateGoalModal
+          admins={admins}
+          defaultOwner={owner !== "all" ? owner : (user?.id ?? "")}
+          onClose={() => setCreating(false)}
+          onCreated={() => { setCreating(false); load(); }}
+        />
+      )}
       {openId && <GoalDetailModal id={openId} onClose={() => setOpenId(null)} onChanged={load} />}
     </div>
   );
 }
 
 // ---- Create ----
-function CreateGoalModal({ onClose, onCreated }: { onClose: () => void; onCreated: () => void }) {
+function CreateGoalModal({ admins, defaultOwner, onClose, onCreated }: { admins: Admin[]; defaultOwner: string; onClose: () => void; onCreated: () => void }) {
   const { workspaces } = useWorkspaces();
   const [type, setType] = useState<GoalType>("revenue");
   const [title, setTitle] = useState("");
@@ -187,6 +234,7 @@ function CreateGoalModal({ onClose, onCreated }: { onClose: () => void; onCreate
   const [targetValue, setTargetValue] = useState("");
   const [initialValue, setInitialValue] = useState("");
   const [channelId, setChannelId] = useState("");
+  const [ownerId, setOwnerId] = useState(defaultOwner);
   const [deadline, setDeadline] = useState("");
   const [saving, setSaving] = useState(false);
 
@@ -202,7 +250,7 @@ function CreateGoalModal({ onClose, onCreated }: { onClose: () => void; onCreate
           type, title: title.trim(), description: description.trim() || null,
           unitLabel: unitLabel.trim() || null, targetValue: target,
           initialValue: initialValue === "" ? 0 : Number(initialValue),
-          channelId: channelId || null, deadline: deadline || null,
+          channelId: channelId || null, ownerId: ownerId || null, deadline: deadline || null,
         }),
       });
       toast.success("Goal created.");
@@ -261,6 +309,14 @@ function CreateGoalModal({ onClose, onCreated }: { onClose: () => void; onCreate
               {workspaces.map((w) => <option key={w.id} value={w.id}>{w.name}</option>)}
             </select>
           </div>
+        </div>
+        <div className="field">
+          <label className="f">Goal For *</label>
+          <select className="t" value={ownerId} onChange={(e) => setOwnerId(e.target.value)}>
+            {admins.length === 0 && <option value="">—</option>}
+            {admins.map((a) => <option key={a.id} value={a.id}>{a.name ?? a.email}</option>)}
+          </select>
+          <div className="hint" style={{ marginTop: 4 }}>Which admin this goal belongs to.</div>
         </div>
       </div>
       <div className="formfoot">
@@ -341,6 +397,7 @@ function GoalDetailModal({ id, onClose, onChanged }: { id: string; onClose: () =
         <div className="goalt-detail-head">
           <span className={"goalt-type " + tm.cls}>{tm.icon} {tm.label}</span>
           <span className={"goalt-status " + STATUS_META[st].cls}>{STATUS_META[st].label}</span>
+          {goal.ownerName && <span className="goalt-owner-tag">👤 {goal.ownerName}</span>}
           {goal.channelName && <span className="goalt-scope">🌐 {goal.channelName}</span>}
           <button className="goalt-del" title="Delete goal" onClick={del}>🗑 Delete</button>
         </div>
