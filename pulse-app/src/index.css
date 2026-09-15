@@ -1751,6 +1751,8 @@ img.lb-ava{object-fit:cover}
 .mp-expand-row .mp-detail{gap:16px}
 
 /* Goal → Achieved, front and centre in the expanded detail */
+.mp-ga-wrap{display:flex;flex-direction:column;gap:10px}
+.mp-ga-label{flex:none;align-self:stretch;display:flex;align-items:center;font-size:10px;font-weight:800;text-transform:uppercase;letter-spacing:.5px;color:var(--muted);min-width:52px;padding-right:14px;border-right:1px solid var(--border2)}
 .mp-ga{display:flex;align-items:center;gap:16px 20px;flex-wrap:wrap;background:var(--panel);border:1px solid var(--border2);border-radius:12px;padding:14px 16px}
 .mp-ga-item{display:flex;flex-direction:column;gap:3px}
 .mp-ga-item span{font-size:11px;color:var(--muted);font-weight:700;text-transform:uppercase;letter-spacing:.4px}

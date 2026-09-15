@@ -12,7 +12,7 @@ type Thresholds = { epiMinPct: number; mpiMinPct: number; isDefault?: boolean };
 type BoardRow = {
   editorId: string; name: string | null; designation: string | null; imageUrl: string | null;
   monthlyGoalHours: number; completedHours: number; remainingHours: number;
-  completionPct: number; level: Level; thresholdsUsed: Partial<Thresholds>;
+  completionPct: number; level: Level; taskGoal: number; taskAchieved: number; thresholdsUsed: Partial<Thresholds>;
 };
 type Level = "EPI" | "MPI" | "LPI";
 
@@ -233,7 +233,7 @@ type DetailResp = BoardRow & {
   editor: { id: string; name: string | null; designation: string | null; imageUrl: string | null };
   month: string;
   thresholds: Thresholds;
-  history: { month: string; completedHours: number; monthlyGoalHours: number; level: Level }[];
+  history: { month: string; completedHours: number; monthlyGoalHours: number; taskGoal: number; taskAchieved: number; level: Level }[];
   eodSessions: { date: string; startedAt: string; endedAt: string | null; spanHours: number | null }[];
 };
 
@@ -272,14 +272,28 @@ function PerformanceDetailInline({ editorId, month }: { editorId: string; month:
 
   return (
         <div className="mp-detail">
-          {/* Goal vs Achieved, front and centre */}
-          <div className="mp-ga">
-            <div className="mp-ga-item"><span>Goal</span><b>{hrs(d.monthlyGoalHours)}</b></div>
-            <div className="mp-ga-arrow" aria-hidden>→</div>
-            <div className="mp-ga-item achieved"><span>Achieved</span><b>{hrs(d.completedHours)}</b></div>
-            <div className="mp-ga-meta">
-              <LevelBadge level={d.level} />
-              <span className="mp-ga-sub">{d.completionPct}% of goal · {hrs(d.remainingHours)} remaining</span>
+          {/* Goal vs Achieved, front and centre — Hours (drives the band) + Tasks */}
+          <div className="mp-ga-wrap">
+            <div className="mp-ga">
+              <div className="mp-ga-label">Hours</div>
+              <div className="mp-ga-item"><span>Goal</span><b>{hrs(d.monthlyGoalHours)}</b></div>
+              <div className="mp-ga-arrow" aria-hidden>→</div>
+              <div className="mp-ga-item achieved"><span>Achieved</span><b>{hrs(d.completedHours)}</b></div>
+              <div className="mp-ga-meta">
+                <LevelBadge level={d.level} />
+                <span className="mp-ga-sub">{d.completionPct}% of goal · {hrs(d.remainingHours)} remaining</span>
+              </div>
+            </div>
+            <div className="mp-ga">
+              <div className="mp-ga-label">Tasks</div>
+              <div className="mp-ga-item"><span>Goal</span><b>{d.taskGoal}</b></div>
+              <div className="mp-ga-arrow" aria-hidden>→</div>
+              <div className="mp-ga-item achieved"><span>Achieved</span><b>{d.taskAchieved}</b></div>
+              <div className="mp-ga-meta">
+                <span className="mp-ga-sub">
+                  {d.taskAchieved} of {d.taskGoal} planned jobs{d.taskGoal > 0 ? ` · ${Math.round((d.taskAchieved / d.taskGoal) * 100)}%` : ""}
+                </span>
+              </div>
             </div>
           </div>
 
@@ -294,13 +308,14 @@ function PerformanceDetailInline({ editorId, month }: { editorId: string; month:
             <div className="mp-section">
               <div className="mp-section-t">Previous months</div>
               <table className="tbl">
-                <thead><tr><th>Month</th><th className="num">Goal</th><th className="num">Completed</th><th>Level</th></tr></thead>
+                <thead><tr><th>Month</th><th className="num">Goal hrs</th><th className="num">Achieved hrs</th><th className="num">Tasks (goal→done)</th><th>Level</th></tr></thead>
                 <tbody>
                   {d.history.map((h) => (
                     <tr key={h.month}>
                       <td>{fmtMonth(h.month)}</td>
                       <td className="num">{hrs(h.monthlyGoalHours)}</td>
                       <td className="num">{hrs(h.completedHours)}</td>
+                      <td className="num">{h.taskGoal} → {h.taskAchieved}</td>
                       <td><LevelBadge level={h.level} /></td>
                     </tr>
                   ))}

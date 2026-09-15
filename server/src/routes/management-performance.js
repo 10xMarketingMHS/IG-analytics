@@ -83,20 +83,47 @@ async function completedHoursByEditor(orgId, monthFirst) {
   return m;
 }
 
-async function upsertSnapshot(orgId, editorId, monthFirst, completedHours, goalHours, level, thr) {
+// Total planned jobs (Σ editor_goal.jc) and completed content tasks per editor
+// for the month — the Task Goal vs Achieved pairing. Mirrors Goal Setting: goal
+// = Σ jc; achieved = completed tasks with a content_format_id (admin tasks have
+// none, so they're excluded), completed within [month, month+1).
+async function taskCountsByEditor(orgId, monthFirst) {
+  const [goals, achieved] = await Promise.all([
+    pool.query(
+      "select editor_id as id, coalesce(sum(jc),0)::int n from editor_goal where org_id=$1 and period_month=$2 group by editor_id",
+      [orgId, monthFirst],
+    ),
+    pool.query(
+      `select editor_id as id, count(*)::int n
+         from task
+        where org_id=$1 and status='done' and content_format_id is not null
+          and completed_at >= $2 and completed_at < ($2::date + interval '1 month')
+        group by editor_id`,
+      [orgId, monthFirst],
+    ),
+  ]);
+  const m = new Map();
+  for (const r of goals.rows) m.set(r.id, { goal: Number(r.n), achieved: 0 });
+  for (const r of achieved.rows) m.set(r.id, { ...(m.get(r.id) || { goal: 0 }), achieved: Number(r.n) });
+  return m;
+}
+
+async function upsertSnapshot(orgId, editorId, monthFirst, completedHours, goalHours, level, thr, taskGoal, taskAchieved) {
   await pool.query(
     `insert into editor_monthly_performance
        (org_id, editor_id, period_month, completed_hours, monthly_goal_hours,
-        performance_level, thresholds_used, computed_at)
-     values ($1, $2, $3, $4, $5, $6, $7, now())
+        performance_level, thresholds_used, task_goal, task_achieved, computed_at)
+     values ($1, $2, $3, $4, $5, $6, $7, $8, $9, now())
      on conflict (org_id, editor_id, period_month) do update set
        completed_hours   = excluded.completed_hours,
        monthly_goal_hours = excluded.monthly_goal_hours,
        performance_level = excluded.performance_level,
        thresholds_used   = excluded.thresholds_used,
+       task_goal         = excluded.task_goal,
+       task_achieved     = excluded.task_achieved,
        computed_at       = now()`,
     [orgId, editorId, monthFirst, completedHours.toFixed(2), goalHours.toFixed(2), level,
-     JSON.stringify({ epiMinPct: thr.epiMinPct, mpiMinPct: thr.mpiMinPct })],
+     JSON.stringify({ epiMinPct: thr.epiMinPct, mpiMinPct: thr.mpiMinPct }), taskGoal, taskAchieved],
   );
 }
 
@@ -177,9 +204,10 @@ async function activeEditors(orgId) {
 // Build (and snapshot) one editor's month figures. `stored` is the existing
 // frozen snapshot row if any; for a past month we keep it as-is, for the current
 // month we always recompute against live thresholds.
-function buildRow(editor, hoursMap, goalHours, thr) {
+function buildRow(editor, hoursMap, goalHours, thr, taskCounts) {
   const completedHours = round1(hoursMap.get(editor.id) ?? 0);
   const { pct, level } = classify(completedHours, goalHours, thr);
+  const tc = taskCounts.get(editor.id) || { goal: 0, achieved: 0 };
   return {
     editorId: editor.id,
     name: editor.name,
@@ -190,6 +218,8 @@ function buildRow(editor, hoursMap, goalHours, thr) {
     remainingHours: round1(Math.max(0, goalHours - completedHours)),
     completionPct: round1(pct),
     level,
+    taskGoal: tc.goal,
+    taskAchieved: tc.achieved,
     thresholdsUsed: { epiMinPct: thr.epiMinPct, mpiMinPct: thr.mpiMinPct },
   };
 }
@@ -207,6 +237,8 @@ function rowFromStored(editor, s) {
     remainingHours: round1(Math.max(0, goalHours - completedHours)),
     completionPct: goalHours > 0 ? round1((completedHours / goalHours) * 100) : 0,
     level: s.performance_level,
+    taskGoal: Number(s.task_goal ?? 0),
+    taskAchieved: Number(s.task_achieved ?? 0),
     thresholdsUsed: s.thresholds_used || {},
   };
 }
@@ -217,9 +249,10 @@ managementPerformanceRouter.get("/management-performance", requireAdmin, async (
     const monthFirst = await firstOfMonth(req.query.month || thisMonthFirst());
     const isCurrent = monthFirst.slice(0, 7) === thisMonthFirst().slice(0, 7);
     const thr = await getThresholds(req.orgId);
-    const [editors, hoursMap, storedRows] = await Promise.all([
+    const [editors, hoursMap, taskCounts, storedRows] = await Promise.all([
       activeEditors(req.orgId),
       completedHoursByEditor(req.orgId, monthFirst),
+      taskCountsByEditor(req.orgId, monthFirst),
       pool.query("select * from editor_monthly_performance where org_id = $1 and period_month = $2", [req.orgId, monthFirst]),
     ]);
     const stored = new Map(storedRows.rows.map((s) => [s.editor_id, s]));
@@ -231,8 +264,8 @@ managementPerformanceRouter.get("/management-performance", requireAdmin, async (
         rows.push(rowFromStored(e, stored.get(e.id)));
       } else {
         const goalHours = capHours(await effectiveCapacity(req.orgId, e.id, monthFirst));
-        const row = buildRow(e, hoursMap, goalHours, thr);
-        await upsertSnapshot(req.orgId, e.id, monthFirst, row.completedHours, goalHours, row.level, thr);
+        const row = buildRow(e, hoursMap, goalHours, thr, taskCounts);
+        await upsertSnapshot(req.orgId, e.id, monthFirst, row.completedHours, goalHours, row.level, thr, row.taskGoal, row.taskAchieved);
         rows.push(row);
       }
     }
@@ -273,10 +306,13 @@ managementPerformanceRouter.get("/management-performance/:editorId", requireAdmi
     if (!isCurrent && storedRows[0]) {
       current = rowFromStored(editor, storedRows[0]);
     } else {
-      const hoursMap = await completedHoursByEditor(req.orgId, monthFirst);
+      const [hoursMap, taskCounts] = await Promise.all([
+        completedHoursByEditor(req.orgId, monthFirst),
+        taskCountsByEditor(req.orgId, monthFirst),
+      ]);
       const goalHours = capHours(await effectiveCapacity(req.orgId, editorId, monthFirst));
-      current = buildRow(editor, hoursMap, goalHours, thr);
-      await upsertSnapshot(req.orgId, editorId, monthFirst, current.completedHours, goalHours, current.level, thr);
+      current = buildRow(editor, hoursMap, goalHours, thr, taskCounts);
+      await upsertSnapshot(req.orgId, editorId, monthFirst, current.completedHours, goalHours, current.level, thr, current.taskGoal, current.taskAchieved);
     }
 
     // Previous months' snapshot history (excluding the month being viewed).
@@ -284,6 +320,7 @@ managementPerformanceRouter.get("/management-performance/:editorId", requireAdmi
       `select to_char(period_month, 'YYYY-MM') as month,
               completed_hours::float as "completedHours",
               monthly_goal_hours::float as "monthlyGoalHours",
+              task_goal as "taskGoal", task_achieved as "taskAchieved",
               performance_level as level, thresholds_used as "thresholdsUsed"
          from editor_monthly_performance
         where org_id = $1 and editor_id = $2 and period_month <> $3
