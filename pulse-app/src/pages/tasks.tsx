@@ -1280,7 +1280,8 @@ export function TaskModal({
             {isAdmin ? (
               <select className="t" value={editorId} onChange={(e) => setEditorId(e.target.value)}>
                 <option value="">Unassigned</option>
-                {editors.map((ed) => (
+                {/* Admins aren't assignable editors (keep a chosen one visible). */}
+                {editors.filter((ed) => !ed.is_admin || ed.id === editorId).map((ed) => (
                   <option key={ed.id} value={ed.id}>{ed.name}</option>
                 ))}
               </select>

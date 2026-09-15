@@ -36,6 +36,9 @@ export type Editor = {
   designation: string;
   image_url: string | null;
   active: boolean;
+  // True when this editor is linked to a user with an admin role. Admins are
+  // hidden from "assign an editor" pickers (they don't get assigned editing).
+  is_admin?: boolean;
 };
 
 export type Platform = { id: string; key: string; name: string; sort_order: number };

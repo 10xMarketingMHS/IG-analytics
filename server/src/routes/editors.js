@@ -19,8 +19,17 @@ const EDITOR_COLUMNS = "id, name, designation, image_url, active";
 // sees the same people.
 editorsRouter.get("/editors", async (req, res, next) => {
   try {
+    // is_admin: this editor is linked to a user who holds an admin role
+    // somewhere in the org. Used to keep admins out of "assign an editor"
+    // pickers (they oversee; they aren't assigned editing work).
     const { rows } = await pool.query(
-      `select ${EDITOR_COLUMNS} from editor where org_id = $1 order by name`,
+      `select ${EDITOR_COLUMNS},
+              exists(
+                select 1 from app_user u
+                join membership m on m.user_id = u.id
+                where u.editor_id = e.id and m.role = 'admin'
+              ) as is_admin
+         from editor e where e.org_id = $1 order by name`,
       [req.orgId],
     );
     res.json({ editors: rows });

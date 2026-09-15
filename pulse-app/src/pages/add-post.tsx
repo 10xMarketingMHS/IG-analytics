@@ -338,7 +338,9 @@ export function AddPostPage({ onClose }: { onClose?: () => void } = {}) {
             </label>
             <select className="t" value={editorId} onChange={(e) => setEditorId(e.target.value)}>
               <option value="">Unassigned</option>
-              {(editors ?? []).map((ed) => (
+              {/* Admins aren't assignable editors — but keep the currently
+                  assigned one visible so editing doesn't silently drop it. */}
+              {(editors ?? []).filter((ed) => !ed.is_admin || ed.id === editorId).map((ed) => (
                 <option key={ed.id} value={ed.id}>
                   {ed.name}{ed.designation ? ` — ${ed.designation}` : ""}
                 </option>

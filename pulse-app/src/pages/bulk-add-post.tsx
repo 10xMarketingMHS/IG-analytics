@@ -451,7 +451,8 @@ export function BulkAddPostPage({ onClose }: { onClose?: () => void } = {}) {
                           <td>
                             <select value={r.editorId} disabled={r.isMirror} title={r.isMirror ? "Mirror has no editor — one task lives on the owner post" : undefined} onChange={(e) => update(card.id, r.key, { editorId: e.target.value })}>
                               <option value="">Unassigned</option>
-                              {(editors ?? []).map((ed) => <option key={ed.id} value={ed.id}>{ed.name}</option>)}
+                              {/* Admins aren't assignable editors (keep a chosen one visible). */}
+                              {(editors ?? []).filter((ed) => !ed.is_admin || ed.id === r.editorId).map((ed) => <option key={ed.id} value={ed.id}>{ed.name}</option>)}
                             </select>
                           </td>
                           <td>
