@@ -3,7 +3,7 @@ import { useNavigate } from "react-router-dom";
 import { useTaxonomy } from "@/lib/use-taxonomy";
 import { useResource } from "@/lib/use-resource";
 import { useWorkspaces } from "@/lib/workspaces-context";
-import type { Post, Platform, Account } from "@/lib/types";
+import type { Post, Platform, Account, PlatformConnection } from "@/lib/types";
 
 const PLATFORM_ICON: Record<string, string> = {
   instagram: "📸", facebook: "👍", youtube: "▶️",
@@ -57,6 +57,20 @@ export function DashboardPage() {
     [allPosts, platformId],
   );
   const activePlatform = channelPlatforms.find((p) => p.id === platformId);
+
+  // Live follower/subscriber count for the selected platform, scoped to the
+  // chosen channel ("all" sums every channel's connection for that platform).
+  // Sourced from platform_connection.follower_count (set at connect/sync time).
+  const { data: connData } = useResource<{ connections: PlatformConnection[] }>("/integrations/connections");
+  const followerCount = useMemo<number | null>(() => {
+    const key = activePlatform?.key;
+    if (!key) return null;
+    const relevant = (connData?.connections ?? []).filter(
+      (c) => c.platform_key === key && (channel === "all" || c.channel_id === channel) && c.follower_count != null,
+    );
+    if (!relevant.length) return null;
+    return relevant.reduce((s, c) => s + (c.follower_count ?? 0), 0);
+  }, [connData, activePlatform, channel]);
   const [custom, setCustom] = useState<{ from: string; to: string } | null>(null);
   const [popOpen, setPopOpen] = useState(false);
   const [fromInput, setFromInput] = useState("2026-06-01");
@@ -151,11 +165,14 @@ export function DashboardPage() {
     setPopOpen(false);
   }
 
-  const kpis: [string, string, string, string | null][] = [
-    ["📝", "Total Posts", String(scopedCount.length), null],
-    ["👁️", "Total Views", compactNum(views), viewsDelta == null ? null : (viewsDelta >= 0 ? "up" : "down")],
-    ["📡", "Accounts Reached", compactNum(reach), reachDelta == null ? null : (reachDelta >= 0 ? "up" : "down")],
-    ["⚡", "Engagement Rate", engRate, "flat"],
+  // [icon, label, value, kind, deltaValue] — deltaValue rides on the tuple so the
+  // render doesn't couple deltas to card positions.
+  const kpis: [string, string, string, string | null, number | null][] = [
+    ["📝", "Total Posts", String(scopedCount.length), null, null],
+    ["👥", "Followers", followerCount == null ? "—" : compactNum(followerCount), null, null],
+    ["👁️", "Total Views", compactNum(views), viewsDelta == null ? null : (viewsDelta >= 0 ? "up" : "down"), viewsDelta],
+    ["📡", "Accounts Reached", compactNum(reach), reachDelta == null ? null : (reachDelta >= 0 ? "up" : "down"), reachDelta],
+    ["⚡", "Engagement Rate", engRate, "flat", null],
   ];
   const deltaText = (kind: string | null, d: number | null) =>
     kind === "up" || kind === "down"
@@ -242,14 +259,14 @@ export function DashboardPage() {
         <span className="s">{rangeLabel} · {scopedCount.length} post{scopedCount.length === 1 ? "" : "s"}</span>
       </div>
 
-      <div className="grid g4">
-        {kpis.map(([ic, l, v, kind], i) => (
+      <div className="grid" style={{ gridTemplateColumns: "repeat(auto-fit, minmax(160px, 1fr))" }}>
+        {kpis.map(([ic, l, v, kind, dv]) => (
           <div className="card kpi" key={l}>
             <div className="ic">{ic}</div>
             <div className="l">{l}</div>
             <div className="v">{v}</div>
             <div className={"d " + (kind ?? "flat")}>
-              {deltaText(kind, i === 1 ? viewsDelta : i === 2 ? reachDelta : null)}
+              {deltaText(kind, dv)}
             </div>
           </div>
         ))}
