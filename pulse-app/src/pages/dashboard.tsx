@@ -3,7 +3,15 @@ import { useNavigate } from "react-router-dom";
 import { useTaxonomy } from "@/lib/use-taxonomy";
 import { useResource } from "@/lib/use-resource";
 import { useWorkspaces } from "@/lib/workspaces-context";
-import type { Post, Platform, Account, PlatformConnection } from "@/lib/types";
+import type { Post, Platform, Account } from "@/lib/types";
+
+// One platform connection's follower figures for the dashboard card: the current
+// count plus its value as of the selected range's start/end (from the snapshot
+// timeline; null when no snapshot exists yet for that date).
+type FollowerRow = {
+  connectionId: string; provider: string; platformKey: string; channelId: string;
+  current: number | null; atFrom: number | null; atTo: number | null;
+};
 
 const PLATFORM_ICON: Record<string, string> = {
   instagram: "📸", facebook: "👍", youtube: "▶️",
@@ -57,26 +65,39 @@ export function DashboardPage() {
     [allPosts, platformId],
   );
   const activePlatform = channelPlatforms.find((p) => p.id === platformId);
-
-  // Live follower/subscriber count for the selected platform, scoped to the
-  // chosen channel ("all" sums every channel's connection for that platform).
-  // Sourced from platform_connection.follower_count (set at connect/sync time).
-  const { data: connData } = useResource<{ connections: PlatformConnection[] }>("/integrations/connections");
-  const followerCount = useMemo<number | null>(() => {
-    const key = activePlatform?.key;
-    if (!key) return null;
-    const relevant = (connData?.connections ?? []).filter(
-      (c) => c.platform_key === key && (channel === "all" || c.channel_id === channel) && c.follower_count != null,
-    );
-    if (!relevant.length) return null;
-    return relevant.reduce((s, c) => s + (c.follower_count ?? 0), 0);
-  }, [connData, activePlatform, channel]);
   const [custom, setCustom] = useState<{ from: string; to: string } | null>(null);
   const [popOpen, setPopOpen] = useState(false);
   const [fromInput, setFromInput] = useState("2026-06-01");
   const [toInput, setToInput] = useState("2026-06-30");
 
   const bounds = range === "custom" && custom ? custom : rangeFor(range);
+
+  // Follower count for the selected platform + channel, from the follower_snapshot
+  // timeline: the count AS OF the range end, and growth over the range. "All time"
+  // (no bounds) shows the current total with no growth. Scoped to the chosen
+  // platform; "All Channels" sums that platform's connections across channels.
+  const folUrl = useMemo(() => {
+    const q = new URLSearchParams();
+    if (bounds.from) q.set("from", bounds.from);
+    if (bounds.to) q.set("to", bounds.to);
+    return `/integrations/followers${q.toString() ? `?${q}` : ""}`;
+  }, [bounds.from, bounds.to]);
+  const { data: folData } = useResource<{ followers: FollowerRow[] }>(folUrl);
+  const followers = useMemo<{ count: number | null; growth: number | null }>(() => {
+    const key = activePlatform?.key;
+    if (!key) return { count: null, growth: null };
+    const rel = (folData?.followers ?? []).filter(
+      (f) => f.platformKey === key && (channel === "all" || f.channelId === channel) && f.current != null,
+    );
+    if (!rel.length) return { count: null, growth: null };
+    // Show the current follower total; growth is the change since the start of
+    // the selected range (current − the count as of `from`). Growth only when
+    // every connection has a baseline snapshot for that date (else null).
+    const count = rel.reduce((s, f) => s + (f.current ?? 0), 0);
+    const haveBaseline = !!bounds.from && rel.every((f) => f.atFrom != null);
+    const growth = haveBaseline ? count - rel.reduce((s, f) => s + (f.atFrom ?? 0), 0) : null;
+    return { count, growth };
+  }, [folData, activePlatform, channel, bounds.from]);
 
   // Analytics count Published posts only (PRD FR-N8).
   const published = useMemo(
@@ -167,17 +188,20 @@ export function DashboardPage() {
 
   // [icon, label, value, kind, deltaValue] — deltaValue rides on the tuple so the
   // render doesn't couple deltas to card positions.
-  const kpis: [string, string, string, string | null, number | null][] = [
-    ["📝", "Total Posts", String(scopedCount.length), null, null],
-    ["👥", "Followers", followerCount == null ? "—" : compactNum(followerCount), null, null],
-    ["👁️", "Total Views", compactNum(views), viewsDelta == null ? null : (viewsDelta >= 0 ? "up" : "down"), viewsDelta],
-    ["📡", "Accounts Reached", compactNum(reach), reachDelta == null ? null : (reachDelta >= 0 ? "up" : "down"), reachDelta],
-    ["⚡", "Engagement Rate", engRate, "flat", null],
+  // % change vs the previous period (Views / Reach); absolute count for Followers.
+  const pctDelta = (d: number | null) => (d == null ? " " : `${d >= 0 ? "▲" : "▼"} ${Math.abs(d)}% vs prev`);
+  const folDelta = followers.growth == null
+    ? " "
+    : `${followers.growth >= 0 ? "▲" : "▼"} ${followers.growth >= 0 ? "+" : "-"}${compactNum(Math.abs(followers.growth))} in ${rangeLabel}`;
+
+  const kpis: [string, string, string, string | null, string][] = [
+    ["📝", "Total Posts", String(scopedCount.length), null, " "],
+    ["👥", "Followers", followers.count == null ? "—" : compactNum(followers.count),
+      followers.growth == null ? null : (followers.growth >= 0 ? "up" : "down"), folDelta],
+    ["👁️", "Total Views", compactNum(views), viewsDelta == null ? null : (viewsDelta >= 0 ? "up" : "down"), pctDelta(viewsDelta)],
+    ["📡", "Accounts Reached", compactNum(reach), reachDelta == null ? null : (reachDelta >= 0 ? "up" : "down"), pctDelta(reachDelta)],
+    ["⚡", "Engagement Rate", engRate, "flat", " "],
   ];
-  const deltaText = (kind: string | null, d: number | null) =>
-    kind === "up" || kind === "down"
-      ? `${d != null && d >= 0 ? "▲" : "▼"} ${d != null ? Math.abs(d) + "% vs prev" : ""}`
-      : " ";
 
   return (
     <section className="screen">
@@ -265,9 +289,7 @@ export function DashboardPage() {
             <div className="ic">{ic}</div>
             <div className="l">{l}</div>
             <div className="v">{v}</div>
-            <div className={"d " + (kind ?? "flat")}>
-              {deltaText(kind, dv)}
-            </div>
+            <div className={"d " + (kind ?? "flat")}>{dv}</div>
           </div>
         ))}
       </div>

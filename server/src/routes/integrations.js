@@ -24,7 +24,26 @@ async function upsertConnection({ orgId, accountId, provider, externalId, extern
        follower_count = excluded.follower_count, connected_at = now()`,
     [orgId, accountId, provider, externalId, externalName, tokenEnc, scope ?? null, uid, followers],
   );
+  captureFollowerSnapshots().catch(() => {}); // record today's value right away
 }
+
+// Record today's follower_count for every connection into follower_snapshot —
+// one row per connection per IST day (later captures the same day just refresh
+// it). Builds the timeline the dashboard reads for range/growth. Idempotent.
+async function captureFollowerSnapshots() {
+  await pool.query(
+    `insert into follower_snapshot (org_id, connection_id, provider, follower_count, day)
+     select org_id, id, provider, follower_count, (now() at time zone 'Asia/Kolkata')::date
+       from platform_connection where follower_count is not null
+     on conflict (connection_id, day) do update set
+       follower_count = excluded.follower_count, captured_at = now()`,
+  );
+}
+
+// Keep the timeline ticking even without a reconnect/sync: capture once shortly
+// after boot and every 6h. Idempotent per day, so overlapping instances are fine.
+setTimeout(() => captureFollowerSnapshots().catch(() => {}), 15_000).unref();
+setInterval(() => captureFollowerSnapshots().catch(() => {}), 6 * 60 * 60 * 1000).unref();
 
 // The org's YouTube Data API key: the admin-entered, encrypted DB key first,
 // falling back to a server env var if one was ever set. null = not configured.
@@ -133,6 +152,34 @@ integrationsRouter.get("/integrations/connections", async (req, res, next) => {
       [req.orgId],
     );
     res.json({ connections: rows });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// Follower counts for the dashboard: each connection's current count plus its
+// value as of the selected range's start (`from`) and end (`to`) — from the
+// follower_snapshot timeline — so the card can show the count for the range and
+// the growth over it. `from`/`to` are YYYY-MM-DD (omit for "all time").
+integrationsRouter.get("/integrations/followers", async (req, res, next) => {
+  try {
+    const dateOrNull = (v) => (/^\d{4}-\d{2}-\d{2}$/.test(String(v || "")) ? String(v) : null);
+    const from = dateOrNull(req.query.from);
+    const to = dateOrNull(req.query.to);
+    const { rows } = await pool.query(
+      `select c.id as "connectionId", c.provider, p.key as "platformKey",
+              a.workspace_id as "channelId", c.follower_count as current,
+              (select follower_count from follower_snapshot s
+                where s.connection_id = c.id and s.day <= $2 order by s.day desc limit 1) as "atFrom",
+              (select follower_count from follower_snapshot s
+                where s.connection_id = c.id and s.day <= $3 order by s.day desc limit 1) as "atTo"
+         from platform_connection c
+         join account a on a.id = c.account_id
+         join platform p on p.id = a.platform_id
+        where c.org_id = $1 and c.follower_count is not null`,
+      [req.orgId, from, to],
+    );
+    res.json({ followers: rows });
   } catch (err) {
     next(err);
   }
