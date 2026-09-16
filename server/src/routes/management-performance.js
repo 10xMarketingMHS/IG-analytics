@@ -294,6 +294,7 @@ managementPerformanceRouter.put("/management-performance/thresholds", requireAdm
          updated_by = excluded.updated_by, updated_at = now()`,
       [req.orgId, epiMinPct, mpiMinPct, req.user.sub],
     );
+    invalidateOrg(req.orgId); // new thresholds → recompute bands on next view
     res.json({ epiMinPct, mpiMinPct, isDefault: false });
   } catch (err) { next(err); }
 });
@@ -322,44 +323,100 @@ managementPerformanceRouter.get("/management-performance/months", requireAdmin, 
 });
 
 // ---------------------------------------------------------------------------
-// Board list — one row per active editor for a month.
-// ---------------------------------------------------------------------------
+// In-memory stale-while-revalidate cache. Every DB round-trip to the remote
+// Supabase pooler is costly (~370ms warm, seconds cold), and a management
+// dashboard is viewed repeatedly, so serve the last computed board/detail from
+// process memory (instant) and refresh in the background. The current month has
+// a short TTL (it changes as tasks complete); past months are frozen → long TTL.
+// A background loop keeps recently-viewed current-month boards warm so even the
+// user's first click after opening the page reads a fresh cache — and it keeps
+// DB connections flowing so the pool never goes cold.
+const CUR_TTL_MS = 20_000;
+const PAST_TTL_MS = 10 * 60_000;
+const boardCache = new Map();   // `${orgId}:${monthFirst}` -> { data, ts }
+const detailCache = new Map();  // `${orgId}:${editorId}:${monthFirst}` -> { data, ts }
+const hotBoards = new Map();    // key -> orgId, current-month boards to keep warm
+const refreshing = new Set();   // keys with an in-flight background refresh
+
+function cacheLookup(cache, key, ttl) {
+  const hit = cache.get(key);
+  if (!hit) return null;
+  return { data: hit.data, fresh: Date.now() - hit.ts < ttl };
+}
+function invalidateOrg(orgId) {
+  for (const m of [boardCache, detailCache]) for (const k of m.keys()) if (k.startsWith(orgId + ":")) m.delete(k);
+}
+
+// Compute the board response for a month (no caching).
+async function computeBoard(orgId, monthFirst, isCurrent) {
+  const [edThr, goalMap, actualsMap, ratingMap, storedRows] = await Promise.all([
+    activeEditorsWithThresholds(orgId),
+    goalRowsByEditor(orgId, monthFirst),
+    actualsByEditorFormat(orgId, monthFirst),
+    ratingsByEditor(orgId, monthFirst),
+    isCurrent
+      ? Promise.resolve({ rows: [] })
+      : pool.query("select * from editor_monthly_performance where org_id = $1 and period_month = $2", [orgId, monthFirst]),
+  ]);
+  const { editors, thr } = edThr;
+  const stored = new Map(storedRows.rows.map((s) => [s.editor_id, s]));
+  const rows = [];
+  const toSnapshot = [];
+  for (const e of editors) {
+    if (!isCurrent && stored.has(e.id)) {
+      rows.push(rowFromStored(e, stored.get(e.id)));
+    } else {
+      const row = scoreToRow(e, computeScore(rowsFor(e.id, goalMap, actualsMap), ratingMap.get(e.id)), thr);
+      rows.push(row);
+      if (!isCurrent) toSnapshot.push(row); // freeze past months only
+    }
+  }
+  if (toSnapshot.length) bgSnapshot(orgId, monthFirst, toSnapshot, thr);
+  return { month: monthFirst.slice(0, 7), isCurrent, thresholds: thr, rows };
+}
+
+// Recompute + cache one board, guarding against overlapping refreshes.
+async function refreshBoard(orgId, monthFirst, isCurrent) {
+  const key = `${orgId}:${monthFirst}`;
+  if (refreshing.has(key)) return;
+  refreshing.add(key);
+  try {
+    const data = await computeBoard(orgId, monthFirst, isCurrent);
+    boardCache.set(key, { data, ts: Date.now() });
+    return data;
+  } finally {
+    refreshing.delete(key);
+  }
+}
+
 managementPerformanceRouter.get("/management-performance", requireAdmin, async (req, res, next) => {
   try {
     const monthFirst = firstOfMonth(req.query.month || thisMonthFirst());
     const isCurrent = monthFirst.slice(0, 7) === thisMonthFirst().slice(0, 7);
+    const key = `${req.orgId}:${monthFirst}`;
+    if (isCurrent) hotBoards.set(key, req.orgId); // keep this board warm
 
-    // Four simple queries in parallel on the warm pool (thresholds folded into
-    // the editors query). The stored snapshot is only needed to freeze PAST
-    // months, so the current-month hot path skips it — keeping it at 4 queries so
-    // none has to cold-connect beyond the warm pool.
-    const [edThr, goalMap, actualsMap, ratingMap, storedRows] = await Promise.all([
-      activeEditorsWithThresholds(req.orgId),
-      goalRowsByEditor(req.orgId, monthFirst),
-      actualsByEditorFormat(req.orgId, monthFirst),
-      ratingsByEditor(req.orgId, monthFirst),
-      isCurrent
-        ? Promise.resolve({ rows: [] })
-        : pool.query("select * from editor_monthly_performance where org_id = $1 and period_month = $2", [req.orgId, monthFirst]),
-    ]);
-    const { editors, thr } = edThr;
-    const stored = new Map(storedRows.rows.map((s) => [s.editor_id, s]));
-
-    const rows = [];
-    const toSnapshot = [];
-    for (const e of editors) {
-      if (!isCurrent && stored.has(e.id)) {
-        rows.push(rowFromStored(e, stored.get(e.id)));
-      } else {
-        const row = scoreToRow(e, computeScore(rowsFor(e.id, goalMap, actualsMap), ratingMap.get(e.id)), thr);
-        rows.push(row);
-        if (!isCurrent) toSnapshot.push(row); // freeze past months only
-      }
+    const c = cacheLookup(boardCache, key, isCurrent ? CUR_TTL_MS : PAST_TTL_MS);
+    if (c) {
+      res.json(c.data);
+      if (!c.fresh) refreshBoard(req.orgId, monthFirst, isCurrent).catch(() => {}); // revalidate in bg
+      return;
     }
-    res.json({ month: monthFirst.slice(0, 7), isCurrent, thresholds: thr, rows });
-    if (toSnapshot.length) bgSnapshot(req.orgId, monthFirst, toSnapshot, thr);
+    // Cold cache — compute once, then serve.
+    res.json(await refreshBoard(req.orgId, monthFirst, isCurrent));
   } catch (err) { next(err); }
 });
+
+// Keep recently-viewed current-month boards fresh in the background, so a user's
+// load reads a warm cache instead of paying the compute. Drops keys once their
+// month rolls over. Also keeps the DB pool warm via steady query traffic.
+setInterval(() => {
+  const cur = thisMonthFirst();
+  for (const [key, orgId] of hotBoards) {
+    if (!key.endsWith(cur)) { hotBoards.delete(key); boardCache.delete(key); continue; }
+    refreshBoard(orgId, cur, true).catch(() => {});
+  }
+}, CUR_TTL_MS).unref();
 
 // ---------------------------------------------------------------------------
 // Self view (My Day) — the caller's own current-month figures. No admin role.
@@ -392,28 +449,17 @@ managementPerformanceRouter.get("/management-performance/me", async (req, res, n
 // ---------------------------------------------------------------------------
 // Individual detail — one editor, one month.
 // ---------------------------------------------------------------------------
-managementPerformanceRouter.get("/management-performance/:editorId", requireAdmin, async (req, res, next) => {
-  try {
-    const editorId = req.params.editorId;
-    const { rows: erows } = await pool.query(
-      "select id, name, designation, image_url from editor where id = $1 and org_id = $2",
-      [editorId, req.orgId],
-    );
-    if (!erows[0]) return res.status(404).json({ error: "Editor not found." });
-    const editor = erows[0];
-
-    const monthFirst = firstOfMonth(req.query.month || thisMonthFirst());
-    const isCurrent = monthFirst.slice(0, 7) === thisMonthFirst().slice(0, 7);
-    const P = [req.orgId, editorId, monthFirst];
-
-    // The detail in as few round-trips as the pooler allows (it serializes
-    // concurrent queries). Thresholds are folded into the breakdown query; the
-    // stored snapshot is only read for past (frozen) months.
-    const [storedRes, breakdownRes, ratingRes, historyRes, eodRes] = await Promise.all([
-      isCurrent
-        ? Promise.resolve({ rows: [] })
-        : pool.query("select * from editor_monthly_performance where org_id = $1 and editor_id = $2 and period_month = $3", P),
-      pool.query(
+async function computeDetail(orgId, editorId, monthFirst, isCurrent) {
+  const P = [orgId, editorId, monthFirst];
+  // Everything in one parallel batch, including the editor lookup — thresholds
+  // are folded into the breakdown query; the stored snapshot is only read for
+  // past (frozen) months.
+  const [erowsRes, storedRes, breakdownRes, ratingRes, historyRes, eodRes] = await Promise.all([
+    pool.query("select id, name, designation, image_url from editor where id = $1 and org_id = $2", [editorId, orgId]),
+    isCurrent
+      ? Promise.resolve({ rows: [] })
+      : pool.query("select * from editor_monthly_performance where org_id = $1 and editor_id = $2 and period_month = $3", P),
+    pool.query(
         `with thr as (
             select coalesce(max(epi_min_pct), ${DEFAULT_THRESHOLDS.epiMinPct}) epi,
                    coalesce(max(mpi_min_pct), ${DEFAULT_THRESHOLDS.mpiMinPct}) mpi,
@@ -459,12 +505,14 @@ managementPerformanceRouter.get("/management-performance/:editorId", requireAdmi
             and date >= $3 and date < ($3::date + interval '1 month')
           order by started_at desc`, P),
     ]);
+    const editor = erowsRes.rows[0];
+    if (!editor) return null; // 404
     const breakdown = breakdownRes.rows;
     const history = historyRes.rows;
     const eodSessions = eodRes.rows;
     const thr = breakdown[0]
       ? { epiMinPct: Number(breakdown[0].epi), mpiMinPct: Number(breakdown[0].mpi), isDefault: !breakdown[0].has }
-      : await getThresholds(req.orgId);
+      : await getThresholds(orgId);
 
     let current;
     if (!isCurrent && storedRes.rows[0]) {
@@ -477,10 +525,10 @@ managementPerformanceRouter.get("/management-performance/:editorId", requireAdmi
       const rr = ratingRes.rows[0];
       const ratings = rr ? Object.fromEntries(CRITERIA.map((k) => [k, rr[k] == null ? null : Number(rr[k])])) : null;
       current = scoreToRow(editor, computeScore(scoreRows, ratings), thr);
-      if (!isCurrent) bgSnapshot(req.orgId, monthFirst, [current], thr); // freeze past months only
+      if (!isCurrent) bgSnapshot(orgId, monthFirst, [current], thr); // freeze past months only
     }
 
-    res.json({
+    return {
       editor: { id: editor.id, name: editor.name, designation: editor.designation, imageUrl: editor.image_url },
       month: monthFirst.slice(0, 7),
       isCurrent,
@@ -492,6 +540,37 @@ managementPerformanceRouter.get("/management-performance/:editorId", requireAdmi
       })),
       history,
       eodSessions: eodSessions.map((s) => ({ ...s, spanHours: s.spanHours == null ? null : Number(s.spanHours) })),
-    });
+    };
+}
+
+async function refreshDetail(orgId, editorId, monthFirst, isCurrent) {
+  const key = `${orgId}:${editorId}:${monthFirst}`;
+  if (refreshing.has(key)) return detailCache.get(key)?.data ?? null;
+  refreshing.add(key);
+  try {
+    const data = await computeDetail(orgId, editorId, monthFirst, isCurrent);
+    if (data) detailCache.set(key, { data, ts: Date.now() });
+    return data;
+  } finally {
+    refreshing.delete(key);
+  }
+}
+
+managementPerformanceRouter.get("/management-performance/:editorId", requireAdmin, async (req, res, next) => {
+  try {
+    const editorId = req.params.editorId;
+    const monthFirst = firstOfMonth(req.query.month || thisMonthFirst());
+    const isCurrent = monthFirst.slice(0, 7) === thisMonthFirst().slice(0, 7);
+    const key = `${req.orgId}:${editorId}:${monthFirst}`;
+
+    const c = cacheLookup(detailCache, key, isCurrent ? CUR_TTL_MS : PAST_TTL_MS);
+    if (c) {
+      res.json(c.data);
+      if (!c.fresh) refreshDetail(req.orgId, editorId, monthFirst, isCurrent).catch(() => {});
+      return;
+    }
+    const data = await refreshDetail(req.orgId, editorId, monthFirst, isCurrent);
+    if (!data) return res.status(404).json({ error: "Editor not found." });
+    res.json(data);
   } catch (err) { next(err); }
 });
