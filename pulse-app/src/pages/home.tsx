@@ -645,11 +645,7 @@ function ScoreCard({ icon, title, window: w }: { icon: string; title: string; wi
 // ---- Monthly Goal: the signed-in user's own current-month goal vs achieved
 // (real tracked hours + task counts), self-scoped so no admin role is needed.
 // Replaces the old placeholder Achievements card. ----
-type MyGoal = {
-  linked: boolean;
-  monthlyGoalHours: number; completedHours: number; remainingHours: number; completionPct: number;
-  taskGoal: number; taskAchieved: number;
-};
+type MyGoal = { linked: boolean; hasGoal?: boolean; goalTargetNumber: number; achievedNumber: number };
 function GoalCard() {
   const [d, setD] = useState<MyGoal | null>(null);
   const [failed, setFailed] = useState(false);
@@ -657,9 +653,9 @@ function GoalCard() {
     api<MyGoal>("/management-performance/me").then(setD).catch(() => setFailed(true));
   }, []);
 
-  const hasGoal = !!d?.linked && d.taskGoal > 0;
-  const taskPct = d && d.taskGoal > 0 ? Math.round((d.taskAchieved / d.taskGoal) * 100) : 0;
-  const toGo = d ? Math.max(0, d.taskGoal - d.taskAchieved) : 0;
+  const hasGoal = !!d?.linked && !!d.hasGoal && d.goalTargetNumber > 0;
+  const taskPct = d && d.goalTargetNumber > 0 ? Math.round((d.achievedNumber / d.goalTargetNumber) * 100) : 0;
+  const toGo = d ? Math.max(0, d.goalTargetNumber - d.achievedNumber) : 0;
 
   return (
     <div className="card myday-scorecard goalc">
@@ -672,7 +668,7 @@ function GoalCard() {
         <>
           <div className="msc-body">
             <div>
-              <div className="msc-pts">{d.taskAchieved} <span>/ {d.taskGoal} tasks</span></div>
+              <div className="msc-pts">{d.achievedNumber} <span>/ {d.goalTargetNumber} tasks</span></div>
               <div className="msc-sub">{toGo > 0 ? `${toGo} to go` : "goal reached 🎉"}</div>
             </div>
             <div className="msc-rank">{taskPct}%</div>

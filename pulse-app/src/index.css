@@ -1784,4 +1784,21 @@ img.lb-ava{object-fit:cover}
 .mp-metric-pct{font-size:13px;font-weight:700;color:var(--muted)}
 .mp-metric-names{margin-left:auto;font-size:11.5px;color:var(--muted);text-align:right}
 
+/* Points breakdown grid (detail primary section) */
+.mp-nolevel{color:var(--muted)}
+.mp-perf{display:inline-flex;align-items:center;gap:8px}
+.mp-perf b{font-weight:750}
+.mp-ptsgrid{display:grid;grid-template-columns:repeat(4,1fr);gap:10px}
+.mp-pt{background:var(--panel);border:1px solid var(--border2);border-radius:11px;padding:11px 13px;display:flex;flex-direction:column;gap:2px}
+.mp-pt>span{font-size:10.5px;color:var(--muted);font-weight:700;text-transform:uppercase;letter-spacing:.4px}
+.mp-pt>b{font-size:20px;font-weight:750;line-height:1.1}
+.mp-pt>i{font-size:10.5px;color:var(--faint);font-style:normal}
+.mp-pt.lead>b,.mp-pt.accent>b{color:var(--accent-ink)}
+.mp-pt.accent{border-color:var(--accent);background:var(--accent-weak)}
+.mp-pt.muted>b{color:var(--muted)}
+.mp-pt.big{grid-column:span 2;flex-direction:row;align-items:center;gap:12px;flex-wrap:wrap}
+.mp-pt.big>span{align-self:center}
+.mp-pt.big>b{font-size:26px;margin-left:auto}
+@media(max-width:720px){.mp-ptsgrid{grid-template-columns:repeat(2,1fr)}.mp-pt.big{grid-column:span 2}}
+
 @media(max-width:640px){.mp-ga-meta{margin-left:0;width:100%}}
