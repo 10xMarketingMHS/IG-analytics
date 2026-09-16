@@ -35,12 +35,18 @@ export const pool = new Pool({
 // A dead idle connection would otherwise crash the process; drop it instead.
 pool.on("error", () => {});
 
-// Keep a handful of connections warm so parallel page-loads don't each pay the
-// cold-connect penalty, and so the remote pooler doesn't idle them out.
-async function warm(n = 4) {
+// Keep the WHOLE pool warm. A page load fires a burst of concurrent queries;
+// cold-connecting several at once to the remote session pooler is very slow
+// (each needs a fresh TLS handshake — measured ~5s for 5 at once), while a warm
+// connection answers in ~350ms. Pinging every pool slot below the idle timeout
+// keeps them all established so bursts never pay that penalty. Still bounded by
+// `max` per instance, so the 15-client project cap is unaffected. Pinged in
+// parallel on their own connections so all `max` slots stay hot.
+const POOL_MAX = Number(process.env.DB_POOL_MAX) || 5;
+async function warm(n = POOL_MAX) {
   await Promise.allSettled(
     Array.from({ length: n }, () => pool.query("select 1")),
   );
 }
 warm();
-setInterval(warm, 30_000).unref();
+setInterval(warm, 25_000).unref();

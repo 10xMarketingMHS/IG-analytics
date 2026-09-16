@@ -29,12 +29,10 @@ function thisMonthFirst() {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-01`;
 }
 
-async function firstOfMonth(monthIn) {
-  const { rows } = await pool.query(
-    "select date_trunc('month', (($1)::text || case when length(($1)::text) = 7 then '-01' else '' end)::date)::date::text m",
-    [String(monthIn).slice(0, 10)],
-  );
-  return rows[0].m;
+// First-of-month as 'YYYY-MM-DD' — pure string math, no DB round-trip.
+function firstOfMonth(monthIn) {
+  const [y, m] = String(monthIn).slice(0, 10).split("-");
+  return `${y}-${String(Number(m)).padStart(2, "0")}-01`;
 }
 
 async function getThresholds(orgId) {
@@ -77,8 +75,11 @@ function computeScore(rows, ratings) {
   };
 }
 
-// ---- Per-editor data for a month (goals × points, actual completions, ratings) ----
-// Goal rows (JC + the content type's points) per editor.
+// ---- Per-editor data for the board — SEPARATE simple queries, run in parallel.
+// Counter-intuitively this beats one big combined query here: the remote session
+// pooler answers a warm simple query in ~370ms but runs a big multi-CTE query
+// erratically (1–6s). With the whole pool kept warm (see db.js), 5 simple queries
+// in parallel land on 5 warm connections and finish together (~370ms). ----
 async function goalRowsByEditor(orgId, monthFirst) {
   const { rows } = await pool.query(
     `select g.editor_id, g.content_format_id, g.jc, cf.points
@@ -94,7 +95,6 @@ async function goalRowsByEditor(orgId, monthFirst) {
   return m;
 }
 
-// Completed tasks per (editor, content format) in the month — the Actual JC.
 async function actualsByEditorFormat(orgId, monthFirst) {
   const { rows } = await pool.query(
     `select editor_id, content_format_id, count(*)::int n
@@ -109,24 +109,45 @@ async function actualsByEditorFormat(orgId, monthFirst) {
   return m;
 }
 
-// Stored discipline criterion ratings per editor for the month.
 async function ratingsByEditor(orgId, monthFirst) {
   const { rows } = await pool.query(
     `select editor_id, ${CRITERIA.join(", ")} from editor_discipline_points where org_id = $1 and period_month = $2`,
     [orgId, monthFirst],
   );
   const m = new Map();
-  for (const r of rows) {
-    m.set(r.editor_id, Object.fromEntries(CRITERIA.map((k) => [k, r[k] == null ? null : Number(r[k])])));
-  }
+  for (const r of rows) m.set(r.editor_id, Object.fromEntries(CRITERIA.map((k) => [k, r[k] == null ? null : Number(r[k])])));
   return m;
 }
 
-// Build the goalBreakdown input rows for one editor from the shared maps.
+// Active, non-admin editors + the org thresholds (folded in via cross join so
+// the board is 4 parallel queries, not 5 — keeping it within the warm pool so no
+// query cold-connects). admins are hidden from this table.
+async function activeEditorsWithThresholds(orgId) {
+  const { rows } = await pool.query(
+    `with thr as (
+        select coalesce(max(epi_min_pct), ${DEFAULT_THRESHOLDS.epiMinPct}) epi,
+               coalesce(max(mpi_min_pct), ${DEFAULT_THRESHOLDS.mpiMinPct}) mpi,
+               count(*) > 0 as has
+          from performance_threshold where org_id = $1
+     )
+     select e.id, e.name, e.designation, e.image_url, thr.epi::float epi, thr.mpi::float mpi, thr.has
+       from editor e cross join thr
+      where e.org_id = $1 and e.active
+        and not exists (select 1 from app_user u join membership m on m.user_id = u.id
+                         where u.editor_id = e.id and m.role = 'admin')
+      order by e.name`,
+    [orgId],
+  );
+  const thr = rows[0]
+    ? { epiMinPct: Number(rows[0].epi), mpiMinPct: Number(rows[0].mpi), isDefault: !rows[0].has }
+    : { ...DEFAULT_THRESHOLDS, isDefault: true };
+  return { editors: rows, thr };
+}
+
+// Build one editor's computeScore() input rows from the shared maps.
 function rowsFor(editorId, goalMap, actualsMap) {
   return (goalMap.get(editorId) ?? []).map((g) => ({
-    goalJC: g.goalJC,
-    points: g.points,
+    goalJC: g.goalJC, points: g.points,
     actualJC: actualsMap.get(`${editorId}:${g.contentFormatId}`) ?? 0,
   }));
 }
@@ -178,13 +199,27 @@ function rowFromStored(editor, s) {
   };
 }
 
-async function upsertSnapshot(orgId, editorId, monthFirst, row, thr) {
+// Persist a whole month's freshly-computed rows in ONE multi-row upsert (instead
+// of N sequential writes). Callers fire this in the background — the snapshot
+// only freezes past months, so the response never needs to wait on the write.
+async function batchUpsertSnapshots(orgId, monthFirst, rows, thr) {
+  if (!rows.length) return;
+  const thrJson = JSON.stringify({ epiMinPct: thr.epiMinPct, mpiMinPct: thr.mpiMinPct });
+  const N = 13; // columns per row (computed_at is now())
+  const vals = [];
+  const tuples = rows.map((row, i) => {
+    const b = i * N;
+    vals.push(orgId, row.editorId, monthFirst, row.totalGoalPoints, row.earnedPoints, row.potentialPoints,
+      row.disciplinePoints, row.totalPoints, row.goalTargetNumber, row.achievedNumber,
+      row.performancePct, row.level, thrJson);
+    return `($${b + 1},$${b + 2},$${b + 3},$${b + 4},$${b + 5},$${b + 6},$${b + 7},$${b + 8},$${b + 9},$${b + 10},$${b + 11},$${b + 12},$${b + 13}, now())`;
+  });
   await pool.query(
     `insert into editor_monthly_performance
        (org_id, editor_id, period_month, total_goal_points, earned_points, potential_points,
         discipline_points, total_points, goal_target_number, achieved_number,
         performance_percentage, performance_level, thresholds_used, computed_at)
-     values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13, now())
+     values ${tuples.join(", ")}
      on conflict (org_id, editor_id, period_month) do update set
        total_goal_points = excluded.total_goal_points,
        earned_points = excluded.earned_points,
@@ -197,27 +232,38 @@ async function upsertSnapshot(orgId, editorId, monthFirst, row, thr) {
        performance_level = excluded.performance_level,
        thresholds_used = excluded.thresholds_used,
        computed_at = now()`,
-    [orgId, editorId, monthFirst, row.totalGoalPoints, row.earnedPoints, row.potentialPoints,
-     row.disciplinePoints, row.totalPoints, row.goalTargetNumber, row.achievedNumber,
-     row.performancePct, row.level, JSON.stringify({ epiMinPct: thr.epiMinPct, mpiMinPct: thr.mpiMinPct })],
+    vals,
   );
 }
 
-// Active, non-admin editors — admins are hidden from this table (same exclusion
-// the EOD oversight view and the editor pickers use).
-async function activeEditors(orgId) {
-  const { rows } = await pool.query(
-    `select id, name, designation, image_url
-       from editor e
-      where e.org_id = $1 and e.active
-        and not exists (
-          select 1 from app_user u join membership m on m.user_id = u.id
-           where u.editor_id = e.id and m.role = 'admin'
+const bgSnapshot = (orgId, monthFirst, rows, thr) =>
+  batchUpsertSnapshots(orgId, monthFirst, rows, thr).catch((e) => console.error("MP snapshot upsert failed:", e.message));
+
+// One editor's goal-format rows ({goalJC, actualJC, points}) + discipline ratings
+// for the month — the minimal data computeScore needs, without pulling the whole
+// org (used by the /me self view).
+async function scoreForEditor(orgId, editorId, monthFirst) {
+  const [goalRes, ratingRes] = await Promise.all([
+    pool.query(
+      `with g as (
+          select content_format_id id, sum(jc)::int jc
+            from editor_goal where org_id=$1 and editor_id=$2 and period_month=$3 group by content_format_id
+        ), a as (
+          select content_format_id id, count(*)::int n
+            from task where org_id=$1 and editor_id=$2 and status='done' and content_format_id is not null
+              and completed_at>=$3 and completed_at<($3::date + interval '1 month') group by content_format_id
         )
-      order by name`,
-    [orgId],
-  );
-  return rows;
+        select cf.points, g.jc as goal, coalesce(a.n,0) as achieved
+          from g join task_content_format cf on cf.id = g.id
+          left join a on a.id = g.id`,
+      [orgId, editorId, monthFirst],
+    ),
+    pool.query(`select ${CRITERIA.join(", ")} from editor_discipline_points where org_id=$1 and editor_id=$2 and period_month=$3`, [orgId, editorId, monthFirst]),
+  ]);
+  const rows = goalRes.rows.map((r) => ({ goalJC: Number(r.goal), actualJC: Number(r.achieved), points: Number(r.points) }));
+  const rr = ratingRes.rows[0];
+  const ratings = rr ? Object.fromEntries(CRITERIA.map((k) => [k, rr[k] == null ? null : Number(rr[k])])) : null;
+  return computeScore(rows, ratings);
 }
 
 // ---------------------------------------------------------------------------
@@ -280,30 +326,38 @@ managementPerformanceRouter.get("/management-performance/months", requireAdmin, 
 // ---------------------------------------------------------------------------
 managementPerformanceRouter.get("/management-performance", requireAdmin, async (req, res, next) => {
   try {
-    const monthFirst = await firstOfMonth(req.query.month || thisMonthFirst());
+    const monthFirst = firstOfMonth(req.query.month || thisMonthFirst());
     const isCurrent = monthFirst.slice(0, 7) === thisMonthFirst().slice(0, 7);
-    const thr = await getThresholds(req.orgId);
-    const [editors, goalMap, actualsMap, ratingMap, storedRows] = await Promise.all([
-      activeEditors(req.orgId),
+
+    // Four simple queries in parallel on the warm pool (thresholds folded into
+    // the editors query). The stored snapshot is only needed to freeze PAST
+    // months, so the current-month hot path skips it — keeping it at 4 queries so
+    // none has to cold-connect beyond the warm pool.
+    const [edThr, goalMap, actualsMap, ratingMap, storedRows] = await Promise.all([
+      activeEditorsWithThresholds(req.orgId),
       goalRowsByEditor(req.orgId, monthFirst),
       actualsByEditorFormat(req.orgId, monthFirst),
       ratingsByEditor(req.orgId, monthFirst),
-      pool.query("select * from editor_monthly_performance where org_id = $1 and period_month = $2", [req.orgId, monthFirst]),
+      isCurrent
+        ? Promise.resolve({ rows: [] })
+        : pool.query("select * from editor_monthly_performance where org_id = $1 and period_month = $2", [req.orgId, monthFirst]),
     ]);
+    const { editors, thr } = edThr;
     const stored = new Map(storedRows.rows.map((s) => [s.editor_id, s]));
 
     const rows = [];
+    const toSnapshot = [];
     for (const e of editors) {
       if (!isCurrent && stored.has(e.id)) {
         rows.push(rowFromStored(e, stored.get(e.id)));
       } else {
-        const score = computeScore(rowsFor(e.id, goalMap, actualsMap), ratingMap.get(e.id));
-        const row = scoreToRow(e, score, thr);
-        await upsertSnapshot(req.orgId, e.id, monthFirst, row, thr);
+        const row = scoreToRow(e, computeScore(rowsFor(e.id, goalMap, actualsMap), ratingMap.get(e.id)), thr);
         rows.push(row);
+        if (!isCurrent) toSnapshot.push(row); // freeze past months only
       }
     }
     res.json({ month: monthFirst.slice(0, 7), isCurrent, thresholds: thr, rows });
+    if (toSnapshot.length) bgSnapshot(req.orgId, monthFirst, toSnapshot, thr);
   } catch (err) { next(err); }
 });
 
@@ -316,13 +370,10 @@ managementPerformanceRouter.get("/management-performance/me", async (req, res, n
     const eid = rows[0]?.editor_id;
     if (!eid) return res.json({ linked: false });
     const monthFirst = thisMonthFirst();
-    const thr = await getThresholds(req.orgId);
-    const [goalMap, actualsMap, ratingMap] = await Promise.all([
-      goalRowsByEditor(req.orgId, monthFirst),
-      actualsByEditorFormat(req.orgId, monthFirst),
-      ratingsByEditor(req.orgId, monthFirst),
+    const [thr, score] = await Promise.all([
+      getThresholds(req.orgId),
+      scoreForEditor(req.orgId, eid, monthFirst),
     ]);
-    const score = computeScore(rowsFor(eid, goalMap, actualsMap), ratingMap.get(eid));
     if (!score) {
       return res.json({ linked: true, hasGoal: false, month: monthFirst.slice(0, 7), goalTargetNumber: 0, achievedNumber: 0 });
     }
@@ -351,78 +402,83 @@ managementPerformanceRouter.get("/management-performance/:editorId", requireAdmi
     if (!erows[0]) return res.status(404).json({ error: "Editor not found." });
     const editor = erows[0];
 
-    const monthFirst = await firstOfMonth(req.query.month || thisMonthFirst());
+    const monthFirst = firstOfMonth(req.query.month || thisMonthFirst());
     const isCurrent = monthFirst.slice(0, 7) === thisMonthFirst().slice(0, 7);
-    const thr = await getThresholds(req.orgId);
+    const P = [req.orgId, editorId, monthFirst];
 
-    const { rows: storedRows } = await pool.query(
-      "select * from editor_monthly_performance where org_id = $1 and editor_id = $2 and period_month = $3",
-      [req.orgId, editorId, monthFirst],
-    );
+    // The detail in as few round-trips as the pooler allows (it serializes
+    // concurrent queries). Thresholds are folded into the breakdown query; the
+    // stored snapshot is only read for past (frozen) months.
+    const [storedRes, breakdownRes, ratingRes, historyRes, eodRes] = await Promise.all([
+      isCurrent
+        ? Promise.resolve({ rows: [] })
+        : pool.query("select * from editor_monthly_performance where org_id = $1 and editor_id = $2 and period_month = $3", P),
+      pool.query(
+        `with thr as (
+            select coalesce(max(epi_min_pct), ${DEFAULT_THRESHOLDS.epiMinPct}) epi,
+                   coalesce(max(mpi_min_pct), ${DEFAULT_THRESHOLDS.mpiMinPct}) mpi,
+                   count(*) > 0 as has
+              from performance_threshold where org_id = $1
+          ), g as (
+            select content_format_id id, sum(jc)::int jc
+              from editor_goal where org_id = $1 and editor_id = $2 and period_month = $3
+              group by content_format_id
+          ), a as (
+            select content_format_id id, count(*)::int n
+              from task where org_id = $1 and editor_id = $2 and status = 'done'
+                and content_format_id is not null
+                and completed_at >= $3 and completed_at < ($3::date + interval '1 month')
+              group by content_format_id
+          )
+          select cf.id, cf.name, cf.icon, cf.category, cf.metric_tier, cf.points,
+                 coalesce(g.jc, 0) as goal, coalesce(a.n, 0) as achieved,
+                 thr.epi::float epi, thr.mpi::float mpi, thr.has
+            from task_content_format cf
+            left join g on g.id = cf.id
+            left join a on a.id = cf.id
+            cross join thr
+           where cf.id in (select id from g union select id from a)
+           order by cf.category nulls last, cf.sort_order, cf.name`, P),
+      pool.query(`select ${CRITERIA.join(", ")} from editor_discipline_points where org_id = $1 and editor_id = $2 and period_month = $3`, P),
+      pool.query(
+        `select to_char(period_month, 'YYYY-MM') as month,
+                total_goal_points::float as "totalGoalPoints",
+                total_points::float as "totalPoints",
+                performance_percentage::float as "performancePct",
+                performance_level as level, thresholds_used as "thresholdsUsed"
+           from editor_monthly_performance
+          where org_id = $1 and editor_id = $2 and period_month <> $3
+          order by period_month desc limit 24`, P),
+      pool.query(
+        `select date::text as date, started_at as "startedAt", ended_at as "endedAt",
+                case when ended_at is not null
+                     then round(extract(epoch from (ended_at - started_at)) / 3600.0, 2)
+                     else null end as "spanHours"
+           from eod_session
+          where org_id = $1 and editor_id = $2
+            and date >= $3 and date < ($3::date + interval '1 month')
+          order by started_at desc`, P),
+    ]);
+    const breakdown = breakdownRes.rows;
+    const history = historyRes.rows;
+    const eodSessions = eodRes.rows;
+    const thr = breakdown[0]
+      ? { epiMinPct: Number(breakdown[0].epi), mpiMinPct: Number(breakdown[0].mpi), isDefault: !breakdown[0].has }
+      : await getThresholds(req.orgId);
 
     let current;
-    if (!isCurrent && storedRows[0]) {
-      current = rowFromStored(editor, storedRows[0]);
+    if (!isCurrent && storedRes.rows[0]) {
+      current = rowFromStored(editor, storedRes.rows[0]);
     } else {
-      const [goalMap, actualsMap, ratingMap] = await Promise.all([
-        goalRowsByEditor(req.orgId, monthFirst),
-        actualsByEditorFormat(req.orgId, monthFirst),
-        ratingsByEditor(req.orgId, monthFirst),
-      ]);
-      const score = computeScore(rowsFor(editorId, goalMap, actualsMap), ratingMap.get(editorId));
-      current = scoreToRow(editor, score, thr);
-      await upsertSnapshot(req.orgId, editorId, monthFirst, current, thr);
+      // Score inputs come straight from the breakdown (goal formats only) — no
+      // extra queries. Same numbers the board produces for this editor.
+      const scoreRows = breakdown.filter((b) => Number(b.goal) > 0)
+        .map((b) => ({ goalJC: Number(b.goal), actualJC: Number(b.achieved), points: Number(b.points) }));
+      const rr = ratingRes.rows[0];
+      const ratings = rr ? Object.fromEntries(CRITERIA.map((k) => [k, rr[k] == null ? null : Number(rr[k])])) : null;
+      current = scoreToRow(editor, computeScore(scoreRows, ratings), thr);
+      if (!isCurrent) bgSnapshot(req.orgId, monthFirst, [current], thr); // freeze past months only
     }
-
-    // Per content-format breakdown (goal JC vs completed) + metric tier.
-    const { rows: breakdown } = await pool.query(
-      `with g as (
-          select content_format_id id, sum(jc)::int jc
-            from editor_goal where org_id = $1 and editor_id = $2 and period_month = $3
-            group by content_format_id
-        ), a as (
-          select content_format_id id, count(*)::int n
-            from task where org_id = $1 and editor_id = $2 and status = 'done'
-              and content_format_id is not null
-              and completed_at >= $3 and completed_at < ($3::date + interval '1 month')
-            group by content_format_id
-        )
-        select cf.id, cf.name, cf.icon, cf.category, cf.metric_tier, cf.points,
-               coalesce(g.jc, 0) as goal, coalesce(a.n, 0) as achieved
-          from task_content_format cf
-          left join g on g.id = cf.id
-          left join a on a.id = cf.id
-         where cf.id in (select id from g union select id from a)
-         order by cf.category nulls last, cf.sort_order, cf.name`,
-      [req.orgId, editorId, monthFirst],
-    );
-
-    // Previous months' performance history — now Overall Performance % + Total Points.
-    const { rows: history } = await pool.query(
-      `select to_char(period_month, 'YYYY-MM') as month,
-              total_goal_points::float as "totalGoalPoints",
-              total_points::float as "totalPoints",
-              performance_percentage::float as "performancePct",
-              performance_level as level, thresholds_used as "thresholdsUsed"
-         from editor_monthly_performance
-        where org_id = $1 and editor_id = $2 and period_month <> $3
-        order by period_month desc
-        limit 24`,
-      [req.orgId, editorId, monthFirst],
-    );
-
-    // Secondary context (NOT part of the score): EOD clock-in spans for the month.
-    const { rows: eodSessions } = await pool.query(
-      `select date::text as date, started_at as "startedAt", ended_at as "endedAt",
-              case when ended_at is not null
-                   then round(extract(epoch from (ended_at - started_at)) / 3600.0, 2)
-                   else null end as "spanHours"
-         from eod_session
-        where org_id = $1 and editor_id = $2
-          and date >= $3 and date < ($3::date + interval '1 month')
-        order by started_at desc`,
-      [req.orgId, editorId, monthFirst],
-    );
 
     res.json({
       editor: { id: editor.id, name: editor.name, designation: editor.designation, imageUrl: editor.image_url },
