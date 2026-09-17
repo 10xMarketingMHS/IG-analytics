@@ -99,6 +99,19 @@ export function DashboardPage() {
     return { count, growth };
   }, [folData, activePlatform, channel, bounds.from]);
 
+  // Combined follower total across EVERY connected platform (IG + FB + YouTube)
+  // for the channel scope — the whole audience, not just the selected platform.
+  const totalFollowers = useMemo<{ count: number | null; growth: number | null }>(() => {
+    const rel = (folData?.followers ?? []).filter(
+      (f) => (channel === "all" || f.channelId === channel) && f.current != null,
+    );
+    if (!rel.length) return { count: null, growth: null };
+    const count = rel.reduce((s, f) => s + (f.current ?? 0), 0);
+    const haveBaseline = !!bounds.from && rel.every((f) => f.atFrom != null);
+    const growth = haveBaseline ? count - rel.reduce((s, f) => s + (f.atFrom ?? 0), 0) : null;
+    return { count, growth };
+  }, [folData, channel, bounds.from]);
+
   // Analytics count Published posts only (PRD FR-N8).
   const published = useMemo(
     () => (posts ?? []).filter((p) => p.status === "published"),
@@ -252,7 +265,15 @@ export function DashboardPage() {
       </div>
 
       <div className="sectitle" style={{ marginTop: 6 }}>
-        <span className="dot" />Platforms<span className="s">click a platform to see its analytics</span>
+        <span className="dot" />Platforms
+        {totalFollowers.count != null ? (
+          <span className="s">
+            👥 {compactNum(totalFollowers.count)} total followers across all platforms
+            {totalFollowers.growth != null ? ` · ${totalFollowers.growth >= 0 ? "▲ +" : "▼ -"}${compactNum(Math.abs(totalFollowers.growth))} in ${rangeLabel}` : ""}
+          </span>
+        ) : (
+          <span className="s">click a platform to see its analytics</span>
+        )}
       </div>
       {channelPlatforms.length === 0 ? (
         <div className="card pad" style={{ color: "var(--muted)", fontSize: 13 }}>
