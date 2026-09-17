@@ -167,7 +167,7 @@ integrationsRouter.get("/integrations/followers", async (req, res, next) => {
     const from = dateOrNull(req.query.from);
     const to = dateOrNull(req.query.to);
     const { rows } = await pool.query(
-      `select c.id as "connectionId", c.provider, p.key as "platformKey",
+      `select c.id as "connectionId", c.provider, c.external_id as "externalId", p.key as "platformKey",
               a.workspace_id as "channelId", c.follower_count as current,
               (select follower_count from follower_snapshot s
                 where s.connection_id = c.id and s.day <= $2 order by s.day desc limit 1) as "atFrom",
@@ -193,7 +193,7 @@ integrationsRouter.get("/integrations/followers/daily", async (req, res, next) =
   try {
     const days = Math.min(180, Math.max(1, Number(req.query.days) || 30));
     const { rows } = await pool.query(
-      `select s.connection_id as "connectionId", c.provider, p.key as "platformKey",
+      `select s.connection_id as "connectionId", c.provider, c.external_id as "externalId", p.key as "platformKey",
               a.workspace_id as "channelId", to_char(s.day, 'YYYY-MM-DD') as day, s.follower_count as "followerCount"
          from follower_snapshot s
          join platform_connection c on c.id = s.connection_id

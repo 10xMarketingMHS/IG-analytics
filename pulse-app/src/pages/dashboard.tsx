@@ -9,14 +9,22 @@ import type { Post, Platform, Account } from "@/lib/types";
 // count plus its value as of the selected range's start/end (from the snapshot
 // timeline; null when no snapshot exists yet for that date).
 type FollowerRow = {
-  connectionId: string; provider: string; platformKey: string; channelId: string;
+  connectionId: string; provider: string; externalId: string; platformKey: string; channelId: string;
   current: number | null; atFrom: number | null; atTo: number | null;
 };
 // One day's follower snapshot for an account, for the day-by-day growth view.
 type FollowerDaily = {
-  connectionId: string; provider: string; platformKey: string; channelId: string;
+  connectionId: string; provider: string; externalId: string; platformKey: string; channelId: string;
   day: string; followerCount: number;
 };
+
+// The same real account (FB Page / IG account) can be connected to more than one
+// channel; when aggregating we must count each account ONCE. external_id is the
+// account's real id, so dedupe on it before summing.
+function dedupeByAccount<T extends { externalId: string }>(rows: T[]): T[] {
+  const seen = new Set<string>();
+  return rows.filter((r) => (seen.has(r.externalId) ? false : (seen.add(r.externalId), true)));
+}
 
 const PLATFORM_ICON: Record<string, string> = {
   instagram: "📸", facebook: "👍", youtube: "▶️",
@@ -91,13 +99,13 @@ export function DashboardPage() {
   const followers = useMemo<{ count: number | null; growth: number | null }>(() => {
     const key = activePlatform?.key;
     if (!key) return { count: null, growth: null };
-    const rel = (folData?.followers ?? []).filter(
+    const rel = dedupeByAccount((folData?.followers ?? []).filter(
       (f) => f.platformKey === key && (channel === "all" || f.channelId === channel) && f.current != null,
-    );
+    ));
     if (!rel.length) return { count: null, growth: null };
     // Show the current follower total; growth is the change since the start of
     // the selected range (current − the count as of `from`). Growth only when
-    // every connection has a baseline snapshot for that date (else null).
+    // every account has a baseline snapshot for that date (else null).
     const count = rel.reduce((s, f) => s + (f.current ?? 0), 0);
     const haveBaseline = !!bounds.from && rel.every((f) => f.atFrom != null);
     const growth = haveBaseline ? count - rel.reduce((s, f) => s + (f.atFrom ?? 0), 0) : null;
@@ -107,9 +115,9 @@ export function DashboardPage() {
   // Combined follower total across EVERY connected platform (IG + FB + YouTube)
   // for the channel scope — the whole audience, not just the selected platform.
   const totalFollowers = useMemo<{ count: number | null; growth: number | null }>(() => {
-    const rel = (folData?.followers ?? []).filter(
+    const rel = dedupeByAccount((folData?.followers ?? []).filter(
       (f) => (channel === "all" || f.channelId === channel) && f.current != null,
-    );
+    ));
     if (!rel.length) return { count: null, growth: null };
     const count = rel.reduce((s, f) => s + (f.current ?? 0), 0);
     const haveBaseline = !!bounds.from && rel.every((f) => f.atFrom != null);
@@ -128,11 +136,13 @@ export function DashboardPage() {
       (r) => r.platformKey === key && (channel === "all" || r.channelId === channel),
     );
     if (!rows.length) return [];
+    // Key by account (external_id), not connection, so the same page connected to
+    // multiple channels isn't counted twice per day.
     const byConn = new Map<string, Map<string, number>>();
     const daySet = new Set<string>();
     for (const r of rows) {
-      if (!byConn.has(r.connectionId)) byConn.set(r.connectionId, new Map());
-      byConn.get(r.connectionId)!.set(r.day, r.followerCount);
+      if (!byConn.has(r.externalId)) byConn.set(r.externalId, new Map());
+      byConn.get(r.externalId)!.set(r.day, r.followerCount);
       daySet.add(r.day);
     }
     const days = [...daySet].sort();
