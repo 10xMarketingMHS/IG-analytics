@@ -80,6 +80,10 @@ export function ChannelsSection() {
   const [fbPages, setFbPages] = useState<FbPage[] | null>(null);
   const [fbPageId, setFbPageId] = useState("");
   const [loadingPages, setLoadingPages] = useState(false);
+  // Which token the loaded Pages came from — "system" (server token) or "token"
+  // (a pasted per-brand token). Keeps the two connect paths from showing each
+  // other's Page list when both are available.
+  const [fbPagesSource, setFbPagesSource] = useState<"system" | "token" | null>(null);
   const [ytChannelInput, setYtChannelInput] = useState("");
   const [ytKeyInput, setYtKeyInput] = useState("");
   const [savingKey, setSavingKey] = useState(false);
@@ -228,7 +232,7 @@ export function ChannelsSection() {
     }
   }
 
-  function closeConnect() { setConnectFor(null); setTokenInput(""); setYtChannelInput(""); setYtKeyInput(""); setReplaceKey(false); setFbPages(null); setFbPageId(""); }
+  function closeConnect() { setConnectFor(null); setTokenInput(""); setYtChannelInput(""); setYtKeyInput(""); setReplaceKey(false); setFbPages(null); setFbPageId(""); setFbPagesSource(null); }
 
   // Fetch the Facebook Pages a token can manage (server system token, or the
   // pasted one) so the user can pick which Page belongs to this channel. Does
@@ -241,7 +245,8 @@ export function ChannelsSection() {
         body: JSON.stringify({ accountId, ...(token ? { token } : {}) }),
       });
       setFbPages(r.pages);
-      setFbPageId((prev) => prev || r.pages[0]?.pageId || "");
+      setFbPageId(r.pages[0]?.pageId || "");
+      setFbPagesSource(token ? "token" : "system");
       if (!r.pages.length) toast.error("This token can't see any Facebook Pages. Check its assigned assets & permissions.");
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "Couldn't load Facebook Pages.");
@@ -666,15 +671,19 @@ export function ChannelsSection() {
             </div>
           ) : null
         ) : null;
-        const fbNeedsPage = prov === "facebook" && fbPages != null && !fbPageId;
+        // A Page must be selected only for the path whose Pages are loaded — the
+        // system button uses system-token Pages, the paste button uses the
+        // pasted token's Pages, so each gates on its own source.
+        const fbSystemNeedsPage = prov === "facebook" && fbPagesSource === "system" && fbPages != null && !fbPageId;
+        const fbTokenNeedsPage = prov === "facebook" && fbPagesSource === "token" && fbPages != null && !fbPageId;
         return (
           <Modal onClose={closeConnect} title={`Connect ${connectFor.account.channel_name} to ${label}`}>
             <div className="int-modal">
               {st?.systemToken && (
                 <>
-                  {fbPicker}
-                  <button className="btn btn-primary int-block" disabled={connecting === aid || fbNeedsPage}
-                    onClick={() => connectVia(`/integrations/${prov}/connect-system`, { accountId: aid, ...(fbPageId ? { pageId: fbPageId } : {}) })}>
+                  {fbPagesSource === "system" && fbPicker}
+                  <button className="btn btn-primary int-block" disabled={connecting === aid || fbSystemNeedsPage}
+                    onClick={() => connectVia(`/integrations/${prov}/connect-system`, { accountId: aid, ...(fbPagesSource === "system" && fbPageId ? { pageId: fbPageId } : {}) })}>
                     {connecting === aid ? "Connecting…" : prov === "facebook" ? "⚡ Connect selected Page (system token)" : "⚡ Use server system token (one click)"}
                   </button>
                 </>
@@ -693,19 +702,19 @@ export function ChannelsSection() {
                   <div className="hint" style={{ display: "block", marginTop: 6 }}>
                     Stored <b>encrypted</b>. Use a token whose assets include this channel's {prov === "instagram" ? "Page + Instagram" : "Facebook Page"}.
                   </div>
-                  {prov === "facebook" && !st?.systemToken && (
+                  {prov === "facebook" && (
                     <>
                       <button className="btn int-block" style={{ marginTop: 12 }}
                         disabled={loadingPages || tokenInput.trim().length < 20}
                         onClick={() => loadFbPages(aid, tokenInput.trim())}>
-                        {loadingPages ? "Loading Pages…" : "Load this token's Pages"}
+                        {loadingPages ? "Loading Pages…" : fbPagesSource === "token" ? "Reload this token's Pages" : "Load this token's Pages"}
                       </button>
-                      {fbPicker}
+                      {fbPagesSource === "token" && fbPicker}
                     </>
                   )}
                   <button className="btn btn-primary int-block" style={{ marginTop: 12 }}
-                    disabled={connecting === aid || tokenInput.trim().length < 20 || fbNeedsPage}
-                    onClick={() => connectVia(`/integrations/${prov}/connect-token`, { accountId: aid, token: tokenInput.trim(), ...(fbPageId ? { pageId: fbPageId } : {}) })}>
+                    disabled={connecting === aid || tokenInput.trim().length < 20 || fbTokenNeedsPage}
+                    onClick={() => connectVia(`/integrations/${prov}/connect-token`, { accountId: aid, token: tokenInput.trim(), ...(fbPagesSource === "token" && fbPageId ? { pageId: fbPageId } : {}) })}>
                     {connecting === aid ? "Connecting…" : "Connect with this token"}
                   </button>
                 </>
