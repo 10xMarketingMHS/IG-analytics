@@ -68,6 +68,15 @@ async function autoSaveFacebook(orgId, channelId, page, uid) {
     [channelId, orgId],
   )).rows[0];
   if (!fbAcc) return null;
+  // Never override an existing Facebook connection: the user may have explicitly
+  // picked a specific Page for this channel. The IG-linked Page is only a
+  // convenience for the FIRST connect — after that, respect their choice so the
+  // channel keeps showing its own Page's data.
+  const existing = (await pool.query(
+    `select external_id from platform_connection where account_id = $1 and provider = 'facebook'`,
+    [fbAcc.id],
+  )).rows[0];
+  if (existing) return existing.external_id === page.pageId ? page.pageName : null;
   // Store the Page token encrypted; fall back to the 'SYSTEM' sentinel (resolve
   // the Page token from the system token at sync time) when no encryption key.
   const tokenEnc = encryptionReady() && page.pageToken ? encryptToken(page.pageToken) : "SYSTEM";
@@ -409,10 +418,48 @@ const SyncSchema = z.object({ accountId: z.string().uuid() });
 
 // ===== Facebook (Meta Page) — its own connection, shares the Meta OAuth =====
 
-// One-click Facebook connect via the server system token. Picks the Page (by the
-// channel's handle, else the only one) and stores its own connection row.
+// Facebook connect accepts an optional explicit pageId: when several Pages are
+// visible to the token, the UI lets the user pick exactly which Page attaches to
+// this channel (the fix for a channel showing the wrong Page's data). Without it
+// we fall back to matching the channel handle, else the only Page.
+const FbConnectSchema = z.object({ accountId: z.string().uuid(), pageId: z.string().min(1).optional() });
+const FbConnectTokenSchema = z.object({ accountId: z.string().uuid(), token: z.string().min(20), pageId: z.string().min(1).optional() });
+const FbPagesSchema = z.object({ accountId: z.string().uuid(), token: z.string().min(20).optional() });
+
+// Resolve which Page to connect. An explicit pageId (from the picker) wins; else
+// match the channel handle to a Page name; else the sole Page. Returns null when
+// the choice is ambiguous (several Pages, no explicit pick) so the caller can ask.
+function resolveChosenPage(pages, handle, pageId) {
+  if (pageId) return pages.find((p) => String(p.pageId) === String(pageId)) || null;
+  const h = (handle || "").replace(/^@/, "").toLowerCase();
+  return pages.find((p) => p.pageName?.toLowerCase() === h) || (pages.length === 1 ? pages[0] : null);
+}
+
+// List the Facebook Pages a token can see — WITHOUT connecting — so the UI can
+// show a picker. Uses the pasted token when given, else the server system token.
+integrationsRouter.post("/integrations/facebook/pages", requirePermission("channels"), async (req, res, next) => {
+  const parsed = FbPagesSchema.safeParse(req.body);
+  if (!parsed.success) return res.status(400).json({ error: "accountId is required" });
+  const token = parsed.data.token || (ig.systemTokenConfigured() ? ig.systemToken() : null);
+  if (!token) return res.status(400).json({ error: "No token available — paste a token or set META_SYSTEM_TOKEN on the server." });
+  try {
+    const acct = (await pool.query(
+      `select a.id from account a join platform p on p.id = a.platform_id
+        where a.id = $1 and a.org_id = $2 and p.key = 'facebook'`,
+      [parsed.data.accountId, req.orgId],
+    )).rows[0];
+    if (!acct) return res.status(400).json({ error: "Unknown Facebook account" });
+    let pages;
+    try { pages = await fb.listPages(token); }
+    catch (err) { return res.status(502).json({ error: `Meta token error: ${err.message}` }); }
+    res.json({ pages: pages.map((p) => ({ pageId: p.pageId, pageName: p.pageName, followers: p.followers })) });
+  } catch (err) { next(err); }
+});
+
+// One-click Facebook connect via the server system token. Picks the Page (an
+// explicit pageId from the picker, else the channel's handle, else the only one).
 integrationsRouter.post("/integrations/facebook/connect-system", requirePermission("channels"), async (req, res, next) => {
-  const parsed = ConnectSchema.safeParse(req.body);
+  const parsed = FbConnectSchema.safeParse(req.body);
   if (!parsed.success) return res.status(400).json({ error: "accountId is required" });
   if (!ig.systemTokenConfigured()) {
     return res.status(400).json({ error: "No system token configured on the server (set META_SYSTEM_TOKEN)." });
@@ -430,10 +477,13 @@ integrationsRouter.post("/integrations/facebook/connect-system", requirePermissi
     catch (err) { return res.status(502).json({ error: `Meta token error: ${err.message}` }); }
     if (!pages.length) return res.status(400).json({ error: "The system token can't see any Facebook Pages. Check its assigned assets & permissions." });
 
-    const handle = (acct.handle || "").replace(/^@/, "").toLowerCase();
-    const chosen = pages.find((p) => p.pageName?.toLowerCase() === handle) || (pages.length === 1 ? pages[0] : null);
+    const chosen = resolveChosenPage(pages, acct.handle, parsed.data.pageId);
     if (!chosen) {
-      return res.status(409).json({ error: `The token sees ${pages.length} Pages (${pages.map((p) => p.pageName).join(", ")}). Set this channel's handle to match a Page, then retry.` });
+      return res.status(409).json({
+        error: `The token sees ${pages.length} Pages. Choose which one to connect.`,
+        needsPageChoice: true,
+        pages: pages.map((p) => ({ pageId: p.pageId, pageName: p.pageName, followers: p.followers })),
+      });
     }
     const tokenEnc = encryptionReady() && chosen.pageToken ? encryptToken(chosen.pageToken) : "SYSTEM";
     await upsertConnection({
@@ -451,7 +501,7 @@ integrationsRouter.post("/integrations/facebook/connect-system", requirePermissi
 
 // Per-account Facebook connect via a pasted token — stores the resolved Page token.
 integrationsRouter.post("/integrations/facebook/connect-token", requirePermission("channels"), async (req, res, next) => {
-  const parsed = ConnectTokenSchema.safeParse(req.body);
+  const parsed = FbConnectTokenSchema.safeParse(req.body);
   if (!parsed.success) return res.status(400).json({ error: "accountId and a token are required" });
   if (!encryptionReady()) {
     return res.status(400).json({ error: "Server encryption key isn't set (APP_ENCRYPTION_KEY) — can't store a token securely." });
@@ -469,10 +519,13 @@ integrationsRouter.post("/integrations/facebook/connect-token", requirePermissio
     catch (err) { return res.status(502).json({ error: `Meta token error: ${err.message}` }); }
     if (!pages.length) return res.status(400).json({ error: "This token can't see any Facebook Pages. Check its assigned assets & permissions." });
 
-    const handle = (acct.handle || "").replace(/^@/, "").toLowerCase();
-    const chosen = pages.find((p) => p.pageName?.toLowerCase() === handle) || (pages.length === 1 ? pages[0] : null);
+    const chosen = resolveChosenPage(pages, acct.handle, parsed.data.pageId);
     if (!chosen) {
-      return res.status(409).json({ error: `This token sees ${pages.length} Pages (${pages.map((p) => p.pageName).join(", ")}). Set this channel's handle to match a Page, then retry.` });
+      return res.status(409).json({
+        error: `This token sees ${pages.length} Pages. Choose which one to connect.`,
+        needsPageChoice: true,
+        pages: pages.map((p) => ({ pageId: p.pageId, pageName: p.pageName, followers: p.followers })),
+      });
     }
     await upsertConnection({
       orgId: req.orgId, accountId: acct.id, provider: "facebook",

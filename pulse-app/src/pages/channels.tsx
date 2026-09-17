@@ -73,6 +73,13 @@ export function ChannelsSection() {
   type ConnectTarget = { account: Account; platform: "instagram" | "facebook" | "youtube" };
   const [connectFor, setConnectFor] = useState<ConnectTarget | null>(null);
   const [tokenInput, setTokenInput] = useState("");
+  // Facebook Page picker: the token can manage several Pages, so the user chooses
+  // exactly which one attaches to this channel (fixes a channel showing the wrong
+  // Page's data). Pages are fetched without connecting; fbPageId is the selection.
+  type FbPage = { pageId: string; pageName: string; followers: number | null };
+  const [fbPages, setFbPages] = useState<FbPage[] | null>(null);
+  const [fbPageId, setFbPageId] = useState("");
+  const [loadingPages, setLoadingPages] = useState(false);
   const [ytChannelInput, setYtChannelInput] = useState("");
   const [ytKeyInput, setYtKeyInput] = useState("");
   const [savingKey, setSavingKey] = useState(false);
@@ -221,7 +228,36 @@ export function ChannelsSection() {
     }
   }
 
-  function closeConnect() { setConnectFor(null); setTokenInput(""); setYtChannelInput(""); setYtKeyInput(""); setReplaceKey(false); }
+  function closeConnect() { setConnectFor(null); setTokenInput(""); setYtChannelInput(""); setYtKeyInput(""); setReplaceKey(false); setFbPages(null); setFbPageId(""); }
+
+  // Fetch the Facebook Pages a token can manage (server system token, or the
+  // pasted one) so the user can pick which Page belongs to this channel. Does
+  // NOT connect anything — selection happens via the Connect buttons below.
+  async function loadFbPages(accountId: string, token?: string) {
+    setLoadingPages(true);
+    try {
+      const r = await api<{ pages: FbPage[] }>("/integrations/facebook/pages", {
+        method: "POST",
+        body: JSON.stringify({ accountId, ...(token ? { token } : {}) }),
+      });
+      setFbPages(r.pages);
+      setFbPageId((prev) => prev || r.pages[0]?.pageId || "");
+      if (!r.pages.length) toast.error("This token can't see any Facebook Pages. Check its assigned assets & permissions.");
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Couldn't load Facebook Pages.");
+    } finally {
+      setLoadingPages(false);
+    }
+  }
+
+  // When the Facebook connect modal opens and a system token exists, load its
+  // Pages straight away so the picker is ready.
+  useEffect(() => {
+    if (connectFor?.platform === "facebook" && fbStatus?.systemToken && fbPages === null && !loadingPages) {
+      loadFbPages(connectFor.account.id);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [connectFor, fbStatus?.systemToken]);
 
   // Admin saves the org's YouTube API key (validated server-side before storing).
   async function saveYoutubeKey() {
@@ -605,14 +641,43 @@ export function ChannelsSection() {
         const st = prov === "instagram" ? igStatus : fbStatus;
         const label = prov === "instagram" ? "Instagram" : "Facebook";
         const aid = connectFor.account.id;
+        // Facebook Page picker — only shown for Facebook. Lets the user choose
+        // exactly which Page attaches, so the channel shows its own Page's data.
+        const fbPicker = prov === "facebook" ? (
+          loadingPages ? (
+            <div className="hint" style={{ display: "block", margin: "8px 0" }}>Loading Facebook Pages…</div>
+          ) : fbPages && fbPages.length > 0 ? (
+            <div style={{ margin: "10px 0" }}>
+              <label className="f">Which Facebook Page?</label>
+              <select className="t" value={fbPageId} onChange={(e) => setFbPageId(e.target.value)}>
+                {fbPages.map((p) => (
+                  <option key={p.pageId} value={p.pageId}>
+                    {p.pageName}{p.followers != null ? ` — ${compactNum(p.followers)} followers` : ""}
+                  </option>
+                ))}
+              </select>
+              <div className="hint" style={{ display: "block", marginTop: 6 }}>
+                Pick the Page that belongs to <b>{connectFor.account.channel_name}</b>. Only Pages this token can access are listed — if the right one is missing, add it to the token's assets in Meta Business settings.
+              </div>
+            </div>
+          ) : fbPages && fbPages.length === 0 ? (
+            <div className="hint" style={{ display: "block", margin: "8px 0" }}>
+              This token can’t see any Facebook Pages. Check its assigned assets & permissions in Meta Business settings.
+            </div>
+          ) : null
+        ) : null;
+        const fbNeedsPage = prov === "facebook" && fbPages != null && !fbPageId;
         return (
           <Modal onClose={closeConnect} title={`Connect ${connectFor.account.channel_name} to ${label}`}>
             <div className="int-modal">
               {st?.systemToken && (
-                <button className="btn btn-primary int-block" disabled={connecting === aid}
-                  onClick={() => connectVia(`/integrations/${prov}/connect-system`, { accountId: aid })}>
-                  {connecting === aid ? "Connecting…" : "⚡ Use server system token (one click)"}
-                </button>
+                <>
+                  {fbPicker}
+                  <button className="btn btn-primary int-block" disabled={connecting === aid || fbNeedsPage}
+                    onClick={() => connectVia(`/integrations/${prov}/connect-system`, { accountId: aid, ...(fbPageId ? { pageId: fbPageId } : {}) })}>
+                    {connecting === aid ? "Connecting…" : prov === "facebook" ? "⚡ Connect selected Page (system token)" : "⚡ Use server system token (one click)"}
+                  </button>
+                </>
               )}
               {st?.pasteToken ? (
                 <>
@@ -627,11 +692,20 @@ export function ChannelsSection() {
                   />
                   <div className="hint" style={{ display: "block", marginTop: 6 }}>
                     Stored <b>encrypted</b>. Use a token whose assets include this channel's {prov === "instagram" ? "Page + Instagram" : "Facebook Page"}.
-                    If it sees several, set this channel's handle to match first.
                   </div>
+                  {prov === "facebook" && !st?.systemToken && (
+                    <>
+                      <button className="btn int-block" style={{ marginTop: 12 }}
+                        disabled={loadingPages || tokenInput.trim().length < 20}
+                        onClick={() => loadFbPages(aid, tokenInput.trim())}>
+                        {loadingPages ? "Loading Pages…" : "Load this token's Pages"}
+                      </button>
+                      {fbPicker}
+                    </>
+                  )}
                   <button className="btn btn-primary int-block" style={{ marginTop: 12 }}
-                    disabled={connecting === aid || tokenInput.trim().length < 20}
-                    onClick={() => connectVia(`/integrations/${prov}/connect-token`, { accountId: aid, token: tokenInput.trim() })}>
+                    disabled={connecting === aid || tokenInput.trim().length < 20 || fbNeedsPage}
+                    onClick={() => connectVia(`/integrations/${prov}/connect-token`, { accountId: aid, token: tokenInput.trim(), ...(fbPageId ? { pageId: fbPageId } : {}) })}>
                     {connecting === aid ? "Connecting…" : "Connect with this token"}
                   </button>
                 </>
@@ -647,7 +721,7 @@ export function ChannelsSection() {
               )}
               {prov === "facebook" && (
                 <div className="hint" style={{ display: "block", marginTop: 10 }}>
-                  Tip: connecting <b>Instagram</b> via Meta also connects its linked Facebook Page automatically.
+                  Wrong Page showing on the dashboard? Pick the correct one above and reconnect — it replaces the current Page for this channel.
                 </div>
               )}
             </div>
