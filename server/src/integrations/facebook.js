@@ -48,22 +48,46 @@ export async function getPageFollowers(pageId, token) {
   }
 }
 
+// Facebook error #1 — "Please reduce the amount of data you're asking for, then
+// retry your request" — fires when a request is too complex for the /posts edge.
+function isReduceDataError(err) {
+  return err?.code === 1 || /reduce the amount of data/i.test(err?.message || "");
+}
+
 // This Page's published posts keyed by a normalized permalink, so a pasted Link
 // can be matched to a real post id (same approach as the Instagram sync).
+//
+// The /{page}/posts edge rejects large pages with error #1, so we start at a
+// modest limit (25) and, if Facebook still complains, halve the page size and
+// retry that page before giving up. More, smaller pages fetch the same posts
+// without tripping the complexity cap. `guard` bounds total pages (25×60 posts).
 export async function listPostsByPermalink(pageId, token) {
   const map = new Map();
   let after = null;
   let guard = 0;
+  let limit = 25;
   do {
-    const params = { fields: "id,permalink_url,created_time", access_token: token, limit: "100" };
+    const params = { fields: "id,permalink_url,created_time", access_token: token, limit: String(limit) };
     if (after) params.after = after;
-    const json = await graphGet(`${pageId}/posts`, params);
+    let json = null;
+    while (json === null) {
+      try {
+        json = await graphGet(`${pageId}/posts`, params);
+      } catch (err) {
+        if (isReduceDataError(err) && limit > 5) {
+          limit = Math.max(5, Math.floor(limit / 2));
+          params.limit = String(limit);
+        } else {
+          throw err;
+        }
+      }
+    }
     for (const p of json.data ?? []) {
       if (p.permalink_url) map.set(normalizePermalink(p.permalink_url), p);
     }
     after = json.paging?.cursors?.after && json.paging?.next ? json.paging.cursors.after : null;
     guard += 1;
-  } while (after && guard < 20);
+  } while (after && guard < 60);
   return map;
 }
 
