@@ -92,25 +92,58 @@ export async function listIgAccounts(userToken) {
   return out;
 }
 
+// Current follower count for an IG business account (node field, like the FB
+// Page followers helper — not an insights metric, so unaffected by the Insights
+// deprecations). Best-effort: returns null on any error.
+export async function getIgFollowers(igId, token) {
+  try {
+    const json = await graphGet(igId, { fields: "followers_count", access_token: token });
+    return json.followers_count ?? null;
+  } catch {
+    return null;
+  }
+}
+
+// Meta error #1 — "Please reduce the amount of data you're asking for" — fires
+// when an edge request is too complex; retry with a smaller page size.
+function isReduceDataError(err) {
+  return err?.code === 1 || /reduce the amount of data/i.test(err?.message || "");
+}
+
 // All media for an IG account (paginated), newest first, keyed by permalink.
+// Starts at a modest page size and halves it on a "reduce the amount of data"
+// error before giving up, so a large account doesn't fail the whole sync.
 export async function listMediaByPermalink(igId, token) {
   const map = new Map(); // normalized permalink -> media summary
   let after = null;
   let guard = 0;
+  let limit = 25;
   do {
     const params = {
       fields: "id,permalink,media_type,media_product_type,like_count,comments_count,timestamp",
       access_token: token,
-      limit: "100",
+      limit: String(limit),
     };
     if (after) params.after = after;
-    const json = await graphGet(`${igId}/media`, params);
+    let json = null;
+    while (json === null) {
+      try {
+        json = await graphGet(`${igId}/media`, params);
+      } catch (err) {
+        if (isReduceDataError(err) && limit > 5) {
+          limit = Math.max(5, Math.floor(limit / 2));
+          params.limit = String(limit);
+        } else {
+          throw err;
+        }
+      }
+    }
     for (const m of json.data ?? []) {
       if (m.permalink) map.set(normalizePermalink(m.permalink), m);
     }
     after = json.paging?.cursors?.after && json.paging?.next ? json.paging.cursors.after : null;
     guard += 1;
-  } while (after && guard < 20); // cap at ~2000 media
+  } while (after && guard < 80); // cap at ~2000 media
   return map;
 }
 

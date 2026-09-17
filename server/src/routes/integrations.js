@@ -185,6 +185,30 @@ integrationsRouter.get("/integrations/followers", async (req, res, next) => {
   }
 });
 
+// Day-by-day follower timeline for the dashboard's growth view: one row per
+// (connection, day) from follower_snapshot over the last `days` (default 30, max
+// 180). The client groups by scope and computes each day's gain/loss vs the
+// previous day.
+integrationsRouter.get("/integrations/followers/daily", async (req, res, next) => {
+  try {
+    const days = Math.min(180, Math.max(1, Number(req.query.days) || 30));
+    const { rows } = await pool.query(
+      `select s.connection_id as "connectionId", c.provider, p.key as "platformKey",
+              a.workspace_id as "channelId", to_char(s.day, 'YYYY-MM-DD') as day, s.follower_count as "followerCount"
+         from follower_snapshot s
+         join platform_connection c on c.id = s.connection_id
+         join account a on a.id = c.account_id
+         join platform p on p.id = a.platform_id
+        where s.org_id = $1 and s.day >= (now() at time zone 'Asia/Kolkata')::date - $2::int
+        order by s.day`,
+      [req.orgId, days],
+    );
+    res.json({ series: rows });
+  } catch (err) {
+    next(err);
+  }
+});
+
 // Step 1: start OAuth for a specific Pulse account (channel × Instagram).
 integrationsRouter.get("/integrations/instagram/connect", requirePermission("channels"), async (req, res, next) => {
   try {
@@ -523,6 +547,7 @@ integrationsRouter.post("/integrations/facebook/sync", requireEditor, async (req
       "update platform_connection set last_synced_at = now(), last_sync_status = $2, follower_count = coalesce($3, follower_count) where id = $1",
       [conn.id, status, followers],
     );
+    captureFollowerSnapshots().catch(() => {}); // record today's count into the timeline
     await logActivity({
       orgId: req.orgId, actorId: req.user.sub, verb: "published",
       entityType: "channel", entityId: conn.workspace_id, channelId: conn.workspace_id,
@@ -661,8 +686,15 @@ integrationsRouter.post("/integrations/instagram/sync", requireEditor, async (re
       updated += 1;
     }
 
+    // Refresh the account's follower count too (node field, not an insight), so
+    // the dashboard total and the daily follower timeline stay current.
+    const followers = await ig.getIgFollowers(conn.external_id, token);
     const status = `Synced ${updated}/${posts.length} post${posts.length === 1 ? "" : "s"}`;
-    await pool.query("update platform_connection set last_synced_at = now(), last_sync_status = $2 where id = $1", [conn.id, status]);
+    await pool.query(
+      "update platform_connection set last_synced_at = now(), last_sync_status = $2, follower_count = coalesce($3, follower_count) where id = $1",
+      [conn.id, status, followers],
+    );
+    captureFollowerSnapshots().catch(() => {}); // record today's count into the timeline
     await logActivity({
       orgId: req.orgId, actorId: req.user.sub, verb: "published",
       entityType: "channel", entityId: conn.workspace_id, channelId: conn.workspace_id,

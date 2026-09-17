@@ -1802,3 +1802,9 @@ img.lb-ava{object-fit:cover}
 @media(max-width:720px){.mp-ptsgrid{grid-template-columns:repeat(2,1fr)}.mp-pt.big{grid-column:span 2}}
 
 @media(max-width:640px){.mp-ga-meta{margin-left:0;width:100%}}
+
+/* Day-by-day follower growth table */
+.fol-daily{font-size:13px}
+.fol-up{color:#16a34a;font-weight:700}
+.fol-down{color:var(--rose);font-weight:700}
+.fol-flat{color:var(--muted)}

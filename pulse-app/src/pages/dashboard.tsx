@@ -12,6 +12,11 @@ type FollowerRow = {
   connectionId: string; provider: string; platformKey: string; channelId: string;
   current: number | null; atFrom: number | null; atTo: number | null;
 };
+// One day's follower snapshot for an account, for the day-by-day growth view.
+type FollowerDaily = {
+  connectionId: string; provider: string; platformKey: string; channelId: string;
+  day: string; followerCount: number;
+};
 
 const PLATFORM_ICON: Record<string, string> = {
   instagram: "📸", facebook: "👍", youtube: "▶️",
@@ -111,6 +116,45 @@ export function DashboardPage() {
     const growth = haveBaseline ? count - rel.reduce((s, f) => s + (f.atFrom ?? 0), 0) : null;
     return { count, growth };
   }, [folData, channel, bounds.from]);
+
+  // Day-by-day follower growth for the selected platform + channel scope. For
+  // each day we carry each account's latest known count forward, sum across the
+  // scope, then take the gain/loss vs the previous day. Most recent first.
+  const { data: dailyData } = useResource<{ series: FollowerDaily[] }>("/integrations/followers/daily?days=30");
+  const dailyGrowth = useMemo<{ day: string; total: number; delta: number | null }[]>(() => {
+    const key = activePlatform?.key;
+    if (!key) return [];
+    const rows = (dailyData?.series ?? []).filter(
+      (r) => r.platformKey === key && (channel === "all" || r.channelId === channel),
+    );
+    if (!rows.length) return [];
+    const byConn = new Map<string, Map<string, number>>();
+    const daySet = new Set<string>();
+    for (const r of rows) {
+      if (!byConn.has(r.connectionId)) byConn.set(r.connectionId, new Map());
+      byConn.get(r.connectionId)!.set(r.day, r.followerCount);
+      daySet.add(r.day);
+    }
+    const days = [...daySet].sort();
+    // Per day, sum each account's latest count on-or-before that day (accounts
+    // with no snapshot yet don't contribute).
+    const totals = days.map((day) => {
+      let sum = 0, any = false;
+      for (const m of byConn.values()) {
+        let best: number | null = null, bestDay = "";
+        for (const [d, val] of m) if (d <= day && d > bestDay) { best = val; bestDay = d; }
+        if (best != null) { sum += best; any = true; }
+      }
+      return { day, total: any ? sum : null };
+    });
+    const out: { day: string; total: number; delta: number | null }[] = [];
+    for (let i = 0; i < totals.length; i++) {
+      if (totals[i].total == null) continue;
+      const prev = i > 0 ? totals[i - 1].total : null;
+      out.push({ day: totals[i].day, total: totals[i].total as number, delta: prev != null ? (totals[i].total as number) - prev : null });
+    }
+    return out.reverse(); // most recent first
+  }, [dailyData, activePlatform, channel]);
 
   // Analytics count Published posts only (PRD FR-N8).
   const published = useMemo(
@@ -314,6 +358,34 @@ export function DashboardPage() {
           </div>
         ))}
       </div>
+
+      {dailyGrowth.length > 0 && (
+        <>
+          <div className="sectitle">
+            <span className="dot" />Follower growth · day by day
+            <span className="s">{activePlatform ? activePlatform.name : ""} · followers gained / lost each day vs the day before</span>
+          </div>
+          <div className="card pad" style={{ overflowX: "auto" }}>
+            <table className="tbl fol-daily">
+              <thead><tr><th>Day</th><th className="num">Followers</th><th className="num">Change</th></tr></thead>
+              <tbody>
+                {dailyGrowth.map((d) => (
+                  <tr key={d.day}>
+                    <td>{new Date(d.day + "T00:00:00").toLocaleDateString(undefined, { weekday: "short", month: "short", day: "numeric" })}</td>
+                    <td className="num">{compactNum(d.total)}</td>
+                    <td className="num">
+                      {d.delta == null ? <span className="fol-flat">—</span>
+                        : d.delta > 0 ? <span className="fol-up">▲ +{d.delta.toLocaleString()}</span>
+                          : d.delta < 0 ? <span className="fol-down">▼ {d.delta.toLocaleString()}</span>
+                            : <span className="fol-flat">0</span>}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </>
+      )}
 
       <div className="sectitle"><span className="dot" />Views by format<span className="s">click a card for the full breakdown</span></div>
       <div className="grid g2">
