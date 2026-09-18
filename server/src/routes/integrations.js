@@ -581,19 +581,35 @@ integrationsRouter.post("/integrations/facebook/sync", requireEditor, async (req
       return res.status(502).json({ error: `Facebook API error: ${err.message}` });
     }
 
-    let updated = 0, matched = 0;
+    // Match posts to fetched Page posts, then pull all their engagement counts
+    // in batched Graph calls (<=50 posts per HTTP request) instead of one each.
+    const pairs = [];
     for (const post of posts) {
       const m = map.get(fb.normalizePermalink(post.permalink));
-      if (!m) continue;
-      matched += 1;
-      const met = await fb.getPostMetrics(m.id, pageToken);
-      await pool.query(
-        `update post set likes = $2, comments = $3, shares = $4, external_id = $5,
-                last_synced_at = now(), metrics_updated_at = now() where id = $1`,
-        [post.id, met.likes, met.comments, met.shares, m.id],
-      );
-      updated += 1;
+      if (m) pairs.push({ postId: post.id, externalId: m.id });
     }
+    const { metrics } = await fb.getPostMetricsBatch(pairs.map((p) => p.externalId), pageToken);
+    const matched = pairs.length;
+
+    // One bulk UPDATE for all matched posts (fewer pooled-connection round trips).
+    if (pairs.length) {
+      const ids = [], likes = [], comments = [], shares = [], extIds = [];
+      for (const { postId, externalId } of pairs) {
+        const met = metrics.get(externalId) || {};
+        ids.push(postId); likes.push(met.likes ?? 0); comments.push(met.comments ?? 0);
+        shares.push(met.shares ?? 0); extIds.push(externalId);
+      }
+      await pool.query(
+        `update post p set likes=d.likes, comments=d.comments, shares=d.shares,
+                external_id=d.external_id, last_synced_at=now(), metrics_updated_at=now()
+           from (select unnest($1::uuid[]) as id, unnest($2::bigint[]) as likes,
+                        unnest($3::bigint[]) as comments, unnest($4::bigint[]) as shares,
+                        unnest($5::text[]) as external_id) d
+          where p.id = d.id`,
+        [ids, likes, comments, shares, extIds],
+      );
+    }
+    const updated = matched;
     const followers = await fb.getPageFollowers(conn.external_id, pageToken);
     const status = `Synced ${updated}/${posts.length} post${posts.length === 1 ? "" : "s"}`;
     await pool.query(
@@ -712,32 +728,51 @@ integrationsRouter.post("/integrations/instagram/sync", requireEditor, async (re
       return res.status(502).json({ error: `Instagram API error: ${err.message}` });
     }
 
-    let updated = 0;
-    let matched = 0;
+    // Match posts to fetched media, then pull all their insights in batched
+    // Graph calls (<=50 media per HTTP request) instead of one call per post.
+    const pairs = [];
     for (const post of posts) {
       const media = mediaMap.get(ig.normalizePermalink(post.permalink));
-      if (!media) continue;
-      matched += 1;
-      const m = await ig.getMediaMetrics(media, token);
-      // Copy the same numbers onto any collab mirror(s) of this post so the
-      // collaborating channel can display them (they never count toward
-      // performance aggregates — the mirror flag excludes them client-side).
-      if (post.collab_group_id) {
+      if (media) pairs.push({ post, media });
+    }
+    const { metrics } = await ig.getMediaMetricsBatch(pairs.map((p) => p.media), token);
+    const matched = pairs.length;
+
+    // Write all matched posts in ONE statement — far fewer pooled-connection
+    // round trips than an UPDATE per post (the pooler cap is the constraint here).
+    if (pairs.length) {
+      const ids = [], views = [], reach = [], likes = [], comments = [], shares = [], saves = [], extIds = [];
+      for (const { post, media } of pairs) {
+        const m = metrics.get(media.id) || {};
+        ids.push(post.id); views.push(m.views ?? 0); reach.push(m.reach ?? 0);
+        likes.push(m.likes ?? 0); comments.push(m.comments ?? 0); shares.push(m.shares ?? 0);
+        saves.push(m.saves ?? 0); extIds.push(media.id);
+      }
+      await pool.query(
+        `update post p set views=d.views, reach=d.reach, likes=d.likes, comments=d.comments,
+                shares=d.shares, saves=d.saves, external_id=d.external_id,
+                last_synced_at=now(), metrics_updated_at=now()
+           from (select unnest($1::uuid[]) as id, unnest($2::bigint[]) as views,
+                        unnest($3::bigint[]) as reach, unnest($4::bigint[]) as likes,
+                        unnest($5::bigint[]) as comments, unnest($6::bigint[]) as shares,
+                        unnest($7::bigint[]) as saves, unnest($8::text[]) as external_id) d
+          where p.id = d.id`,
+        [ids, views, reach, likes, comments, shares, saves, extIds],
+      );
+      // Collab mirrors live on the collaborating channel's account — copy each
+      // collab post's numbers onto its mirror row(s) (uncommon, so left per-post).
+      for (const { post, media } of pairs) {
+        if (!post.collab_group_id) continue;
+        const m = metrics.get(media.id) || {};
         await pool.query(
           `update post set views=$2, reach=$3, likes=$4, comments=$5, shares=$6, saves=$7,
                   last_synced_at=now(), metrics_updated_at=now()
             where collab_group_id=$1 and is_collab_mirror = true and deleted_at is null`,
-          [post.collab_group_id, m.views, m.reach, m.likes, m.comments, m.shares, m.saves],
+          [post.collab_group_id, m.views ?? 0, m.reach ?? 0, m.likes ?? 0, m.comments ?? 0, m.shares ?? 0, m.saves ?? 0],
         );
       }
-      await pool.query(
-        `update post set views=$2, reach=$3, likes=$4, comments=$5, shares=$6, saves=$7,
-                external_id=$8, last_synced_at=now(), metrics_updated_at=now()
-          where id=$1`,
-        [post.id, m.views, m.reach, m.likes, m.comments, m.shares, m.saves, media.id],
-      );
-      updated += 1;
     }
+    const updated = matched;
 
     // Refresh the account's follower count too (node field, not an insight), so
     // the dashboard total and the daily follower timeline stay current.

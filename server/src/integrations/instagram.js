@@ -1,4 +1,5 @@
 import { config } from "../config.js";
+import { parseAppUsage } from "./meta-usage.js";
 
 // Thin Instagram Graph API client (Meta). Uses global fetch (Node 18+).
 // Docs: https://developers.facebook.com/docs/instagram-api
@@ -173,6 +174,73 @@ export async function getMediaMetrics(media, token) {
     }
   }
   return out; // insights unavailable — likes/comments from the media node still returned
+}
+
+// Meta Batch API: run up to 50 subrequests in ONE HTTP round trip. The overall
+// call is 200 even when individual subrequests fail — each subresponse carries
+// its own `code`/`body` — so only a whole-batch failure (bad token, etc.) throws.
+// Returns the per-subrequest results in request order plus the app-usage %.
+async function graphBatch(requests, token) {
+  const params = new URLSearchParams({
+    access_token: token,
+    include_headers: "false",
+    batch: JSON.stringify(requests),
+  });
+  const res = await fetch(`${API}/`, { method: "POST", body: params });
+  const usage = parseAppUsage(res.headers.get("x-app-usage"));
+  const json = await res.json().catch(() => null);
+  if (!res.ok || (json && json.error)) {
+    const err = new Error(json?.error?.message || `Graph batch error (${res.status})`);
+    err.code = json?.error?.code;
+    err.status = res.status;
+    err.usage = usage;
+    throw err;
+  }
+  return { responses: Array.isArray(json) ? json : [], usage };
+}
+
+// Batched getMediaMetrics for many media at once — one HTTP call per 50 media
+// instead of one per media. Mirrors the per-item metric-set fallback: try the
+// richest set for all pending media, then re-request only those that rejected it
+// with the next, smaller set. Returns { metrics: Map(mediaId -> {...}), usage }.
+export async function getMediaMetricsBatch(mediaList, token) {
+  const out = new Map();
+  for (const m of mediaList) {
+    out.set(m.id, { views: 0, reach: 0, likes: m.like_count ?? 0, comments: m.comments_count ?? 0, shares: 0, saves: 0 });
+  }
+  let usage = null;
+  let pending = mediaList.map((m) => m.id);
+  for (const metrics of INSIGHT_ATTEMPTS) {
+    if (!pending.length) break;
+    const stillPending = [];
+    for (let i = 0; i < pending.length; i += 50) {
+      const chunk = pending.slice(i, i + 50);
+      const requests = chunk.map((id) => ({
+        method: "GET",
+        relative_url: `${id}/insights?metric=${encodeURIComponent(metrics.join(","))}`,
+      }));
+      const { responses, usage: u } = await graphBatch(requests, token);
+      if (u != null) usage = u;
+      chunk.forEach((id, idx) => {
+        const r = responses[idx];
+        if (r && r.code === 200) {
+          let body = null;
+          try { body = JSON.parse(r.body); } catch { /* leave defaults */ }
+          const v = {};
+          for (const d of body?.data ?? []) v[d.name] = d.values?.[0]?.value ?? 0;
+          const cur = out.get(id);
+          cur.reach = v.reach ?? cur.reach;
+          cur.saves = v.saved ?? cur.saves;
+          cur.shares = v.shares ?? cur.shares;
+          cur.views = v.views ?? v.impressions ?? cur.views;
+        } else {
+          stillPending.push(id); // rejected this metric set — try the next, smaller one
+        }
+      });
+    }
+    pending = stillPending;
+  }
+  return { metrics: out, usage };
 }
 
 // Instagram permalinks come as /p/<code>/ or /reel/<code>/. Normalize to the

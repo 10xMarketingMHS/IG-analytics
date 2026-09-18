@@ -1,4 +1,5 @@
 import { config } from "../config.js";
+import { parseAppUsage } from "./meta-usage.js";
 
 // Facebook Page client (Meta Graph API). Shares the Meta app + OAuth with the
 // Instagram integration (see instagram.js) — same META_* config, same token —
@@ -106,6 +107,60 @@ export async function getPostMetrics(postId, token) {
     comments: json.comments?.summary?.total_count ?? 0,
     shares: json.shares?.count ?? 0,
   };
+}
+
+// Meta Batch API: up to 50 subrequests in ONE HTTP round trip. The overall call
+// is 200 even when subrequests fail (each carries its own code/body), so only a
+// whole-batch failure throws. Returns per-subrequest results + the app-usage %.
+async function graphBatch(requests, token) {
+  const params = new URLSearchParams({
+    access_token: token,
+    include_headers: "false",
+    batch: JSON.stringify(requests),
+  });
+  const res = await fetch(`${API}/`, { method: "POST", body: params });
+  const usage = parseAppUsage(res.headers.get("x-app-usage"));
+  const json = await res.json().catch(() => null);
+  if (!res.ok || (json && json.error)) {
+    const err = new Error(json?.error?.message || `Graph batch error (${res.status})`);
+    err.code = json?.error?.code;
+    err.status = res.status;
+    err.usage = usage;
+    throw err;
+  }
+  return { responses: Array.isArray(json) ? json : [], usage };
+}
+
+// Batched getPostMetrics for many posts at once — one HTTP call per 50 posts
+// instead of one per post. Returns { metrics: Map(postId -> {likes,comments,
+// shares}), usage }. A post whose subrequest fails keeps its zero defaults.
+export async function getPostMetricsBatch(postIds, token) {
+  const out = new Map();
+  for (const id of postIds) out.set(id, { likes: 0, comments: 0, shares: 0 });
+  let usage = null;
+  const fields = "reactions.summary(total_count).limit(0),comments.summary(total_count).limit(0),shares";
+  for (let i = 0; i < postIds.length; i += 50) {
+    const chunk = postIds.slice(i, i + 50);
+    const requests = chunk.map((id) => ({
+      method: "GET",
+      relative_url: `${id}?fields=${encodeURIComponent(fields)}`,
+    }));
+    const { responses, usage: u } = await graphBatch(requests, token);
+    if (u != null) usage = u;
+    chunk.forEach((id, idx) => {
+      const r = responses[idx];
+      if (r && r.code === 200) {
+        let body = null;
+        try { body = JSON.parse(r.body); } catch { /* keep defaults */ }
+        out.set(id, {
+          likes: body?.reactions?.summary?.total_count ?? 0,
+          comments: body?.comments?.summary?.total_count ?? 0,
+          shares: body?.shares?.count ?? 0,
+        });
+      }
+    });
+  }
+  return { metrics: out, usage };
 }
 
 // Facebook post permalinks take several forms (/{page}/posts/{id},
