@@ -150,6 +150,7 @@ integrationsRouter.get("/integrations/connections", async (req, res, next) => {
     const { rows } = await pool.query(
       `select c.id, c.provider, c.external_id, c.external_name, c.token_expires_at,
               c.connected_at, c.last_synced_at, c.last_sync_status, c.follower_count,
+              c.sync_in_progress, c.consecutive_failures, c.last_error_type,
               c.account_id, a.workspace_id as channel_id, w.name as channel_name,
               p.key as platform_key, p.name as platform_name
          from platform_connection c
@@ -164,6 +165,43 @@ integrationsRouter.get("/integrations/connections", async (req, res, next) => {
   } catch (err) {
     next(err);
   }
+});
+
+// Auto-sync org settings: the kill switch + poll interval, both DB-backed so an
+// admin can flip them WITHOUT a deploy (this app's deploy pipeline is fragile —
+// a runaway must be stoppable in seconds). Readable by anyone (the auto-poller
+// needs the interval + enabled flag); only channel-admins can change them.
+integrationsRouter.get("/integrations/auto-sync", async (req, res, next) => {
+  try {
+    const row = (await pool.query(
+      "select auto_sync_enabled, auto_sync_interval_minutes from org where id = $1",
+      [req.orgId],
+    )).rows[0] || {};
+    res.json({
+      enabled: row.auto_sync_enabled ?? false,
+      intervalMinutes: row.auto_sync_interval_minutes ?? 30,
+    });
+  } catch (err) { next(err); }
+});
+
+const AutoSyncSchema = z.object({
+  enabled: z.boolean().optional(),
+  intervalMinutes: z.number().int().min(5).max(1440).optional(),
+});
+integrationsRouter.patch("/integrations/auto-sync", requirePermission("channels"), async (req, res, next) => {
+  const parsed = AutoSyncSchema.safeParse(req.body);
+  if (!parsed.success) return res.status(400).json({ error: "enabled (boolean) and/or intervalMinutes (5-1440) required." });
+  const { enabled, intervalMinutes } = parsed.data;
+  if (enabled === undefined && intervalMinutes === undefined) return res.status(400).json({ error: "Nothing to update." });
+  try {
+    const row = (await pool.query(
+      `update org set auto_sync_enabled = coalesce($2, auto_sync_enabled),
+              auto_sync_interval_minutes = coalesce($3, auto_sync_interval_minutes)
+        where id = $1 returning auto_sync_enabled, auto_sync_interval_minutes`,
+      [req.orgId, enabled ?? null, intervalMinutes ?? null],
+    )).rows[0];
+    res.json({ enabled: row.auto_sync_enabled, intervalMinutes: row.auto_sync_interval_minutes });
+  } catch (err) { next(err); }
 });
 
 // Follower counts for the dashboard: each connection's current count plus its
