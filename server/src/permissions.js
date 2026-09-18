@@ -48,6 +48,29 @@ export async function hasActiveGrant(orgId, userId, key) {
   return rows.length > 0;
 }
 
+// Org-wide admin = admin of ANY channel in the org. Such a user sees AND manages
+// every channel in that org (current and future), even ones they have no
+// membership row for — the "admin" role is org-scoped, not per-channel. Regular
+// editors/viewers stay limited to the channels they're explicitly added to.
+// Cached briefly (like membership roles) so it can gate every request cheaply;
+// a role change takes effect within the TTL.
+const orgAdminCache = new Map(); // `${uid}:${orgId}` -> { v, exp }
+export async function isOrgAdmin(orgId, userId) {
+  if (!orgId || !userId) return false;
+  const key = `${userId}:${orgId}`;
+  const hit = orgAdminCache.get(key);
+  if (hit && hit.exp > Date.now()) return hit.v;
+  const { rowCount } = await pool.query(
+    `select 1 from membership m join workspace w on w.id = m.workspace_id
+      where m.user_id = $1 and w.org_id = $2 and m.role = 'admin' limit 1`,
+    [userId, orgId],
+  );
+  const v = rowCount > 0;
+  orgAdminCache.set(key, { v, exp: Date.now() + 30_000 });
+  return v;
+}
+export function clearOrgAdminCache() { orgAdminCache.clear(); }
+
 // Middleware: allow if the caller is an admin, OR holds an active grant for
 // `key`. Composes WITH the role system rather than replacing it — pass an
 // `alsoAllow` set of roles that should still pass without a grant (e.g. posts

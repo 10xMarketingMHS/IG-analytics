@@ -7,21 +7,33 @@ import { requirePermission } from "../permissions.js";
 
 export const workspacesRouter = Router();
 
-// List every workspace the authenticated user belongs to (for the switcher).
+// Channels visible in the switcher. An org-wide admin (admin of any channel in
+// an org) sees EVERY channel in that org — including ones they aren't a member
+// of, shown as 'admin'. Everyone else sees only channels they're a member of.
 workspacesRouter.get("/workspaces", async (req, res, next) => {
   try {
+    const uid = req.user.sub;
+    // Orgs where the user is an admin of at least one channel => full org access.
+    const adminOrgs = (await pool.query(
+      `select distinct w.org_id from workspace w
+         join membership m on m.workspace_id = w.id
+        where m.user_id = $1 and m.role = 'admin' and w.org_id is not null`,
+      [uid],
+    )).rows.map((r) => r.org_id);
+
     const { rows } = await pool.query(
-      `select w.id, w.name, w.logo_url, m.role,
+      `select w.id, w.name, w.logo_url,
+              case when w.org_id = any($2::uuid[]) then 'admin'::membership_role else m.role end as role,
               coalesce((
                 select array_agg(g.permission_key)
                 from user_permission_grant g
-                where g.org_id = w.org_id and g.user_id = m.user_id and g.revoked_at is null
+                where g.org_id = w.org_id and g.user_id = $1 and g.revoked_at is null
               ), '{}') as permissions
        from workspace w
-       join membership m on m.workspace_id = w.id
-       where m.user_id = $1
+       left join membership m on m.workspace_id = w.id and m.user_id = $1
+       where m.user_id = $1 or w.org_id = any($2::uuid[])
        order by w.created_at asc`,
-      [req.user.sub],
+      [uid, adminOrgs],
     );
     res.json({ workspaces: rows });
   } catch (err) {
@@ -89,15 +101,13 @@ workspacesRouter.patch("/workspaces/:id", requirePermission("channels"), async (
     return res.status(400).json({ error: "Workspace name is required." });
   }
   try {
+    // Org-admins (enforced by requirePermission) can rename any channel in their
+    // org, so gate on the org rather than a personal membership row.
     const { rows } = await pool.query(
       `update workspace set name = $1, updated_at = now()
-       where id = $2
-         and exists (
-           select 1 from membership m
-           where m.workspace_id = workspace.id and m.user_id = $3
-         )
+       where id = $2 and org_id = $3
        returning id, name, logo_url`,
-      [parsed.data.name, req.params.id, req.user.sub],
+      [parsed.data.name, req.params.id, req.orgId],
     );
     if (!rows.length) return res.status(404).json({ error: "Workspace not found" });
     res.json({ workspace: rows[0] });
@@ -114,11 +124,12 @@ workspacesRouter.delete("/workspaces/:id", requirePermission("channels"), async 
   const client = await pool.connect();
   try {
     await client.query("BEGIN");
+    // requirePermission("channels") already confirmed the caller is an admin of
+    // this org, so gate on the channel being in their org rather than on a
+    // personal membership row (org-admins can delete channels they never joined).
     const ws = (await client.query(
-      `select w.id, w.org_id from workspace w
-       join membership m on m.workspace_id = w.id
-       where w.id = $1 and m.user_id = $2`,
-      [req.params.id, req.user.sub],
+      `select w.id, w.org_id from workspace w where w.id = $1 and w.org_id = $2`,
+      [req.params.id, req.orgId],
     )).rows[0];
     if (!ws) {
       await client.query("ROLLBACK");

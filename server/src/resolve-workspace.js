@@ -1,4 +1,5 @@
 import { pool } from "./db.js";
+import { isOrgAdmin } from "./permissions.js";
 
 // Short-lived membership cache. Every scoped request otherwise pays an extra
 // round trip to the (remote) DB just to look up the caller's role. Roles change
@@ -38,8 +39,22 @@ export async function resolveWorkspace(req, res, next) {
     const requested = req.get("X-Workspace-Id");
     let workspaceId = null;
     let role = null;
+    let orgId = null;
 
+    // Org-wide admins can act on EVERY channel in their org — including ones they
+    // have no membership row for. So if the request names a valid workspace in an
+    // org where the user is an admin, honor it as admin regardless of membership.
     if (requested) {
+      orgId = await orgForWorkspace(requested); // null if the header is bogus
+      if (orgId && (await isOrgAdmin(orgId, uid))) {
+        workspaceId = requested;
+        role = "admin";
+      }
+    }
+
+    // Otherwise, the normal per-membership path: the requested workspace if the
+    // user belongs to it, else their oldest workspace.
+    if (!workspaceId && requested) {
       let entry = cachedRole(uid, requested);
       if (entry === undefined) {
         const { rows } = await pool.query(
@@ -57,7 +72,7 @@ export async function resolveWorkspace(req, res, next) {
 
     if (!workspaceId) {
       const { rows } = await pool.query(
-        `select w.id, m.role from workspace w
+        `select w.id, w.org_id, m.role from workspace w
          join membership m on m.workspace_id = w.id
          where m.user_id = $1
          order by w.created_at asc
@@ -65,7 +80,10 @@ export async function resolveWorkspace(req, res, next) {
         [uid],
       );
       workspaceId = rows[0]?.id ?? null;
+      orgId = rows[0]?.org_id ?? null;
       role = rows[0]?.role ?? null;
+      // An org-admin is an admin even on their fallback (oldest) channel.
+      if (workspaceId && orgId && (await isOrgAdmin(orgId, uid))) role = "admin";
     }
 
     if (!workspaceId) {
@@ -75,7 +93,7 @@ export async function resolveWorkspace(req, res, next) {
     req.workspaceId = workspaceId;
     req.role = role;
     // Org context for shared-team resources (editors, tasks).
-    req.orgId = await orgForWorkspace(workspaceId);
+    req.orgId = orgId ?? (await orgForWorkspace(workspaceId));
     next();
   } catch (err) {
     next(err);
