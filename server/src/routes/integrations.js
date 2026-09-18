@@ -506,10 +506,15 @@ async function runConnectionSync(conn, { auto = false, classify = classifySyncEr
       }
     }
     const result = await work();
+    // Proactive throttle: if Meta reports app-usage near its cap (X-App-Usage),
+    // hold the connection off auto-polling for one backoff step (~5 min) even on
+    // success — rather than waiting for a hard 429. Kept distinct from a real
+    // failure (last_error_type stays null, so the UI shows healthy, not retrying).
+    const cooldown = result.usage != null && result.usage >= 90 ? 1 : 0;
     await pool.query(
       `update platform_connection set last_synced_at = now(), last_sync_status = $2,
-              consecutive_failures = 0, last_error_type = null where id = $1`,
-      [conn.id, result.statusText],
+              consecutive_failures = $3, last_error_type = null where id = $1`,
+      [conn.id, result.statusText, cooldown],
     );
     return { ran: true, result };
   } catch (err) {
@@ -695,7 +700,7 @@ integrationsRouter.post("/integrations/facebook/sync", requireEditor, async (req
         const m = map.get(fb.normalizePermalink(post.permalink));
         if (m) pairs.push({ postId: post.id, externalId: m.id });
       }
-      const { metrics } = await fb.getPostMetricsBatch(pairs.map((p) => p.externalId), pageToken);
+      const { metrics, usage } = await fb.getPostMetricsBatch(pairs.map((p) => p.externalId), pageToken);
 
       // One bulk UPDATE for all matched posts (fewer pooled-connection round trips).
       if (pairs.length) {
@@ -723,7 +728,7 @@ integrationsRouter.post("/integrations/facebook/sync", requireEditor, async (req
       captureFollowerSnapshots().catch(() => {}); // record today's count into the timeline
 
       counts = { total: posts.length, matched: pairs.length, updated: pairs.length };
-      return { statusText: `Synced ${counts.updated}/${counts.total} post${counts.total === 1 ? "" : "s"}` };
+      return { statusText: `Synced ${counts.updated}/${counts.total} post${counts.total === 1 ? "" : "s"}`, usage };
     });
 
     if (outcome.skipped) return res.json({ ok: true, skipped: outcome.skipped });
@@ -844,7 +849,7 @@ integrationsRouter.post("/integrations/instagram/sync", requireEditor, async (re
         const media = mediaMap.get(ig.normalizePermalink(post.permalink));
         if (media) pairs.push({ post, media });
       }
-      const { metrics } = await ig.getMediaMetricsBatch(pairs.map((p) => p.media), token);
+      const { metrics, usage } = await ig.getMediaMetricsBatch(pairs.map((p) => p.media), token);
 
       // Write all matched posts in ONE statement — far fewer pooled-connection
       // round trips than an UPDATE per post (the pooler cap is the constraint).
@@ -889,7 +894,7 @@ integrationsRouter.post("/integrations/instagram/sync", requireEditor, async (re
       captureFollowerSnapshots().catch(() => {}); // record today's count into the timeline
 
       counts = { total: posts.length, matched: pairs.length, updated: pairs.length };
-      return { statusText: `Synced ${counts.updated}/${counts.total} post${counts.total === 1 ? "" : "s"}` };
+      return { statusText: `Synced ${counts.updated}/${counts.total} post${counts.total === 1 ? "" : "s"}`, usage };
     });
 
     if (outcome.skipped) return res.json({ ok: true, skipped: outcome.skipped });

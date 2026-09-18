@@ -338,12 +338,20 @@ export function ChannelsSection() {
   async function syncPlatform(accountId: string, provider: "instagram" | "facebook" | "youtube") {
     setSyncing(accountId);
     try {
-      const r = await api<{ updated: number; total: number; unmatched: number }>(
+      const r = await api<{ updated?: number; total?: number; unmatched?: number; skipped?: string }>(
         `/integrations/${provider}/sync`,
         { method: "POST", body: JSON.stringify({ accountId }) },
       );
-      const noun = provider === "youtube" ? "video" : "post";
-      toast.success(`Synced ${r.updated} of ${r.total} ${noun}${r.total === 1 ? "" : "s"}${r.unmatched ? ` · ${r.unmatched} not matched to a Link` : ""}.`);
+      // A manual click can still be skipped if another sync is already running
+      // on this connection (the shared in-flight lock).
+      if (r.skipped === "in_progress") {
+        toast("A sync is already running for this connection — try again in a moment.");
+      } else if (r.skipped) {
+        toast("Sync skipped.");
+      } else {
+        const noun = provider === "youtube" ? "video" : "post";
+        toast.success(`Synced ${r.updated} of ${r.total} ${noun}${r.total === 1 ? "" : "s"}${r.unmatched ? ` · ${r.unmatched} not matched to a Link` : ""}.`);
+      }
       await refetch();
       refetchConns();
     } catch (e) {
@@ -379,7 +387,9 @@ export function ChannelsSection() {
   function connHealth(conn: PlatformConnection): { label: string; cls: string } | null {
     if (conn.sync_in_progress) return { label: "Syncing…", cls: "sync" };
     if (conn.last_error_type === "permanent") return { label: "Needs reconnect", cls: "err" };
-    if ((conn.consecutive_failures ?? 0) > 0) return { label: "Retrying", cls: "warn" };
+    // Only a real transient failure shows "Retrying" — a usage-throttle cooldown
+    // also bumps consecutive_failures but leaves last_error_type null (healthy).
+    if (conn.last_error_type === "transient" && (conn.consecutive_failures ?? 0) > 0) return { label: "Retrying", cls: "warn" };
     return null;
   }
 
