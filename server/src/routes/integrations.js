@@ -13,7 +13,7 @@ import * as fb from "../integrations/facebook.js";
 // Upsert a platform_connection row (one per account × provider). Used by every
 // connect path so the shape stays identical across Instagram / Facebook / YouTube.
 async function upsertConnection({ orgId, accountId, provider, externalId, externalName, tokenEnc, scope, uid, followers = null }) {
-  await pool.query(
+  const { rows } = await pool.query(
     `insert into platform_connection
        (org_id, account_id, provider, external_id, external_name, access_token_enc, token_expires_at, scope, connected_by, follower_count)
      values ($1,$2,$3,$4,$5,$6,null,$7,$8,$9)
@@ -21,22 +21,32 @@ async function upsertConnection({ orgId, accountId, provider, externalId, extern
        external_id = excluded.external_id, external_name = excluded.external_name,
        access_token_enc = excluded.access_token_enc, token_expires_at = null,
        scope = excluded.scope, connected_by = excluded.connected_by,
-       follower_count = excluded.follower_count, connected_at = now()`,
+       follower_count = excluded.follower_count, connected_at = now(),
+       -- Reconnecting clears prior sync health, so a connection that was flagged
+       -- 'needs reconnect' (permanent) actually resumes auto-sync after re-auth.
+       last_error_type = null, consecutive_failures = 0, sync_in_progress = false
+     returning id`,
     [orgId, accountId, provider, externalId, externalName, tokenEnc, scope ?? null, uid, followers],
   );
-  captureFollowerSnapshots().catch(() => {}); // record today's value right away
+  captureFollowerSnapshots(rows[0]?.id).catch(() => {}); // record today's value right away
 }
 
 // Record today's follower_count for every connection into follower_snapshot —
 // one row per connection per IST day (later captures the same day just refresh
 // it). Builds the timeline the dashboard reads for range/growth. Idempotent.
-async function captureFollowerSnapshots() {
+// Record today's follower count into the timeline. Pass a connectionId to snapshot
+// just that one connection (per-sync); omit it for the whole org (on connect).
+// Scoping matters now that auto-poll runs this per connection every interval —
+// an org-wide table scan on each poll would be wasted I/O against the pooler.
+async function captureFollowerSnapshots(connectionId = null) {
   await pool.query(
     `insert into follower_snapshot (org_id, connection_id, provider, follower_count, day)
      select org_id, id, provider, follower_count, (now() at time zone 'Asia/Kolkata')::date
-       from platform_connection where follower_count is not null
+       from platform_connection
+      where follower_count is not null and ($1::uuid is null or id = $1)
      on conflict (connection_id, day) do update set
        follower_count = excluded.follower_count, captured_at = now()`,
+    [connectionId],
   );
 }
 
@@ -483,25 +493,29 @@ function classifySyncError(err) {
 // `classify` maps a thrown error to 'transient' | 'permanent' (default is the
 // Meta rule; YouTube overrides it since it has no per-connection token to expire).
 async function runConnectionSync(conn, { auto = false, classify = classifySyncError }, work) {
-  // Atomic lock acquire; a lock older than 10 min is treated as stale (left by a
+  // Atomic lock acquire; a lock older than 15 min is treated as stale (left by a
   // crashed sync) and re-acquired so a connection can never wedge permanently.
-  const locked = (await pool.query(
-    `update platform_connection set sync_in_progress = true, sync_started_at = now()
-      where id = $1 and (sync_in_progress = false or sync_started_at < now() - interval '10 minutes')
-      returning id`,
+  // `returning sync_started_at` gives us a token identifying OUR hold, so the
+  // finally below only releases the lock if it's still ours (a stale-recovery
+  // re-acquire by someone else must not be cleared out from under them).
+  const lockToken = (await pool.query(
+    `update platform_connection
+        set sync_in_progress = true, sync_started_at = now(), sync_lock_token = gen_random_uuid()
+      where id = $1 and (sync_in_progress = false or sync_started_at < now() - interval '15 minutes')
+      returning sync_lock_token`,
     [conn.id],
-  )).rows.length > 0;
-  if (!locked) return { skipped: "in_progress" };
+  )).rows[0]?.sync_lock_token;
+  if (!lockToken) return { skipped: "in_progress" };
 
   try {
     if (auto) {
       const h = (await pool.query(
-        "select last_error_type, consecutive_failures, last_synced_at from platform_connection where id = $1",
+        "select last_error_type, consecutive_failures, last_attempt_at from platform_connection where id = $1",
         [conn.id],
       )).rows[0] || {};
       if (h.last_error_type === "permanent") return { skipped: "needs_reconnect" };
-      if (h.consecutive_failures > 0 && h.last_synced_at &&
-          Date.now() - new Date(h.last_synced_at).getTime() < backoffMinutes(h.consecutive_failures) * 60_000) {
+      if (h.consecutive_failures > 0 && h.last_attempt_at &&
+          Date.now() - new Date(h.last_attempt_at).getTime() < backoffMinutes(h.consecutive_failures) * 60_000) {
         return { skipped: "backoff" };
       }
     }
@@ -511,23 +525,32 @@ async function runConnectionSync(conn, { auto = false, classify = classifySyncEr
     // success — rather than waiting for a hard 429. Kept distinct from a real
     // failure (last_error_type stays null, so the UI shows healthy, not retrying).
     const cooldown = result.usage != null && result.usage >= 90 ? 1 : 0;
+    // last_synced_at = last SUCCESS (drives the "Live · Xh ago" status);
+    // last_attempt_at = this attempt (drives backoff).
     await pool.query(
-      `update platform_connection set last_synced_at = now(), last_sync_status = $2,
-              consecutive_failures = $3, last_error_type = null where id = $1`,
+      `update platform_connection set last_synced_at = now(), last_attempt_at = now(),
+              last_sync_status = $2, consecutive_failures = $3, last_error_type = null where id = $1`,
       [conn.id, result.statusText, cooldown],
     );
     return { ran: true, result };
   } catch (err) {
     const errorType = classify(err);
+    // On failure, bump last_attempt_at but NOT last_synced_at — the status keeps
+    // showing the true last-good time, and health reflects the failure instead.
     await pool.query(
-      `update platform_connection set last_synced_at = now(), last_sync_status = $2, last_error_type = $3,
+      `update platform_connection set last_attempt_at = now(), last_sync_status = $2, last_error_type = $3,
               consecutive_failures = case when $3 = 'transient' then consecutive_failures + 1 else consecutive_failures end
         where id = $1`,
       [conn.id, `Failed: ${String(err.message).slice(0, 120)}`, errorType],
     );
     return { error: err, errorType };
   } finally {
-    await pool.query("update platform_connection set sync_in_progress = false where id = $1", [conn.id]).catch(() => {});
+    // Release only if we still hold the lock — a stale-recovery re-acquire by
+    // another sync gets a new token, so we won't clear it out from under it.
+    await pool.query(
+      "update platform_connection set sync_in_progress = false where id = $1 and sync_lock_token = $2",
+      [conn.id, lockToken],
+    ).catch(() => {});
   }
 }
 
@@ -671,19 +694,25 @@ integrationsRouter.post("/integrations/facebook/sync", requireEditor, async (req
     )).rows[0];
     if (!conn) return res.status(404).json({ error: "This channel isn't connected to Facebook yet." });
 
-    // Resolve the Page token: 'SYSTEM' → look it up via the system token.
-    let pageToken;
-    if (conn.access_token_enc === "SYSTEM") {
-      if (!ig.systemTokenConfigured()) return res.status(400).json({ error: "This connection uses the system token, but META_SYSTEM_TOKEN isn't set." });
-      const page = (await fb.listPages(ig.systemToken())).find((p) => p.pageId === conn.external_id);
-      if (!page) return res.status(502).json({ error: "The system token can no longer see this Page." });
-      pageToken = page.pageToken;
-    } else {
-      pageToken = decryptToken(conn.access_token_enc);
+    // Config gate only (no API call): a SYSTEM connection needs the env token set.
+    if (conn.access_token_enc === "SYSTEM" && !ig.systemTokenConfigured()) {
+      return res.status(400).json({ error: "This connection uses the system token, but META_SYSTEM_TOKEN isn't set." });
     }
 
     let counts = { total: 0, matched: 0, updated: 0 };
     const outcome = await runConnectionSync(conn, { auto: parsed.data.auto === true }, async () => {
+      // Resolve the Page token INSIDE the guard so the SYSTEM-token listPages call
+      // is lock-protected and its failures get classified / backed off (rather
+      // than running unguarded on every poll and 500-ing past the backoff logic).
+      let pageToken;
+      if (conn.access_token_enc === "SYSTEM") {
+        const page = (await fb.listPages(ig.systemToken())).find((p) => p.pageId === conn.external_id);
+        if (!page) { const e = new Error("The system token can no longer see this Page."); e.code = 190; throw e; }
+        pageToken = page.pageToken;
+      } else {
+        pageToken = decryptToken(conn.access_token_enc);
+      }
+
       const posts = (await pool.query(
         `select id, permalink from post
           where workspace_id = $1 and platform_id = $2 and deleted_at is null
@@ -725,7 +754,7 @@ integrationsRouter.post("/integrations/facebook/sync", requireEditor, async (req
       if (followers != null) {
         await pool.query("update platform_connection set follower_count = $2 where id = $1", [conn.id, followers]);
       }
-      captureFollowerSnapshots().catch(() => {}); // record today's count into the timeline
+      captureFollowerSnapshots(conn.id).catch(() => {}); // record today's count into the timeline
 
       counts = { total: posts.length, matched: pairs.length, updated: pairs.length };
       return { statusText: `Synced ${counts.updated}/${counts.total} post${counts.total === 1 ? "" : "s"}`, usage };
@@ -891,7 +920,7 @@ integrationsRouter.post("/integrations/instagram/sync", requireEditor, async (re
       if (followers != null) {
         await pool.query("update platform_connection set follower_count = $2 where id = $1", [conn.id, followers]);
       }
-      captureFollowerSnapshots().catch(() => {}); // record today's count into the timeline
+      captureFollowerSnapshots(conn.id).catch(() => {}); // record today's count into the timeline
 
       counts = { total: posts.length, matched: pairs.length, updated: pairs.length };
       return { statusText: `Synced ${counts.updated}/${counts.total} post${counts.total === 1 ? "" : "s"}`, usage };

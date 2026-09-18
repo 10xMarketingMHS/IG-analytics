@@ -94,9 +94,13 @@ export function useAutoSync(
       if (document.hidden) stop();
       else { runAll(); start(); } // refocus: catch up now, then resume ticking
     };
-    if (!document.hidden) { runAll(); start(); } // fire once on mount
+    // Debounce the catch-up fire: rapid filter changes re-run this effect, and
+    // clearing the pending timer coalesces them into a single sync burst ~2s
+    // after the target set settles (the interval still starts ticking now).
+    const settle = document.hidden ? undefined : setTimeout(runAll, 2000);
+    if (!document.hidden) start();
     document.addEventListener("visibilitychange", onVis);
-    return () => { stop(); document.removeEventListener("visibilitychange", onVis); };
+    return () => { if (settle) clearTimeout(settle); stop(); document.removeEventListener("visibilitychange", onVis); };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [enabled, intervalMs, targetKey]);
 }

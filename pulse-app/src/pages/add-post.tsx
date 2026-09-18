@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, type FormEvent } from "react";
+import { useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { toast } from "sonner";
 import { useTaxonomy } from "@/lib/use-taxonomy";
@@ -61,6 +61,9 @@ export function AddPostPage({ onClose }: { onClose?: () => void } = {}) {
   const [saving, setSaving] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const [loadingPost, setLoadingPost] = useState(editing);
+  // The link this post already had on load (empty for a new post) — so the
+  // immediate sync fires only when a NEW link is pasted, not on every edit.
+  const originalLink = useRef("");
 
   // Edit mode: load the existing post and prefill every field.
   useEffect(() => {
@@ -73,6 +76,7 @@ export function AddPostPage({ onClose }: { onClose?: () => void } = {}) {
         setDate(post.date);
         setTitle(post.title);
         setLink(post.permalink ?? "");
+        originalLink.current = post.permalink ?? "";
         setCollabChannelId(post.collab_channel_id ?? "");
         setPillarId(post.pillar_id);
         setContentTypeId(post.content_type_id);
@@ -174,9 +178,12 @@ export function AddPostPage({ onClose }: { onClose?: () => void } = {}) {
         await api("/posts", { method: "POST", body: JSON.stringify(payload) });
         toast.success(status === "planned" ? "Planned post saved." : "Post saved.");
       }
-      // Brand-new published link → pull its first data point immediately rather
-      // than waiting a full auto-sync interval (no-op if auto-sync is off).
-      if ((link || "").trim() && channelId && platformId) syncOnLinkSave(channelId, platformId);
+      // A NEWLY added/changed published link → pull its first data point now
+      // rather than waiting a full auto-sync interval (no-op if auto-sync is off;
+      // skipped when the link is unchanged, so plain edits don't trigger syncs).
+      if ((link || "").trim() && link.trim() !== originalLink.current.trim() && channelId && platformId) {
+        syncOnLinkSave(channelId, platformId);
+      }
       navigate("/posts");
     } catch (err) {
       setSubmitError(err instanceof ApiError ? err.message : "Failed to save post.");
