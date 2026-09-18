@@ -55,21 +55,28 @@ export function connectionsForPosts(
   return connections.filter((c) => wanted.has(`${c.channel_id}:${c.platform_key}`));
 }
 
-// Auto-poll the connections represented among `posts`. Triggers: on mount / when
-// the target set first resolves, on a recurring interval (paused while the tab is
-// hidden), and immediately on tab refocus (catch up rather than wait a full
-// cycle). No-op unless the org's kill switch is on.
+// Auto-poll connection syncs. Triggers: on mount / when the target set first
+// resolves, on a recurring interval (paused while the tab is hidden), and
+// immediately on tab refocus (catch up rather than wait a full cycle). No-op
+// unless the org's kill switch is on.
+//
+// Scope: pass `posts` (+ platforms) to poll only the connections behind those
+// posts; call with no arguments to poll EVERY connection in the org — used for
+// the app-wide poller mounted in the shell, so sync runs on any page while the
+// user is logged in and the tab is active, not just on the Posts page.
 export function useAutoSync(
-  posts: { channel_id?: string | null; platform_id?: string | null }[] | null,
-  platforms: Platform[] | null,
+  posts?: { channel_id?: string | null; platform_id?: string | null }[] | null,
+  platforms?: Platform[] | null,
 ) {
   const { data: settings } = useResource<AutoSyncSettings>("/integrations/auto-sync");
   const { data: connData } = useResource<{ connections: Connection[] }>("/integrations/connections");
 
-  const targets = useMemo(
-    () => (posts && platforms && connData ? connectionsForPosts(posts, platforms, connData.connections) : []),
-    [posts, platforms, connData],
-  );
+  const targets = useMemo(() => {
+    if (!connData) return [];
+    if (posts === undefined) return connData.connections; // app-wide: every connection
+    if (!posts || !platforms) return [];
+    return connectionsForPosts(posts, platforms, connData.connections);
+  }, [posts, platforms, connData]);
 
   // Keep a stable callback that always sees the latest targets, so the effect
   // below doesn't need `targets` in its deps (which would reset the interval on

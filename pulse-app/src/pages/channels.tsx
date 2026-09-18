@@ -485,7 +485,7 @@ export function ChannelsSection() {
           <span className="as-spacer" />
           <span className="as-sub">
             {autoSync.enabled
-              ? "Live metrics refresh automatically while Posts is open."
+              ? "Live metrics refresh automatically while you're logged in (any page, when the tab is active)."
               : "Off — pull metrics with the Sync button below."}
             {!canManage && " · admins can change"}
           </span>

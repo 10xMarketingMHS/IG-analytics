@@ -6,6 +6,7 @@ import { useWorkspaces } from "@/lib/workspaces-context";
 import { useEditors } from "@/lib/use-editors";
 import { usePosts } from "@/lib/use-posts";
 import { useResource } from "@/lib/use-resource";
+import { useAutoSync } from "@/lib/auto-sync";
 import { getActivitySeen, onActivitySeenChange } from "@/lib/activity-seen";
 import { useTaskAssignNotify } from "@/lib/use-task-notify";
 import { useOverdueTaskNotify } from "@/lib/use-overdue-notify";
@@ -59,6 +60,9 @@ export function AppShell() {
   const unread = useUnreadActivity();
   useTaskAssignNotify();
   useOverdueTaskNotify();
+  // App-wide auto-sync: polls every connection on the org's interval while the
+  // user is logged in and the tab is active (no-op unless an admin enabled it).
+  useAutoSync();
   const [menuOpen, setMenuOpen] = useState(false);
   const [profileOpen, setProfileOpen] = useState(false);
 
