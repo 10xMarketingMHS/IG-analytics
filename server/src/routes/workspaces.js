@@ -148,6 +148,14 @@ workspacesRouter.delete("/workspaces/:id", resolveWorkspace, requirePermission("
     // Editors are the org's shared team (NOT NULL workspace_id cascades) — move
     // them to another channel so they survive.
     await client.query("update editor set workspace_id = $1 where workspace_id = $2", [other.id, ws.id]);
+    // Delete posts explicitly FIRST, while the workspace still exists: the
+    // post_audit_log trigger writes an audit_log row (referencing this
+    // workspace) on every post delete. If posts were left to cascade with the
+    // workspace, that trigger would fire after the workspace row is gone and the
+    // audit_log FK would fail — so a channel with any posts could never be
+    // deleted. Deleting posts now keeps those audit rows valid; the workspace
+    // delete then cascades them away.
+    await client.query("delete from post where workspace_id = $1", [ws.id]);
     await client.query("delete from workspace where id = $1", [ws.id]);
     await client.query("COMMIT");
     res.status(204).end();
