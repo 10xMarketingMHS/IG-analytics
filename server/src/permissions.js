@@ -96,10 +96,7 @@ export function requirePermission(key, { alsoAllow = [], message } = {}) {
         for (const r of rows) req.viaGrant[r.permission_key] = true;
         return next();
       }
-      // TEMP DIAGNOSTIC: surface the runtime auth context in the 403 so we can
-      // see why an admin is being denied. Remove after debugging.
-      const dbg = `[role=${req.role} ws=${req.workspaceId} xws=${req.get("X-Workspace-Id") ?? "none"} org=${req.orgId} sub=${req.user?.sub?.slice(0, 8)} need=${keys.join("|")}]`;
-      return res.status(403).json({ error: `${message ?? "You don't have access to this."} ${dbg}` });
+      return res.status(403).json({ error: message ?? "You don't have access to this." });
     } catch (err) {
       next(err);
     }

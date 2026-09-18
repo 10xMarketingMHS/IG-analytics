@@ -4,6 +4,7 @@ import { pool } from "../db.js";
 import { createWorkspace } from "../bootstrap.js";
 import { logActivity } from "../activity.js";
 import { requirePermission } from "../permissions.js";
+import { resolveWorkspace } from "../resolve-workspace.js";
 
 export const workspacesRouter = Router();
 
@@ -44,7 +45,7 @@ workspacesRouter.get("/workspaces", async (req, res, next) => {
 const NameSchema = z.object({ name: z.string().trim().min(1).max(80) });
 
 // Create a new workspace — the creator becomes its admin.
-workspacesRouter.post("/workspaces", requirePermission("channels"), async (req, res, next) => {
+workspacesRouter.post("/workspaces", resolveWorkspace, requirePermission("channels"), async (req, res, next) => {
   const parsed = NameSchema.safeParse(req.body);
   if (!parsed.success) {
     return res.status(400).json({ error: "Workspace name is required." });
@@ -95,7 +96,7 @@ workspacesRouter.post("/workspaces", requirePermission("channels"), async (req, 
 });
 
 // Rename a workspace the user is an admin of.
-workspacesRouter.patch("/workspaces/:id", requirePermission("channels"), async (req, res, next) => {
+workspacesRouter.patch("/workspaces/:id", resolveWorkspace, requirePermission("channels"), async (req, res, next) => {
   const parsed = NameSchema.safeParse(req.body);
   if (!parsed.success) {
     return res.status(400).json({ error: "Workspace name is required." });
@@ -120,7 +121,7 @@ workspacesRouter.patch("/workspaces/:id", requirePermission("channels"), async (
 // accounts, taxonomy, memberships & Instagram connections; keeps the shared
 // team (editors are reassigned to another channel) and keeps tasks (their
 // channel link is just cleared). Refuses to delete the org's only channel.
-workspacesRouter.delete("/workspaces/:id", requirePermission("channels"), async (req, res, next) => {
+workspacesRouter.delete("/workspaces/:id", resolveWorkspace, requirePermission("channels"), async (req, res, next) => {
   const client = await pool.connect();
   try {
     await client.query("BEGIN");
