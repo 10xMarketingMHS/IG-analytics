@@ -1808,3 +1808,15 @@ img.lb-ava{object-fit:cover}
 .fol-up{color:#16a34a;font-weight:700}
 .fol-down{color:var(--rose);font-weight:700}
 .fol-flat{color:var(--muted)}
+
+/* Auto-sync connection health chip + the auto-sync settings panel. */
+.sync-health { font-weight: 600; }
+.sync-health.sync { color: #6366f1; }
+.sync-health.warn { color: #d97706; }
+.sync-health.err  { color: var(--rose); }
+.autosync { display: flex; align-items: center; gap: 12px; flex-wrap: wrap;
+  padding: 12px 16px; border: 1px solid var(--border); border-radius: 12px; margin: 12px 0; }
+.autosync .as-title { font-weight: 700; }
+.autosync .as-sub { color: var(--muted); font-size: 13px; }
+.autosync .as-int { width: 72px; }
+.autosync .as-spacer { flex: 1; }

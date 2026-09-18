@@ -56,6 +56,8 @@ export function ChannelsSection() {
   const { data: acctData, refetch } = useResource<{ accounts: Account[] }>("/accounts?channel=all");
   const { data: statusData, refetch: refetchStatus } = useResource<IntegrationStatus>("/integrations/status");
   const { data: connData, refetch: refetchConns } = useResource<{ connections: PlatformConnection[] }>("/integrations/connections");
+  const { data: autoSync, refetch: refetchAutoSync } = useResource<{ enabled: boolean; intervalMinutes: number }>("/integrations/auto-sync");
+  const [savingAutoSync, setSavingAutoSync] = useState(false);
   const platforms = platData?.platforms ?? [];
   const accounts = acctData?.accounts ?? [];
   const [newName, setNewName] = useState("");
@@ -234,6 +236,21 @@ export function ChannelsSection() {
 
   function closeConnect() { setConnectFor(null); setTokenInput(""); setYtChannelInput(""); setYtKeyInput(""); setReplaceKey(false); setFbPages(null); setFbPageId(""); setFbPagesSource(null); }
 
+  // Save the org-wide auto-sync kill switch / interval (admin only). DB-backed so
+  // it takes effect without a deploy.
+  async function saveAutoSync(patch: { enabled?: boolean; intervalMinutes?: number }) {
+    setSavingAutoSync(true);
+    try {
+      await api("/integrations/auto-sync", { method: "PATCH", body: JSON.stringify(patch) });
+      await refetchAutoSync();
+      toast.success("Auto-sync settings saved.");
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Couldn't save auto-sync settings.");
+    } finally {
+      setSavingAutoSync(false);
+    }
+  }
+
   // Fetch the Facebook Pages a token can manage (server system token, or the
   // pasted one) so the user can pick which Page belongs to this channel. Does
   // NOT connect anything — selection happens via the Connect buttons below.
@@ -357,13 +374,25 @@ export function ChannelsSection() {
   type Prov = keyof typeof PLAT_META;
   const platReady = (p: Prov) => (p === "instagram" ? igReady : p === "facebook" ? fbReady : (ytStatus?.ready ?? false));
 
+  // Auto-sync health chip, derived from the server sync guard's fields. Healthy
+  // returns null — the Live/Synced text already conveys it.
+  function connHealth(conn: PlatformConnection): { label: string; cls: string } | null {
+    if (conn.sync_in_progress) return { label: "Syncing…", cls: "sync" };
+    if (conn.last_error_type === "permanent") return { label: "Needs reconnect", cls: "err" };
+    if ((conn.consecutive_failures ?? 0) > 0) return { label: "Retrying", cls: "warn" };
+    return null;
+  }
+
   // Compact per-platform status for a table cell.
   function statusCell(acc: Account | undefined) {
     if (!acc) return <span className="st dim">—</span>;
     const conn = connByAccount.get(acc.id);
-    if (conn) return conn.last_synced_at
-      ? <span className="st ok">● Live · {relTime(conn.last_synced_at)}</span>
-      : <span className="st ok">● Connected</span>;
+    if (conn) {
+      if (conn.last_error_type === "permanent") return <span className="st off">⚠ Reconnect</span>;
+      return conn.last_synced_at
+        ? <span className="st ok">● Live · {relTime(conn.last_synced_at)}</span>
+        : <span className="st ok">● Connected</span>;
+    }
     return <span className="st off">○ Connect</span>;
   }
 
@@ -384,7 +413,10 @@ export function ChannelsSection() {
                 ● {conn.external_name ?? meta.label}
                 {conn.follower_count != null ? ` · ${compactNum(conn.follower_count)} ${meta.unit}` : ""}
               </span>
-              <span className="chan-int-sub">Synced {relTime(conn.last_synced_at)}{conn.last_sync_status ? ` · ${conn.last_sync_status}` : ""}</span>
+              <span className="chan-int-sub">
+                Synced {relTime(conn.last_synced_at)}{conn.last_sync_status ? ` · ${conn.last_sync_status}` : ""}
+                {(() => { const h = connHealth(conn); return h ? <span className={`sync-health ${h.cls}`}> · {h.label}</span> : null; })()}
+              </span>
             </div>
             <div className="chan-int-act">
               <button className="btn btn-primary btn-sm" disabled={syncing === acc.id} onClick={() => syncPlatform(acc.id, p)}>
@@ -427,6 +459,28 @@ export function ChannelsSection() {
         🌐 Add brand channels, choose which platforms each is on, and connect Instagram or YouTube to pull live metrics — all in one place.
         {!canManage && <span style={{ color: "var(--amber)", marginLeft: 6 }}>· Read-only (admins can edit).</span>}
       </div>
+
+      {autoSync && (
+        <div className="autosync">
+          <span className="as-title">🔄 Auto-sync</span>
+          <button className={`btn btn-sm ${autoSync.enabled ? "btn-primary" : ""}`} disabled={!canManage || savingAutoSync}
+            onClick={() => saveAutoSync({ enabled: !autoSync.enabled })}>
+            {autoSync.enabled ? "On" : "Off"}
+          </button>
+          <span className="as-sub">refresh every</span>
+          <input className="t as-int" type="number" min={5} max={1440} disabled={!canManage || savingAutoSync}
+            key={autoSync.intervalMinutes} defaultValue={autoSync.intervalMinutes}
+            onBlur={(e) => { const v = Number(e.target.value); if (v >= 5 && v <= 1440 && v !== autoSync.intervalMinutes) saveAutoSync({ intervalMinutes: v }); }} />
+          <span className="as-sub">min</span>
+          <span className="as-spacer" />
+          <span className="as-sub">
+            {autoSync.enabled
+              ? "Live metrics refresh automatically while Posts is open."
+              : "Off — pull metrics with the Sync button below."}
+            {!canManage && " · admins can change"}
+          </span>
+        </div>
+      )}
 
       {/* YouTube key is org-wide (one key), so surface the gap ONCE here — not as
           a chip on every row. It's now entered in-app by an admin, no env var. */}

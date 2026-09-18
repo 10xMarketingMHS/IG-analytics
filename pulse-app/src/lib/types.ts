@@ -72,6 +72,10 @@ export type PlatformConnection = {
   last_synced_at: string | null;
   last_sync_status: string | null;
   follower_count: number | null;
+  // Auto-sync health (see lib/auto-sync.ts + the sync guard on the server).
+  sync_in_progress?: boolean;
+  consecutive_failures?: number;
+  last_error_type?: "transient" | "permanent" | null;
   account_id: string;
   channel_id: string;
   channel_name: string;

@@ -5,6 +5,7 @@ import { api, ApiError } from "@/lib/api";
 import { useTaxonomy } from "@/lib/use-taxonomy";
 import { useEditors } from "@/lib/use-editors";
 import { useResource } from "@/lib/use-resource";
+import { useAutoSync } from "@/lib/auto-sync";
 import { useWorkspaces } from "@/lib/workspaces-context";
 import { formatScore } from "@/lib/score";
 import { MultiSelect, type Opt } from "@/components/multi-select";
@@ -177,6 +178,11 @@ export function PostsPage() {
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [scoped, statuses, types, channelIds, platformIds, collabsOnly, query, taxonomy]);
+
+  // Auto-poll live metrics for the connections behind the posts currently in
+  // view (off unless an admin has enabled it; interval is admin-set). The Posts
+  // view is the one mount point for this — see lib/auto-sync.ts.
+  useAutoSync(rows, platData?.platforms ?? null);
 
   const activeCount =
     statuses.size + types.size + channelIds.size + platformIds.size +

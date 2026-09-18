@@ -5,6 +5,7 @@ import { useTaxonomy } from "@/lib/use-taxonomy";
 import { useEditors } from "@/lib/use-editors";
 import { useWorkspaces } from "@/lib/workspaces-context";
 import { useResource } from "@/lib/use-resource";
+import { useSyncOnLinkSave } from "@/lib/auto-sync";
 import { api, ApiError } from "@/lib/api";
 import type { Post, Platform, Account } from "@/lib/types";
 
@@ -25,6 +26,7 @@ export function AddPostPage({ onClose }: { onClose?: () => void } = {}) {
   const { editors } = useEditors();
   const { workspaces, active } = useWorkspaces();
   const navigate = useNavigate();
+  const syncOnLinkSave = useSyncOnLinkSave();
   const { id } = useParams<{ id: string }>();
   const editing = Boolean(id);
   const modal = Boolean(onClose); // rendered inside the glass modal vs full page
@@ -172,6 +174,9 @@ export function AddPostPage({ onClose }: { onClose?: () => void } = {}) {
         await api("/posts", { method: "POST", body: JSON.stringify(payload) });
         toast.success(status === "planned" ? "Planned post saved." : "Post saved.");
       }
+      // Brand-new published link → pull its first data point immediately rather
+      // than waiting a full auto-sync interval (no-op if auto-sync is off).
+      if ((link || "").trim() && channelId && platformId) syncOnLinkSave(channelId, platformId);
       navigate("/posts");
     } catch (err) {
       setSubmitError(err instanceof ApiError ? err.message : "Failed to save post.");
