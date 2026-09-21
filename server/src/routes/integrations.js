@@ -510,13 +510,23 @@ async function runConnectionSync(conn, { auto = false, classify = classifySyncEr
   try {
     if (auto) {
       const h = (await pool.query(
-        "select last_error_type, consecutive_failures, last_attempt_at from platform_connection where id = $1",
+        `select c.last_error_type, c.consecutive_failures, c.last_attempt_at, c.last_synced_at,
+                o.auto_sync_interval_minutes as interval_min
+           from platform_connection c join org o on o.id = c.org_id where c.id = $1`,
         [conn.id],
       )).rows[0] || {};
       if (h.last_error_type === "permanent") return { skipped: "needs_reconnect" };
       if (h.consecutive_failures > 0 && h.last_attempt_at &&
           Date.now() - new Date(h.last_attempt_at).getTime() < backoffMinutes(h.consecutive_failures) * 60_000) {
         return { skipped: "backoff" };
+      }
+      // Freshness short-circuit: if this connection was successfully synced within
+      // ~80% of the poll interval, skip the real work. This caps actual syncs to
+      // roughly once per interval per connection GLOBALLY — so N admin tabs (or
+      // page navigations / refocuses) collapse to one real sync, not N.
+      const freshMs = (h.interval_min ?? 30) * 60_000 * 0.8;
+      if (h.last_synced_at && Date.now() - new Date(h.last_synced_at).getTime() < freshMs) {
+        return { skipped: "fresh" };
       }
     }
     const result = await work();

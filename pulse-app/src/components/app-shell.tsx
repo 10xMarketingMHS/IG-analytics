@@ -60,9 +60,10 @@ export function AppShell() {
   const unread = useUnreadActivity();
   useTaskAssignNotify();
   useOverdueTaskNotify();
-  // App-wide auto-sync: polls every connection on the org's interval while the
-  // user is logged in and the tab is active (no-op unless an admin enabled it).
-  useAutoSync();
+  // App-wide auto-sync: only ADMIN tabs poll (keeps the trigger surface small
+  // with many users online); runs on any page while the tab is active, on the
+  // org's interval. No-op unless an admin enabled the kill switch.
+  useAutoSync(undefined, undefined, { active: isAdmin });
   const [menuOpen, setMenuOpen] = useState(false);
   const [profileOpen, setProfileOpen] = useState(false);
 

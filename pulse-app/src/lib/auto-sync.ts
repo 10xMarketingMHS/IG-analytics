@@ -64,10 +64,15 @@ export function connectionsForPosts(
 // posts; call with no arguments to poll EVERY connection in the org — used for
 // the app-wide poller mounted in the shell, so sync runs on any page while the
 // user is logged in and the tab is active, not just on the Posts page.
+// `opts.active` gates whether THIS session polls at all — the app-wide poller
+// passes `active: isAdmin` so only admin tabs trigger auto-sync (regular users'
+// tabs just display data). Defaults true for the scoped form.
 export function useAutoSync(
   posts?: { channel_id?: string | null; platform_id?: string | null }[] | null,
   platforms?: Platform[] | null,
+  opts?: { active?: boolean },
 ) {
+  const active = opts?.active ?? true;
   const { data: settings } = useResource<AutoSyncSettings>("/integrations/auto-sync");
   const { data: connData } = useResource<{ connections: Connection[] }>("/integrations/connections");
 
@@ -83,33 +88,48 @@ export function useAutoSync(
   // every render).
   const targetsRef = useRef<Connection[]>(targets);
   targetsRef.current = targets;
+  const intervalMs = Math.max(5, settings?.intervalMinutes ?? 30) * 60_000;
+  const intervalRef = useRef(intervalMs);
+  intervalRef.current = intervalMs;
+
+  // This tab's last-fire time per connection. Don't re-poll a connection this tab
+  // already hit within ~80% of the interval, so page navigation / refocus don't
+  // spam it. (The server ALSO short-circuits connections synced recently, which
+  // is what dedups across the different admins' tabs.)
+  const firedRef = useRef<Map<string, number>>(new Map());
   const runAll = () => {
-    for (const c of targetsRef.current) syncConnection(c.account_id, c.provider, { auto: true });
+    const now = Date.now();
+    const freshMs = intervalRef.current * 0.8;
+    for (const c of targetsRef.current) {
+      if (now - (firedRef.current.get(c.id) ?? 0) < freshMs) continue;
+      firedRef.current.set(c.id, now);
+      syncConnection(c.account_id, c.provider, { auto: true });
+    }
   };
 
   const enabled = settings?.enabled ?? false;
-  const intervalMs = Math.max(5, settings?.intervalMinutes ?? 30) * 60_000;
   // Re-arm when the actual target set changes (filters), not just its length.
   const targetKey = targets.map((c) => c.id).sort().join(",");
 
   useEffect(() => {
-    if (!enabled || !targetKey) return;
+    if (!enabled || !active || !targetKey) return;
     let timer: ReturnType<typeof setInterval> | undefined;
     const stop = () => { if (timer) { clearInterval(timer); timer = undefined; } };
-    const start = () => { stop(); timer = setInterval(() => { if (!document.hidden) runAll(); }, intervalMs); };
+    // Jitter the interval ±15% so multiple admin tabs don't fire in lockstep.
+    const jittered = () => intervalMs * (0.85 + Math.random() * 0.3);
+    const start = () => { stop(); timer = setInterval(() => { if (!document.hidden) runAll(); }, jittered()); };
     const onVis = () => {
       if (document.hidden) stop();
       else { runAll(); start(); } // refocus: catch up now, then resume ticking
     };
-    // Debounce the catch-up fire: rapid filter changes re-run this effect, and
-    // clearing the pending timer coalesces them into a single sync burst ~2s
-    // after the target set settles (the interval still starts ticking now).
-    const settle = document.hidden ? undefined : setTimeout(runAll, 2000);
+    // Debounced, jittered catch-up fire so tab-open / rapid re-runs coalesce and
+    // several tabs don't all fire at the same instant.
+    const settle = document.hidden ? undefined : setTimeout(runAll, 1500 + Math.random() * 3000);
     if (!document.hidden) start();
     document.addEventListener("visibilitychange", onVis);
     return () => { if (settle) clearTimeout(settle); stop(); document.removeEventListener("visibilitychange", onVis); };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [enabled, intervalMs, targetKey]);
+  }, [enabled, active, intervalMs, targetKey]);
 }
 
 // Returns a function to call right after a post's Link is saved: if auto-sync is
