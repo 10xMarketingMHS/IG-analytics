@@ -861,7 +861,7 @@ export function TasksPage() {
                             {holdCtrl}
                             {canNext && (
                               <button className="linkbtn" onClick={() => move(t, COLUMNS[ci + 1].key)}>
-                                {COLUMNS[ci + 1].label} →
+                                {t.status === "todo" ? "▶ Start" : `${COLUMNS[ci + 1].label} →`}
                               </button>
                             )}
                           </div>
@@ -1400,6 +1400,9 @@ export function TaskModal({
             )}
           </div>
         </div>
+        {/* New tasks always start in To Do — the status picker is only for moving
+            an existing task between stages, so it's hidden while creating. */}
+        {editing && (
         <div className="field">
           <label className="f">Status</label>
           <div className="statusseg">
@@ -1431,6 +1434,7 @@ export function TaskModal({
             <div className="hint" style={{ marginTop: 6 }}>⏳ Waiting on admin review — only an admin can approve or send it back.</div>
           )}
         </div>
+        )}
         {sendingBack && (
           <div className="field">
             <label className="f">What needs fixing? <span className="req">*</span></label>

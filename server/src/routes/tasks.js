@@ -227,7 +227,10 @@ tasksRouter.post("/tasks", requireEditor, requireActiveEod, async (req, res, nex
     }
     const callerEid = await callerEditorId(req);
     const assigneeId = isAdminTask ? callerEid : (d.editorId ?? null);
-    const status = isAdminTask ? "in_progress" : (d.status ?? "todo");
+    // Every new task starts in To Do — nothing is auto-started (not even admin
+    // tasks, which used to open In Progress). A task moves to In Progress only
+    // when the assignee clicks Start on the board (todo -> in_progress).
+    const status = "todo";
     const contentFormatId = isAdminTask ? null : (d.contentFormatId ?? null);
     // Admin tasks may optionally belong to a brand (Project) — they just never
     // get a content type, SID/AID or timer.
