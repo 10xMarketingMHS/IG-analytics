@@ -1652,15 +1652,6 @@ function TaskPanel({ mode, task, canWrite, editors, channels, onClose, onChanged
     // A Project needs a Start Date (defaults to today) and its own type list.
     setDraft((d) => ({ ...d, content_format_id: null, start_date: next === "project" ? (d.start_date ?? today()) : d.start_date }));
   }
-  // Project-only derived values: the selected project type drives its duration
-  // (which bounds the Due Date) and its read-only points.
-  const isProject = activeCategory === "project";
-  const selectedFormat = (contentFormats ?? []).find((f) => f.id === cur.content_format_id) ?? null;
-  const projectDuration = isProject ? (selectedFormat?.duration_days ?? null) : null;
-  const projectPoints = isProject ? (selectedFormat?.points ?? null) : null;
-  const dueMax = isProject && cur.start_date != null && projectDuration != null
-    ? ymd(addDays(new Date(`${cur.start_date}T00:00:00`), projectDuration))
-    : undefined;
   // Choosing a content type also settles the category (Reel → Social, Ad Video
   // → Ads) when one hasn't been picked yet, so the two never disagree.
   function onPickContentType(id: string | null) {
@@ -1693,6 +1684,15 @@ function TaskPanel({ mode, task, canWrite, editors, channels, onClose, onChanged
     channel_id: task!.channel_id, editor_id: task!.editor_id, due_date: task!.due_date, start_date: task!.start_date, priority: task!.priority,
     status: task!.status, content_format_id: task!.content_format_id, attachments: task!.attachments ?? [],
   };
+  // Project-only derived values: the selected project type drives its duration
+  // (which bounds the Due Date) and its read-only points. Declared after `cur`.
+  const isProject = activeCategory === "project";
+  const selectedFormat = (contentFormats ?? []).find((f) => f.id === cur.content_format_id) ?? null;
+  const projectDuration = isProject ? (selectedFormat?.duration_days ?? null) : null;
+  const projectPoints = isProject ? (selectedFormat?.points ?? null) : null;
+  const dueMax = isProject && cur.start_date != null && projectDuration != null
+    ? ymd(addDays(new Date(`${cur.start_date}T00:00:00`), projectDuration))
+    : undefined;
 
   async function patch(fields: Record<string, unknown>) {
     if (!task) return;

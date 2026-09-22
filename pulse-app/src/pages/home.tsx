@@ -85,6 +85,7 @@ const TAG_META: Record<TaskType, { label: string; cls: string }> = {
   ad: { label: "Ad", cls: "t-ad" },
   admin: { label: "Admin", cls: "t-admin" },
   service: { label: "Service", cls: "t-service" },
+  project: { label: "Project", cls: "t-project" },
 };
 
 const STAGE_META: Record<string, { label: string; cls: string }> = {

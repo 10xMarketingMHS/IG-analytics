@@ -732,6 +732,7 @@ main{min-width:0;display:flex;flex-direction:column}
 .tt-tag.t-admin{background:rgba(249,115,22,.16);color:#fb923c}
 .tt-tag.t-quick{background:rgba(34,211,238,.16);color:#22d3ee}
 .tt-tag.t-service{background:var(--accent-weak);color:var(--accent-ink)}
+.tt-tag.t-project{background:rgba(139,92,246,.16);color:#a78bfa}
 .tt-tag.t-general{background:rgba(148,163,184,.18);color:#94a3b8}
 .tt-pts{flex:none;font-size:12.5px;font-weight:800;color:var(--accent-ink)}
 .tt-go{flex:none;font-size:18px;font-weight:800;color:var(--faint,var(--muted));line-height:1}
