@@ -19,7 +19,20 @@ const PRIORITY = ["low", "medium", "high"];
 // "emergency" was dropped — priority=high already covers urgency. "social"
 // and "ad" each carry a secondary id alongside the task's own TID — see
 // nextTaskRef() below.
-const TASK_TYPE = ["content", "short_task", "general", "social", "ad", "admin", "service"];
+const TASK_TYPE = ["content", "short_task", "general", "social", "ad", "admin", "service", "project"];
+
+// Date-only helpers for Project start/due bounds. YYYY-MM-DD strings compare
+// lexicographically, so range checks need no Date math; addDaysYmd shifts a
+// calendar date in UTC (no DST for date-only values). "Today" is IST, matching
+// the rest of the app's calendar handling.
+function todayYmdIst() {
+  return new Date().toLocaleDateString("en-CA", { timeZone: "Asia/Kolkata" });
+}
+function addDaysYmd(ymd, n) {
+  const d = new Date(`${ymd}T00:00:00Z`);
+  d.setUTCDate(d.getUTCDate() + n);
+  return d.toISOString().slice(0, 10);
+}
 const PLATFORMS = ["instagram", "facebook", "youtube"];
 
 // Type-specific extras for social/ad tasks — small and varying enough per
@@ -43,6 +56,7 @@ const TaskSchema = z.object({
   channelId: z.string().uuid().nullable().optional(),
   postId: z.string().uuid().nullable().optional(),
   dueDate: z.string().optional().nullable(), // YYYY-MM-DD
+  startDate: z.string().optional().nullable(), // YYYY-MM-DD — Project start
   status: z.enum(STATUS).optional(),
   // Required when sending a task back from review to in_progress — what
   // needs fixing, so the team isn't just told "no" with nothing to act on.
@@ -86,7 +100,7 @@ export async function nextTaskRef(orgId, kind) {
 // brand carries its own SID-00001…/AID-00001… sequence. Mirrors nextTaskRef
 // but keyed by channel_id via next_brand_task_ref().
 export async function nextBrandTaskRef(channelId, kind) {
-  const prefix = { sid: "SID", adid: "AID", svid: "SVID" }[kind];
+  const prefix = { sid: "SID", adid: "AID", svid: "SVID", pid: "PID" }[kind];
   const { rows } = await pool.query("select next_brand_task_ref($1, $2) as n", [channelId, kind]);
   return `${prefix}-${String(rows[0].n).padStart(5, "0")}`;
 }
@@ -99,9 +113,10 @@ export async function nextBrandTaskRef(channelId, kind) {
 const SELECT = `
   select t.id, t.serial, t.title, t.description, t.editor_id, t.channel_id, t.post_id,
          t.status, t.priority, t.due_date, t.recurrence, t.task_type,
-         t.tid, t.sid, t.ad_id, t.svid, t.meta, t.revision, t.pending_note,
+         t.tid, t.sid, t.ad_id, t.svid, t.pid, t.start_date, t.meta, t.revision, t.pending_note,
          t.content_format_id, cf.name as content_format_name, cf.icon as content_format_icon,
-         cf.points as content_format_points,
+         cf.points as content_format_points, cf.duration_days as content_format_duration,
+         cf.metrics_description as content_format_metrics,
          t.budget_hours, t.budget_started_at, t.accepted, t.on_hold, t.held_by, t.created_at, t.completed_at,
          t.content_type, t.platforms, t.attachments, t.delivery_link,
          e.name as editor_name, e.image_url as editor_image,
@@ -235,10 +250,27 @@ tasksRouter.post("/tasks", requireEditor, requireActiveEod, async (req, res, nex
     // Admin tasks may optionally belong to a brand (Project) — they just never
     // get a content type, SID/AID or timer.
     const channelId = d.channelId ?? null;
-    // Social / Ads / Service tasks are numbered per brand, so they must belong
-    // to one (a Project) — enforce it up front rather than minting an orphan id.
-    if ((taskType === "social" || taskType === "ad" || taskType === "service") && !channelId) {
-      return res.status(400).json({ error: "Pick a Project (brand) — Social, Ads and Service tasks are numbered per brand." });
+    // Social / Ads / Service / Project tasks are numbered per brand, so they must
+    // belong to one — enforce it up front rather than minting an orphan id.
+    if ((taskType === "social" || taskType === "ad" || taskType === "service" || taskType === "project") && !channelId) {
+      return res.status(400).json({ error: "Pick a Brand — Social, Ads, Service and Project tasks are numbered per brand." });
+    }
+    // Project: has a Start Date (defaults to today) and a Due Date bounded by the
+    // selected project type's configured duration. Enforced server-side, not just
+    // in the date picker.
+    const isProject = taskType === "project";
+    let startDate = null;
+    if (isProject) {
+      startDate = d.startDate || todayYmdIst();
+      const dur = contentFormatId
+        ? (await pool.query("select duration_days from task_content_format where id = $1 and org_id = $2", [contentFormatId, req.orgId])).rows[0]?.duration_days ?? null
+        : null;
+      if (d.dueDate) {
+        if (d.dueDate < startDate) return res.status(400).json({ error: "Due Date can't be before the Start Date." });
+        if (dur != null && d.dueDate > addDaysYmd(startDate, dur)) {
+          return res.status(400).json({ error: `Due Date must be within ${dur} day(s) of the Start Date.` });
+        }
+      }
     }
     // Assigning to yourself accepts immediately — no separate approval needed
     // — but that's still an "accept" moment: the office-hours check just runs
@@ -258,6 +290,7 @@ tasksRouter.post("/tasks", requireEditor, requireActiveEod, async (req, res, nex
     const sid = taskType === "social" ? await nextBrandTaskRef(channelId, "sid") : null;
     const adId = taskType === "ad" ? await nextBrandTaskRef(channelId, "adid") : null;
     const svid = taskType === "service" ? await nextBrandTaskRef(channelId, "svid") : null;
+    const pid = isProject ? await nextBrandTaskRef(channelId, "pid") : null;
     // Atomically claim the next per-org Task ID (serial, "TASK-####") and
     // insert in one statement, alongside the TID/SID/AdID system above —
     // both id schemes point at the same row.
@@ -266,10 +299,10 @@ tasksRouter.post("/tasks", requireEditor, requireActiveEod, async (req, res, nex
        insert into task (org_id, editor_id, channel_id, title, description,
                          status, priority, due_date, recurrence, task_type, content_format_id,
                          budget_hours, accepted, budget_started_at, completed_at,
-                         tid, sid, ad_id, svid, meta, content_type, platforms, attachments, serial)
+                         tid, sid, ad_id, svid, pid, start_date, meta, content_type, platforms, attachments, serial)
        select $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,
               case when $6 = 'done' then now() else null end,
-              $15,$16,$17,$18,$19,$20,$21,$22::jsonb, (select task_seq from s)
+              $15,$16,$17,$18,$23,$24,$19,$20,$21,$22::jsonb, (select task_seq from s)
        returning id`,
       [
         req.orgId,
@@ -294,6 +327,8 @@ tasksRouter.post("/tasks", requireEditor, requireActiveEod, async (req, res, nex
         d.contentType ?? null,
         d.platforms ?? [],
         JSON.stringify(d.attachments ?? []),
+        pid,
+        startDate,
       ],
     );
     const { rows: full } = await pool.query(`${SELECT} where t.id = $1`, [rows[0].id]);
@@ -329,6 +364,7 @@ tasksRouter.patch("/tasks/:id", requireEditor, requireActiveEod, async (req, res
   if (d.channelId !== undefined) push("channel_id", d.channelId ?? null);
   if (d.priority !== undefined) push("priority", d.priority);
   if (d.dueDate !== undefined) push("due_date", d.dueDate || null);
+  if (d.startDate !== undefined) push("start_date", d.startDate || null);
   if (d.recurrence !== undefined) push("recurrence", d.recurrence);
   if (d.contentType !== undefined) push("content_type", d.contentType ?? null);
   if (d.platforms !== undefined) push("platforms", d.platforms);
@@ -344,10 +380,28 @@ tasksRouter.patch("/tasks/:id", requireEditor, requireActiveEod, async (req, res
     // Capture prior state so we can spawn the next occurrence on completion,
     // guard task_type for post-linked tasks, and re-resolve the time budget.
     const prior = (await pool.query(
-      "select status, recurrence, post_id, editor_id, channel_id, content_format_id, accepted, budget_hours, budget_started_at, budget_used_seconds, on_hold, sid, ad_id, svid, revision, task_type from task where id = $1 and org_id = $2",
+      "select status, recurrence, post_id, editor_id, channel_id, content_format_id, accepted, budget_hours, budget_started_at, budget_used_seconds, on_hold, sid, ad_id, svid, pid, start_date, due_date, revision, task_type from task where id = $1 and org_id = $2",
       [req.params.id, req.orgId],
     )).rows[0];
     if (!prior) return res.status(404).json({ error: "Task not found" });
+
+    // Project: keep the Due Date within [Start, Start + type's duration] on
+    // update too (server-side, not just the picker). date columns come back as
+    // "YYYY-MM-DD" strings, so range checks are plain string compares.
+    if (prior.task_type === "project" || d.taskType === "project") {
+      const effStart = d.startDate !== undefined ? (d.startDate || null) : prior.start_date;
+      const effDue = d.dueDate !== undefined ? (d.dueDate || null) : prior.due_date;
+      if (effStart && effDue) {
+        if (effDue < effStart) return res.status(400).json({ error: "Due Date can't be before the Start Date." });
+        const cfId = d.contentFormatId !== undefined ? (d.contentFormatId ?? null) : prior.content_format_id;
+        const dur = cfId
+          ? (await pool.query("select duration_days from task_content_format where id = $1 and org_id = $2", [cfId, req.orgId])).rows[0]?.duration_days ?? null
+          : null;
+        if (dur != null && effDue > addDaysYmd(effStart, dur)) {
+          return res.status(400).json({ error: `Due Date must be within ${dur} day(s) of the Start Date.` });
+        }
+      }
+    }
 
     // Status moves follow who's allowed to make that particular call:
     //  - todo/in_progress/review: only the assignee — not whoever assigned
@@ -508,14 +562,15 @@ tasksRouter.patch("/tasks/:id", requireEditor, requireActiveEod, async (req, res
       // Social or Paid Ad — numbered within its brand (Project), so it needs
       // one. Uses the channel being set in this same PATCH if present, else the
       // task's existing one. Never re-generates an id that already exists.
-      if (d.taskType === "social" || d.taskType === "ad" || d.taskType === "service") {
+      if (d.taskType === "social" || d.taskType === "ad" || d.taskType === "service" || d.taskType === "project") {
         const effChannel = d.channelId !== undefined ? (d.channelId ?? null) : prior.channel_id;
         if (!effChannel) {
-          return res.status(400).json({ error: "Pick a Project (brand) first — Social, Ads and Service tasks are numbered per brand." });
+          return res.status(400).json({ error: "Pick a Brand first — Social, Ads, Service and Project tasks are numbered per brand." });
         }
         if (d.taskType === "social" && !prior.sid) push("sid", await nextBrandTaskRef(effChannel, "sid"));
         if (d.taskType === "ad" && !prior.ad_id) push("ad_id", await nextBrandTaskRef(effChannel, "adid"));
         if (d.taskType === "service" && !prior.svid) push("svid", await nextBrandTaskRef(effChannel, "svid"));
+        if (d.taskType === "project" && !prior.pid) push("pid", await nextBrandTaskRef(effChannel, "pid"));
       }
     }
     if (d.contentFormatId !== undefined) push("content_format_id", d.contentFormatId ?? null);

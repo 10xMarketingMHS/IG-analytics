@@ -11,7 +11,7 @@ const Schema = z.object({
   // Which category (Social vs Ads) this content type belongs to — a format
   // lives in exactly one, and the task-creation dropdown pulls the chosen
   // category's list. Required on create; not editable afterward.
-  category: z.enum(["social", "ad", "service"]).optional(),
+  category: z.enum(["social", "ad", "service", "project"]).optional(),
   // Points Formula base_points for this format — how much a task in it is
   // worth before the on-time/late timing multiplier applies. Independent of
   // budget_hours (task-rules.js) — a format's point value and its time
@@ -20,9 +20,15 @@ const Schema = z.object({
   // Management-metric tag: mark a format as a Key or Critical Metric so
   // Management Performance can report goal-vs-achieved against it. null clears.
   metric_tier: z.enum(["key", "critical"]).nullable().optional(),
+  // Project-type-only (category='project'): duration bounds a project's Due
+  // Date; metrics_description is free-form documentation ONLY — no scoring
+  // logic reads it. Ignored for the other categories.
+  duration_days: z.number().int().positive().max(3650).nullable().optional(),
+  metrics_description: z.string().max(2000).nullable().optional(),
 });
 
-const SELECT = "id, name, icon, sort_order, active, points, category, metric_tier";
+const SELECT = "id, name, icon, sort_order, active, points, category, metric_tier, duration_days, metrics_description";
+const CATEGORIES = ["social", "ad", "service", "project"];
 
 // Org-wide, like editors — every channel picks from the same list.
 contentFormatsRouter.get("/content-formats", async (req, res, next) => {
@@ -41,8 +47,8 @@ contentFormatsRouter.post("/content-formats", requirePermission("task_settings")
   const parsed = Schema.safeParse(req.body);
   if (!parsed.success) return res.status(400).json({ error: "Give the format a name." });
   const category = parsed.data.category;
-  if (category !== "social" && category !== "ad" && category !== "service") {
-    return res.status(400).json({ error: "Pick a category (Social, Ads or Service) for this content type." });
+  if (!CATEGORIES.includes(category)) {
+    return res.status(400).json({ error: "Pick a category (Social, Ads, Service or Project) for this content type." });
   }
   try {
     // Sort order is per category, so each list numbers from 1 independently.
@@ -51,9 +57,12 @@ contentFormatsRouter.post("/content-formats", requirePermission("task_settings")
       [req.orgId, category],
     );
     const { rows } = await pool.query(
-      `insert into task_content_format (org_id, name, icon, sort_order, category, metric_tier)
-       values ($1, $2, $3, $4, $5, $6) returning ${SELECT}`,
-      [req.orgId, parsed.data.name, parsed.data.icon || "🔧", maxRow[0].n, category, parsed.data.metric_tier ?? null],
+      `insert into task_content_format
+         (org_id, name, icon, sort_order, category, metric_tier, points, duration_days, metrics_description)
+       values ($1, $2, $3, $4, $5, $6, coalesce($7, 1), $8, $9) returning ${SELECT}`,
+      [req.orgId, parsed.data.name, parsed.data.icon || "🔧", maxRow[0].n, category,
+       parsed.data.metric_tier ?? null, parsed.data.points ?? null,
+       parsed.data.duration_days ?? null, parsed.data.metrics_description ?? null],
     );
     res.status(201).json({ contentFormat: rows[0] });
   } catch (err) {
@@ -71,6 +80,8 @@ contentFormatsRouter.patch("/content-formats/:id", requirePermission("task_setti
   if (parsed.data.icon !== undefined) { vals.push(parsed.data.icon); sets.push(`icon = $${vals.length}`); }
   if (parsed.data.points !== undefined) { vals.push(parsed.data.points); sets.push(`points = $${vals.length}`); }
   if (parsed.data.metric_tier !== undefined) { vals.push(parsed.data.metric_tier); sets.push(`metric_tier = $${vals.length}`); }
+  if (parsed.data.duration_days !== undefined) { vals.push(parsed.data.duration_days); sets.push(`duration_days = $${vals.length}`); }
+  if (parsed.data.metrics_description !== undefined) { vals.push(parsed.data.metrics_description); sets.push(`metrics_description = $${vals.length}`); }
   if (!sets.length) return res.status(400).json({ error: "Nothing to update." });
   vals.push(req.params.id, req.orgId);
   try {

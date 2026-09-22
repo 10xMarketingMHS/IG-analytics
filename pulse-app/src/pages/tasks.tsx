@@ -42,8 +42,9 @@ const TYPE_LABEL: Record<TaskType, string> = {
   ad: "Paid Ad",
   admin: "Admin",
   service: "Service",
+  project: "Project",
 };
-const TYPE_ICON: Record<TaskType, string> = { content: "📄", short_task: "⚡", general: "🗒️", social: "📱", ad: "📢", admin: "🛠️", service: "🧰" };
+const TYPE_ICON: Record<TaskType, string> = { content: "📄", short_task: "⚡", general: "🗒️", social: "📱", ad: "📢", admin: "🛠️", service: "🧰", project: "📁" };
 // Task types selectable in the Add/Edit Task modal — "content" is reserved
 // for auto-created (post-linked) tasks, not offered here.
 const SELECTABLE_TASK_TYPES: TaskType[] = ["general", "short_task", "social", "ad"];
@@ -78,8 +79,8 @@ const CONTENT_LABEL = (v: string | null) => CONTENT_TYPES.find((c) => c.value ==
 // A board task is created under one of two categories — Social or Ads — which
 // drives its per-brand id (SID vs AID) and gates the Content Type list: pick a
 // category first, then only its content types are offered.
-type TaskCategory = "social" | "ad" | "service" | "admin";
-const CATEGORY_LABEL: Record<TaskCategory, string> = { social: "Social", ad: "Ads", service: "Service", admin: "Admin" };
+type TaskCategory = "social" | "ad" | "service" | "project" | "admin";
+const CATEGORY_LABEL: Record<TaskCategory, string> = { social: "Social", ad: "Ads", service: "Service", project: "Project", admin: "Admin" };
 // A task's category, inferred from its task_type (null for legacy general/short
 // tasks that predate the Social/Ads split). "service" is a full peer of
 // Social/Ads; "admin" is an admin-only category with no project/content-type/
@@ -88,6 +89,7 @@ const taskCategory = (t: Pick<Task, "task_type">): TaskCategory | null =>
   t.task_type === "social" ? "social"
     : t.task_type === "ad" ? "ad"
     : t.task_type === "service" ? "service"
+    : t.task_type === "project" ? "project"
     : t.task_type === "admin" ? "admin"
     : null;
 // Display normalizer for the secondary id — old rows stored the "AdID-" prefix,
@@ -1617,9 +1619,9 @@ function TaskPanel({ mode, task, canWrite, editors, channels, onClose, onChanged
   const canEditDelivery = !ro && (isAdmin || isOwnerTask);
   const { contentFormats } = useContentFormats();
   const [draft, setDraft] = useState<{
-    channel_id: string | null; editor_id: string | null; due_date: string | null; priority: string;
+    channel_id: string | null; editor_id: string | null; due_date: string | null; start_date: string | null; priority: string;
     status: string; content_format_id: string | null; attachments: TaskAttachment[];
-  }>({ channel_id: null, editor_id: null, due_date: null, priority: "medium", status: "todo", content_format_id: null, attachments: [] });
+  }>({ channel_id: null, editor_id: null, due_date: null, start_date: null, priority: "medium", status: "todo", content_format_id: null, attachments: [] });
   const [title, setTitle] = useState(task?.title ?? "");
   const [description, setDescription] = useState(task?.description ?? "");
   const [busy, setBusy] = useState(false);
@@ -1647,8 +1649,18 @@ function TaskPanel({ mode, task, canWrite, editors, channels, onClose, onChanged
   // (each category has its own list).
   function pickCategory(next: TaskCategory) {
     setCategory(next);
-    setDraft((d) => ({ ...d, content_format_id: null }));
+    // A Project needs a Start Date (defaults to today) and its own type list.
+    setDraft((d) => ({ ...d, content_format_id: null, start_date: next === "project" ? (d.start_date ?? today()) : d.start_date }));
   }
+  // Project-only derived values: the selected project type drives its duration
+  // (which bounds the Due Date) and its read-only points.
+  const isProject = activeCategory === "project";
+  const selectedFormat = (contentFormats ?? []).find((f) => f.id === cur.content_format_id) ?? null;
+  const projectDuration = isProject ? (selectedFormat?.duration_days ?? null) : null;
+  const projectPoints = isProject ? (selectedFormat?.points ?? null) : null;
+  const dueMax = isProject && cur.start_date != null && projectDuration != null
+    ? ymd(addDays(new Date(`${cur.start_date}T00:00:00`), projectDuration))
+    : undefined;
   // Choosing a content type also settles the category (Reel → Social, Ad Video
   // → Ads) when one hasn't been picked yet, so the two never disagree.
   function onPickContentType(id: string | null) {
@@ -1678,7 +1690,7 @@ function TaskPanel({ mode, task, canWrite, editors, channels, onClose, onChanged
   }, []);
 
   const cur = creating ? draft : {
-    channel_id: task!.channel_id, editor_id: task!.editor_id, due_date: task!.due_date, priority: task!.priority,
+    channel_id: task!.channel_id, editor_id: task!.editor_id, due_date: task!.due_date, start_date: task!.start_date, priority: task!.priority,
     status: task!.status, content_format_id: task!.content_format_id, attachments: task!.attachments ?? [],
   };
 
@@ -1695,7 +1707,8 @@ function TaskPanel({ mode, task, canWrite, editors, channels, onClose, onChanged
   // A board task must declare its category and belong to a brand (Project) —
   // that's what its per-brand SID/AID is numbered against.
   // Admin tasks need no project; every other category is numbered per brand.
-  const canCreate = Boolean(title.trim() && category && (category === "admin" || draft.channel_id));
+  // A Project must have its type picked first (it drives duration + points).
+  const canCreate = Boolean(title.trim() && category && (category === "admin" || draft.channel_id) && (category !== "project" || draft.content_format_id));
   async function create() {
     if (!canCreate || busy) return;
     setBusy(true);
@@ -1704,6 +1717,7 @@ function TaskPanel({ mode, task, canWrite, editors, channels, onClose, onChanged
         // Every new task starts in To Do, regardless of where it was opened from.
         title: title.trim(), description, taskType: category, status: "todo",
         channelId: draft.channel_id, editorId: draft.editor_id, dueDate: draft.due_date,
+        startDate: category === "project" ? draft.start_date : undefined,
         priority: draft.priority, contentFormatId: draft.content_format_id,
         attachments: draft.attachments,
       }) });
@@ -1746,6 +1760,7 @@ function TaskPanel({ mode, task, canWrite, editors, channels, onClose, onChanged
           {task!.sid && <span className="task-code">{showId(task!.sid)}</span>}
           {task!.ad_id && <span className="task-code">{showId(task!.ad_id)}</span>}
           {task!.svid && <span className="task-code">{task!.svid}</span>}
+          {task!.pid && <span className="task-code">{task!.pid}</span>}
         </div>
       )}
       {!creating && task!.pending_note && (
@@ -1767,11 +1782,12 @@ function TaskPanel({ mode, task, canWrite, editors, channels, onClose, onChanged
               <button type="button" className={category === "social" ? "on" : ""} onClick={() => pickCategory("social")}>📣 Social</button>
               <button type="button" className={category === "ad" ? "on" : ""} onClick={() => pickCategory("ad")}>💰 Ads</button>
               <button type="button" className={category === "service" ? "on" : ""} onClick={() => pickCategory("service")}>🧰 Service</button>
+              <button type="button" className={category === "project" ? "on" : ""} onClick={() => pickCategory("project")}>📁 Project</button>
               {isAdmin && <button type="button" className={category === "admin" ? "on" : ""} onClick={() => pickCategory("admin")}>🛠️ Admin</button>}
             </div>
           </Row>
         )}
-        <Row label="Project">
+        <Row label="Brand">
           <select className="t" disabled={ro} value={cur.channel_id ?? ""} onChange={(e) => set("channel_id", "channelId", e.target.value || null)}>
             <option value="">—</option>
             {channels.map((c) => (<option key={c.id} value={c.id}>{c.name}</option>))}
@@ -1809,7 +1825,19 @@ function TaskPanel({ mode, task, canWrite, editors, channels, onClose, onChanged
             </>
           )}
         </Row>
-        <Row label="Due Date"><input className="t" type="date" disabled={ro} value={cur.due_date ?? ""} onChange={(e) => set("due_date", "dueDate", e.target.value || null)} /></Row>
+        {isProject && (
+          <Row label="Start Date">
+            <input className="t" type="date" disabled={ro} value={cur.start_date ?? ""} onChange={(e) => set("start_date", "startDate", e.target.value || null)} />
+          </Row>
+        )}
+        <Row label="Due Date">
+          <input className="t" type="date" disabled={ro} value={cur.due_date ?? ""}
+            min={isProject ? (cur.start_date ?? undefined) : undefined} max={dueMax}
+            onChange={(e) => set("due_date", "dueDate", e.target.value || null)} />
+          {isProject && projectDuration != null && (
+            <span className="hint" style={{ display: "block", marginTop: 4 }}>Within {projectDuration} day{projectDuration === 1 ? "" : "s"} of the Start Date{dueMax ? ` (by ${dueMax})` : ""}.</span>
+          )}
+        </Row>
         <Row label="Priority">
           <select className="t" disabled={ro} value={cur.priority} onChange={(e) => set("priority", "priority", e.target.value)}>
             <option value="low">Low</option><option value="medium">Medium</option><option value="high">High</option>
@@ -1837,14 +1865,19 @@ function TaskPanel({ mode, task, canWrite, editors, channels, onClose, onChanged
           </Row>
         )}
         {!(adminTask || adminEdit) && (
-          <Row label="Content Type">
-            {/* Always a dropdown; its options are the content types configured in
-                Task Settings for the active category. Disabled until a category
-                is picked (create mode). */}
+          <Row label={isProject ? "Project type" : "Content Type"}>
+            {/* Always a dropdown; its options are the content/project types
+                configured in Task Settings for the active category. Disabled
+                until a category is picked (create mode). */}
             <select className="t" disabled={ro} value={cur.content_format_id ?? ""} onChange={(e) => onPickContentType(e.target.value || null)}>
               <option value="">—</option>
               {contentTypeChoices.map((f) => (<option key={f.id} value={f.id}>{f.icon} {f.name}{!activeCategory ? ` · ${CATEGORY_LABEL[f.category ?? "social"]}` : ""}</option>))}
             </select>
+          </Row>
+        )}
+        {isProject && (
+          <Row label="Points">
+            <div className="t autofield">{projectPoints != null ? projectPoints : "— pick a project type first"}</div>
           </Row>
         )}
         {!creating && !adminEdit && (
@@ -1863,9 +1896,9 @@ function TaskPanel({ mode, task, canWrite, editors, channels, onClose, onChanged
       {creating ? (
         <div className="formfoot" style={{ marginTop: 14 }}>
           <div className="hint" style={{ margin: 0, flex: 1 }}>
-            {!category ? `Choose a category — Social or Ads${isAdmin ? " or Admin" : ""} — to begin.`
-              : adminTask ? (!title.trim() ? "Add a title — Admin tasks need nothing else." : "Admin task — starts In Progress, just for you.")
-              : !draft.channel_id ? "Pick a Project (brand) — Social/Ads tasks are numbered per brand."
+            {!category ? `Choose a category — Social, Ads, Service or Project${isAdmin ? " or Admin" : ""} — to begin.`
+              : adminTask ? (!title.trim() ? "Add a title — Admin tasks need nothing else." : "Admin task — just for you.")
+              : !draft.channel_id ? "Pick a Brand — Social, Ads, Service and Project tasks are numbered per brand."
               : !title.trim() ? "Add a task title."
               : "Checklist & comments become available after you create the task."}
           </div>
@@ -2198,7 +2231,7 @@ function TaskList({ tasks, onOpen }: { tasks: Task[]; onOpen: (t: Task) => void 
       <table className="tbl task-tbl">
         <thead>
           <tr>
-            <th>Task</th><th>Type</th><th>Assignee</th><th>Project</th>
+            <th>Task</th><th>Type</th><th>Assignee</th><th>Brand</th>
             <th>Priority</th><th>Due</th><th>Checklist</th><th>Platforms</th><th>Status</th>
           </tr>
         </thead>

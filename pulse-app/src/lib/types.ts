@@ -116,7 +116,7 @@ export type TaskPriority = "low" | "medium" | "high";
 // reserved for auto-created (post-linked) tasks and isn't user-selectable.
 // "emergency" was dropped — priority "high" already covers urgency. "social"
 // and "ad" each carry a secondary id (SID/AdID) alongside the task's own TID.
-export type TaskType = "content" | "short_task" | "general" | "social" | "ad" | "admin" | "service";
+export type TaskType = "content" | "short_task" | "general" | "social" | "ad" | "admin" | "service" | "project";
 
 // Type-specific extras for social/ad tasks — optional, only meaningful when
 // task_type is "social" or "ad" respectively.
@@ -139,13 +139,17 @@ export type ContentFormatDef = {
   active: boolean;
   // Social / Ads / Service — the category this content type belongs to (null
   // only for retired legacy formats that predate the split).
-  category: "social" | "ad" | "service" | null;
+  category: "social" | "ad" | "service" | "project" | null;
   // Points Formula base_points for this format — independent of budget_hours
   // (task_time_rule). See taskPoints() in leaderboard.tsx.
   points: number;
   // Management-metric tag — surfaces goal-vs-achieved for this format under
   // Key / Critical Metrics in Management Performance. null = untagged.
   metric_tier: "key" | "critical" | null;
+  // Project-type-only (category='project'): duration bounds a project's Due
+  // Date; metrics_description is free-form documentation only (no scoring use).
+  duration_days?: number | null;
+  metrics_description?: string | null;
 };
 
 export type TaskAttachment = { url: string; label?: string };
@@ -180,6 +184,10 @@ export type Task = {
   sid: string | null;
   ad_id: string | null;
   svid: string | null;
+  // Project ID (per-brand, like sid/ad_id/svid) + start date — only set for
+  // task_type='project'. due_date (above) is the project's due date.
+  pid: string | null;
+  start_date: string | null;
   meta: TaskMeta;
   // Bumps every time an admin sends it back from Review for rework — see
   // TaskReviewLogEntry for the note that came with each bump.
@@ -193,6 +201,10 @@ export type Task = {
   // Points Formula base_points for this task's format — see taskPoints() in
   // leaderboard.tsx. Null only if content_format_id itself is null.
   content_format_points: number | null;
+  // Project type's configured duration (days) + metrics text, joined from the
+  // task's content_format. Only meaningful for task_type='project'.
+  content_format_duration: number | null;
+  content_format_metrics: string | null;
   budget_hours: number | null;
   budget_started_at: string | null;
   // The assignee's break state — offsets the countdown by however long

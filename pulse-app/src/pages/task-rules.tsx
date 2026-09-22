@@ -24,7 +24,7 @@ export function TaskRulesSection() {
   const { contentFormats, refetch: refetchFormats } = useContentFormats();
   const [rules, setRules] = useState<TaskTimeRule[] | null>(null);
   // Which category's formats + overrides are on screen — toggled at the top.
-  const [activeCat, setActiveCat] = useState<"social" | "ad" | "service">("social");
+  const [activeCat, setActiveCat] = useState<"social" | "ad" | "service" | "project">("social");
 
   const load = useCallback(() => {
     api<{ rules: TaskTimeRule[] }>("/task-time-rules")
@@ -74,7 +74,7 @@ export function TaskRulesSection() {
       toast.error(err instanceof ApiError ? err.message : errorMsg);
     }
   }
-  async function addFormat(name: string, icon: string, category: "social" | "ad" | "service") {
+  async function addFormat(name: string, icon: string, category: "social" | "ad" | "service" | "project") {
     try {
       await api("/content-formats", { method: "POST", body: JSON.stringify({ name, icon, category }) });
       await refetchFormats();
@@ -99,10 +99,11 @@ export function TaskRulesSection() {
 
   // One Social section and one Ads section — each is a self-contained content
   // formats table + per-person overrides grid, scoped to that category's list.
-  const CATEGORIES: { key: "social" | "ad" | "service"; label: string }[] = [
+  const CATEGORIES: { key: "social" | "ad" | "service" | "project"; label: string }[] = [
     { key: "social", label: "Social" },
     { key: "ad", label: "Ads" },
     { key: "service", label: "Service" },
+    { key: "project", label: "Project" },
   ];
 
   return (
@@ -119,8 +120,8 @@ export function TaskRulesSection() {
         return (
           <div key={key}>
             <div className="sectitle">
-              <span className="dot" />{label} — content formats
-              <span className="s">icon, points, and time budget together — click a name to rename it</span>
+              <span className="dot" />{label} — {key === "project" ? "project types" : "content formats"}
+              <span className="s">{key === "project" ? "icon, points, duration and metrics — click a name to rename it" : "icon, points, and time budget together — click a name to rename it"}</span>
             </div>
             <div className="card pad">
               {contentFormats === null ? (
@@ -133,8 +134,17 @@ export function TaskRulesSection() {
                         <th style={{ width: 44 }}></th>
                         <th>Format</th>
                         <th style={{ width: 110, textAlign: "center" }}>Points</th>
-                        <th style={{ width: 130, textAlign: "center" }}>Time budget</th>
-                        <th style={{ width: 150, textAlign: "center" }}>Metric</th>
+                        {key === "project" ? (
+                          <>
+                            <th style={{ width: 120, textAlign: "center" }}>Duration (days)</th>
+                            <th style={{ textAlign: "center" }}>Metrics</th>
+                          </>
+                        ) : (
+                          <>
+                            <th style={{ width: 130, textAlign: "center" }}>Time budget</th>
+                            <th style={{ width: 150, textAlign: "center" }}>Metric</th>
+                          </>
+                        )}
                         <th style={{ width: 36 }}></th>
                       </tr>
                     </thead>
@@ -150,6 +160,9 @@ export function TaskRulesSection() {
                           onMetric={(metric_tier) => patchFormat(f.id, { metric_tier }, "Could not update the metric tag.")}
                           onHours={(hours) => setRule(f.id, null, hours)}
                           onClearHours={() => { const r = globalFor(f); if (r) removeRule(r.id); }}
+                          isProject={key === "project"}
+                          onDuration={(duration_days) => patchFormat(f.id, { duration_days }, "Could not save the duration.")}
+                          onMetrics={(metrics_description) => patchFormat(f.id, { metrics_description }, "Could not save the metrics.")}
                           onRemove={() => removeFormat(f)}
                         />
                       ))}
@@ -263,6 +276,7 @@ function IconPicker({ value, onPick }: { value: string; onPick: (icon: string) =
 // pattern as the rest of this page.
 function FormatRow({
   format, rule, onIcon, onRename, onPoints, onMetric, onHours, onClearHours, onRemove,
+  isProject = false, onDuration, onMetrics,
 }: {
   format: ContentFormatDef;
   rule: TaskTimeRule | null;
@@ -273,14 +287,36 @@ function FormatRow({
   onHours: (hours: number) => void;
   onClearHours: () => void;
   onRemove: () => void;
+  // Project types swap Time budget + Metric for Duration (days) + Metrics text.
+  isProject?: boolean;
+  onDuration?: (days: number | null) => void;
+  onMetrics?: (text: string | null) => void;
 }) {
   const [name, setName] = useState(format.name);
   const [points, setPoints] = useState(format.points.toString());
   const [hours, setHours] = useState(rule?.hours?.toString() ?? "");
+  const [duration, setDuration] = useState(format.duration_days?.toString() ?? "");
+  const [metrics, setMetrics] = useState(format.metrics_description ?? "");
 
   useEffect(() => setName(format.name), [format.name]);
   useEffect(() => setPoints(format.points.toString()), [format.points]);
   useEffect(() => setHours(rule?.hours?.toString() ?? ""), [rule?.hours]);
+  useEffect(() => setDuration(format.duration_days?.toString() ?? ""), [format.duration_days]);
+  useEffect(() => setMetrics(format.metrics_description ?? ""), [format.metrics_description]);
+
+  function saveDuration() {
+    const t = duration.trim();
+    if (!t) { if (format.duration_days != null) onDuration?.(null); return; }
+    const n = Number(t);
+    if (!(n > 0)) { setDuration(format.duration_days?.toString() ?? ""); return; }
+    if (n === format.duration_days) return;
+    onDuration?.(n);
+  }
+  function saveMetrics() {
+    const next = metrics.trim() || null;
+    if (next === (format.metrics_description ?? null)) return;
+    onMetrics?.(next);
+  }
 
   function saveName() {
     const trimmed = name.trim();
@@ -323,25 +359,46 @@ function FormatRow({
           value={points} onChange={(e) => setPoints(e.target.value)} onBlur={savePoints} onKeyDown={blurOnEnter}
         />
       </td>
-      <td>
-        <input
-          className="t" type="number" min="0.5" step="0.5" placeholder="—" style={{ width: 86, textAlign: "center" }}
-          value={hours} onChange={(e) => setHours(e.target.value)} onBlur={saveHours} onKeyDown={blurOnEnter}
-        />
-      </td>
-      <td style={{ textAlign: "center" }}>
-        <select
-          className="t"
-          style={{ width: 132 }}
-          value={format.metric_tier ?? ""}
-          onChange={(e) => onMetric((e.target.value || null) as "key" | "critical" | null)}
-          title="Tag this format as a Key or Critical Metric for Management Performance"
-        >
-          <option value="">— None —</option>
-          <option value="key">Key Metric</option>
-          <option value="critical">Critical Metric</option>
-        </select>
-      </td>
+      {isProject ? (
+        <>
+          <td style={{ textAlign: "center" }}>
+            <input
+              className="t" type="number" min="1" step="1" placeholder="—" style={{ width: 86, textAlign: "center" }}
+              value={duration} onChange={(e) => setDuration(e.target.value)} onBlur={saveDuration} onKeyDown={blurOnEnter}
+              title="Max days a project of this type may run — bounds its Due Date"
+            />
+          </td>
+          <td>
+            <input
+              className="t" placeholder="What this project delivers (info only)…"
+              value={metrics} onChange={(e) => setMetrics(e.target.value)} onBlur={saveMetrics} onKeyDown={blurOnEnter}
+              title="Free-text description — documentation only, not used in scoring"
+            />
+          </td>
+        </>
+      ) : (
+        <>
+          <td>
+            <input
+              className="t" type="number" min="0.5" step="0.5" placeholder="—" style={{ width: 86, textAlign: "center" }}
+              value={hours} onChange={(e) => setHours(e.target.value)} onBlur={saveHours} onKeyDown={blurOnEnter}
+            />
+          </td>
+          <td style={{ textAlign: "center" }}>
+            <select
+              className="t"
+              style={{ width: 132 }}
+              value={format.metric_tier ?? ""}
+              onChange={(e) => onMetric((e.target.value || null) as "key" | "critical" | null)}
+              title="Tag this format as a Key or Critical Metric for Management Performance"
+            >
+              <option value="">— None —</option>
+              <option value="key">Key Metric</option>
+              <option value="critical">Critical Metric</option>
+            </select>
+          </td>
+        </>
+      )}
       <td>
         <button type="button" className="linkbtn" style={{ color: "var(--rose)" }} onClick={onRemove} title="Remove format">✕</button>
       </td>
