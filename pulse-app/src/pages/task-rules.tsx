@@ -145,6 +145,7 @@ export function TaskRulesSection() {
                             <th style={{ width: 150, textAlign: "center" }}>Metric</th>
                           </>
                         )}
+                        <th style={{ width: 120, textAlign: "center" }}>Link for review</th>
                         <th style={{ width: 36 }}></th>
                       </tr>
                     </thead>
@@ -158,6 +159,7 @@ export function TaskRulesSection() {
                           onRename={(name) => patchFormat(f.id, { name }, "Could not rename that format.")}
                           onPoints={(points) => patchFormat(f.id, { points }, "Could not save points.")}
                           onMetric={(metric_tier) => patchFormat(f.id, { metric_tier }, "Could not update the metric tag.")}
+                          onLinkRequired={(review_link_required) => patchFormat(f.id, { review_link_required }, "Could not update the review link setting.")}
                           onHours={(hours) => setRule(f.id, null, hours)}
                           onClearHours={() => { const r = globalFor(f); if (r) removeRule(r.id); }}
                           isProject={key === "project"}
@@ -173,9 +175,11 @@ export function TaskRulesSection() {
               )}
               <div className="hint" style={{ marginTop: 14 }}>
                 <b>Points</b> — the Points Formula's base value for this format (on/before due date earns it in full, 1 day
-                late earns half, 2 days late earns none, 3+ days late costs it back). <b>Time budget</b> — hours before a
+                late earns half, 2 days late earns none, 3+ days late costs it back; days waiting for a reviewer don't count as late). <b>Time budget</b> — hours before a
                 task's countdown runs out; blank means no timer. The two are independent — a Reel and a Poster can score
-                differently even at the same time budget. Removing a format doesn't touch tasks already using it.
+                differently even at the same time budget. <b>Link for review</b> — when ticked, a task of this type can't be
+                submitted for review without a delivery link; untick it for work with nothing to link to (scheduling,
+                data, technical tasks). Removing a format doesn't touch tasks already using it.
               </div>
             </div>
 
@@ -275,7 +279,7 @@ function IconPicker({ value, onPick }: { value: string; onPick: (icon: string) =
 // remove. Each field saves independently on blur/pick, same "no Save button"
 // pattern as the rest of this page.
 function FormatRow({
-  format, rule, onIcon, onRename, onPoints, onMetric, onHours, onClearHours, onRemove,
+  format, rule, onIcon, onRename, onPoints, onMetric, onLinkRequired, onHours, onClearHours, onRemove,
   isProject = false, onDuration, onMetrics,
 }: {
   format: ContentFormatDef;
@@ -284,6 +288,7 @@ function FormatRow({
   onRename: (name: string) => void;
   onPoints: (points: number) => void;
   onMetric: (tier: "key" | "critical" | null) => void;
+  onLinkRequired: (required: boolean) => void;
   onHours: (hours: number) => void;
   onClearHours: () => void;
   onRemove: () => void;
@@ -399,6 +404,16 @@ function FormatRow({
           </td>
         </>
       )}
+      <td style={{ textAlign: "center" }}>
+        <input
+          type="checkbox"
+          checked={format.review_link_required}
+          onChange={(e) => onLinkRequired(e.target.checked)}
+          style={{ width: 18, height: 18 }}
+          aria-label={`Delivery link required to submit ${format.name} for review`}
+          title="When ticked, a task of this type needs a delivery link before it can be submitted for review"
+        />
+      </td>
       <td>
         <button type="button" className="linkbtn" style={{ color: "var(--rose)" }} onClick={onRemove} title="Remove format">✕</button>
       </td>

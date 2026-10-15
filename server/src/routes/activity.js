@@ -1,10 +1,19 @@
 import { Router } from "express";
 import { pool } from "../db.js";
+import { reviewAccess } from "../permissions.js";
 
 export const activityRouter = Router();
 
-// Recent activity across the org, newest first. Optional ?channel=<id> filter
-// and ?limit= (capped). Joins the actor's name for display.
+// Recent activity, newest first. Optional ?channel=<id> filter and ?limit=
+// (capped). Joins the actor's name for display.
+//
+// Admins see the whole org. Everyone else gets a personal feed: events on tasks
+// assigned to them (including one that was deleted or moved to someone else),
+// things they did themselves,
+// and new team members — plus,
+// for resolve_tasks grantees, tasks submitted for review that fall inside their
+// review scope. Other people's tasks, published posts and channel changes are
+// left out.
 activityRouter.get("/activity", async (req, res, next) => {
   try {
     const params = [req.orgId];
@@ -13,10 +22,35 @@ activityRouter.get("/activity", async (req, res, next) => {
       params.push(req.query.channel);
       where += ` and a.channel_id = $${params.length}`;
     }
+    if (req.role !== "admin") {
+      const { rows: me } = await pool.query("select editor_id from app_user where id = $1", [req.user.sub]);
+      const review = await reviewAccess(req.orgId, req.user.sub);
+      // Unscoped grant → every review request. Scoped → only requests on the
+      // people (all their tasks) or the individual tasks the scope names.
+      const reviewAll = review.granted && !review.scope;
+      const scoped = review.granted && review.scope ? review.scope.editors ?? [] : [];
+      const scopeEditors = scoped.filter((e) => e.taskIds == null).map((e) => e.editorId);
+      const scopeTasks = scoped.flatMap((e) => e.taskIds ?? []);
+      params.push(req.user.sub, me[0]?.editor_id ?? null, reviewAll, scopeEditors, scopeTasks);
+      const [uid, eid, resolve, sEds, sTasks] =
+        [params.length - 4, params.length - 3, params.length - 2, params.length - 1, params.length];
+      where += ` and (
+        a.actor_id = $${uid}
+        or a.verb = 'editor_added'
+        or (a.verb = 'deleted' and a.meta->>'editorId' = $${eid}::text)
+        or (a.verb = 'assigned' and a.meta->>'fromEditorId' = $${eid}::text)
+        or (a.entity_type = 'task' and exists (
+              select 1 from task t where t.id = a.entity_id and t.editor_id = $${eid}::uuid))
+        or (a.verb = 'review_requested' and (
+              $${resolve}::boolean
+              or exists (select 1 from task t where t.id = a.entity_id
+                          and (t.editor_id = any($${sEds}::uuid[]) or t.id = any($${sTasks}::uuid[])))))
+      )`;
+    }
     const limit = Math.min(Number(req.query.limit) || 60, 200);
     params.push(limit);
     const { rows } = await pool.query(
-      `select a.id, a.verb, a.entity_type, a.entity_id, a.channel_id,
+      `select a.id, a.verb, a.entity_type, a.entity_id, a.channel_id, a.actor_id,
               a.summary, a.meta, a.created_at,
               coalesce(u.name, u.email) as actor_name,
               w.name as channel_name

@@ -23,6 +23,7 @@ import { integrationsRouter } from "./routes/integrations.js";
 import { goalsRouter } from "./routes/goals.js";
 import { goalTrackerRouter } from "./routes/goal-tracker.js";
 import { eodRouter } from "./routes/eod.js";
+import { sodRouter } from "./routes/sod.js";
 import { managementPerformanceRouter } from "./routes/management-performance.js";
 import { accessRouter } from "./routes/access.js";
 
@@ -63,6 +64,7 @@ app.use("/api", requireAuth, resolveWorkspace, integrationsRouter);
 app.use("/api", requireAuth, resolveWorkspace, goalsRouter);
 app.use("/api", requireAuth, resolveWorkspace, goalTrackerRouter);
 app.use("/api", requireAuth, resolveWorkspace, eodRouter);
+app.use("/api", requireAuth, resolveWorkspace, sodRouter);
 app.use("/api", requireAuth, resolveWorkspace, managementPerformanceRouter);
 app.use("/api", requireAuth, resolveWorkspace, accessRouter);
 

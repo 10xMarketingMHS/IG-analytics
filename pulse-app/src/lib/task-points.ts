@@ -16,13 +16,14 @@ export const isScorableTask = (t: Task): boolean => t.task_type !== "admin";
 //   on/before due date -> +100% · 1 day late -> +50% · 2 days late -> 0%
 //   3+ days late -> -100% (flat, doesn't get worse)
 //   No due date is treated as on-time (nothing to be late against).
+//   Time spent waiting for a reviewer doesn't count: lateness is measured at
+//   workedUntil() — approval time minus every review wait.
 // REWORK (how many review send-backs it took — the task.revision count):
 //   see reworkMultiplier below.
 //
-// The two multipliers are INDEPENDENT and compound multiplicatively — neither
-// caps the other. rework is always a positive fraction ≤ 1, so it only shrinks
-// the magnitude timeliness alone would give, keeping the ±base bound intact.
-// Evaluated once at completion using the revision count at that moment.
+// Rework only scales earned (positive) points down; it never softens the
+// 3+-days-late penalty, so a late task with many send-backs can't lose less
+// than one with none. Evaluated at completion using the revision count then.
 //
 // Shared by the Media House Leaders board, Progress Path, and My Day's "your
 // rank" widget — one implementation so all three can never quietly disagree.
@@ -53,16 +54,30 @@ export function reworkMultiplier(revision: number | null | undefined): number {
   return 0.2;
 }
 
+// The moment a task's lateness is measured at, with every wait for a reviewer
+// taken out — when it would have been finished had each review been instant.
+// Completed: approval time. In Review: frozen at submission. Otherwise: now.
+export function workedUntil(t: Task, now: Date = new Date()): Date {
+  const at = t.status === "done" && t.completed_at ? new Date(t.completed_at)
+    : t.status === "review" && t.review_started_at ? new Date(t.review_started_at)
+    : now;
+  return new Date(at.getTime() - Number(t.review_wait_seconds ?? 0) * 1000);
+}
+
+// Days past the due date at workedUntil(); 0 or less is on time (no due date: 0).
+export function lateDays(t: Task, now?: Date): number {
+  return t.due_date ? daysBetween(t.due_date, ymd(workedUntil(t, now))) : 0;
+}
+
 export function taskPoints(t: Task): number {
   const base = t.content_format_points != null ? Number(t.content_format_points) : 1;
   if (!t.completed_at) return 0;
   const rework = reworkMultiplier(t.revision);
-  if (!t.due_date) return base * rework;
-  const daysLate = daysBetween(t.due_date, ymd(new Date(t.completed_at)));
+  const daysLate = lateDays(t);
   if (daysLate <= 0) return base * rework;
   if (daysLate === 1) return base * 0.5 * rework;
   if (daysLate === 2) return 0;
-  return -base * rework;
+  return -base;
 }
 
 // ---- Per-window ranking (My Day's "Your Score" widget) ----

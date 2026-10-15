@@ -1,7 +1,7 @@
 import { Router } from "express";
 import { z } from "zod";
 import { pool } from "../db.js";
-import { PERMISSION_KEYS, activeGrants, requirePermission } from "../permissions.js";
+import { PERMISSION_KEYS, activeGrants, requirePermission, reviewAccess } from "../permissions.js";
 
 // Settings → Access — admin-only management of per-user permission grants.
 // The user picker is served by the existing GET /users (workspace members);
@@ -14,16 +14,38 @@ accessRouter.get("/access/grants", requirePermission("access_manage"), async (re
   const userId = req.query.userId;
   if (!userId) return res.status(400).json({ error: "userId is required." });
   try {
-    res.json({ permissions: await activeGrants(req.orgId, userId) });
+    const review = await reviewAccess(req.orgId, userId);
+    res.json({ permissions: await activeGrants(req.orgId, userId), reviewScope: review.scope });
   } catch (err) {
     next(err);
   }
+});
+
+// GET /access/review-scope/me — the caller's own review access, so the Task
+// Board can show approve / send-back only on the tasks they may resolve. Open
+// to every signed-in member; it only ever describes the caller.
+accessRouter.get("/access/review-scope/me", async (req, res, next) => {
+  try {
+    res.json(await reviewAccess(req.orgId, req.user.sub));
+  } catch (err) {
+    next(err);
+  }
+});
+
+const ReviewScopeSchema = z.object({
+  editors: z.array(z.object({
+    editorId: z.string().uuid(),
+    taskIds: z.array(z.string().uuid()).nullable(),
+  })),
 });
 
 const SaveSchema = z.object({
   userId: z.string().uuid(),
   // A desired-state map; only known keys are honored, unknown ones ignored.
   permissions: z.record(z.string(), z.boolean()),
+  // Narrows resolve_tasks: null/omitted = everyone, otherwise only these
+  // people/tasks. Ignored unless resolve_tasks is being granted.
+  reviewScope: ReviewScopeSchema.nullable().optional(),
 });
 
 // PUT /access/grants — apply a user's desired permission state. New permissions
@@ -32,7 +54,7 @@ const SaveSchema = z.object({
 accessRouter.put("/access/grants", requirePermission("access_manage"), async (req, res, next) => {
   const parsed = SaveSchema.safeParse(req.body);
   if (!parsed.success) return res.status(400).json({ error: "Invalid grant payload." });
-  const { userId, permissions } = parsed.data;
+  const { userId, permissions, reviewScope } = parsed.data;
   try {
     // Target must be a member of this workspace, and not an admin — grants are
     // meaningless for admins (they already have everything).
@@ -59,7 +81,13 @@ accessRouter.put("/access/grants", requirePermission("access_manage"), async (re
         );
       }
     }
-    res.json({ ok: true, permissions: await activeGrants(req.orgId, userId) });
+    if (permissions.resolve_tasks === true) {
+      await pool.query(
+        "update user_permission_grant set scope=$4 where org_id=$1 and user_id=$2 and permission_key=$3 and revoked_at is null",
+        [req.orgId, userId, "resolve_tasks", reviewScope ? JSON.stringify(reviewScope) : null],
+      );
+    }
+    res.json({ ok: true, permissions: await activeGrants(req.orgId, userId), reviewScope: reviewScope ?? null });
   } catch (err) {
     next(err);
   }

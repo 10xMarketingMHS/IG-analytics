@@ -177,7 +177,7 @@ export function BreakOverlay() {
 
         <div className="brk-quote"><span className="qm l">“</span>{quote}<span className="qm r">”</span></div>
 
-        <button type="button" className="brk-startwork" onClick={startWork}>▶ Start Work</button>
+        <button type="button" className="brk-startwork" onClick={startWork}>▶ Resume Work</button>
       </div>
     </div>
   );

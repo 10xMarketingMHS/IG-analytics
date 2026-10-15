@@ -3,7 +3,8 @@ import { z } from "zod";
 import { pool } from "../db.js";
 import { requireEditor } from "../resolve-workspace.js";
 import { requireActiveEod } from "./eod.js";
-import { hasActiveGrant } from "../permissions.js";
+import { requireTodaysPlan } from "./sod.js";
+import { hasActiveGrant, reviewAccess, scopeAllowsTask } from "../permissions.js";
 import { logActivity } from "../activity.js";
 
 export const tasksRouter = Router();
@@ -68,6 +69,12 @@ const TaskSchema = z.object({
   // admin-manageable task_content_format list. Optional — not every task
   // (e.g. a short/general task) has one.
   contentFormatId: z.string().uuid().nullable().optional(),
+  // Per-task "delivery link required to submit for review". null = follow the
+  // content type's default. Only an admin / assign_tasks grantee may set it.
+  reviewLinkRequired: z.boolean().nullable().optional(),
+  // Approving a task that needs a delivery link but has none is refused unless
+  // the reviewer explicitly confirms it (the app asks first).
+  approveWithoutWork: z.boolean().optional(),
   meta: MetaSchema.optional(),
   // When a save results in an accepted task with a resolvable time budget,
   // the client already knows (from this same response, checked after a first
@@ -117,7 +124,15 @@ const SELECT = `
          t.content_format_id, cf.name as content_format_name, cf.icon as content_format_icon,
          cf.points as content_format_points, cf.duration_days as content_format_duration,
          cf.metrics_description as content_format_metrics,
-         t.budget_hours, t.budget_started_at, t.accepted, t.on_hold, t.held_by, t.created_at, t.completed_at,
+         cf.review_link_required as content_format_link_required,
+         coalesce(t.review_link_required, cf.review_link_required, false) as link_required,
+         t.budget_hours, t.budget_started_at, t.accepted, t.on_hold, t.held_by, t.created_at, t.completed_at, t.created_by,
+         -- Time spent waiting for a reviewer, taken off lateness when scoring.
+         t.review_started_at, t.review_wait_seconds::float as review_wait_seconds,
+         -- The assignee made this task for themselves (marked in the UI, so
+         -- reviewers and My Team can tell it from assigned work).
+         (t.created_by is not null and exists (
+            select 1 from app_user cu where cu.id = t.created_by and cu.editor_id = t.editor_id)) as self_created,
          t.content_type, t.platforms, t.attachments, t.delivery_link,
          e.name as editor_name, e.image_url as editor_image,
          coalesce(hu.name, hu.email) as held_by_name,
@@ -162,6 +177,12 @@ export async function resolveBudgetHours(orgId, editorId, contentFormatId) {
 async function callerEditorId(req) {
   const { rows } = await pool.query("select editor_id from app_user where id = $1", [req.user.sub]);
   return rows[0]?.editor_id ?? null;
+}
+
+// Setting work up for other people — assigning it, re-planning it, removing it —
+// is for an admin or an assign_tasks grantee (Settings → Access).
+async function canAssignTasks(req) {
+  return req.role === "admin" || (await hasActiveGrant(req.orgId, req.user.sub, "assign_tasks"));
 }
 
 // List every task in the org, newest-relevant first. Optional filters:
@@ -241,6 +262,12 @@ tasksRouter.post("/tasks", requireEditor, requireActiveEod, async (req, res, nex
       return res.status(403).json({ error: "Only an admin can create an Admin task." });
     }
     const callerEid = await callerEditorId(req);
+    if (isAdminTask && !callerEid) {
+      return res.status(400).json({ error: "Add yourself to the team first (Settings → Team → Edit on your row) — an Admin task is assigned to you." });
+    }
+    if (!isAdminTask && d.editorId && d.editorId !== callerEid && !(await canAssignTasks(req))) {
+      return res.status(403).json({ error: "You can create tasks for yourself. Assigning work to someone else needs an admin." });
+    }
     const assigneeId = isAdminTask ? callerEid : (d.editorId ?? null);
     // Every new task starts in To Do — nothing is auto-started (not even admin
     // tasks, which used to open In Progress). A task moves to In Progress only
@@ -272,17 +299,17 @@ tasksRouter.post("/tasks", requireEditor, requireActiveEod, async (req, res, nex
         }
       }
     }
-    // Assigning to yourself accepts immediately — no separate approval needed
-    // — but that's still an "accept" moment: the office-hours check just runs
-    // client-side after this response instead of before it (see startAt).
+    // Assigning to yourself accepts immediately — no separate approval needed.
     // Assigning to someone else needs their explicit accept before anything
     // starts (POST /tasks/:id/accept). Admin tasks are always self-assigned, so
     // always accepted, and have no timer to gate anyway.
     const accepted = !assigneeId || callerEid === assigneeId;
     // Admin tasks carry no time tracking at all — skip the budget lookup.
     const budgetHours = isAdminTask ? null : await resolveBudgetHours(req.orgId, assigneeId, contentFormatId);
-    const hasBudget = accepted && budgetHours != null;
-    const budgetStartedAt = hasBudget ? (d.startAt ? new Date(d.startAt) : new Date()) : null;
+    // The clock never starts at creation: an assigned task's starts on Accept,
+    // one you made for yourself when you press Start (see PATCH). A morning plan
+    // full of new tasks would otherwise start every timer at once.
+    const budgetStartedAt = null;
     // Every task gets an org-wide TID (internal key); a Social task also gets a
     // per-brand SID, a Paid Ad task a per-brand AID, a Service task a per-brand
     // SVID. Admin tasks get a TID only.
@@ -331,6 +358,10 @@ tasksRouter.post("/tasks", requireEditor, requireActiveEod, async (req, res, nex
         startDate,
       ],
     );
+    await pool.query("update task set created_by = $2 where id = $1", [rows[0].id, req.user.sub]);
+    if (typeof d.reviewLinkRequired === "boolean" && (await canAssignTasks(req))) {
+      await pool.query("update task set review_link_required = $2 where id = $1", [rows[0].id, d.reviewLinkRequired]);
+    }
     const { rows: full } = await pool.query(`${SELECT} where t.id = $1`, [rows[0].id]);
     await logActivity({
       orgId: req.orgId,
@@ -347,7 +378,7 @@ tasksRouter.post("/tasks", requireEditor, requireActiveEod, async (req, res, nex
   }
 });
 
-tasksRouter.patch("/tasks/:id", requireEditor, requireActiveEod, async (req, res, next) => {
+tasksRouter.patch("/tasks/:id", requireEditor, requireActiveEod, requireTodaysPlan, async (req, res, next) => {
   const parsed = TaskSchema.partial().safeParse(req.body);
   if (!parsed.success) {
     return res.status(400).json({ error: parsed.error.flatten().fieldErrors });
@@ -380,10 +411,65 @@ tasksRouter.patch("/tasks/:id", requireEditor, requireActiveEod, async (req, res
     // Capture prior state so we can spawn the next occurrence on completion,
     // guard task_type for post-linked tasks, and re-resolve the time budget.
     const prior = (await pool.query(
-      "select status, recurrence, post_id, editor_id, channel_id, content_format_id, accepted, budget_hours, budget_started_at, budget_used_seconds, on_hold, sid, ad_id, svid, pid, start_date, due_date, revision, task_type from task where id = $1 and org_id = $2",
+      "select status, recurrence, post_id, editor_id, channel_id, content_format_id, accepted, budget_hours, budget_started_at, budget_used_seconds, on_hold, sid, ad_id, svid, pid, start_date, due_date, revision, task_type, delivery_link, review_link_required, title, description, priority, content_type, platforms, attachments, meta, created_by, held_by from task where id = $1 and org_id = $2",
       [req.params.id, req.orgId],
     )).rows[0];
     if (!prior) return res.status(404).json({ error: "Task not found" });
+
+    // Who may change what (admins: anything):
+    //  - a completed task is frozen as it was approved — work link included;
+    //  - handing a task to someone is for assigners; anyone may take an
+    //    unassigned one for themselves;
+    //  - the brief (title, description, brand, type, dates, priority, repeat)
+    //    belongs to whoever set the task up: an assigner, or the assignee when
+    //    they created the task for themselves. The due date and content type in
+    //    particular drive points and the review-link rule, so an assigned task's
+    //    can't be moved by the person doing it;
+    //  - the working fields (links, platforms, post) are the assignee's.
+    // Values that arrive unchanged are fine — the edit forms resend them.
+    if (req.role !== "admin") {
+      const myEid = await callerEditorId(req);
+      const assigner = await hasActiveGrant(req.orgId, req.user.sub, "assign_tasks");
+      const own = !!myEid && prior.editor_id === myEid;
+      const same = (a, b) => (a ?? null) === (b ?? null);
+      const json = (v) => JSON.stringify(v ?? null);
+      const briefChanged =
+        (d.title !== undefined && d.title !== prior.title)
+        || (d.description !== undefined && (d.description ?? "") !== (prior.description ?? ""))
+        || (d.channelId !== undefined && !same(d.channelId, prior.channel_id))
+        || (d.priority !== undefined && d.priority !== prior.priority)
+        || (d.dueDate !== undefined && !same(d.dueDate || null, prior.due_date))
+        || (d.startDate !== undefined && !same(d.startDate || null, prior.start_date))
+        || (d.recurrence !== undefined && d.recurrence !== prior.recurrence)
+        || (d.contentType !== undefined && !same(d.contentType, prior.content_type))
+        || (d.taskType !== undefined && d.taskType !== prior.task_type)
+        || (d.contentFormatId !== undefined && !same(d.contentFormatId, prior.content_format_id));
+      const workChanged =
+        (d.attachments !== undefined && json(d.attachments) !== json(prior.attachments ?? []))
+        || (d.platforms !== undefined && json(d.platforms) !== json(prior.platforms ?? []))
+        || (d.meta !== undefined && json(d.meta) !== json(prior.meta ?? {}))
+        || (d.postId !== undefined && !same(d.postId, prior.post_id))
+        || (d.deliveryLink !== undefined && !same(d.deliveryLink || null, prior.delivery_link))
+        || d.startAt !== undefined;
+      const assigneeChanged = d.editorId !== undefined && !same(d.editorId, prior.editor_id);
+      const claiming = assigneeChanged && !prior.editor_id && !!myEid && d.editorId === myEid;
+      if (prior.status === "done" && (briefChanged || workChanged || assigneeChanged)) {
+        return res.status(403).json({ error: "This task is completed — only an admin can change it." });
+      }
+      if (assigneeChanged && !claiming && !assigner) {
+        return res.status(403).json({ error: "Only an admin can reassign a task." });
+      }
+      if (briefChanged && !(own ? prior.created_by === req.user.sub : assigner)) {
+        return res.status(403).json({
+          error: own
+            ? "This task was assigned to you — only an admin can change its title, description, type, dates, priority or repeat."
+            : "Only an admin can change someone else's task.",
+        });
+      }
+      if (workChanged && !own && !claiming && !assigner) {
+        return res.status(403).json({ error: "Only an admin can change someone else's task." });
+      }
+    }
 
     // Project: keep the Due Date within [Start, Start + type's duration] on
     // update too (server-side, not just the picker). date columns come back as
@@ -418,12 +504,25 @@ tasksRouter.patch("/tasks/:id", requireEditor, requireActiveEod, async (req, res
     // written after the main update below.
     let reviewLogAction = null;
     let reviewNote = null;
+    let holdAction = null;
+    let budgetStartSet = false;
     if (d.status !== undefined && d.status !== prior.status) {
       if (prior.status === "review") {
         // Resolving a review (approve into done, or send back for rework) is an
-        // admin power — or a resolve_tasks grantee acting with the same reach.
-        if (req.role !== "admin" && !(await hasActiveGrant(req.orgId, req.user.sub, "resolve_tasks"))) {
-          return res.status(403).json({ error: "Only an admin can approve or send back a task in review." });
+        // admin power — or a resolve_tasks grantee, within whatever scope their
+        // grant carries (everyone / certain people / certain tasks). A grantee
+        // can never resolve a task assigned to themselves.
+        if (req.role !== "admin") {
+          const review = await reviewAccess(req.orgId, req.user.sub);
+          if (!review.granted) {
+            return res.status(403).json({ error: "Only an admin can approve or send back a task in review." });
+          }
+          if (prior.editor_id && prior.editor_id === (await callerEditorId(req))) {
+            return res.status(403).json({ error: "You can't review a task that's assigned to you." });
+          }
+          if (!scopeAllowsTask(review.scope, { id: req.params.id, editor_id: prior.editor_id })) {
+            return res.status(403).json({ error: "You don't have review access for this task." });
+          }
         }
         if (d.status !== "done" && d.status !== "in_progress") {
           return res.status(400).json({ error: "From review, a task can only move to Completed or back to In progress." });
@@ -442,6 +541,20 @@ tasksRouter.patch("/tasks/:id", requireEditor, requireActiveEod, async (req, res
           push("accepted", false);
           push("pending_note", reviewNote);
         } else {
+          const link = d.deliveryLink !== undefined ? d.deliveryLink : prior.delivery_link;
+          if (!link && !d.approveWithoutWork) {
+            let required = prior.review_link_required;
+            if (required == null && prior.content_format_id) {
+              const { rows: cfRows } = await pool.query(
+                "select review_link_required from task_content_format where id = $1 and org_id = $2",
+                [prior.content_format_id, req.orgId],
+              );
+              required = cfRows[0]?.review_link_required ?? false;
+            }
+            if (required) {
+              return res.status(409).json({ error: "No work is attached to this task. Confirm to approve it anyway.", code: "no_work_attached" });
+            }
+          }
           reviewLogAction = "approved";
           reviewNote = (d.reviewNote ?? "").trim() || null;
         }
@@ -454,13 +567,52 @@ tasksRouter.patch("/tasks/:id", requireEditor, requireActiveEod, async (req, res
         if (prior.status === "in_progress" && d.status === "todo") {
           return res.status(403).json({ error: "Once work has started, a task can't go back to To Do — an admin can put it on Hold instead." });
         }
-        // A held task is frozen until an admin resumes it (clears the hold).
-        if (prior.on_hold && req.role !== "admin") {
-          return res.status(403).json({ error: "This task is on hold — an admin needs to resume it first." });
+        if (prior.status === "done") {
+          // Completed is final for the assignee: it was approved, and its points
+          // are counted. Reopening approved work is an admin's call, and it goes
+          // back into the working stages, never to the pre-start To Do.
+          if (req.role !== "admin") {
+            return res.status(403).json({ error: "This task is completed — only an admin can reopen it." });
+          }
+          if (d.status === "todo") {
+            return res.status(400).json({ error: "A completed task can be reopened to In progress or Review, not To Do." });
+          }
+        } else {
+          // A held task is frozen until an admin resumes it (clears the hold).
+          if (prior.on_hold && req.role !== "admin") {
+            return res.status(403).json({
+              error: prior.held_by === req.user.sub
+                ? "This task is on hold — press Resume first."
+                : "An admin put this task on hold — they need to resume it first.",
+            });
+          }
+          const myEditorId = await callerEditorId(req);
+          if (!prior.editor_id || myEditorId !== prior.editor_id) {
+            return res.status(403).json({ error: "Only the person this task is assigned to can change its status." });
+          }
+          // Work starts with Accept — that's the moment the assignee takes the
+          // task on, and, after a send-back, where they read what needs fixing.
+          if (!prior.accepted) {
+            return res.status(400).json({ error: "Accept this task first, then you can move it." });
+          }
         }
-        const myEditorId = await callerEditorId(req);
-        if (!prior.editor_id || myEditorId !== prior.editor_id) {
-          return res.status(403).json({ error: "Only the person this task is assigned to can change its status." });
+      }
+      // A reviewer needs the output to judge it: submitting for review requires
+      // the delivery link, unless this content type is exempt (Task Settings).
+      // Tasks with no content type (e.g. Admin tasks) have nothing to link.
+      if (d.status === "review") {
+        const cfId = d.contentFormatId !== undefined ? (d.contentFormatId ?? null) : prior.content_format_id;
+        const link = d.deliveryLink !== undefined ? d.deliveryLink : prior.delivery_link;
+        // The task's own setting wins; with none, fall back to its content type.
+        let required = d.reviewLinkRequired !== undefined ? d.reviewLinkRequired : prior.review_link_required;
+        if (required == null && cfId) {
+          const { rows: cfRows } = await pool.query(
+            "select review_link_required from task_content_format where id = $1 and org_id = $2", [cfId, req.orgId],
+          );
+          required = cfRows[0]?.review_link_required ?? false;
+        }
+        if (required && !link) {
+          return res.status(400).json({ error: "Add your delivery link before submitting for review." });
         }
       }
       // Entering review pauses the clock — bank whatever's elapsed so far
@@ -471,6 +623,26 @@ tasksRouter.patch("/tasks/:id", requireEditor, requireActiveEod, async (req, res
         const elapsedSec = Math.max(0, (Date.now() - new Date(prior.budget_started_at).getTime()) / 1000);
         push("budget_used_seconds", Number(prior.budget_used_seconds ?? 0) + elapsedSec);
         push("budget_started_at", null);
+      }
+      // An already-accepted task (made for yourself, or picked up) starts its
+      // clock here, on its move out of To Do — not when it was created. startAt
+      // lets the board offer "start now or 9 AM tomorrow" after office hours.
+      if (prior.status === "todo" && d.status === "in_progress" && prior.accepted
+          && prior.budget_hours != null && !prior.budget_started_at) {
+        const usedSec = Number(prior.budget_used_seconds ?? 0);
+        const startAt = d.startAt ? new Date(d.startAt) : new Date();
+        push("budget_started_at", new Date(startAt.getTime() - usedSec * 1000));
+        push("budget_used_seconds", 0);
+        budgetStartSet = true;
+      }
+      // Time waiting for a reviewer never counts against the assignee: note
+      // when it went into Review, and when it leaves (approved, sent back or
+      // moved by an admin) add that wait to the total the score subtracts.
+      if (d.status === "review") {
+        sets.push("review_started_at = now()");
+      } else if (prior.status === "review") {
+        sets.push("review_wait_seconds = review_wait_seconds + greatest(0, extract(epoch from now() - coalesce(review_started_at, now())))");
+        sets.push("review_started_at = null");
       }
       push("status", d.status);
       // Stamp/clear completion time as status moves in/out of "done".
@@ -491,7 +663,13 @@ tasksRouter.patch("/tasks/:id", requireEditor, requireActiveEod, async (req, res
         if (!prior.editor_id || myEditorId !== prior.editor_id) {
           return res.status(403).json({ error: "Only an admin or the task's assignee can put it on hold or resume it." });
         }
+        // A hold an admin (or hold_tasks grantee) applied is theirs to lift —
+        // the assignee can only resume a hold they put on themselves.
+        if (!d.onHold && prior.held_by && prior.held_by !== req.user.sub) {
+          return res.status(403).json({ error: "An admin put this task on hold — ask them to resume it." });
+        }
       }
+      holdAction = d.onHold ? "held" : "resumed";
       if (d.onHold) {
         // Pause: bank whatever's elapsed and stop the clock (mirrors Review).
         if (prior.budget_started_at && prior.budget_hours != null) {
@@ -574,6 +752,13 @@ tasksRouter.patch("/tasks/:id", requireEditor, requireActiveEod, async (req, res
       }
     }
     if (d.contentFormatId !== undefined) push("content_format_id", d.contentFormatId ?? null);
+    if (d.reviewLinkRequired !== undefined) {
+      // The assignee can't waive their own review link — only whoever may assign work.
+      if (req.role !== "admin" && !(await hasActiveGrant(req.orgId, req.user.sub, "assign_tasks"))) {
+        return res.status(403).json({ error: "Only an admin can change whether this task needs a review link." });
+      }
+      push("review_link_required", d.reviewLinkRequired);
+    }
     if (d.meta !== undefined) push("meta", JSON.stringify(d.meta));
 
     // Reassigning — resets acceptance unless it's a no-op (same editor) or a
@@ -598,11 +783,13 @@ tasksRouter.patch("/tasks/:id", requireEditor, requireActiveEod, async (req, res
       const effectiveFormatId = d.contentFormatId !== undefined ? (d.contentFormatId ?? null) : prior.content_format_id;
       const budgetHours = await resolveBudgetHours(req.orgId, effectiveEditorId, effectiveFormatId);
       push("budget_hours", budgetHours);
-      push("budget_started_at", budgetHours !== null && accepted ? (d.startAt ? new Date(d.startAt) : new Date()) : null);
+      // A task that hasn't been started (still To Do) keeps its clock stopped.
+      const runs = budgetHours !== null && accepted && (prior.status !== "todo" || budgetStartSet);
+      if (!budgetStartSet) push("budget_started_at", runs ? (d.startAt ? new Date(d.startAt) : new Date()) : null);
       // Handing it to someone new — any time banked from the previous
       // assignee's paused work session doesn't carry over to them.
       if (d.editorId !== undefined && d.editorId !== prior.editor_id) push("budget_used_seconds", 0);
-    } else if (d.startAt !== undefined && prior.accepted && prior.budget_hours != null) {
+    } else if (!budgetStartSet && d.startAt !== undefined && prior.accepted && prior.budget_hours != null && prior.budget_started_at) {
       // Pure reschedule — nothing else about the task changed, just when its
       // already-running clock should count from (e.g. deferring a self-assign
       // made after office hours to 9 AM tomorrow instead).
@@ -632,7 +819,48 @@ tasksRouter.patch("/tasks/:id", requireEditor, requireActiveEod, async (req, res
         entityType: "task",
         entityId: full[0].id,
         channelId: full[0].channel_id,
-        summary: `Completed task “${full[0].title}”`,
+        summary: `Approved task “${full[0].title}”`,
+      });
+    }
+    // Handed to someone else — the new assignee needs to know.
+    if (d.editorId && d.editorId !== prior.editor_id) {
+      await logActivity({
+        orgId: req.orgId, actorId: req.user.sub, verb: "assigned",
+        entityType: "task", entityId: full[0].id, channelId: full[0].channel_id,
+        summary: `Assigned task “${full[0].title}” to ${full[0].editor_name ?? "a team member"}`,
+        // Who had it before — they see this in their feed too (see activity.js).
+        meta: { fromEditorId: prior.editor_id, toEditorId: d.editorId },
+      });
+    }
+    if (holdAction) {
+      await logActivity({
+        orgId: req.orgId, actorId: req.user.sub, verb: holdAction,
+        entityType: "task", entityId: full[0].id, channelId: full[0].channel_id,
+        summary: holdAction === "held" ? `Put task “${full[0].title}” on hold` : `Resumed task “${full[0].title}”`,
+      });
+    }
+    // Submitted for review / sent back for rework — these are what reviewers
+    // and the assignee respectively need a notification for.
+    if (prior.status === "done" && finalStatus !== "done") {
+      await logActivity({
+        orgId: req.orgId, actorId: req.user.sub, verb: "reopened",
+        entityType: "task", entityId: full[0].id, channelId: full[0].channel_id,
+        summary: `Reopened completed task “${full[0].title}”`,
+      });
+    } else if (prior.status !== "review" && finalStatus === "review") {
+      await logActivity({
+        orgId: req.orgId, actorId: req.user.sub, verb: "review_requested",
+        entityType: "task", entityId: full[0].id, channelId: full[0].channel_id,
+        summary: `Submitted task “${full[0].title}” for review`,
+      });
+    }
+    if (reviewLogAction === "sent_back") {
+      await logActivity({
+        orgId: req.orgId, actorId: req.user.sub, verb: "sent_back",
+        entityType: "task", entityId: full[0].id, channelId: full[0].channel_id,
+        summary: `Sent back task “${full[0].title}” for rework`,
+        // The reason, so the feed says what needs fixing.
+        meta: { note: reviewNote },
       });
     }
     // Record the review decision (and, for a rework cycle, the note the team
@@ -656,7 +884,7 @@ tasksRouter.patch("/tasks/:id", requireEditor, requireActiveEod, async (req, res
 // now would run the budget past office close) — client computes the wall-clock
 // time since office hours are a local-time concept, not something the server
 // should guess at.
-tasksRouter.post("/tasks/:id/accept", requireEditor, requireActiveEod, async (req, res, next) => {
+tasksRouter.post("/tasks/:id/accept", requireEditor, requireActiveEod, requireTodaysPlan, async (req, res, next) => {
   const startAt = req.body?.startAt ? new Date(req.body.startAt) : new Date();
   if (isNaN(startAt.getTime())) return res.status(400).json({ error: "Invalid start time." });
   try {
@@ -699,7 +927,7 @@ tasksRouter.post("/tasks/:id/accept", requireEditor, requireActiveEod, async (re
 async function spawnNextOccurrence(taskId, recurrence) {
   try {
     const t = (await pool.query(
-      "select org_id, editor_id, channel_id, title, description, priority, due_date, task_type, content_format_id from task where id = $1",
+      "select org_id, editor_id, channel_id, title, description, priority, due_date, task_type, content_format_id, review_link_required, created_by from task where id = $1",
       [taskId],
     )).rows[0];
     if (!t) return;
@@ -716,9 +944,9 @@ async function spawnNextOccurrence(taskId, recurrence) {
     const adId = t.task_type === "ad" && t.channel_id ? await nextBrandTaskRef(t.channel_id, "adid") : null;
     const svid = t.task_type === "service" && t.channel_id ? await nextBrandTaskRef(t.channel_id, "svid") : null;
     const { rows } = await pool.query(
-      `insert into task (org_id, editor_id, channel_id, title, description, priority, due_date, recurrence, status, task_type, content_format_id, budget_hours, budget_started_at, tid, sid, ad_id, svid)
-       values ($1,$2,$3,$4,$5,$6, ${nextDue}, $8, 'todo', $9, $10, $11, case when $11::numeric is not null then now() else null end, $12, $13, $14, $15) returning id`,
-      [t.org_id, t.editor_id, t.channel_id, t.title, t.description, t.priority, t.due_date, recurrence, t.task_type, t.content_format_id, budgetHours, tid, sid, adId, svid],
+      `insert into task (org_id, editor_id, channel_id, title, description, priority, due_date, recurrence, status, task_type, content_format_id, budget_hours, budget_started_at, tid, sid, ad_id, svid, review_link_required, accepted, created_by)
+       values ($1,$2,$3,$4,$5,$6, ${nextDue}, $8, 'todo', $9, $10, $11, null, $12, $13, $14, $15, $16, false, $17) returning id`,
+      [t.org_id, t.editor_id, t.channel_id, t.title, t.description, t.priority, t.due_date, recurrence, t.task_type, t.content_format_id, budgetHours, tid, sid, adId, svid, t.review_link_required, t.created_by],
     );
     const newId = rows[0].id;
     await pool.query(
@@ -730,13 +958,38 @@ async function spawnNextOccurrence(taskId, recurrence) {
   }
 }
 
+// Deleting erases the work, its history and its points. A completed task: an
+// admin only. Anything else: an admin or an assign_tasks grantee — or the person
+// who created the task for themselves. Every deletion is written to the feed.
 tasksRouter.delete("/tasks/:id", requireEditor, async (req, res, next) => {
   try {
+    const t = (await pool.query(
+      "select title, tid, status, editor_id, channel_id, created_by from task where id = $1 and org_id = $2",
+      [req.params.id, req.orgId],
+    )).rows[0];
+    if (!t) return res.status(404).json({ error: "Task not found" });
+    if (req.role !== "admin") {
+      if (t.status === "done") {
+        return res.status(403).json({ error: "This task is completed — only an admin can delete it." });
+      }
+      if (!(await hasActiveGrant(req.orgId, req.user.sub, "assign_tasks"))) {
+        const myEid = await callerEditorId(req);
+        const ownCreation = t.created_by === req.user.sub && !!myEid && t.editor_id === myEid;
+        if (!ownCreation) return res.status(403).json({ error: "Only an admin can delete this task." });
+      }
+    }
     const { rowCount } = await pool.query(
       "delete from task where id = $1 and org_id = $2",
       [req.params.id, req.orgId],
     );
     if (!rowCount) return res.status(404).json({ error: "Task not found" });
+    await logActivity({
+      orgId: req.orgId, actorId: req.user.sub, verb: "deleted",
+      entityType: "task", entityId: req.params.id, channelId: t.channel_id,
+      summary: `Deleted task “${t.title}”`,
+      // The task row is gone — keep who it belonged to, so they still see this.
+      meta: { tid: t.tid, editorId: t.editor_id },
+    });
     res.status(204).end();
   } catch (err) {
     next(err);
@@ -748,6 +1001,27 @@ tasksRouter.delete("/tasks/:id", requireEditor, async (req, res, next) => {
 async function ownsTask(taskId, orgId) {
   const { rows } = await pool.query("select 1 from task where id = $1 and org_id = $2", [taskId, orgId]);
   return rows.length > 0;
+}
+
+// The checklist is part of working a task: its assignee, an admin or an
+// assign_tasks grantee may change it — and once the task is completed, only an
+// admin. Returns null when allowed, else the { status, error } to send.
+async function checklistRefusal(req, task) {
+  if (!task) return { status: 404, error: "Task not found" };
+  if (req.role === "admin") return null;
+  if (task.status === "done") return { status: 403, error: "This task is completed — only an admin can change it." };
+  const myEid = await callerEditorId(req);
+  if (myEid && task.editor_id === myEid) return null;
+  if (await hasActiveGrant(req.orgId, req.user.sub, "assign_tasks")) return null;
+  return { status: 403, error: "Only an admin can change someone else's task." };
+}
+async function taskOfSubtask(subtaskId, orgId) {
+  const { rows } = await pool.query(
+    `select t.id, t.status, t.editor_id from subtask s join task t on t.id = s.task_id
+      where s.id = $1 and t.org_id = $2`,
+    [subtaskId, orgId],
+  );
+  return rows[0] ?? null;
 }
 
 // Every review decision on this task — sent back (with its note) or
@@ -784,11 +1058,13 @@ tasksRouter.get("/tasks/:id/subtasks", async (req, res, next) => {
   }
 });
 
-tasksRouter.post("/tasks/:id/subtasks", requireEditor, async (req, res, next) => {
+tasksRouter.post("/tasks/:id/subtasks", requireEditor, requireActiveEod, requireTodaysPlan, async (req, res, next) => {
   const title = typeof req.body?.title === "string" ? req.body.title.trim() : "";
   if (!title) return res.status(400).json({ error: "A checklist item needs a title." });
   try {
-    if (!(await ownsTask(req.params.id, req.orgId))) return res.status(404).json({ error: "Task not found" });
+    const parent = (await pool.query("select id, status, editor_id from task where id = $1 and org_id = $2", [req.params.id, req.orgId])).rows[0];
+    const refusal = await checklistRefusal(req, parent);
+    if (refusal) return res.status(refusal.status).json({ error: refusal.error });
     const { rows } = await pool.query(
       `insert into subtask (task_id, title, sort_order)
        values ($1, $2, (select coalesce(max(sort_order), 0) + 1 from subtask where task_id = $1))
@@ -801,13 +1077,17 @@ tasksRouter.post("/tasks/:id/subtasks", requireEditor, async (req, res, next) =>
   }
 });
 
-tasksRouter.patch("/subtasks/:id", requireEditor, async (req, res, next) => {
+tasksRouter.patch("/subtasks/:id", requireEditor, requireActiveEod, requireTodaysPlan, async (req, res, next) => {
   const sets = [];
   const params = [req.params.id, req.orgId];
   if (typeof req.body?.done === "boolean") { params.push(req.body.done); sets.push(`done = $${params.length}`); }
   if (typeof req.body?.title === "string" && req.body.title.trim()) { params.push(req.body.title.trim()); sets.push(`title = $${params.length}`); }
   if (!sets.length) return res.status(400).json({ error: "Nothing to update." });
   try {
+    const parent = await taskOfSubtask(req.params.id, req.orgId);
+    if (!parent) return res.status(404).json({ error: "Checklist item not found" });
+    const refusal = await checklistRefusal(req, parent);
+    if (refusal) return res.status(refusal.status).json({ error: refusal.error });
     const { rows } = await pool.query(
       `update subtask set ${sets.join(", ")}
        where id = $1 and task_id in (select id from task where org_id = $2)
@@ -821,8 +1101,12 @@ tasksRouter.patch("/subtasks/:id", requireEditor, async (req, res, next) => {
   }
 });
 
-tasksRouter.delete("/subtasks/:id", requireEditor, async (req, res, next) => {
+tasksRouter.delete("/subtasks/:id", requireEditor, requireActiveEod, requireTodaysPlan, async (req, res, next) => {
   try {
+    const parent = await taskOfSubtask(req.params.id, req.orgId);
+    if (!parent) return res.status(404).json({ error: "Checklist item not found" });
+    const refusal = await checklistRefusal(req, parent);
+    if (refusal) return res.status(refusal.status).json({ error: refusal.error });
     const { rowCount } = await pool.query(
       "delete from subtask where id = $1 and task_id in (select id from task where org_id = $2)",
       [req.params.id, req.orgId],
@@ -853,7 +1137,8 @@ tasksRouter.get("/tasks/:id/comments", async (req, res, next) => {
   }
 });
 
-tasksRouter.post("/tasks/:id/comments", async (req, res, next) => {
+// Viewers have read-only access — commenting is for the team doing the work.
+tasksRouter.post("/tasks/:id/comments", requireEditor, async (req, res, next) => {
   const body = typeof req.body?.body === "string" ? req.body.body.trim() : "";
   if (!body) return res.status(400).json({ error: "Write a comment first." });
   try {

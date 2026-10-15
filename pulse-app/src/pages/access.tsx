@@ -1,7 +1,10 @@
-import { useEffect, useState } from "react";
+import { Fragment, useEffect, useState } from "react";
 import { toast } from "sonner";
 import { api, ApiError } from "@/lib/api";
 import type { PermissionKey } from "@/lib/workspaces-context";
+import { useEditors } from "@/lib/use-editors";
+import { useTasks } from "@/lib/use-tasks";
+import type { ReviewScope } from "@/lib/use-review-access";
 
 // Settings → Access — admin-only. Grant SPECIFIC named permissions to a
 // SPECIFIC user, additive on top of their role. Same "pick someone, tick what
@@ -20,7 +23,7 @@ const PERMISSIONS: { key: PermissionKey; label: string; desc: string; scope: "se
   { key: "content_taxonomy", label: "Content Taxonomy", scope: "admin", desc: "Edit the shared pillars, avatars, content types and formats." },
   { key: "access_manage", label: "Manage Access", scope: "admin", desc: "Grant or revoke permissions for other users. ⚠️ Lets them extend their own access too." },
   { key: "assign_tasks", label: "Assign tasks", scope: "admin", desc: "Assign tasks to other editors (not just themselves) when creating a task." },
-  { key: "resolve_tasks", label: "Resolve reviews", scope: "admin", desc: "Approve or send back any task sitting in Review." },
+  { key: "resolve_tasks", label: "Resolve reviews", scope: "admin", desc: "Approve or send back tasks sitting in Review — for everyone, or only the people and tasks you choose below." },
   { key: "hold_tasks", label: "Hold any task", scope: "admin", desc: "Put on hold / resume anyone's task, not only their own." },
   { key: "edit_goals", label: "Edit Goals", scope: "admin", desc: "Set and edit any editor's goals and capacity." },
   { key: "discipline", label: "Discipline", scope: "admin", desc: "Award discipline ratings for any editor (the whole-team Discipline table)." },
@@ -32,6 +35,12 @@ export function AccessSection() {
   const [checked, setChecked] = useState<Record<string, boolean>>({});
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
+  // Resolve reviews scope: everyone, or only the ticked people — and for each
+  // of them either all their tasks or a hand-picked few.
+  const [reviewAll, setReviewAll] = useState(true);
+  const [reviewWho, setReviewWho] = useState<Record<string, { all: boolean; taskIds: string[] }>>({});
+  const { editors } = useEditors();
+  const { tasks } = useTasks();
 
   useEffect(() => {
     api<{ users: UserRow[] }>("/users")
@@ -43,8 +52,13 @@ export function AccessSection() {
   useEffect(() => {
     if (!userId) { setChecked({}); return; }
     setLoading(true);
-    api<{ permissions: PermissionKey[] }>(`/access/grants?userId=${userId}`)
-      .then((d) => setChecked(Object.fromEntries(PERMISSIONS.map((p) => [p.key, d.permissions.includes(p.key)]))))
+    api<{ permissions: PermissionKey[]; reviewScope: ReviewScope }>(`/access/grants?userId=${userId}`)
+      .then((d) => {
+        setChecked(Object.fromEntries(PERMISSIONS.map((p) => [p.key, d.permissions.includes(p.key)])));
+        setReviewAll(!d.reviewScope);
+        setReviewWho(Object.fromEntries((d.reviewScope?.editors ?? []).map((e) =>
+          [e.editorId, { all: e.taskIds == null, taskIds: e.taskIds ?? [] }])));
+      })
       .catch((e) => toast.error(e instanceof ApiError ? e.message : "Couldn't load access."))
       .finally(() => setLoading(false));
   }, [userId]);
@@ -53,7 +67,10 @@ export function AccessSection() {
     setSaving(true);
     try {
       const permissions = Object.fromEntries(PERMISSIONS.map((p) => [p.key, !!checked[p.key]]));
-      await api("/access/grants", { method: "PUT", body: JSON.stringify({ userId, permissions }) });
+      const reviewScope: ReviewScope = reviewAll ? null : {
+        editors: Object.entries(reviewWho).map(([editorId, w]) => ({ editorId, taskIds: w.all ? null : w.taskIds })),
+      };
+      await api("/access/grants", { method: "PUT", body: JSON.stringify({ userId, permissions, reviewScope }) });
       toast.success("Access updated.");
     } catch (e) {
       toast.error(e instanceof ApiError ? e.message : "Couldn't save access.");
@@ -63,6 +80,12 @@ export function AccessSection() {
   }
 
   const activeUsers = (users ?? []).filter((u) => u.active);
+  // People whose work can be handed to this reviewer — everyone on the team
+  // except the reviewer themselves (nobody reviews their own tasks).
+  const selfEditorId = users?.find((u) => u.id === userId)?.editor_id ?? null;
+  const reviewable = (editors ?? []).filter((e) => e.active && e.id !== selfEditorId);
+  const openTasksOf = (editorId: string) =>
+    (tasks ?? []).filter((t) => t.editor_id === editorId && t.status !== "done");
 
   return (
     <>
@@ -95,7 +118,8 @@ export function AccessSection() {
               </div>
               <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
                 {PERMISSIONS.filter((p) => p.scope === scope).map((p) => (
-                  <label key={p.key} style={{ display: "flex", gap: 12, alignItems: "flex-start", cursor: "pointer" }}>
+                  <Fragment key={p.key}>
+                  <label style={{ display: "flex", gap: 12, alignItems: "flex-start", cursor: "pointer" }}>
                     <input
                       type="checkbox"
                       checked={!!checked[p.key]}
@@ -107,6 +131,77 @@ export function AccessSection() {
                       <span style={{ display: "block", fontSize: 12.5, color: "var(--muted)", marginTop: 2 }}>{p.desc}</span>
                     </span>
                   </label>
+                  {p.key === "resolve_tasks" && checked.resolve_tasks && (
+                    <div className="rv-scope">
+                      <label className="rv-opt">
+                        <input type="radio" name="rv-mode" checked={reviewAll} onChange={() => setReviewAll(true)} />
+                        <span><b>Everyone</b> — can review every task</span>
+                      </label>
+                      <label className="rv-opt">
+                        <input type="radio" name="rv-mode" checked={!reviewAll} onChange={() => setReviewAll(false)} />
+                        <span><b>Only these people</b> — tick whose work they can review</span>
+                      </label>
+                      {!reviewAll && (
+                        <div className="rv-people">
+                          {reviewable.length === 0 && <div className="hint">No other team members yet.</div>}
+                          {reviewable.map((e) => {
+                            const w = reviewWho[e.id];
+                            const open = openTasksOf(e.id);
+                            return (
+                              <div key={e.id} className="rv-person">
+                                <label className="rv-opt">
+                                  <input
+                                    type="checkbox"
+                                    checked={!!w}
+                                    onChange={(ev) => setReviewWho((s) => {
+                                      const next = { ...s };
+                                      if (ev.target.checked) next[e.id] = { all: true, taskIds: [] };
+                                      else delete next[e.id];
+                                      return next;
+                                    })}
+                                  />
+                                  <span><b>{e.name}</b></span>
+                                </label>
+                                {w && (
+                                  <select
+                                    className="t rv-which"
+                                    aria-label={`Which of ${e.name}'s tasks`}
+                                    value={w.all ? "all" : "some"}
+                                    onChange={(ev) => setReviewWho((s) => ({ ...s, [e.id]: { ...w, all: ev.target.value === "all" } }))}
+                                  >
+                                    <option value="all">All tasks</option>
+                                    <option value="some">Selected tasks</option>
+                                  </select>
+                                )}
+                                {w && !w.all && (
+                                  <div className="rv-tasks">
+                                    {open.length === 0 && <div className="hint">{e.name} has no open tasks right now.</div>}
+                                    {open.map((t) => (
+                                      <label key={t.id} className="rv-opt">
+                                        <input
+                                          type="checkbox"
+                                          checked={w.taskIds.includes(t.id)}
+                                          onChange={(ev) => setReviewWho((s) => ({
+                                            ...s,
+                                            [e.id]: {
+                                              ...w,
+                                              taskIds: ev.target.checked ? [...w.taskIds, t.id] : w.taskIds.filter((id) => id !== t.id),
+                                            },
+                                          }))}
+                                        />
+                                        <span>{t.tid ? `${t.tid} · ` : ""}{t.title}</span>
+                                      </label>
+                                    ))}
+                                  </div>
+                                )}
+                              </div>
+                            );
+                          })}
+                        </div>
+                      )}
+                    </div>
+                  )}
+                  </Fragment>
                 ))}
               </div>
             </div>

@@ -4,7 +4,7 @@ import { pool } from "../db.js";
 import { requireEditor } from "../resolve-workspace.js";
 import { requirePermission } from "../permissions.js";
 import { logActivity } from "../activity.js";
-import { resolveBudgetHours, nextTaskRef } from "./tasks.js";
+import { resolveBudgetHours, nextTaskRef, nextBrandTaskRef } from "./tasks.js";
 
 export const postsRouter = Router();
 
@@ -58,7 +58,7 @@ const EDIT_STAGES = ["not_started", "in_progress", "in_review", "pending", "comp
 async function syncPostTask(postId, orgId, callerUserId) {
   try {
     const { rows } = await pool.query(
-      "select id, editor_id, title, date, workspace_id, is_collab_mirror, post_type from post where id = $1 and deleted_at is null",
+      "select id, editor_id, title, date, workspace_id, is_collab_mirror, post_type, status from post where id = $1 and deleted_at is null",
       [postId],
     );
     const post = rows[0];
@@ -95,28 +95,28 @@ async function syncPostTask(postId, orgId, callerUserId) {
       const budgetHours = await resolveBudgetHours(orgId, post.editor_id, nextFormatId);
       // A post-linked task is social-media editing work — same "Social" bucket
       // as a manually-typed social task, so it gets an SID too (backfilled for
-      // rows created before this existed).
-      const sid = prior.sid ?? await nextTaskRef(orgId, "sid");
+      // rows created before this existed) — from the same per-brand counter the
+      // board uses, or the numbers clash and the save fails.
+      const sid = prior.sid ?? await nextBrandTaskRef(post.workspace_id, "sid");
       await pool.query(
         `update task set editor_id = $1, title = $2, due_date = $3, channel_id = $4, accepted = $5,
                 content_format_id = $6, budget_hours = $7, sid = $9,
-                budget_started_at = case
-                  when $5 and $7::numeric is not null then coalesce(budget_started_at, now())
-                  when $5 then budget_started_at
-                  else null
-                end
+                budget_started_at = case when $5 then budget_started_at else null end
           where post_id = $8`,
         [post.editor_id, post.title, post.date, post.workspace_id, nextAccepted, nextFormatId, budgetHours, postId, sid],
       );
     } else {
+      // A post entered after it was published has no editing left to do — a
+      // fresh To Do task due on a past date would only show up as overdue work
+      // (and count as late). Tasks are made for posts still being prepared.
+      if (post.status === "published") return;
       const budgetHours = await resolveBudgetHours(orgId, post.editor_id, defaultFormatId);
       const tid = await nextTaskRef(orgId, "tid");
-      const sid = await nextTaskRef(orgId, "sid");
+      const sid = await nextBrandTaskRef(post.workspace_id, "sid");
       await pool.query(
         `insert into task (org_id, post_id, editor_id, channel_id, title, due_date, status, priority,
                            task_type, accepted, content_format_id, budget_hours, budget_started_at, tid, sid)
-         values ($1, $2, $3, $4, $5, $6, 'todo', 'medium', 'content', $7, $8, $9,
-                 case when $7 and $9::numeric is not null then now() else null end, $10, $11)`,
+         values ($1, $2, $3, $4, $5, $6, 'todo', 'medium', 'content', $7, $8, $9, null, $10, $11)`,
         [orgId, postId, post.editor_id, post.workspace_id, post.title, post.date, accepted, defaultFormatId, budgetHours, tid, sid],
       );
     }

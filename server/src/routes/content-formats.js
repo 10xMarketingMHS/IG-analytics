@@ -25,9 +25,11 @@ const Schema = z.object({
   // logic reads it. Ignored for the other categories.
   duration_days: z.number().int().positive().max(3650).nullable().optional(),
   metrics_description: z.string().max(2000).nullable().optional(),
+  // Must a task of this type have a delivery link before going to review?
+  review_link_required: z.boolean().optional(),
 });
 
-const SELECT = "id, name, icon, sort_order, active, points, category, metric_tier, duration_days, metrics_description";
+const SELECT = "id, name, icon, sort_order, active, points, category, metric_tier, duration_days, metrics_description, review_link_required";
 const CATEGORIES = ["social", "ad", "service", "project"];
 
 // Org-wide, like editors — every channel picks from the same list.
@@ -82,6 +84,7 @@ contentFormatsRouter.patch("/content-formats/:id", requirePermission("task_setti
   if (parsed.data.metric_tier !== undefined) { vals.push(parsed.data.metric_tier); sets.push(`metric_tier = $${vals.length}`); }
   if (parsed.data.duration_days !== undefined) { vals.push(parsed.data.duration_days); sets.push(`duration_days = $${vals.length}`); }
   if (parsed.data.metrics_description !== undefined) { vals.push(parsed.data.metrics_description); sets.push(`metrics_description = $${vals.length}`); }
+  if (parsed.data.review_link_required !== undefined) { vals.push(parsed.data.review_link_required); sets.push(`review_link_required = $${vals.length}`); }
   if (!sets.length) return res.status(400).json({ error: "Nothing to update." });
   vals.push(req.params.id, req.orgId);
   try {

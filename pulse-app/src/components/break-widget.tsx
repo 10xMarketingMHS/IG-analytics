@@ -2,7 +2,8 @@ import { useLocation } from "react-router-dom";
 import { useAuth } from "@/lib/auth-context";
 import { useBreakState } from "@/lib/break-context";
 import { ApiError } from "@/lib/api";
-import { OFFICE_CLOSE_HOUR } from "@/lib/task-timing";
+import { useWorkspaces } from "@/lib/workspaces-context";
+import { useEodState } from "@/lib/eod-context";
 import { toast } from "sonner";
 
 function fmt(seconds: number) {
@@ -22,14 +23,16 @@ export function BreakWidget() {
   const { user } = useAuth();
   const { status, displayRemaining, busy, start, end } = useBreakState();
   const location = useLocation();
+  const { active } = useWorkspaces();
+  const { session } = useEodState();
 
   if (location.pathname !== "/tasks") return null;
   if (!user || !status) return null;
-  // Breaks are a workday concept — no point offering "start a break" once
-  // office hours are over. Exception: someone already mid-break needs to
-  // stay able to end it, so this only hides the *offer*, never a break
-  // that's already running.
-  if (new Date().getHours() >= OFFICE_CLOSE_HOUR && !status.onBreak) return null;
+  // Breaks belong to an employee's work day (they pause their task timers):
+  // offered whenever they're clocked in, at any hour, working late included.
+  // Admins and viewers don't clock in, so it isn't shown to them. Someone
+  // already on a break can always end it.
+  if (!status.onBreak && (active?.role !== "editor" || !session)) return null;
 
   if (status.unlinked) {
     return (

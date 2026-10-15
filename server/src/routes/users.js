@@ -2,8 +2,10 @@ import { Router } from "express";
 import bcrypt from "bcryptjs";
 import { z } from "zod";
 import { pool } from "../db.js";
+import { config } from "../config.js";
 import { requireAdmin, clearMembershipCache } from "../resolve-workspace.js";
 import { requirePermission } from "../permissions.js";
+import { logActivity } from "../activity.js";
 
 export const usersRouter = Router();
 
@@ -21,12 +23,18 @@ const ROLES = ["admin", "editor", "viewer"];
 usersRouter.get("/users", requirePermission("access_manage"), async (req, res, next) => {
   try {
     const { rows } = await pool.query(
-      `select u.id, u.email, u.name, u.active, u.editor_id, m.role
+      `select u.id, u.email, u.name, u.active, u.editor_id, m.role,
+              -- An open "forgot password" request: asked, and no reset since.
+              (select max(a.created_at) from activity a
+                where a.org_id = $2 and a.actor_id = u.id and a.verb = 'password_reset_requested'
+                  and a.created_at > coalesce((select max(r.created_at) from activity r
+                        where r.org_id = $2 and r.entity_id = u.id and r.verb = 'password_reset'), 'epoch'))
+                as "resetRequestedAt"
        from membership m
        join app_user u on u.id = m.user_id
        where m.workspace_id = $1
        order by (m.role = 'admin') desc, u.email asc`,
-      [req.workspaceId],
+      [req.workspaceId, req.orgId],
     );
     res.json({
       users: rows.map((u) => ({ ...u, isSelf: u.id === req.user.sub })),
@@ -62,6 +70,19 @@ usersRouter.post("/users", requireAdmin, async (req, res, next) => {
       [email],
     );
     let user = rows[0];
+
+    // Someone who already has a login here is changed through Edit, never through
+    // this add form: it carries a role (defaulting to editor), so re-adding an
+    // existing member — yourself included — would silently overwrite their role.
+    if (user) {
+      const { rows: member } = await client.query(
+        "select 1 from membership where workspace_id = $1 and user_id = $2", [req.workspaceId, user.id],
+      );
+      if (member.length) {
+        await client.query("ROLLBACK");
+        return res.status(409).json({ error: "That email already has a login on this team. Use Edit on their row instead." });
+      }
+    }
 
     if (!user) {
       if (!password) {
@@ -144,6 +165,42 @@ const SelfUpdateSchema = z.object({
 // name, photo, and accent color. No admin gate: this can only ever touch the
 // caller's own row (req.user.sub), never anyone else's. Registered before
 // PATCH /users/:id so "me" isn't swallowed as an :id value.
+const PasswordSchema = z.object({
+  currentPassword: z.string().min(1),
+  newPassword: z.string().min(6).max(200),
+});
+
+// Self-service password change — any signed-in user, their own login only. The
+// current password is required, so an unattended open session can't be used
+// to take the account over. Registered before /users/:id like /users/me.
+usersRouter.post("/users/me/password", async (req, res, next) => {
+  const parsed = PasswordSchema.safeParse(req.body);
+  if (!parsed.success) {
+    return res.status(400).json({ error: "Enter your current password and a new one of at least 6 characters." });
+  }
+  const { currentPassword, newPassword } = parsed.data;
+  // The bootstrap account's password comes from the server configuration and is
+  // re-applied at every start (see ensureBootstrapped), so a change made here
+  // would silently revert — refuse it rather than pretend it worked.
+  if (req.user.sub === config.ADMIN_USER_ID) {
+    return res.status(409).json({ error: "This account's password is set in the server configuration and can't be changed here." });
+  }
+  try {
+    const { rows } = await pool.query("select password_hash from app_user where id = $1", [req.user.sub]);
+    if (!rows.length) return res.status(404).json({ error: "Account not found." });
+    if (!(await bcrypt.compare(currentPassword, rows[0].password_hash))) {
+      return res.status(400).json({ error: "Your current password is incorrect." });
+    }
+    if (currentPassword === newPassword) {
+      return res.status(400).json({ error: "Choose a password different from your current one." });
+    }
+    await pool.query("update app_user set password_hash = $2 where id = $1", [req.user.sub, await bcrypt.hash(newPassword, 10)]);
+    res.status(204).end();
+  } catch (err) {
+    next(err);
+  }
+});
+
 usersRouter.patch("/users/me", async (req, res, next) => {
   const parsed = SelfUpdateSchema.safeParse(req.body);
   if (!parsed.success) return res.status(400).json({ error: "Invalid profile update." });
@@ -220,6 +277,14 @@ usersRouter.patch("/users/:id", requireAdmin, async (req, res, next) => {
     if (sets.length) {
       vals.push(targetId);
       await pool.query(`update app_user set ${sets.join(", ")} where id = $${vals.length}`, vals);
+    }
+    if (password) {
+      const { rows: who } = await pool.query("select coalesce(name, email) as n from app_user where id = $1", [targetId]);
+      await logActivity({
+        orgId: req.orgId, actorId: req.user.sub, verb: "password_reset",
+        entityType: "user", entityId: targetId,
+        summary: `Set a temporary password for ${who[0]?.n ?? "a team member"}`,
+      });
     }
 
     const { rows } = await pool.query(

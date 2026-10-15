@@ -8,8 +8,9 @@ import { useTasks } from "@/lib/use-tasks";
 import { useEditors } from "@/lib/use-editors";
 import { useContentFormats } from "@/lib/use-content-formats";
 import { noteTaskSeen } from "@/lib/use-task-notify";
-import { breakOffsetMs, isOverBudget, OFFICE_CLOSE_HOUR } from "@/lib/task-timing";
+import { breakOffsetMs, fmtWait, isOverBudget, OFFICE_CLOSE_HOUR, reviewWaitMs, SLOW_REVIEW_MS } from "@/lib/task-timing";
 import { useAuth } from "@/lib/auth-context";
+import { useReviewAccess, scopeAllowsTask } from "@/lib/use-review-access";
 import { useWorkspaces } from "@/lib/workspaces-context";
 import { usePosts } from "@/lib/use-posts";
 import { api, ApiError } from "@/lib/api";
@@ -173,7 +174,7 @@ function budgetInfo(t: Task, nowMs: number) {
   const absMs = Math.abs(remainingMs);
   const h = Math.floor(absMs / 3_600_000);
   const m = Math.floor((absMs % 3_600_000) / 60_000);
-  return { scheduled: false, over, paused, label: h > 0 ? `${h}h ${m}m` : `${m}m` };
+  return { scheduled: false, over, paused, label: h > 0 ? `${h}h ${m}m` : m > 0 ? `${m}m` : "<1m" };
 }
 
 // Office hours the acceptance dual-confirmation checks against.
@@ -203,6 +204,10 @@ function classifyWorkload(totalHours: number): 0 | 1 | 2 {
 }
 function fmtHours(n: number) {
   return Number.isInteger(n) ? String(n) : n.toFixed(1);
+}
+// Time left before office close: "24 min", or "1h 24m" once it's an hour or more.
+function fmtCloseIn(mins: number) {
+  return mins < 60 ? `${mins} min` : `${Math.floor(mins / 60)}h ${mins % 60}m`;
 }
 
 // Whole days a due date is past today. Both inputs are YYYY-MM-DD; compared via
@@ -260,8 +265,18 @@ export function TasksPage() {
   const { active, workspaces, isAdmin, hasPermission } = useWorkspaces();
   const role = active?.role;
   // Access grants that give admin-like reach over other people's tasks.
-  const canResolve = isAdmin || hasPermission("resolve_tasks"); // approve/send back reviews
+  // Approve/send back reviews: admins always; a resolve_tasks grantee only for
+  // tasks inside their review scope, and never for a task of their own.
+  const review = useReviewAccess();
+  const canResolveTask = (t: Task) =>
+    isAdmin || (review.granted && !isOwner(t) && scopeAllowsTask(review.scope, t));
   const canHoldAny = isAdmin || hasPermission("hold_tasks");    // hold/resume anyone's task
+  const canAssign = isAdmin || hasPermission("assign_tasks");   // set work up for other people
+  // Deleting erases the work and its points: a completed task is an admin's
+  // call; anything else an assigner's — or yours, if you created it for yourself.
+  // The server enforces the same rule.
+  const canDeleteTask = (t: Task) =>
+    isAdmin || (canWrite && t.status !== "done" && (canAssign || (isOwner(t) && !!user && t.created_by === user.id)));
   // Viewers are read-only (the backend already 403s their writes); hide the
   // status-move controls from them so the affordance matches the permission.
   const canWrite = active?.role !== "viewer";
@@ -272,15 +287,19 @@ export function TasksPage() {
   // in_progress for rework. The backend enforces this too.
   function canTransition(t: Task, target: TaskStatus): boolean {
     if (!canWrite || target === t.status) return false;
-    if (t.status === "review") return canResolve && (target === "done" || target === "in_progress");
+    if (t.status === "review") return canResolveTask(t) && (target === "done" || target === "in_progress");
     if (target === "done") return false; // must go through review
+    // Completed is final for the assignee — only an admin reopens approved work.
+    if (t.status === "done") return isAdmin && target !== "todo";
     // Once work has started it can't go back to To Do — an admin parks it with
     // Hold instead. And a held task is frozen until an admin resumes it.
     if (t.status === "in_progress" && target === "todo") return false;
     if (t.on_hold && !isAdmin) return false;
-    return isOwner(t);
+    // Work starts with Accept — an unaccepted task can't be moved yet.
+    return isOwner(t) && t.accepted;
   }
-  const canMoveStatus = (t: Task) => canWrite && (t.status === "review" ? canResolve : isOwner(t));
+  const canMoveStatus = (t: Task) =>
+    canWrite && (t.status === "review" ? canResolveTask(t) : t.status === "done" ? isAdmin : isOwner(t));
 
   const [filterEditor, setFilterEditor] = useState("");
   const [filterType, setFilterType] = useState<TaskType | "">("");
@@ -375,7 +394,7 @@ export function TasksPage() {
     () => {
       const q = search.trim().toLowerCase();
       const list = effective.filter((t) => {
-        if (scope === "mine" && t.editor_id !== user?.editorId) return false;
+        if (scope === "mine" && (!user?.editorId || t.editor_id !== user.editorId)) return false;
         if (filterEditor && t.editor_id !== filterEditor) return false;
         if (filterType && t.task_type !== filterType) return false;
         if (filterFormat && t.content_format_id !== filterFormat) return false;
@@ -412,7 +431,9 @@ export function TasksPage() {
   // total) but does respect My Tasks vs Team — otherwise "My Tasks" shows an
   // empty board next to a misleadingly large org-wide number.
   const taskCounts = useMemo(() => {
-    const all = scope === "mine" ? (tasks ?? []).filter((t) => t.editor_id === user?.editorId) : (tasks ?? []);
+    const all = scope === "mine"
+      ? (tasks ?? []).filter((t) => !!user?.editorId && t.editor_id === user.editorId)
+      : (tasks ?? []);
     let social = 0, ad = 0, pendingOverdue = 0;
     for (const t of all) {
       if (t.task_type === "social") social++;
@@ -437,8 +458,16 @@ export function TasksPage() {
           ? "Only an admin can approve or send back a task in review."
           : status === "done"
             ? "Move it to Review first."
-            : "Only the person this task is assigned to can move it.",
+            : isOwner(t) && !t.accepted
+              ? "Accept this task first, then you can move it."
+              : "Only the person this task is assigned to can move it.",
       );
+      return;
+    }
+    // Starting a timed task you made yourself runs the same checks as Accept (a
+    // heavy day, office hours) — starting it is what starts its clock.
+    if (t.status === "todo" && status === "in_progress" && t.accepted && t.budget_hours != null) {
+      proceedAccept(t);
       return;
     }
     if (t.status === "review" && status === "in_progress" && reviewNote === undefined) {
@@ -446,10 +475,22 @@ export function TasksPage() {
       setSendBackNote("");
       return;
     }
+    // Approving work that was never attached needs a deliberate yes.
+    const noWork = t.status === "review" && status === "done" && t.link_required && !t.delivery_link;
+    if (noWork && !window.confirm(`No work is attached to "${t.title}". Approve it anyway?`)) return;
     setPending((p) => ({ ...p, [t.id]: status }));
     try {
-      await api(`/tasks/${t.id}`, { method: "PATCH", body: JSON.stringify({ status, ...(reviewNote ? { reviewNote } : {}) }) });
+      await api(`/tasks/${t.id}`, { method: "PATCH", body: JSON.stringify({
+        status, ...(reviewNote ? { reviewNote } : {}), ...(noWork ? { approveWithoutWork: true } : {}),
+      }) });
       await refetch();
+      toast.success(
+        t.status === "done" ? `Reopened “${t.title}”.`
+          : status === "done" ? `Approved “${t.title}”.`
+          : t.status === "review" ? `Sent “${t.title}” back for rework.`
+          : status === "review" ? `Submitted “${t.title}” for review.`
+          : `Moved “${t.title}” to ${COLUMNS.find((c) => c.key === status)?.label ?? status}.`,
+      );
     } catch (err) {
       toast.error(err instanceof ApiError ? err.message : "Could not update task.");
     } finally {
@@ -463,6 +504,7 @@ export function TasksPage() {
     try {
       await api(`/tasks/${t.id}`, { method: "PATCH", body: JSON.stringify({ onHold: next }) });
       await refetch();
+      toast.success(next ? `Put “${t.title}” on hold.` : `Resumed “${t.title}”.`);
     } catch (err) {
       toast.error(err instanceof ApiError ? err.message : "Could not update hold.");
     }
@@ -510,8 +552,19 @@ export function TasksPage() {
 
   async function acceptTask(t: Task, startAt: Date) {
     try {
-      await api(`/tasks/${t.id}/accept`, { method: "POST", body: JSON.stringify({ startAt: startAt.toISOString() }) });
-      toast.success(startAt.getTime() > Date.now() ? "Accepted — starts as scheduled." : "Accepted — timer started.");
+      if (t.accepted) {
+        // Already yours (you made it, or picked it up): starting it is what
+        // starts its clock — with the same "now or 9 AM tomorrow" choice.
+        await api(`/tasks/${t.id}`, { method: "PATCH", body: JSON.stringify({ status: "in_progress", startAt: startAt.toISOString() }) });
+        toast.success(startAt.getTime() > Date.now() ? "Started — its timer begins as scheduled." : "Started — timer running.");
+      } else {
+        await api(`/tasks/${t.id}/accept`, { method: "POST", body: JSON.stringify({ startAt: startAt.toISOString() }) });
+        toast.success(
+          startAt.getTime() > Date.now() ? "Accepted — starts as scheduled."
+            : t.budget_hours != null ? "Accepted — timer started."
+            : "Accepted — it's now In Progress.",
+        );
+      }
       if (user) noteTaskSeen(user.id, t.id);
       setAcceptPrompt(null);
       // The 60s tick won't have caught up yet — without this, a task accepted
@@ -565,7 +618,7 @@ export function TasksPage() {
       const wouldEnd = new Date(now.getTime() + t.budget_hours * 3_600_000);
       if (alreadyClosed || wouldEnd > close) {
         const mins = alreadyClosed ? 0 : Math.max(0, Math.round((close.getTime() - now.getTime()) / 60_000));
-        setAcceptPrompt({ task: t, closeIn: `${Math.floor(mins / 60)}h ${mins % 60}m`, alreadyClosed });
+        setAcceptPrompt({ task: t, closeIn: fmtCloseIn(mins), alreadyClosed });
         return;
       }
     }
@@ -681,8 +734,10 @@ export function TasksPage() {
 
       {scope === "mine" && !user?.editorId && (
         <div className="card pad" style={{ color: "var(--muted)", fontSize: 13, marginBottom: 16 }}>
-          Your account isn't linked to a team member yet, so there's nothing to show here. Ask an admin to
-          link you under Settings → User management.
+          Your account isn't on the team roster yet, so there's nothing to show here.{" "}
+          {isAdmin
+            ? "To add yourself, go to Settings → Team and press Edit on your own row."
+            : "Ask an admin to link you under Settings → Team."}
         </div>
       )}
 
@@ -743,14 +798,17 @@ export function TasksPage() {
                         <span className="task-flags">
                           {t.post_id && <span title="Auto-created from a post">📄</span>}
                           {t.recurrence !== "none" && <span title={`Repeats ${t.recurrence}`}>🔁</span>}
+                          {t.self_created && <span title="Created by the assignee for themselves">🙋</span>}
                         </span>
-                        <button
-                          className="task-x"
-                          title="Delete"
-                          onClick={(e) => { e.stopPropagation(); del(t); }}
-                        >
-                          🗑
-                        </button>
+                        {canDeleteTask(t) && (
+                          <button
+                            className="task-x"
+                            title="Delete"
+                            onClick={(e) => { e.stopPropagation(); del(t); }}
+                          >
+                            🗑
+                          </button>
+                        )}
                       </div>
                       <div className="task-title">{t.title}</div>
                       {t.on_hold && (
@@ -763,6 +821,17 @@ export function TasksPage() {
                           📝 Rework: {t.pending_note}
                         </div>
                       )}
+                      {t.status === "review" && t.review_started_at && (() => {
+                        const wait = reviewWaitMs(t, nowMs);
+                        return (
+                          <div
+                            className={"task-review-wait" + (wait >= SLOW_REVIEW_MS ? " slow" : "")}
+                            title="How long this has been waiting for a reviewer. This time doesn't count against the assignee."
+                          >
+                            ⏳ Waiting for review {fmtWait(wait)}
+                          </div>
+                        );
+                      })()}
                       {(t.tid || t.sid || t.ad_id || t.revision > 1) && (
                         <div className="task-ids">
                           {t.tid && <span>{t.tid}</span>}
@@ -837,9 +906,18 @@ export function TasksPage() {
                         // or resume an in-progress task — it stays In Progress;
                         // Hold pauses its timer. Same "is this mine" check the
                         // forward-move buttons use (isOwner).
+                        // A hold someone else applied (an admin) is theirs to lift,
+                        // not the assignee's — mirrors the server.
+                        const heldByOther = !canHoldAny && t.on_hold && !!t.held_by && t.held_by !== user?.id;
                         const holdCtrl = (isAdmin || isOwner(t) || canHoldAny) && t.status === "in_progress" ? (
                           t.on_hold ? (
-                            <button className="linkbtn" onClick={() => toggleHold(t, false)}>▶ Resume</button>
+                            heldByOther ? (
+                              <span className="hint" style={{ margin: 0 }} title="Only an admin can resume it">
+                                ⏸ Held by {t.held_by_name ?? "an admin"}
+                              </span>
+                            ) : (
+                              <button className="linkbtn" onClick={() => toggleHold(t, false)}>▶ Resume</button>
+                            )
                           ) : (
                             <button className="linkbtn" onClick={() => toggleHold(t, true)}>⏸ Hold</button>
                           )
@@ -849,7 +927,7 @@ export function TasksPage() {
                           // to do here but wait.
                           return t.status === "review" ? (
                             <div className="task-actions">
-                              <span className="hint" style={{ margin: 0 }}>⏳ Waiting on admin review</span>
+                              <span className="hint" style={{ margin: 0 }}>⏳ Waiting for review</span>
                             </div>
                           ) : null;
                         }
@@ -916,7 +994,7 @@ export function TasksPage() {
           onClose={() => { setSelectedId(null); refetch(); }}
           onChanged={refetch}
           onCreated={() => {}}
-          onDelete={(t) => { setSelectedId(null); del(t); }}
+          onDelete={canDeleteTask(selectedTask) ? (t) => { setSelectedId(null); del(t); } : undefined}
         />
       )}
 
@@ -932,13 +1010,13 @@ export function TasksPage() {
               <p style={{ margin: "0 0 4px", fontSize: 13.5, lineHeight: 1.6 }}>
                 {acceptPrompt.alreadyClosed ? (
                   <>
-                    <b>{acceptPrompt.task.title}</b> needs <b>{acceptPrompt.task.budget_hours}h</b>, and office
+                    <b>{acceptPrompt.task.title}</b> needs <b>{fmtHours(Number(acceptPrompt.task.budget_hours))}h</b>, and office
                     hours already closed for today (6:00 PM). Starting now means the whole thing runs
                     outside office hours.
                   </>
                 ) : (
                   <>
-                    <b>{acceptPrompt.task.title}</b> needs <b>{acceptPrompt.task.budget_hours}h</b>, but office
+                    <b>{acceptPrompt.task.title}</b> needs <b>{fmtHours(Number(acceptPrompt.task.budget_hours))}h</b>, but office
                     hours close in <b>{acceptPrompt.closeIn}</b> (6:00 PM). Starting now means finishing outside
                     office hours.
                   </>
@@ -1212,7 +1290,7 @@ export function TaskModal({
       const wouldEnd = startMs + saved.budget_hours * 3_600_000;
       if (alreadyClosed || wouldEnd > close.getTime()) {
         const mins = alreadyClosed ? 0 : Math.max(0, Math.round((close.getTime() - startMs) / 60_000));
-        setScheduleConflict({ taskId: saved.id, closeIn: `${Math.floor(mins / 60)}h ${mins % 60}m`, alreadyClosed });
+        setScheduleConflict({ taskId: saved.id, closeIn: fmtCloseIn(mins), alreadyClosed });
         return;
       }
     }
@@ -1433,7 +1511,7 @@ export function TaskModal({
             })}
           </div>
           {editing && task?.status === "review" && !isAdmin && (
-            <div className="hint" style={{ marginTop: 6 }}>⏳ Waiting on admin review — only an admin can approve or send it back.</div>
+            <div className="hint" style={{ marginTop: 6 }}>⏳ Waiting for review — only a reviewer can approve or send it back.</div>
           )}
         </div>
         )}
@@ -1452,7 +1530,7 @@ export function TaskModal({
           <div className="field">
             <label className="f">Time allotted</label>
             <div className="autofield">
-              ⏱ {task.budget_hours}h, started {new Date(task.budget_started_at!).toLocaleString()} — set by your admin, not editable here.
+              ⏱ {fmtHours(Number(task.budget_hours))}h, started {new Date(task.budget_started_at!).toLocaleString()} — set by your admin, not editable here.
             </div>
           </div>
         )}
@@ -1595,7 +1673,9 @@ function Row({ label, children }: { label: string; children: ReactNode }) {
 // offered here — it requires a rework note, which the board's dedicated
 // prompt collects; approving (→ Completed) doesn't need one, so that stays
 // available inline.
-function TaskPanel({ mode, task, canWrite, editors, channels, onClose, onChanged, onCreated, onDelete }: {
+// Exported so My Day's review queue can open the same panel. `onDelete` is
+// optional — leave it out where deleting isn't offered and the button is hidden.
+export function TaskPanel({ mode, task, canWrite, editors, channels, onClose, onChanged, onCreated, onDelete }: {
   mode: "create" | "edit";
   task: Task | null;
   canWrite: boolean;
@@ -1604,19 +1684,35 @@ function TaskPanel({ mode, task, canWrite, editors, channels, onClose, onChanged
   onClose: () => void;
   onChanged: () => void;
   onCreated: (id: string) => void;
-  onDelete: (t: Task) => void;
+  onDelete?: (t: Task) => void;
 }) {
   const creating = mode === "create";
   const { user } = useAuth();
   const { isAdmin, hasPermission } = useWorkspaces();
   // Access grants: assign tasks to others, and resolve reviews.
   const canAssign = isAdmin || hasPermission("assign_tasks");
-  const canResolve = isAdmin || hasPermission("resolve_tasks");
+  const review = useReviewAccess();
   const ro = !canWrite;
   // Delivery Link is writable by the task's assignee or an admin (mirrors the
   // server check); everyone else who can open the panel sees it read-only.
   const isOwnerTask = !!user?.editorId && task?.editor_id === user.editorId;
-  const canEditDelivery = !ro && (isAdmin || isOwnerTask);
+  const canResolve = isAdmin
+    || (review.granted && !!task && !isOwnerTask && scopeAllowsTask(review.scope, task));
+  // Who may change what — mirrors the server (PATCH /tasks/:id):
+  //  - a completed task is frozen as approved; only an admin changes it;
+  //  - the brief (title, description, brand, type, dates, priority, repeat)
+  //    belongs to whoever set the task up: an assigner, or the assignee when
+  //    they created the task for themselves;
+  //  - handing a task to someone is for assigners;
+  //  - the working parts (links, checklist) are the assignee's.
+  const isDoneTask = !creating && task?.status === "done";
+  const selfMade = isOwnerTask && !!user && task?.created_by === user.id;
+  const canEditBrief = creating || (!ro && (isAdmin || (!isDoneTask && (isOwnerTask ? selfMade : canAssign))));
+  const canReassign = creating || (!ro && (isAdmin || (!isDoneTask && canAssign)));
+  const canEditWork = creating || (!ro && (isAdmin || (!isDoneTask && (isOwnerTask || canAssign))));
+  const canTake = !creating && !ro && !canReassign && !isDoneTask && !!user?.editorId && !task?.editor_id;
+  const briefRo = !canEditBrief;
+  const canEditDelivery = canEditWork && (isAdmin || isOwnerTask);
   const { contentFormats } = useContentFormats();
   const [draft, setDraft] = useState<{
     channel_id: string | null; editor_id: string | null; due_date: string | null; start_date: string | null; priority: string;
@@ -1625,6 +1721,9 @@ function TaskPanel({ mode, task, canWrite, editors, channels, onClose, onChanged
   const [title, setTitle] = useState(task?.title ?? "");
   const [description, setDescription] = useState(task?.description ?? "");
   const [busy, setBusy] = useState(false);
+  // New task: whether it needs a delivery link for review. null = follow the
+  // chosen content type; set once the assigner ticks/unticks it themselves.
+  const [linkOverride, setLinkOverride] = useState<boolean | null>(null);
   // Board tasks are created as Social or Ads (chosen first); Content Type stays
   // hidden until one is picked. In edit mode the category is fixed by the task's
   // existing task_type (never re-picked here — that would churn its SID/AID).
@@ -1656,6 +1755,8 @@ function TaskPanel({ mode, task, canWrite, editors, channels, onClose, onChanged
   // → Ads) when one hasn't been picked yet, so the two never disagree.
   function onPickContentType(id: string | null) {
     set("content_format_id", "contentFormatId", id);
+    // A different type brings its own default back.
+    if (creating) setLinkOverride(null);
     if (creating && id) {
       const f = (contentFormats ?? []).find((x) => x.id === id);
       if (f?.category && f.category !== category) setCategory(f.category);
@@ -1688,6 +1789,9 @@ function TaskPanel({ mode, task, canWrite, editors, channels, onClose, onChanged
   // (which bounds the Due Date) and its read-only points. Declared after `cur`.
   const isProject = activeCategory === "project";
   const selectedFormat = (contentFormats ?? []).find((f) => f.id === cur.content_format_id) ?? null;
+  const linkRequired = creating
+    ? (linkOverride ?? selectedFormat?.review_link_required ?? false)
+    : !!task?.link_required;
   const projectDuration = isProject ? (selectedFormat?.duration_days ?? null) : null;
   const projectPoints = isProject ? (selectedFormat?.points ?? null) : null;
   const dueMax = isProject && cur.start_date != null && projectDuration != null
@@ -1696,7 +1800,14 @@ function TaskPanel({ mode, task, canWrite, editors, channels, onClose, onChanged
 
   async function patch(fields: Record<string, unknown>) {
     if (!task) return;
-    try { await api(`/tasks/${task.id}`, { method: "PATCH", body: JSON.stringify(fields) }); onChanged(); }
+    const approving = task.status === "review" && fields.status === "done";
+    const noWork = approving && task.link_required && !task.delivery_link;
+    if (noWork && !window.confirm(`No work is attached to "${task.title}". Approve it anyway?`)) return;
+    try {
+      await api(`/tasks/${task.id}`, { method: "PATCH", body: JSON.stringify(noWork ? { ...fields, approveWithoutWork: true } : fields) });
+      onChanged();
+      toast.success(approving ? `Approved “${task.title}”.` : "Saved.");
+    }
     catch (e) { toast.error(e instanceof ApiError ? e.message : "Couldn't save."); }
   }
   // Draft-update in create mode; inline PATCH in edit mode.
@@ -1708,7 +1819,9 @@ function TaskPanel({ mode, task, canWrite, editors, channels, onClose, onChanged
   // that's what its per-brand SID/AID is numbered against.
   // Admin tasks need no project; every other category is numbered per brand.
   // A Project must have its type picked first (it drives duration + points).
-  const canCreate = Boolean(title.trim() && category && (category === "admin" || draft.channel_id) && (category !== "project" || draft.content_format_id));
+  // An Admin task is assigned to its creator, so the creator must be on the roster.
+  const adminNeedsRoster = category === "admin" && !user?.editorId;
+  const canCreate = Boolean(title.trim() && category && !adminNeedsRoster && (category === "admin" || draft.channel_id) && (category !== "project" || draft.content_format_id));
   async function create() {
     if (!canCreate || busy) return;
     setBusy(true);
@@ -1719,6 +1832,7 @@ function TaskPanel({ mode, task, canWrite, editors, channels, onClose, onChanged
         channelId: draft.channel_id, editorId: draft.editor_id, dueDate: draft.due_date,
         startDate: category === "project" ? draft.start_date : undefined,
         priority: draft.priority, contentFormatId: draft.content_format_id,
+        ...(canAssign && linkOverride != null ? { reviewLinkRequired: linkOverride } : {}),
         attachments: draft.attachments,
       }) });
       toast.success("Task created.");
@@ -1734,7 +1848,9 @@ function TaskPanel({ mode, task, canWrite, editors, channels, onClose, onChanged
     if (creating || !task) return true;
     if (c.key === task.status) return true;
     if (task.status === "review") return canResolve && c.key === "done";
-    return c.key !== "done" && !!user?.editorId && task.editor_id === user.editorId;
+    if (task.status === "done") return isAdmin && c.key !== "todo";
+    // The assignee moves it — once they've accepted it.
+    return c.key !== "done" && !!user?.editorId && task.editor_id === user.editorId && task.accepted;
   });
 
   const inner = (
@@ -1746,7 +1862,7 @@ function TaskPanel({ mode, task, canWrite, editors, channels, onClose, onChanged
           </div>
         )}
         <div style={{ display: "flex", gap: 8 }}>
-          {!creating && !ro && <button className="btn btn-sm" onClick={() => onDelete(task!)}>🗑 Delete</button>}
+          {!creating && !ro && onDelete && <button className="btn btn-sm" onClick={() => onDelete(task!)}>🗑 Delete</button>}
           <button className="task-x" onClick={onClose}>✕</button>
         </div>
       </div>
@@ -1761,17 +1877,37 @@ function TaskPanel({ mode, task, canWrite, editors, channels, onClose, onChanged
           {task!.ad_id && <span className="task-code">{showId(task!.ad_id)}</span>}
           {task!.svid && <span className="task-code">{task!.svid}</span>}
           {task!.pid && <span className="task-code">{task!.pid}</span>}
+          {task!.self_created && <span className="self-chip" title="The assignee created this task for themselves">🙋 Self-created</span>}
         </div>
+      )}
+      {/* In review, the output is the first thing a reviewer needs. */}
+      {!creating && task!.status === "review" && (
+        task!.delivery_link ? (
+          <a className="btn btn-primary tp-work" href={task!.delivery_link} target="_blank" rel="noopener noreferrer">
+            🔗 Open the work
+          </a>
+        ) : (
+          <div className="hint tp-nowork">
+            {task!.link_required ? "⚠️ No work is attached to this task." : "No link is needed for this task."}
+          </div>
+        )
       )}
       {!creating && task!.pending_note && (
         <div className="task-rework-note" title={task!.pending_note}>
           📝 Rework: {task!.pending_note}
         </div>
       )}
-      <input className="tp-title" autoFocus={creating} placeholder="Task title…" value={title} disabled={ro}
+      {!creating && !ro && briefRo && (
+        <div className="hint tp-locked">
+          🔒 {isDoneTask ? "This task is completed — only an admin can change it."
+            : isOwnerTask ? "This task was assigned to you. You can add your work link, checklist and comments; only an admin can change its details."
+            : "Only an admin can change this task. You can still comment on it."}
+        </div>
+      )}
+      <input className="tp-title" autoFocus={creating} placeholder="Task title…" value={title} disabled={briefRo}
         onChange={(e) => setTitle(e.target.value)}
         onBlur={() => { if (!creating && title.trim() && title !== task!.title) patch({ title: title.trim() }); }} />
-      <textarea className="tp-desc" placeholder="Add a description…" value={description} disabled={ro}
+      <textarea className="tp-desc" placeholder="Add a description…" value={description} disabled={briefRo}
         onChange={(e) => setDescription(e.target.value)}
         onBlur={() => { if (!creating && description !== (task!.description ?? "")) patch({ description }); }} />
 
@@ -1788,7 +1924,7 @@ function TaskPanel({ mode, task, canWrite, editors, channels, onClose, onChanged
           </Row>
         )}
         <Row label="Brand">
-          <select className="t" disabled={ro} value={cur.channel_id ?? ""} onChange={(e) => set("channel_id", "channelId", e.target.value || null)}>
+          <select className="t" disabled={briefRo} value={cur.channel_id ?? ""} onChange={(e) => set("channel_id", "channelId", e.target.value || null)}>
             <option value="">—</option>
             {channels.map((c) => (<option key={c.id} value={c.id}>{c.name}</option>))}
           </select>
@@ -1816,8 +1952,11 @@ function TaskPanel({ mode, task, canWrite, editors, channels, onClose, onChanged
                 ) : (
                   <div className="t autofield">{editors.find((ed) => ed.id === user?.editorId)?.name ?? "Myself"}</div>
                 )
+              ) : canTake ? (
+                /* Nobody has this task yet — anyone on the team can take it. */
+                <button type="button" className="btn btn-sm" onClick={() => patch({ editorId: user!.editorId })}>🙋 Take this task</button>
               ) : (
-                <select className="t" disabled={ro} value={cur.editor_id ?? ""} onChange={(e) => set("editor_id", "editorId", e.target.value || null)}>
+                <select className="t" disabled={!canReassign} value={cur.editor_id ?? ""} onChange={(e) => set("editor_id", "editorId", e.target.value || null)}>
                   <option value="">Unassigned</option>
                   {editors.map((ed) => (<option key={ed.id} value={ed.id}>{ed.name}</option>))}
                 </select>
@@ -1827,11 +1966,11 @@ function TaskPanel({ mode, task, canWrite, editors, channels, onClose, onChanged
         </Row>
         {isProject && (
           <Row label="Start Date">
-            <input className="t" type="date" disabled={ro} value={cur.start_date ?? ""} onChange={(e) => set("start_date", "startDate", e.target.value || null)} />
+            <input className="t" type="date" disabled={briefRo} value={cur.start_date ?? ""} onChange={(e) => set("start_date", "startDate", e.target.value || null)} />
           </Row>
         )}
         <Row label="Due Date">
-          <input className="t" type="date" disabled={ro} value={cur.due_date ?? ""}
+          <input className="t" type="date" disabled={briefRo} value={cur.due_date ?? ""}
             min={isProject ? (cur.start_date ?? undefined) : undefined} max={dueMax}
             onChange={(e) => set("due_date", "dueDate", e.target.value || null)} />
           {isProject && projectDuration != null && (
@@ -1839,7 +1978,7 @@ function TaskPanel({ mode, task, canWrite, editors, channels, onClose, onChanged
           )}
         </Row>
         <Row label="Priority">
-          <select className="t" disabled={ro} value={cur.priority} onChange={(e) => set("priority", "priority", e.target.value)}>
+          <select className="t" disabled={briefRo} value={cur.priority} onChange={(e) => set("priority", "priority", e.target.value)}>
             <option value="low">Low</option><option value="medium">Medium</option><option value="high">High</option>
           </select>
         </Row>
@@ -1854,13 +1993,15 @@ function TaskPanel({ mode, task, canWrite, editors, channels, onClose, onChanged
         )}
         {!creating && task!.status === "review" && (
           <div className="hint" style={{ margin: "-2px 0 4px" }}>
-            {isAdmin ? "Sending back for rework needs a note — use the ← button on the board." : "⏳ Waiting on admin review."}
+            {canResolve
+              ? "To approve, set Status to Completed. Sending back for rework needs a note — use the Send back / ← button."
+              : "⏳ Waiting on review."}
           </div>
         )}
         {!creating && task!.budget_hours != null && (
           <Row label="Time budget">
             <div className="autofield">
-              ⏱ {task!.budget_hours}h{task!.budget_started_at ? `, started ${new Date(task!.budget_started_at).toLocaleString()}` : " — not started"}
+              ⏱ {fmtHours(Number(task!.budget_hours))}h{task!.budget_started_at ? `, started ${new Date(task!.budget_started_at).toLocaleString()}` : " — not started"}
             </div>
           </Row>
         )}
@@ -1869,10 +2010,25 @@ function TaskPanel({ mode, task, canWrite, editors, channels, onClose, onChanged
             {/* Always a dropdown; its options are the content/project types
                 configured in Task Settings for the active category. Disabled
                 until a category is picked (create mode). */}
-            <select className="t" disabled={ro} value={cur.content_format_id ?? ""} onChange={(e) => onPickContentType(e.target.value || null)}>
+            <select className="t" disabled={briefRo} value={cur.content_format_id ?? ""} onChange={(e) => onPickContentType(e.target.value || null)}>
               <option value="">—</option>
               {contentTypeChoices.map((f) => (<option key={f.id} value={f.id}>{f.icon} {f.name}{!activeCategory ? ` · ${CATEGORY_LABEL[f.category ?? "social"]}` : ""}</option>))}
             </select>
+          </Row>
+        )}
+        {/* Whoever assigns work decides if this task needs its output linked
+            before review; everyone else just sees the answer. */}
+        {!(adminTask || adminEdit) && (canAssign || !creating) && (
+          <Row label="Review link">
+            <label className="tp-linkreq">
+              <input
+                type="checkbox"
+                checked={linkRequired}
+                disabled={ro || !canAssign || (isDoneTask && !isAdmin)}
+                onChange={(e) => (creating ? setLinkOverride(e.target.checked) : patch({ reviewLinkRequired: e.target.checked }))}
+              />
+              <span>Required to submit for review</span>
+            </label>
           </Row>
         )}
         {isProject && (
@@ -1882,7 +2038,7 @@ function TaskPanel({ mode, task, canWrite, editors, channels, onClose, onChanged
         )}
         {!creating && !adminEdit && (
           <Row label="Repeat">
-            <select className="t" disabled={ro} value={task!.recurrence} onChange={(e) => patch({ recurrence: e.target.value })}>
+            <select className="t" disabled={briefRo} value={task!.recurrence} onChange={(e) => patch({ recurrence: e.target.value })}>
               <option value="none">Doesn't repeat</option><option value="daily">🔁 Daily</option><option value="weekly">🔁 Weekly</option>
             </select>
           </Row>
@@ -1890,16 +2046,19 @@ function TaskPanel({ mode, task, canWrite, editors, channels, onClose, onChanged
       </div>
 
       {!(adminTask || adminEdit) && (
-        <Attachments links={cur.attachments} readOnly={ro} onChange={(next) => set("attachments", "attachments", next)} />
+        <Attachments links={cur.attachments} readOnly={!canEditWork} onChange={(next) => set("attachments", "attachments", next)} />
       )}
 
       {creating ? (
         <div className="formfoot" style={{ marginTop: 14 }}>
           <div className="hint" style={{ margin: 0, flex: 1 }}>
             {!category ? `Choose a category — Social, Ads, Service or Project${isAdmin ? " or Admin" : ""} — to begin.`
+              : adminNeedsRoster ? "You're not on the team roster yet, so an Admin task would have no owner. Add yourself under Settings → Team (Edit on your row) first."
               : adminTask ? (!title.trim() ? "Add a title — Admin tasks need nothing else." : "Admin task — just for you.")
               : !draft.channel_id ? "Pick a Brand — Social, Ads, Service and Project tasks are numbered per brand."
               : !title.trim() ? "Add a task title."
+              : category === "project" && contentTypeChoices.length === 0 ? "No project types exist yet. Add one under Settings → Task Settings → Project first."
+              : category === "project" && !draft.content_format_id ? "Pick a project type."
               : "Checklist & comments become available after you create the task."}
           </div>
           <button type="button" className="btn" onClick={onClose}>Cancel</button>
@@ -1907,11 +2066,11 @@ function TaskPanel({ mode, task, canWrite, editors, channels, onClose, onChanged
         </div>
       ) : (
         <>
-          {!task!.post_id && <LinkPostControl taskId={task!.id} onLinked={onChanged} />}
-          <Checklist taskId={task!.id} readOnly={ro} onChanged={onChanged} />
+          {!task!.post_id && canEditWork && <LinkPostControl taskId={task!.id} onLinked={onChanged} />}
+          <Checklist taskId={task!.id} readOnly={!canEditWork} onChanged={onChanged} />
           {!adminEdit && <DeliveryLink task={task!} canEdit={canEditDelivery} onChanged={onChanged} />}
           <ReviewHistory taskId={task!.id} />
-          <Comments taskId={task!.id} />
+          <Comments taskId={task!.id} readOnly={ro} />
         </>
       )}
     </div>
@@ -2147,7 +2306,7 @@ function ReviewHistory({ taskId }: { taskId: string }) {
   );
 }
 
-function Comments({ taskId }: { taskId: string }) {
+function Comments({ taskId, readOnly = false }: { taskId: string; readOnly?: boolean }) {
   const [items, setItems] = useState<TaskComment[]>([]);
   const [loading, setLoading] = useState(true);
   const [text, setText] = useState("");
@@ -2200,11 +2359,13 @@ function Comments({ taskId }: { taskId: string }) {
           </div>
         ))}
       </div>
-      <div className="cmt-add">
-        <input className="t" placeholder="Write a comment…" value={text} onChange={(e) => setText(e.target.value)}
-          onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); send(); } }} />
-        <button type="button" className="btn btn-primary" onClick={send} disabled={sending || !text.trim()}>Post</button>
-      </div>
+      {!readOnly && (
+        <div className="cmt-add">
+          <input className="t" placeholder="Write a comment…" value={text} onChange={(e) => setText(e.target.value)}
+            onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); send(); } }} />
+          <button type="button" className="btn btn-primary" onClick={send} disabled={sending || !text.trim()}>Post</button>
+        </div>
+      )}
     </div>
   );
 }

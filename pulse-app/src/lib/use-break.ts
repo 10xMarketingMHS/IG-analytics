@@ -1,5 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import { toast } from "sonner";
 import { api } from "@/lib/api";
+import { notifyTasksChanged } from "@/lib/task-events";
 import type { BreakStatus } from "@/lib/types";
 
 // Drives the bottom-right break widget. Polls the server (which is the
@@ -44,7 +46,10 @@ export function useBreak() {
       setDisplayRemaining(remaining);
       if (remaining <= 0 && !endingRef.current) {
         endingRef.current = true;
-        end().finally(() => { endingRef.current = false; });
+        end()
+          .then(() => toast("Your break time for today is used up — your task timers are running again."))
+          .catch(() => {})
+          .finally(() => { endingRef.current = false; });
       }
     };
     tick();
@@ -59,6 +64,8 @@ export function useBreak() {
       const s = await api<BreakStatus>("/break/start", { method: "POST" });
       fetchedAtRef.current = Date.now();
       setStatus(s);
+      // Task timers show as paused straight away, not on the next reload.
+      notifyTasksChanged();
       return s;
     } finally {
       setBusy(false);
@@ -71,6 +78,7 @@ export function useBreak() {
       const s = await api<BreakStatus>("/break/end", { method: "POST" });
       fetchedAtRef.current = Date.now();
       setStatus(s);
+      notifyTasksChanged();
       return s;
     } finally {
       setBusy(false);

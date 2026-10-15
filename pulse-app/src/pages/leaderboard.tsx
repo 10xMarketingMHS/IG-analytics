@@ -484,7 +484,7 @@ export function LeaderboardPage() {
             </div>
           </div>
           <div className="hint" style={{ margin: "0 0 4px" }}>
-            On time earns full points, 1 day late half, 2 days late none, 3+ days late costs the task's full points back. Resets each month.
+            On time earns full points, 1 day late half, 2 days late none, 3+ days late costs the task's full points back. Days waiting for a reviewer don't count as late. Resets each month.
           </div>
           {monthFellBack && (
             <div className="pp-note">

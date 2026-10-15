@@ -4,6 +4,7 @@ import bcrypt from "bcryptjs";
 import { z } from "zod";
 import { config } from "./config.js";
 import { pool } from "./db.js";
+import { logActivity } from "./activity.js";
 
 const COOKIE_NAME = "pulse_session";
 const SESSION_TTL = "7d";
@@ -56,6 +57,48 @@ authRouter.post("/login", async (req, res, next) => {
     res.json({
       user: { id: user.id, email: user.email, editorId: user.editor_id, name: user.name, imageUrl: user.image_url, color: user.color },
     });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// "Forgot password?" — Pulse can't send email, so this tells the admin instead:
+// a request lands in the activity feed of each team the login belongs to, and
+// the admin sets a temporary password from Settings → Team. The answer is the
+// same whether or not the email has a login, so it can't be used to probe for
+// accounts; repeat requests within 10 minutes are ignored.
+authRouter.post("/forgot", async (req, res, next) => {
+  const email = typeof req.body?.email === "string" ? req.body.email.trim() : "";
+  if (!z.string().email().safeParse(email).success) {
+    return res.status(400).json({ error: "Enter the email you sign in with." });
+  }
+  try {
+    const { rows } = await pool.query(
+      "select id, email, active from app_user where lower(email) = lower($1)",
+      [email],
+    );
+    const u = rows[0];
+    if (u && u.active) {
+      const { rows: orgs } = await pool.query(
+        `select distinct w.org_id from membership m join workspace w on w.id = m.workspace_id
+          where m.user_id = $1`,
+        [u.id],
+      );
+      for (const { org_id: orgId } of orgs) {
+        const { rowCount } = await pool.query(
+          `select 1 from activity where org_id = $1 and actor_id = $2 and verb = 'password_reset_requested'
+              and created_at > now() - interval '10 minutes'`,
+          [orgId, u.id],
+        );
+        if (rowCount) continue;
+        await logActivity({
+          orgId, actorId: u.id, verb: "password_reset_requested",
+          entityType: "user", entityId: u.id,
+          summary: "Asked for a password reset", meta: { email: u.email },
+        });
+      }
+    }
+    res.json({ ok: true });
   } catch (err) {
     next(err);
   }

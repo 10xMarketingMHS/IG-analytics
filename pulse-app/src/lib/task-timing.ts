@@ -39,3 +39,24 @@ export function isOverBudget(t: Task, nowMs: number): boolean {
   const deadlineMs = startMs + t.budget_hours * 3_600_000 + breakOffsetMs(t, nowMs);
   return deadlineMs < nowMs;
 }
+
+// A review waiting this long is flagged to reviewers (My Day's review queue and
+// the Task Board). The assignee isn't charged for the wait — see workedUntil()
+// in task-points.ts — but their work is stuck until someone looks at it.
+export const SLOW_REVIEW_MS = 24 * 3_600_000;
+
+// How long a task has been waiting in Review right now (0 when it isn't there).
+export function reviewWaitMs(t: Task, nowMs: number): number {
+  if (t.status !== "review" || !t.review_started_at) return 0;
+  return Math.max(0, nowMs - new Date(t.review_started_at).getTime());
+}
+
+// "35m", "5h", "1d 4h"
+export function fmtWait(ms: number): string {
+  const m = Math.floor(ms / 60_000);
+  if (m < 60) return `${Math.max(1, m)}m`;
+  const h = Math.floor(m / 60);
+  if (h < 24) return `${h}h`;
+  const d = Math.floor(h / 24);
+  return h % 24 ? `${d}d ${h % 24}h` : `${d}d`;
+}

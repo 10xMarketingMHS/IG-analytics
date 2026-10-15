@@ -683,8 +683,8 @@ main{min-width:0;display:flex;flex-direction:column}
 }
 
 /* ---- Attention strip (restyled) ---- */
-.myday-stats{display:grid;grid-template-columns:repeat(4,1fr);gap:14px;margin-bottom:18px}
-@media(max-width:760px){.myday-stats{grid-template-columns:1fr 1fr}}
+.myday-stats{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:14px;margin-bottom:18px}
+@media(max-width:760px){.myday-stats{grid-template-columns:minmax(0,1fr) minmax(0,1fr)}}
 .myday-stat{display:flex;align-items:center;gap:13px;text-align:left;font:inherit;color:inherit;cursor:pointer;
   background:var(--panel);border:1px solid var(--border);border-left:4px solid var(--accent);border-radius:16px;
   padding:15px 16px;transition:transform .16s,box-shadow .16s,border-color .16s;box-shadow:var(--shadow)}
@@ -700,8 +700,8 @@ main{min-width:0;display:flex;flex-direction:column}
 .myday-stat.info{border-left-color:#3b82f6}.myday-stat.info .ms-ic{background:rgba(59,130,246,.14)}.myday-stat.info .ms-v{color:#60a5fa}
 
 /* ---- Two-panel row (Today's Tasks + Today's Progress) ---- */
-.myday-grid2{display:grid;grid-template-columns:1fr 1fr;gap:18px;margin-bottom:18px;align-items:stretch}
-@media(max-width:900px){.myday-grid2{grid-template-columns:1fr}}
+.myday-grid2{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:18px;margin-bottom:18px;align-items:stretch}
+@media(max-width:900px){.myday-grid2{grid-template-columns:minmax(0,1fr)}}
 .myday-panel{padding:18px 18px 16px}
 .mp-head{display:flex;align-items:center;gap:10px;margin-bottom:14px}
 .mp-head h3{margin:0;font-size:16px;letter-spacing:-.3px;display:flex;align-items:center;gap:8px}
@@ -772,8 +772,8 @@ main{min-width:0;display:flex;flex-direction:column}
 @media(max-width:560px){.prog-body{padding-right:0}.prog-char{display:none}.prog-left{flex-wrap:wrap}}
 
 /* ---- Three cards (This Week / This Month / Achievements) ---- */
-.myday-grid3{display:grid;grid-template-columns:repeat(3,1fr);gap:18px;margin-bottom:6px}
-@media(max-width:820px){.myday-grid3{grid-template-columns:1fr}}
+.myday-grid3{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:18px;margin-bottom:6px}
+@media(max-width:820px){.myday-grid3{grid-template-columns:minmax(0,1fr)}}
 .myday-scorecard{padding:16px 17px}
 .msc-head{display:flex;align-items:center;gap:9px;font-size:14px;font-weight:800;margin-bottom:12px}
 .msc-ic{font-size:16px}
@@ -793,7 +793,7 @@ main{min-width:0;display:flex;flex-direction:column}
 .ach-note{font-size:11.5px;color:var(--muted);font-weight:600;text-align:center}
 
 .home-cols{display:grid;grid-template-columns:1fr 1fr;gap:22px;margin-top:20px;align-items:start}
-@media(max-width:900px){.home-cols{grid-template-columns:1fr}}
+@media(max-width:900px){.home-cols{grid-template-columns:minmax(0,1fr)}}
 .home-colhead{display:flex;align-items:center;gap:11px;margin:0 2px 12px}
 .home-colhead h3{margin:0;font-size:16.5px;letter-spacing:-.3px}
 .hc-tag{font-size:10px;font-weight:800;text-transform:uppercase;letter-spacing:.5px;padding:3px 9px;border-radius:7px}
@@ -1288,6 +1288,7 @@ img.lb-ava{object-fit:cover}
    ACTIVITY FEED + notification bell
    ============================================================ */
 .bell-btn{position:relative}
+.bell-btn.on{border-color:var(--accent);color:var(--accent-ink)}
 .bell-dot{position:absolute;top:-5px;right:-5px;min-width:17px;height:17px;padding:0 4px;border-radius:9px;
   background:var(--rose,#f43f5e);color:#fff;font-size:10.5px;font-weight:800;line-height:17px;text-align:center;
   box-shadow:0 0 0 2px var(--bg);pointer-events:none}
@@ -1534,7 +1535,7 @@ img.lb-ava{object-fit:cover}
 .brk-quote{position:relative;margin-top:22px;font-size:15px;line-height:1.5;color:#c4b5fd;font-style:italic;padding:0 26px}
 .brk-quote .qm{font-style:normal;font-size:34px;line-height:0;color:#a855f7;opacity:.55;vertical-align:-6px}
 .brk-quote .qm.l{margin-right:6px}.brk-quote .qm.r{margin-left:6px}
-/* "Start Work" — end the break early and get back to it. */
+/* "Resume Work" — end the break early and get back to it. */
 .brk-startwork{position:relative;z-index:3;margin-top:24px;border:0;cursor:pointer;font-family:inherit;
   font-weight:800;font-size:15.5px;letter-spacing:.2px;color:#fff;padding:13px 34px;border-radius:999px;
   background:linear-gradient(135deg,#34d399,#a855f7);box-shadow:0 12px 28px rgba(168,85,247,.42);
@@ -1672,12 +1673,15 @@ img.lb-ava{object-fit:cover}
    Both the filter (visual) and pointer-events:none (the real disabling) apply. */
 .eod-lock nav.side,
 .eod-lock .topbar-title,
-.eod-lock .content > .screen:not(.myday),
+.eod-lock .content > .screen:not(.myday):not(.eod-open),
 .eod-lock .myday > *:not(.myday-hero){filter:grayscale(100%);opacity:.92}
 .eod-lock nav.side,
 .eod-lock .content{pointer-events:none}
 /* Re-enable the few live controls even under the disabled content. */
 .eod-lock .eod-live{pointer-events:auto !important}
+/* Read-only pages a locked editor may still open (Activity): full colour and
+   usable, even though the rest of the content area stays disabled. */
+.eod-lock .content > .screen.eod-open{pointer-events:auto}
 /* My Day header button row (unlocked: New Task + End EOD + status) */
 .mh-cta-row{display:flex;align-items:center;gap:12px;flex-wrap:wrap}
 .mh-endeod{background:rgba(255,255,255,.14);border-color:rgba(255,255,255,.28);color:#fff;font-weight:700;
@@ -1692,12 +1696,56 @@ img.lb-ava{object-fit:cover}
 .eod-sum-ratio{font-size:13px;color:var(--muted);font-weight:600}
 .eod-sum-ratio b{font-size:20px;color:var(--text)}
 .eod-sum-ratio span{font-size:15px;color:var(--muted)}
+.eod-sum-due{font-size:12px;font-weight:600;color:var(--muted);text-align:right;margin-top:2px}
+.eod-sum-worked{font-size:12.5px;font-weight:600;color:var(--muted);margin-top:3px}
+.eod-sum-auto{margin:10px 0 0;padding:8px 11px;border-radius:10px;font-size:12.5px;font-weight:600;color:#f59e0b;background:rgba(245,158,11,.12);border:1px solid rgba(245,158,11,.3)}
+.eod-st.auto{background:rgba(245,158,11,.16);color:#f59e0b}
+.mh-startwrap{display:flex;flex-direction:column;align-items:flex-start;gap:10px}
+.mh-lockhint{margin:0;max-width:330px;font-size:12.5px;font-weight:600;line-height:1.45;color:rgba(255,255,255,.88);text-shadow:0 1px 6px rgba(0,0,0,.55)}
+.act-link{cursor:pointer}
+.act-link:focus-visible{outline:2px solid var(--accent);outline-offset:-2px}
+.act-note{margin-top:5px;padding:6px 10px;border-left:3px solid var(--amber);border-radius:6px;background:var(--panel2);font-size:13px;color:var(--text);line-height:1.45}
+.act-open{margin-left:auto;font-size:12px;font-weight:700;color:var(--accent-ink)}
+.self-chip{display:inline-block;margin-left:6px;padding:1px 8px;border-radius:999px;font-size:11px;font-weight:700;vertical-align:middle;white-space:nowrap;color:#60a5fa;background:rgba(59,130,246,.14)}
+.reset-req{font-size:11.5px;font-weight:700;padding:2px 9px;border-radius:999px;white-space:nowrap;color:#f59e0b;background:rgba(245,158,11,.14)}
+.login-forgot{display:block;margin:14px auto 0;font-size:13px}
+.plan-intro{font-size:13.5px;line-height:1.55;color:var(--muted);margin:-4px 0 6px}
+.plan-sec{font-size:12px;font-weight:800;letter-spacing:.04em;text-transform:uppercase;color:var(--muted);margin:16px 0 8px}
+.plan-row{display:flex;align-items:center;gap:10px;padding:9px 12px;border:1px solid var(--border);border-radius:10px;background:var(--panel2);font-size:13.5px}
+.plan-row + .plan-row{margin-top:6px}
+.plan-title{flex:1;min-width:0;font-weight:650;overflow:hidden;text-overflow:ellipsis}
+.plan-fmt{font-size:12px;color:var(--muted);white-space:nowrap}
+.plan-tag{font-size:11.5px;font-weight:700;padding:2px 9px;border-radius:999px;white-space:nowrap;color:#60a5fa;background:rgba(59,130,246,.14)}
+.plan-tag.warn{color:#f59e0b;background:rgba(245,158,11,.14)}
+.plan-pick{cursor:pointer}
+.plan-off .plan-title{opacity:.5;text-decoration:line-through}
+.plan-empty{font-size:13px;color:var(--muted);padding:4px 2px}
+.plan-add{display:grid;grid-template-columns:minmax(0,1fr) 150px 140px auto;gap:8px;margin-top:8px}
+@media(max-width:640px){.plan-add{grid-template-columns:1fr 1fr}}
+.plan-err{font-size:12.5px;font-weight:600;color:var(--rose);margin-top:6px}
+.plan-notebox{width:100%;resize:vertical}
+.plan-foot{margin-top:16px;align-items:center}
+/* Phones: windows, the task panel and the break card stay inside the screen. */
+@media(max-width:640px){
+  .modal-card{min-width:0}
+  .task-panel{width:100%;max-width:100%}
+  .brk-card{max-width:calc(100vw - 24px)}
+  .myday > *{min-width:0}
+}
+.plan-sent{font-size:13.5px;font-weight:700;color:#22c55e;margin:-4px 0 4px}
+.plan-note{margin-top:10px;font-size:13.5px;color:var(--text)}
+.mh-planchip{all:unset;cursor:pointer;font-size:12.5px;font-weight:700;color:#fff;padding:4px 11px;border-radius:999px;background:rgba(255,255,255,.14);border:1px solid rgba(255,255,255,.25)}
+.mh-planchip:hover{background:rgba(255,255,255,.22)}
+.eod-sum-plan{margin-top:12px;padding:10px 12px;border-radius:10px;background:var(--panel2);border:1px solid var(--border);font-size:13px;line-height:1.6}
+.eod-sum-plan-head{font-size:13.5px;margin-bottom:2px}
+.login-note{font-size:13.5px;line-height:1.55;color:var(--text);text-align:left;padding:12px 14px;border-radius:12px;background:var(--panel2);border:1px solid var(--border)}
+.tp-locked{margin:0 0 10px;padding:8px 10px;border-radius:10px;background:rgba(255,255,255,.04);border:1px solid var(--border)}
 .eod-sum-groups{display:flex;flex-direction:column;gap:8px}
 .eod-sum-row{display:flex;align-items:center;gap:11px;font-size:14px}
 .eod-sum-n{flex:none;min-width:26px;height:26px;padding:0 6px;border-radius:8px;display:grid;place-items:center;
   font-weight:800;font-size:13px;background:var(--accent-weak);color:var(--accent-ink)}
 .eod-sum-reportlabel{font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.4px;color:var(--muted);margin-top:2px}
-.eod-sum-report{margin:0;background:var(--panel2);border:1px solid var(--border);border-radius:11px;padding:12px 14px;
+.eod-sum-report{white-space:pre-wrap;overflow-wrap:anywhere;margin:0;background:var(--panel2);border:1px solid var(--border);border-radius:11px;padding:12px 14px;
   font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:12.5px;line-height:1.55;color:var(--text);
   white-space:pre-wrap;word-break:break-word;max-height:220px;overflow:auto}
 /* Oversight status badges */
@@ -1821,3 +1869,127 @@ img.lb-ava{object-fit:cover}
 .autosync .as-sub { color: var(--muted); font-size: 13px; }
 .autosync .as-int { width: 72px; }
 .autosync .as-spacer { flex: 1; }
+
+/* Settings → Access: the Resolve reviews scope picker (everyone / people / tasks). */
+.rv-scope{margin:-4px 0 4px 30px;padding:12px 14px;border:1px solid var(--border);border-radius:12px;background:var(--panel2);
+  display:flex;flex-direction:column;gap:10px;font-size:13.5px}
+.rv-opt{display:flex;gap:10px;align-items:flex-start;cursor:pointer}
+.rv-opt input{margin-top:2px;width:16px;height:16px;flex:none}
+.rv-people{display:flex;flex-direction:column;gap:10px;margin-left:26px}
+.rv-person{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:8px 12px;align-items:center}
+.rv-which{width:auto;min-width:150px;padding-top:6px;padding-bottom:6px}
+.rv-tasks{grid-column:1 / -1;display:flex;flex-direction:column;gap:8px;margin-left:26px;padding-left:12px;border-left:2px solid var(--border)}
+
+/* My Day → Waiting for your review (approve / send back in place). */
+.rvq{margin-bottom:18px}
+.rvq .mp-link{margin-left:auto}
+.rvq-count{font-size:11.5px;font-weight:800;color:var(--accent-ink);background:var(--accent-weak);padding:2px 9px;border-radius:999px}
+.rvq-list{display:flex;flex-direction:column}
+.rvq-row{display:flex;align-items:center;gap:10px 14px;flex-wrap:wrap;padding:12px 2px;border-top:1px solid var(--border2)}
+.rvq-row:first-child{border-top:0;padding-top:2px}
+.rvq-main{display:flex;flex-direction:column;gap:2px;min-width:0;flex:1 1 240px}
+.rvq-open{all:unset;display:flex;align-items:baseline;gap:10px;min-width:0;cursor:pointer;border-radius:6px}
+.rvq-open:hover .rvq-title{text-decoration:underline}
+.rvq-open:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+.rvq-title{font-weight:700;font-size:14px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.rvq-view{font-size:12px;font-weight:700;color:var(--accent-ink);white-space:nowrap;flex:none}
+.rvq-meta{font-size:12.5px;color:var(--muted)}
+.rvq-meta a{color:var(--accent-ink);font-weight:600}
+.rvq-actions{display:flex;gap:8px;flex:none}
+.rvq-note{display:flex;gap:8px;align-items:center;flex:1 1 100%}
+.rvq-note .t{flex:1;min-width:0}
+
+/* Task panel in review: the deliverable, up top. */
+.tp-work{align-self:flex-start;margin:2px 0 12px}
+.tp-nowork{margin:2px 0 12px}
+.tp-linkreq{display:inline-flex;align-items:center;gap:8px;font-size:13.5px;cursor:pointer}
+.tp-linkreq input{width:17px;height:17px}
+
+/* My Day → Team (admin): ranking for a date range + the selected person's tasks. */
+.tmp{margin-bottom:18px}
+.tmp .mp-link{margin-left:auto}
+.tmp-bar{display:flex;align-items:center;gap:10px 14px;flex-wrap:wrap;margin-bottom:14px}
+.tmp-bar .seg{margin:0;flex-wrap:wrap}
+.tmp-export{margin-left:auto}
+.tmp-dates{display:flex;align-items:center;gap:8px;font-size:12.5px;color:var(--muted)}
+.tmp-dates .t{width:150px;padding-top:7px;padding-bottom:7px}
+.tmp-grid{display:grid;grid-template-columns:minmax(0,300px) minmax(0,1fr);gap:18px;align-items:start}
+.tmp-colhead{display:flex;justify-content:space-between;align-items:baseline;gap:10px;font-size:13px;font-weight:800;padding:0 4px 8px}
+.tmp-colhead span{font-size:12px;font-weight:600;color:var(--muted);white-space:nowrap}
+.tmp-list{display:flex;flex-direction:column;gap:2px}
+.tmp-row{display:flex;align-items:center;gap:10px;width:100%;padding:8px;border:1px solid transparent;border-radius:12px;background:transparent;color:inherit;text-align:left;font:inherit}
+.tmp-row:hover{background:var(--panel2)}
+.tmp-row.on{background:var(--accent-weak);border-color:var(--glass-brd)}
+.tmp-rank{width:18px;flex:none;text-align:center;font-size:12.5px;font-weight:800;color:var(--faint);font-variant-numeric:tabular-nums}
+.tmp .lb-ava{width:32px;height:32px;border-radius:10px;font-size:13px}
+.tmp-who{display:flex;flex-direction:column;gap:1px;min-width:0;flex:1}
+.tmp-name{font-size:13.5px;font-weight:700;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.tmp-meta{font-size:12px;color:var(--muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.tmp-latecount{color:var(--rose);font-weight:700}
+.tmp-pts{flex:none;font-size:13px;font-weight:800;white-space:nowrap;font-variant-numeric:tabular-nums}
+.tmp-stats{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px;margin-bottom:6px}
+.tmp-stats>div{background:var(--panel2);border:1px solid var(--border2);border-radius:12px;padding:9px 12px}
+.tmp-stats b{display:block;font-size:20px;font-weight:800;line-height:1.2;font-variant-numeric:tabular-nums}
+.tmp-stats span{font-size:11.5px;color:var(--muted);font-weight:600}
+.tmp-stats .bad b{color:var(--rose)}
+.tmp-tasks{display:flex;flex-direction:column}
+.tmp-task{display:block;width:100%;padding:12px 4px;border:0;border-top:1px solid var(--border2);background:transparent;color:inherit;text-align:left;font:inherit;border-radius:0}
+.tmp-task:first-child{border-top:0}
+.tmp-task:hover .tmp-name{text-decoration:underline}
+.tmp-row:focus-visible,.tmp-task:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+.tmp-task-top{display:flex;justify-content:space-between;align-items:flex-start;gap:12px}
+.tmp-note{flex:none;font-size:11.5px;font-weight:700;padding:3px 9px;border-radius:999px;white-space:nowrap;background:var(--panel2);color:var(--muted)}
+.tmp-note.good{background:color-mix(in srgb,var(--good) 16%,transparent);color:var(--good)}
+.tmp-note.warn{background:color-mix(in srgb,var(--c5) 18%,transparent);color:var(--amber)}
+.tmp-note.bad{background:color-mix(in srgb,var(--rose) 16%,transparent);color:var(--rose)}
+html[data-theme="dark"] .tmp-note.warn{color:var(--c5)}
+.tmp-steps{display:grid;grid-template-columns:repeat(4,1fr);gap:4px;margin-top:9px}
+.tmp-steps span{height:5px;border-radius:3px;background:var(--border)}
+.tmp-steps span.done{background:var(--accent)}
+.tmp-labels{display:grid;grid-template-columns:repeat(4,1fr);gap:4px;margin-top:4px;font-size:10.5px;color:var(--faint);font-weight:600}
+.tmp-labels .cur{color:var(--text);font-weight:800}
+@media(max-width:900px){.tmp-grid{grid-template-columns:minmax(0,1fr)}}
+@media(max-width:560px){.tmp-dates .t{width:132px}.tmp-stats{grid-template-columns:repeat(2,minmax(0,1fr))}}
+
+/* My Team: people across the top, then the selected person's tasks as a table
+   whose rows expand for the remaining details. */
+.tmp-people{display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:8px;margin-bottom:16px}
+.tmp-person{display:flex;align-items:center;gap:10px;min-width:0;padding:9px 10px;border:1px solid var(--border2);border-radius:12px;background:var(--panel2);color:inherit;text-align:left;font:inherit}
+.tmp-person:hover{border-color:var(--glass-brd)}
+.tmp-person.on{background:var(--accent-weak);border-color:var(--accent)}
+.tmp-person:focus-visible,.tmp-tr:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+.tmp-scroll{overflow-x:auto;margin-top:8px;container-type:inline-size}
+.tmp-morein{position:sticky;left:12px;width:calc(100cqw - 24px)}
+.tmp-table{width:100%;min-width:780px;border-collapse:collapse;font-size:12.5px}
+.tmp-table th{text-align:left;font-size:11px;font-weight:800;color:var(--faint);text-transform:uppercase;letter-spacing:.4px;padding:8px 10px;border-bottom:1px solid var(--border);white-space:nowrap}
+.tmp-table td{padding:10px;border-bottom:1px solid var(--border2);vertical-align:top;white-space:nowrap;font-variant-numeric:tabular-nums}
+.tmp-tr{cursor:pointer}
+.tmp-tr:hover td,.tmp-tr.open td{background:var(--panel2)}
+.tmp-td-task{white-space:normal !important;min-width:190px;max-width:320px}
+.tmp-td-task .tmp-name,.tmp-td-task .tmp-meta{display:block;white-space:normal}
+.tmp-table a{color:var(--accent-ink);font-weight:700;text-decoration:none}
+.tmp-table a:hover{text-decoration:underline}
+.tmp-more td{white-space:normal;background:var(--panel2);padding:14px 12px 16px}
+.tmp-moregrid{display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:12px 20px;margin-bottom:14px}
+.tmp-moregrid>div{font-size:13px;min-width:0;overflow-wrap:anywhere}
+.tmp-moregrid>div>span{display:block;font-size:11px;font-weight:700;color:var(--faint);margin-bottom:2px}
+.tmp-moregrid a{display:block}
+.tmp-progress{max-width:420px;margin-bottom:12px}
+.tmp-progress .tmp-steps,.tmp-progress .tmp-labels{display:grid}
+.tmp-progress .tmp-steps{margin-top:0}
+
+/* My Profile → change password */
+.profile-password{margin-top:16px;padding-top:14px;border-top:1px solid var(--border2)}
+.profile-password form{display:flex;flex-direction:column;gap:8px}
+.profile-password-err{font-size:12.5px;font-weight:600;color:var(--rose)}
+.profile-password-actions{display:flex;gap:8px;margin-top:2px}
+
+/* How long a task has been waiting for review — amber, red after a day. */
+.task-review-wait{display:inline-block;font-size:10.5px;font-weight:700;color:var(--amber);
+  background:rgba(245,158,11,.12);border:1px solid rgba(245,158,11,.28);border-radius:999px;padding:2px 9px;margin-bottom:6px}
+.task-review-wait.slow{color:var(--rose);background:color-mix(in srgb,var(--rose) 12%,transparent);
+  border-color:color-mix(in srgb,var(--rose) 34%,transparent)}
+.rvq-wait{display:inline-block;font-size:11.5px;font-weight:700;color:var(--amber);margin-right:8px}
+.rvq-wait.slow{color:var(--rose)}
+.rvq-slow{font-size:11.5px;font-weight:800;color:var(--rose);background:color-mix(in srgb,var(--rose) 12%,transparent);
+  padding:2px 9px;border-radius:999px}

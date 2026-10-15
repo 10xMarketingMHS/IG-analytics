@@ -10,9 +10,12 @@ import { useResource } from "@/lib/use-resource";
 import { rangeFor, inRange, compactNum } from "@/lib/date-range";
 import { performanceScore, formatScore } from "@/lib/score";
 import { ymd, myRankInRange, topEditorsInRange } from "@/lib/task-points";
-import { breakOffsetMs, DAILY_BREAK_CAP_SEC } from "@/lib/task-timing";
+import { breakOffsetMs, DAILY_BREAK_CAP_SEC, fmtWait, reviewWaitMs, SLOW_REVIEW_MS } from "@/lib/task-timing";
 import { Avatar } from "@/lib/editor-visuals";
-import { api } from "@/lib/api";
+import { api, ApiError } from "@/lib/api";
+import { toast } from "sonner";
+import { useReviewAccess, scopeAllowsTask } from "@/lib/use-review-access";
+import { TaskPanel } from "@/pages/tasks";
 import type { Editor, Post, Task, TaskStatus, TaskType } from "@/lib/types";
 
 // DF Foods runs a 6-day week (Mon–Sat) — used to spread the monthly Goal Points
@@ -99,10 +102,29 @@ const STAGE_META: Record<string, { label: string; cls: string }> = {
 export function HomePage() {
   const navigate = useNavigate();
   const { user } = useAuth();
-  const { active } = useWorkspaces();
-  const { session: eodSession, start: startEod, end: endEod, busy: eodBusy } = useEodState();
+  const { active, isAdmin, workspaces } = useWorkspaces();
+  const { session: eodSession, start: startEod, end: endEod, busy: eodBusy, sod, setPlanOpen } = useEodState();
   const isEditor = active?.role === "editor";
-  const { tasks } = useTasks();
+  const { tasks, refetch: refetchTasks } = useTasks();
+  // Tasks in Review that THIS person may resolve: all of them for an admin; for
+  // a resolve_tasks grantee, whatever their review scope covers — never their own.
+  const review = useReviewAccess();
+  const canReview = isAdmin || review.granted;
+  // The task whose details panel is open (from a review row). Held by id so the
+  // panel always shows the freshest copy after a refetch.
+  const [openTaskId, setOpenTaskId] = useState<string | null>(null);
+  const openTask = (tasks ?? []).find((t) => t.id === openTaskId) ?? null;
+  const reviewQueue = useMemo(
+    () => (tasks ?? [])
+      .filter((t) => t.status === "review")
+      .filter((t) => isAdmin
+        || (review.granted && t.editor_id !== user?.editorId && scopeAllowsTask(review.scope, t)))
+      // Longest-waiting first — the assignee isn't charged for the wait, but
+      // their work is stuck until someone looks at it.
+      .sort((a, b) => (a.review_started_at ?? "9999").localeCompare(b.review_started_at ?? "9999")
+        || (a.due_date ?? "9999").localeCompare(b.due_date ?? "9999")),
+    [tasks, isAdmin, review, user?.editorId],
+  );
   const { editors } = useEditors();
   const { data: postData } = useResource<{ posts: (Post & { channel_name?: string })[] }>("/posts?channel=all");
   // Home is org-wide — collab mirrors never count here (count or performance).
@@ -126,9 +148,6 @@ export function HomePage() {
     // of what's on their plate, not a team-wide dashboard (the Task Board covers
     // oversight). Someone with no linked roster record simply sees none.
     const scoped = (tasks ?? []).filter((t) => user?.editorId != null && t.editor_id === user.editorId);
-    const open = scoped.filter((t) => t.status !== "done" && t.due_date);
-    const overdue = open.filter((t) => (t.due_date as string) < today);
-    const dueToday = open.filter((t) => t.due_date === today);
     // The working queue for Today's Tasks — everything not done, newest-relevant
     // first (overdue/today ahead of the rest, then by due date).
     const active = scoped
@@ -139,8 +158,17 @@ export function HomePage() {
         return ad.localeCompare(bd);
       });
     const completedToday = scoped.filter((t) => t.completed_at && ymd(new Date(t.completed_at)) === today).length;
-    return { overdue: overdue.length, dueToday: dueToday.length, active, completedToday };
-  }, [tasks, today, user?.editorId]);
+    // The count boxes: an admin oversees everyone, so theirs cover the whole
+    // team; everyone else's cover their own tasks.
+    const counted = isAdmin ? (tasks ?? []) : scoped;
+    const countedOpen = counted.filter((t) => t.status !== "done");
+    return {
+      overdue: countedOpen.filter((t) => t.due_date != null && t.due_date < today).length,
+      dueToday: countedOpen.filter((t) => t.due_date === today).length,
+      inReview: counted.filter((t) => t.status === "review").length,
+      active, completedToday,
+    };
+  }, [tasks, today, user?.editorId, isAdmin]);
 
   // ---- Personal Task Points (same formula the Media House Leaders board scores
   // by — see lib/task-points). Today feeds Today's Progress; week/month feed the
@@ -234,10 +262,10 @@ export function HomePage() {
   const pipelineTotal = Object.values(pipeline).reduce((a, b) => a + b, 0);
 
   const STATS: { label: string; value: number; tone: string; to: string; icon: string }[] = [
-    { label: "Overdue tasks", value: ops.overdue, tone: "danger", to: "/tasks", icon: "⏰" },
-    { label: "Due today", value: ops.dueToday, tone: "warn", to: "/tasks", icon: "📅" },
-    { label: "Awaiting metrics", value: awaitingMetrics, tone: "accent", to: "/posts", icon: "📊" },
-    { label: "In review", value: pipeline.in_review, tone: "info", to: "/metrics", icon: "👁️" },
+    { label: isAdmin ? "Team tasks overdue" : "Overdue tasks", value: ops.overdue, tone: "danger", to: "/tasks", icon: "⏰" },
+    { label: isAdmin ? "Team tasks due today" : "Due today", value: ops.dueToday, tone: "warn", to: "/tasks", icon: "📅" },
+    { label: "Posts awaiting metrics", value: awaitingMetrics, tone: "accent", to: "/posts", icon: "📊" },
+    { label: isAdmin ? "Tasks waiting for review" : "My tasks in review", value: ops.inReview, tone: "info", to: "/tasks", icon: "👁️" },
   ];
 
   // One podium name/points card (gold styling for #1). Null slot → nothing.
@@ -264,22 +292,40 @@ export function HomePage() {
           <div className="mh-left">
             <h1 className="mh-headline">Small Tasks<br /><span className="mh-headline-g">Big Wins</span></h1>
             <p className="mh-tag">Create. Collaborate. Grow.<br />Level up every day.</p>
-            {/* Locked editor → the primary slot IS Start EOD (kept live in color
+            {/* Locked editor → the primary slot IS Start Work (kept live in color
                 by .eod-live even while the rest of the app is grayscaled). Once
-                clocked in, New Task returns as primary, with End EOD secondary. */}
+                clocked in, Task Board returns as primary, with End Work secondary. */}
             {isEditor && !eodSession ? (
-              <button className="btn btn-primary mh-cta eod-live" onClick={() => startEod()} disabled={eodBusy}>
-                {eodBusy ? "Starting…" : "▶ Start EOD"}
-              </button>
+              <div className="mh-startwrap">
+                <button className="btn btn-primary mh-cta eod-live" onClick={() => startEod()} disabled={eodBusy}>
+                  {eodBusy ? "Starting…" : "▶ Start Work"}
+                </button>
+                {/* Before Start Work the rest of the app is greyed out — say why. */}
+                <p className="mh-lockhint">Press Start Work to begin your day. The menu and your tasks unlock once you do.</p>
+              </div>
+            ) : isEditor && sod?.required ? (
+              <div className="mh-startwrap">
+                <button className="btn btn-primary mh-cta eod-live" onClick={() => setPlanOpen(true)}>📝 Plan your day</button>
+                <p className="mh-lockhint">Send today's plan to unlock your tasks: add everything you'll work on today.</p>
+              </div>
             ) : (
               <div className="mh-cta-row">
-                <button className="btn btn-primary mh-cta" onClick={() => navigate("/tasks")}>▶ New Task</button>
+                <button className="btn btn-primary mh-cta" onClick={() => navigate("/tasks")}>▶ Task Board</button>
                 {isEditor && eodSession && (
                   <>
-                    <button className="btn mh-endeod" onClick={() => endEod()} disabled={eodBusy}>
-                      {eodBusy ? "Ending…" : "⏹ End EOD"}
+                    <button
+                      className="btn mh-endeod"
+                      onClick={() => { if (window.confirm("End your work day? The app locks until you press Start Work again.")) endEod(); }}
+                      disabled={eodBusy}
+                    >
+                      {eodBusy ? "Ending…" : "⏹ End Work"}
                     </button>
                     <span className="mh-clockedin">🟢 Clocked in since {fmtClock(eodSession.startedAt)}</span>
+                    {sod?.plan && (
+                      <button className="mh-planchip" onClick={() => setPlanOpen(true)} title="View today's plan">
+                        📝 Plan sent {fmtClock(sod.plan.submittedAt)}
+                      </button>
+                    )}
                   </>
                 )}
               </div>
@@ -305,8 +351,16 @@ export function HomePage() {
 
       {!user?.editorId && (
         <div className="card pad" style={{ color: "var(--muted)", fontSize: 13, marginBottom: 16 }}>
-          Your account isn't linked to a team member yet, so My Day and your score have nothing personal to show.
-          Ask an admin to link you under Settings → Team.
+          {active?.role === "viewer" ? (
+            "You have view-only access: you can look at tasks, posts and analytics, but not change them."
+          ) : (
+            <>
+              Your account isn't on the team roster yet, so My Day and your score have nothing personal to show.{" "}
+              {isAdmin
+                ? "To add yourself, go to Settings → Team and press Edit on your own row."
+                : "Ask an admin to link you under Settings → Team."}
+            </>
+          )}
         </div>
       )}
 
@@ -322,6 +376,18 @@ export function HomePage() {
           </button>
         ))}
       </div>
+
+      {canReview && (
+        <ReviewQueue tasks={reviewQueue} loading={tasks === null} nowMs={now.getTime()} onChanged={refetchTasks} onOpen={(t) => setOpenTaskId(t.id)} />
+      )}
+      {openTask && (
+        <TaskPanel
+          mode="edit" task={openTask} canWrite={active?.role !== "viewer"} editors={editors ?? []} channels={workspaces ?? []}
+          onClose={() => { setOpenTaskId(null); refetchTasks().catch(() => {}); }}
+          onChanged={() => { refetchTasks().catch(() => {}); }}
+          onCreated={() => {}}
+        />
+      )}
 
       {/* Today's Tasks + Today's Progress */}
       <div className="myday-grid2">
@@ -500,6 +566,113 @@ function HeroVideo() {
         <source src="/media/myday-intro.mp4" type="video/mp4" />
       </video>
     </>
+  );
+}
+
+// ---- Waiting for your review: tasks this person can approve or send back,
+// resolved right here. Sending back needs a note (the assignee sees it when they
+// re-accept), so that button opens an inline note box instead of acting at once.
+function ReviewQueue({ tasks, loading, nowMs, onChanged, onOpen }: {
+  tasks: Task[]; loading: boolean; nowMs: number; onChanged: () => Promise<unknown>; onOpen: (t: Task) => void;
+}) {
+  const slow = tasks.filter((t) => reviewWaitMs(t, nowMs) >= SLOW_REVIEW_MS).length;
+  const [busyId, setBusyId] = useState<string | null>(null);
+  const [noteFor, setNoteFor] = useState<string | null>(null);
+  const [note, setNote] = useState("");
+
+  async function resolve(t: Task, status: "done" | "in_progress", reviewNote?: string) {
+    // Approving work that was never attached needs a deliberate yes.
+    const noWork = status === "done" && t.link_required && !t.delivery_link;
+    if (noWork && !window.confirm(`No work is attached to "${t.title}". Approve it anyway?`)) return;
+    setBusyId(t.id);
+    try {
+      await api(`/tasks/${t.id}`, { method: "PATCH", body: JSON.stringify({
+        status, ...(reviewNote ? { reviewNote } : {}), ...(noWork ? { approveWithoutWork: true } : {}),
+      }) });
+      toast.success(status === "done" ? `Approved “${t.title}”.` : `Sent “${t.title}” back for rework.`);
+      setNoteFor(null);
+      setNote("");
+      await onChanged();
+    } catch (e) {
+      toast.error(e instanceof ApiError ? e.message : "Couldn't update that task.");
+    } finally {
+      setBusyId(null);
+    }
+  }
+
+  return (
+    <div className="card myday-panel rvq">
+      <div className="mp-head">
+        <h3><span className="mp-ic">👀</span> Waiting for your review</h3>
+        {tasks.length > 0 && <span className="rvq-count">{tasks.length}</span>}
+        {slow > 0 && <span className="rvq-slow" title="These are holding up someone's work">⏳ {slow} waiting over a day</span>}
+        <Link to="/tasks" className="mp-link">Task Board →</Link>
+      </div>
+      {loading ? (
+        <Loader label="Loading…" />
+      ) : tasks.length === 0 ? (
+        <div className="home-empty">Nothing is waiting for your review.</div>
+      ) : (
+        <div className="rvq-list">
+          {tasks.map((t) => {
+            const meta = [t.editor_name ?? "Unassigned", t.content_format_name, t.tid].filter(Boolean).join(" · ");
+            const busy = busyId === t.id;
+            const wait = reviewWaitMs(t, nowMs);
+            return (
+              <div key={t.id} className="rvq-row">
+                <div className="rvq-main">
+                  <button type="button" className="rvq-open" onClick={() => onOpen(t)} title="Open the task's details">
+                    <span className="rvq-title">{t.title}</span>
+                    <span className="rvq-view">View details ›</span>
+                  </button>
+                  {t.self_created && <span className="self-chip" title="The assignee created this task for themselves">🙋 Self-created</span>}
+                  <span className="rvq-meta">
+                    {t.review_started_at && (
+                      <span className={"rvq-wait" + (wait >= SLOW_REVIEW_MS ? " slow" : "")} title="Time waiting for review doesn't count against the assignee">
+                        ⏳ Waiting {fmtWait(wait)}
+                      </span>
+                    )}
+                    {meta}
+                    {t.delivery_link ? (
+                      <> · <a href={t.delivery_link} target="_blank" rel="noreferrer">Open the work ↗</a></>
+                    ) : (
+                      <> · {t.link_required ? "No work attached" : "No link needed"}</>
+                    )}
+                  </span>
+                </div>
+                {noteFor === t.id ? (
+                  <form
+                    className="rvq-note"
+                    onSubmit={(e) => { e.preventDefault(); if (note.trim()) resolve(t, "in_progress", note.trim()); }}
+                  >
+                    <input
+                      className="t" autoFocus value={note} onChange={(e) => setNote(e.target.value)}
+                      placeholder={`What does ${t.editor_name ?? "the assignee"} need to fix?`}
+                      aria-label="What needs fixing"
+                    />
+                    <button type="submit" className="btn btn-sm btn-primary" disabled={busy || !note.trim()}>
+                      {busy ? "Sending…" : "Send back"}
+                    </button>
+                    <button type="button" className="btn btn-sm" disabled={busy} onClick={() => { setNoteFor(null); setNote(""); }}>
+                      Cancel
+                    </button>
+                  </form>
+                ) : (
+                  <div className="rvq-actions">
+                    <button className="btn btn-sm" disabled={busy} onClick={() => { setNoteFor(t.id); setNote(""); }}>
+                      Send back
+                    </button>
+                    <button className="btn btn-sm btn-primary" disabled={busy} onClick={() => resolve(t, "done")}>
+                      {busy ? "Approving…" : "Approve"}
+                    </button>
+                  </div>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </div>
   );
 }
 

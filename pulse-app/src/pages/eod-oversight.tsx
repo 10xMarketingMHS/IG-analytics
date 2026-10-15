@@ -2,9 +2,10 @@ import { useEffect, useState } from "react";
 import { toast } from "sonner";
 import { api } from "@/lib/api";
 import { EodSummaryCard } from "@/components/eod-summary-card";
-import type { EodSummary } from "@/lib/use-eod";
+import { SodReportModal } from "@/components/sod-report-card";
+import { fmtDuration, type EodSummary, type SodPlan } from "@/lib/use-eod";
 
-// Admin EOD oversight — one row per (non-admin) editor, their Start/End status
+// Admin work-day oversight — one row per (non-admin) editor, their Start/End status
 // for a chosen date, with a way to open any editor's full summary for that day.
 type TeamRow = {
   id: string;
@@ -12,6 +13,11 @@ type TeamRow = {
   status: "not_started" | "active" | "completed";
   startedAt: string | null;
   endedAt: string | null;
+  sessions?: number;
+  workedSeconds?: number;
+  autoClosed?: boolean;
+  planSubmittedAt?: string | null;
+  planCount?: number | null;
 };
 
 function todayStr() {
@@ -32,6 +38,16 @@ export function EodOversightSection() {
   const [rows, setRows] = useState<TeamRow[] | null>(null);
   const [open, setOpen] = useState<{ name: string; summary: EodSummary } | null>(null);
   const [loadingSum, setLoadingSum] = useState(false);
+  const [openPlan, setOpenPlan] = useState<{ name: string; plan: SodPlan } | null>(null);
+
+  async function showPlan(r: TeamRow) {
+    try {
+      const d = await api<{ plan: SodPlan | null }>(`/sod?editorId=${r.id}&date=${date}`);
+      if (d.plan) setOpenPlan({ name: (r.name ?? "Editor").split(" ")[0], plan: d.plan });
+    } catch {
+      toast.error("Could not load that plan.");
+    }
+  }
 
   useEffect(() => {
     let cancel = false;
@@ -59,7 +75,7 @@ export function EodOversightSection() {
       <div className="goalt-owner" style={{ marginBottom: 16 }}>
         <span className="goalt-owner-l">Date</span>
         <input className="t" type="date" value={date} max={todayStr()} onChange={(e) => setDate(e.target.value)} style={{ maxWidth: 180 }} />
-        <span className="goalt-owner-hint">Each editor's Start / End EOD status for the day</span>
+        <span className="goalt-owner-hint">Each person's Start Work / End Work for the day. A day nobody ended is closed automatically at 6 PM and marked.</span>
       </div>
 
       {rows === null ? (
@@ -70,19 +86,33 @@ export function EodOversightSection() {
         <div className="card" style={{ overflowX: "auto" }}>
           <table className="tbl">
             <thead>
-              <tr><th>Editor</th><th>Status</th><th>Start</th><th>End</th><th></th></tr>
+              <tr><th>Editor</th><th>Status</th><th>Start</th><th>End</th><th>Worked</th><th>Morning plan</th><th></th></tr>
             </thead>
             <tbody>
               {rows.map((r) => (
                 <tr key={r.id}>
                   <td><b style={{ fontWeight: 650 }}>{r.name ?? "—"}</b></td>
                   <td>
-                    <span className={"eod-st " + STATUS[r.status].cls}>
-                      {r.status === "active" && r.startedAt ? `Active since ${fmtTime(r.startedAt)}` : STATUS[r.status].label}
+                    <span
+                      className={"eod-st " + (r.autoClosed ? "auto" : STATUS[r.status].cls)}
+                      title={r.autoClosed ? "End Work wasn't pressed — closed automatically at 6 PM" : undefined}
+                    >
+                      {r.status === "active" && r.startedAt ? `Active since ${fmtTime(r.startedAt)}`
+                        : r.autoClosed ? "Ended automatically" : STATUS[r.status].label}
                     </span>
                   </td>
                   <td>{fmtTime(r.startedAt)}</td>
                   <td>{fmtTime(r.endedAt)}</td>
+                  <td>{r.status === "not_started" || r.workedSeconds == null ? "—" : `${fmtDuration(r.workedSeconds)}${(r.sessions ?? 1) > 1 ? ` · ${r.sessions} sessions` : ""}`}</td>
+                  <td>
+                    {r.planSubmittedAt ? (
+                      <button className="linkbtn" onClick={() => showPlan(r)} title="View the plan">
+                        📝 {fmtTime(r.planSubmittedAt)} · {r.planCount ?? 0} {r.planCount === 1 ? "task" : "tasks"}
+                      </button>
+                    ) : r.status === "active" ? (
+                      <span className="eod-st auto">Not sent yet</span>
+                    ) : "—"}
+                  </td>
                   <td>
                     <button className="btn" disabled={r.status === "not_started" || loadingSum} onClick={() => openSummary(r)}>
                       View summary
@@ -96,6 +126,7 @@ export function EodOversightSection() {
       )}
 
       {open && <EodSummaryCard name={open.name} summary={open.summary} onClose={() => setOpen(null)} />}
+      {openPlan && <SodReportModal name={openPlan.name} plan={openPlan.plan} onClose={() => setOpenPlan(null)} />}
     </div>
   );
 }

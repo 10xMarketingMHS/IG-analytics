@@ -59,7 +59,7 @@ export function SettingsPage() {
         { key: "goals" as const, label: "Goal Setting", show: canViewGoals },
         { key: "channels" as const, label: "Channels & Integrations", show: true },
         { key: "team" as const, label: "Team", show: isAdmin },
-        { key: "eod" as const, label: "EOD", show: isAdmin },
+        { key: "eod" as const, label: "Work Day", show: isAdmin },
         { key: "mp" as const, label: "Management Performance", show: isAdmin },
         { key: "access" as const, label: "Access", show: canAccess },
       ].filter((t) => t.show),

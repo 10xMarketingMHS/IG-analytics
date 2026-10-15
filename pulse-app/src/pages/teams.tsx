@@ -58,7 +58,7 @@ export function TeamsSection() {
   if (!isAdmin) {
     return (
       <div className="card pad" style={{ color: "var(--muted)", fontSize: 13 }}>
-        You're signed in as a <b style={{ color: "var(--text)" }}>{active?.role ?? "member"}</b> of this
+        You're signed in as {/^[aeiou]/.test(active?.role ?? "member") ? "an" : "a"} <b style={{ color: "var(--text)" }}>{active?.role ?? "member"}</b> of this
         workspace. Only admins can manage the team.
       </div>
     );
@@ -95,7 +95,8 @@ export function TeamsSection() {
     if (password.length < 6) return toast.error("Password must be at least 6 characters.");
     try {
       await api(`/users/${u.id}`, { method: "PATCH", body: JSON.stringify({ password }) });
-      toast.success("Password reset.");
+      toast.success("Password reset. Tell them the temporary password — they can change it under My Profile.");
+      refetchAll();
     } catch (err) {
       toast.error(err instanceof ApiError ? err.message : "Failed to reset password.");
     }
@@ -170,6 +171,9 @@ export function TeamsSection() {
                   )}
 
                   <button className="linkbtn" onClick={() => setModal({ row: r })}>Edit</button>
+                  {r.user?.resetRequestedAt && (
+                    <span className="reset-req" title={`Asked on ${new Date(r.user.resetRequestedAt).toLocaleString()}`}>🔑 Asked for a password reset</span>
+                  )}
                   {r.user && <button className="linkbtn" onClick={() => resetPassword(r.user!)}>Reset password</button>}
                   {r.user && (
                     <button className="linkbtn" onClick={() => toggleActive(r.user!)} disabled={r.user.isSelf} style={{ color: r.user.active ? "var(--amber)" : "var(--good)" }}>
@@ -193,13 +197,18 @@ export function TeamsSection() {
       </div>
 
       {modal && (
-        <TeamMemberModal row={modal.row} onClose={() => setModal(null)} onSaved={refetchAll} />
+        <TeamMemberModal
+          row={modal.row} onClose={() => setModal(null)} onSaved={refetchAll}
+          existingEmails={(users ?? []).map((u) => u.email.toLowerCase())}
+        />
       )}
     </>
   );
 }
 
-function TeamMemberModal({ row, onClose, onSaved }: { row: Row; onClose: () => void; onSaved: () => void }) {
+function TeamMemberModal({ row, onClose, onSaved, existingEmails }: {
+  row: Row; onClose: () => void; onSaved: () => void; existingEmails: string[];
+}) {
   const { editor, user } = row;
   const editingEditor = Boolean(editor);
   const fileRef = useRef<HTMLInputElement>(null);
@@ -226,6 +235,12 @@ function TeamMemberModal({ row, onClose, onSaved }: { row: Row; onClose: () => v
     e.preventDefault();
     if (!name.trim()) { setError("Name is required."); return; }
     if (giveLogin && !user && !email.trim()) { setError("Email is required for login access."); return; }
+    // Checked before anything is created: adding an email that already has a login
+    // would overwrite that person's role (the server refuses it too).
+    if (giveLogin && !user && existingEmails.includes(email.trim().toLowerCase())) {
+      setError("That email already has a login on this team. Close this and use Edit on their row instead.");
+      return;
+    }
     if (giveLogin && !user && password.length < 6) { setError("Set a temporary password (6+ characters)."); return; }
     setSaving(true);
     setError(null);
@@ -252,10 +267,12 @@ function TeamMemberModal({ row, onClose, onSaved }: { row: Row; onClose: () => v
           method: "POST",
           body: JSON.stringify({ email: email.trim(), name: name.trim(), password, role, editorId }),
         });
-      } else if (giveLogin && user && (role !== user.role || (editor && user.editor_id !== editorId))) {
+      } else if (giveLogin && user && (role !== user.role || user.editor_id !== editorId)) {
+        // Link the login to its roster record whenever they differ — including a
+        // login that was not on the roster yet, whose record was just created above.
         const patch: Record<string, unknown> = {};
         if (role !== user.role) patch.role = role;
-        if (editor && user.editor_id !== editorId) patch.editorId = editorId;
+        if (user.editor_id !== editorId) patch.editorId = editorId;
         await api(`/users/${user.id}`, { method: "PATCH", body: JSON.stringify(patch) });
       }
 

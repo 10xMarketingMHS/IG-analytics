@@ -99,6 +99,42 @@ export function MyProfileModal({ onClose }: { onClose: () => void }) {
     }
   }
 
+  // Change password — its own little form with its own button, so it never
+  // rides along with "Save changes". The current password is asked for so a
+  // session left open on a shared computer can't be used to take the login over.
+  const [pwOpen, setPwOpen] = useState(false);
+  const [currentPassword, setCurrentPassword] = useState("");
+  const [newPassword, setNewPassword] = useState("");
+  const [confirmPassword, setConfirmPassword] = useState("");
+  const [pwError, setPwError] = useState<string | null>(null);
+  const [pwSaving, setPwSaving] = useState(false);
+
+  function closePassword() {
+    setPwOpen(false);
+    setCurrentPassword("");
+    setNewPassword("");
+    setConfirmPassword("");
+    setPwError(null);
+  }
+
+  async function changePassword() {
+    if (!currentPassword) return setPwError("Enter your current password.");
+    if (newPassword.length < 6) return setPwError("Your new password needs at least 6 characters.");
+    if (newPassword !== confirmPassword) return setPwError("The two new passwords don't match.");
+    if (newPassword === currentPassword) return setPwError("Choose a password different from your current one.");
+    setPwSaving(true);
+    setPwError(null);
+    try {
+      await api("/users/me/password", { method: "POST", body: JSON.stringify({ currentPassword, newPassword }) });
+      toast.success("Password changed.");
+      closePassword();
+    } catch (err) {
+      setPwError(err instanceof ApiError ? err.message : "Could not change your password.");
+    } finally {
+      setPwSaving(false);
+    }
+  }
+
   const initial = (name || user?.email || "?").charAt(0).toUpperCase();
 
   return (
@@ -167,6 +203,38 @@ export function MyProfileModal({ onClose }: { onClose: () => void }) {
       <div className="hint" style={{ marginTop: 4 }}>
         This only changes your own login — it's separate from admin Settings and doesn't need admin access, and
         doesn't touch your Team-roster profile (if you have one) either.
+      </div>
+
+      <div className="field profile-password">
+        <label className="f">Password</label>
+        {!pwOpen ? (
+          <button type="button" className="btn" onClick={() => setPwOpen(true)}>🔒 Change password</button>
+        ) : (
+          <form onSubmit={(e) => { e.preventDefault(); changePassword(); }}>
+            <div className="hint" style={{ marginTop: -2, marginBottom: 8 }}>
+              Only you will know your new password. It needs at least 6 characters.
+            </div>
+            <input
+              className="t" type="password" placeholder="Current password" autoComplete="current-password"
+              aria-label="Current password" value={currentPassword} onChange={(e) => setCurrentPassword(e.target.value)}
+            />
+            <input
+              className="t" type="password" placeholder="New password" autoComplete="new-password"
+              aria-label="New password" value={newPassword} onChange={(e) => setNewPassword(e.target.value)}
+            />
+            <input
+              className="t" type="password" placeholder="New password again" autoComplete="new-password"
+              aria-label="New password again" value={confirmPassword} onChange={(e) => setConfirmPassword(e.target.value)}
+            />
+            {pwError && <div className="profile-password-err" role="alert">{pwError}</div>}
+            <div className="profile-password-actions">
+              <button type="submit" className="btn btn-primary" disabled={pwSaving}>
+                {pwSaving ? "Changing…" : "Change password"}
+              </button>
+              <button type="button" className="btn" disabled={pwSaving} onClick={closePassword}>Cancel</button>
+            </div>
+          </form>
+        )}
       </div>
 
       <div className="mfoot" style={{ marginTop: 18 }}>

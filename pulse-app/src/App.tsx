@@ -32,6 +32,7 @@ import { SocialMediaPage } from "@/pages/social-media";
 import { ActivityPage } from "@/pages/activity";
 import { AddPostPage } from "@/pages/add-post";
 import { BulkAddPostPage } from "@/pages/bulk-add-post";
+import { useWorkspaces } from "@/lib/workspaces-context";
 // Task Settings, Channels, and Teams are now tabs inside one master Settings
 // page (see settings.tsx) — /task-rules, /channels, /teams still route here
 // so any old link keeps working, just pre-selecting the matching tab.
@@ -39,6 +40,24 @@ import { SettingsPage } from "@/pages/settings";
 import { GoalsTrackerPage } from "@/pages/goals-tracker";
 import { FormatAnalyticsPage } from "@/pages/format-analytics";
 import { LeaderboardPage } from "@/pages/leaderboard";
+import { MyTeamPage } from "@/pages/my-team";
+
+// Adding posts is for admins and anyone given Add Post access — everyone else
+// who opens the address gets a short explanation instead of an empty page.
+function AddPostGate({ children }: { children: React.ReactNode }) {
+  const { isAdmin, hasPermission, loading } = useWorkspaces();
+  if (loading) return null;
+  if (!isAdmin && !hasPermission("create_post")) {
+    return (
+      <section className="screen">
+        <div className="card pad home-empty">
+          Adding posts is for admins, or people an admin has given Add Post access. You can see every post under Posts.
+        </div>
+      </section>
+    );
+  }
+  return <>{children}</>;
+}
 
 // The Add/Edit Post form rendered inside the glass modal. Closing returns to
 // the page underneath; a successful save navigates on to /posts (handled inside
@@ -55,7 +74,7 @@ function PostFormModal() {
       </Modal>
     );
   }
-  return <BulkAddPostPage onClose={close} />;
+  return <AddPostGate><BulkAddPostPage onClose={close} /></AddPostGate>;
 }
 
 function AppRoutes() {
@@ -94,11 +113,12 @@ function AppRoutes() {
             {/* Integrations merged into Channels — keep the path working for old links / OAuth callback. */}
             <Route path="/integrations" element={<Navigate to="/channels" replace />} />
             <Route path="/tasks" element={<TasksPage />} />
+            <Route path="/my-team" element={<MyTeamPage />} />
             <Route path="/task-rules" element={<SettingsPage />} />
             <Route path="/social-media" element={<SocialMediaPage />} />
             <Route path="/activity" element={<ActivityPage />} />
             {/* Direct visits (no background) still render the form. */}
-            <Route path="/posts/new" element={<BulkAddPostPage />} />
+            <Route path="/posts/new" element={<AddPostGate><BulkAddPostPage /></AddPostGate>} />
             <Route path="/posts/:id/edit" element={<AddPostPage />} />
             <Route path="/analytics/:type" element={<FormatAnalyticsPage />} />
             <Route path="/settings" element={<SettingsPage />} />

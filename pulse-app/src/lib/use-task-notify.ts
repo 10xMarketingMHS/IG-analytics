@@ -18,6 +18,13 @@ function writeSeen(userId: string, seen: Set<string>) {
   window.localStorage.setItem(SEEN_KEY_PREFIX + userId, JSON.stringify([...seen]));
 }
 
+// Whether this browser has already shown the user this task — the poller below
+// only announces tasks it hasn't seen, so a task that comes BACK to someone is
+// announced by the app shell's live notices instead.
+export function hasSeenTask(userId: string, taskId: string): boolean {
+  return readSeen(userId).has(taskId);
+}
+
 // Call right after taking an action that assigns a task to yourself in this
 // tab (self-assign, accept, claim) — so the background poller below doesn't
 // also pop a redundant "new task" toast about something you just did.
@@ -51,6 +58,8 @@ export function useTaskAssignNotify() {
         if (!isFirstEver) {
           for (const t of tasks) {
             if (seen.has(t.id)) continue;
+            // A task you created yourself isn't news to you.
+            if (t.created_by === user!.id) continue;
             toast(`🔔 New task: "${t.title}"`, {
               description: t.due_date ? `Due ${t.due_date}` : undefined,
             });

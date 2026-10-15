@@ -362,12 +362,12 @@ function PerformanceDetailInline({ editorId, month }: { editorId: string; month:
 function EodSection({ sessions }: { sessions: DetailResp["eodSessions"] }) {
   return (
     <div className="mp-section">
-      <div className="mp-section-t">Start / End EOD sessions <span className="mp-context-tag">context only</span></div>
+      <div className="mp-section-t">Start Work / End Work sessions <span className="mp-context-tag">context only</span></div>
       <div className="hint" style={{ margin: "0 0 8px" }}>
         Clock-in spans for the month — supplementary context, <b>not</b> part of the performance score (that's points only).
       </div>
       {sessions.length === 0 ? (
-        <div className="hint">No EOD sessions this month.</div>
+        <div className="hint">No work sessions this month.</div>
       ) : (
         <table className="tbl">
           <thead><tr><th>Date</th><th>Start</th><th>End</th><th className="num">Span</th></tr></thead>

@@ -1,4 +1,5 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { toast } from "sonner";
 import { NavLink, Outlet, useLocation, useNavigate } from "react-router-dom";
 import { NAV_ITEMS, NAV_SECTIONS, PAGE_META } from "@/lib/nav";
 import { useAuth } from "@/lib/auth-context";
@@ -8,13 +9,16 @@ import { usePosts } from "@/lib/use-posts";
 import { useResource } from "@/lib/use-resource";
 import { useAutoSync } from "@/lib/auto-sync";
 import { getActivitySeen, onActivitySeenChange } from "@/lib/activity-seen";
-import { useTaskAssignNotify } from "@/lib/use-task-notify";
+import { hasSeenTask, useTaskAssignNotify } from "@/lib/use-task-notify";
 import { useOverdueTaskNotify } from "@/lib/use-overdue-notify";
 import { BreakWidget } from "@/components/break-widget";
 import { BreakOverlay } from "@/components/break-overlay";
 import { BreakProvider } from "@/lib/break-context";
 import { useEodState } from "@/lib/eod-context";
 import { MyProfileModal } from "@/components/my-profile-modal";
+import { Modal } from "@/components/modal";
+import { notifyTasksChanged } from "@/lib/task-events";
+import { PlanDayModal } from "@/components/plan-day-modal";
 import { useTheme } from "@/components/theme-provider";
 import type { Activity } from "@/lib/types";
 
@@ -26,15 +30,48 @@ function useUnreadActivity() {
 
   useEffect(() => onActivitySeenChange(() => setSeen(getActivitySeen())), []);
   useEffect(() => {
-    const id = setInterval(() => refetch().catch(() => {}), 45_000);
+    const id = setInterval(() => refetch().catch(() => {}), 20_000);
     return () => clearInterval(id);
   }, [refetch]);
 
-  return useMemo(() => {
+  const unread = useMemo(() => {
     const items = data?.activity ?? [];
     if (!seen) return Math.min(items.length, 9);
     return items.filter((a) => a.created_at > seen).length;
   }, [data, seen]);
+  return { unread, items: data?.activity };
+}
+
+// Live notices: when someone else approves, sends back, reopens, moves, holds or
+// deletes one of your tasks — or, for a reviewer, submits one — say so as it
+// happens and reload every task list, instead of leaving the board on its old
+// stage until the page changes. Only entries newer than this tab's first look
+// count.
+const LIVE_VERBS = new Set([
+  "completed", "sent_back", "reopened", "assigned", "deleted", "held", "resumed",
+  "review_requested", "password_reset_requested", "sod_submitted",
+]);
+function useLiveNotices(items: Activity[] | undefined, myId: string | undefined, myEditorId: string | null | undefined) {
+  const since = useRef<string | null>(null);
+  useEffect(() => {
+    if (!items) return;
+    const newest = items[0]?.created_at ?? new Date().toISOString();
+    if (since.current === null) { since.current = newest; return; }
+    const fresh = items.filter((a) => a.created_at > since.current! && a.actor_id !== myId);
+    if (newest > since.current) since.current = newest;
+    if (!fresh.length) return;
+    for (const a of [...fresh].reverse()) {
+      if (!LIVE_VERBS.has(a.verb)) continue;
+      // A task newly handed to you is announced by useTaskAssignNotify ("New
+      // task"); one that comes back after you had it before is announced here.
+      if (a.verb === "assigned" && myEditorId && a.meta?.toEditorId === myEditorId
+          && myId && a.entity_id && !hasSeenTask(myId, a.entity_id)) continue;
+      const summary = a.summary.charAt(0).toLowerCase() + a.summary.slice(1);
+      const note = a.verb === "sent_back" && typeof a.meta?.note === "string" ? a.meta.note : undefined;
+      toast(`🔔 ${a.actor_name ?? "Someone"} ${summary}`, { description: note });
+    }
+    if (fresh.some((a) => a.entity_type === "task")) notifyTasksChanged();
+  }, [items, myId, myEditorId]);
 }
 
 function metaFor(pathname: string): [string, string] {
@@ -49,15 +86,19 @@ export function AppShell() {
   // EOD lockout: an editor with no open session gets the whole shell grayscaled
   // and non-interactive (except a few live controls) until they Start EOD. The
   // grayscale/disable is CSS keyed off this class; see index.css `.eod-lock`.
-  const { session: eodSession, loading: eodLoading, unlinked: eodUnlinked } = useEodState();
-  const eodLocked = active?.role === "editor" && !eodLoading && !eodUnlinked && !eodSession;
+  const { session: eodSession, loading: eodLoading, unlinked: eodUnlinked, end: endEod, sod, summary: eodSummary } = useEodState();
+  // After Start Work, the morning plan (SOD) has to be sent before task work
+  // opens up — the app stays locked the same way until it is.
+  const planPending = active?.role === "editor" && !!eodSession && !!sod?.required;
+  const eodLocked = (active?.role === "editor" && !eodLoading && !eodUnlinked && !eodSession) || planPending;
   const { editors } = useEditors();
   const { theme, toggle } = useTheme();
   const location = useLocation();
   const navigate = useNavigate();
   const { posts } = usePosts();
   const postCount = posts?.length ?? null;
-  const unread = useUnreadActivity();
+  const { unread, items: activityItems } = useUnreadActivity();
+  useLiveNotices(activityItems, user?.id, user?.editorId);
   useTaskAssignNotify();
   useOverdueTaskNotify();
   // App-wide auto-sync: only ADMIN tabs poll (keeps the trigger surface small
@@ -72,6 +113,18 @@ export function AppShell() {
     setMenuOpen(false);
   }, [location.pathname]);
 
+  // A locked editor can only act on My Day (it holds the live Start EOD button)
+  // and the lock disables the nav, so landing anywhere else — sign-in, refresh,
+  // an old link — would strand them on a dead page. Send them to My Day. The
+  // one exception is Activity: notifications are read-only, so the bell keeps
+  // working before clock-in (the topbar offers the way back, see below).
+  const lockedOnActivity = eodLocked && location.pathname === "/activity";
+  useEffect(() => {
+    if (eodLocked && location.pathname !== "/home" && location.pathname !== "/activity") {
+      navigate("/home", { replace: true });
+    }
+  }, [eodLocked, location.pathname, navigate]);
+
   const [title, sub] = metaFor(location.pathname);
   const initial = (user?.name || user?.email || "?").charAt(0).toUpperCase();
   // Prefer the person's actual designation (Team Lead, Manager, Video
@@ -83,10 +136,39 @@ export function AppShell() {
   const roleLabel = active?.role ? active.role.charAt(0).toUpperCase() + active.role.slice(1) : "Member";
   const subtitle = myDesignation || (isAdmin ? null : roleLabel);
 
+  // Signing out doesn't end the work day (someone may just be switching
+  // devices), so a clocked-in employee is asked which they mean.
+  const [signOutAsk, setSignOutAsk] = useState(false);
+  const [signingOut, setSigningOut] = useState(false);
   async function handleSignOut() {
+    if (active?.role === "editor" && eodSession) { setSignOutAsk(true); return; }
+    await signOut(false);
+  }
+  // After "End Work and sign out" the day's report is shown first (so it can be
+  // copied); closing it finishes the sign-out.
+  const [signOutAfterReport, setSignOutAfterReport] = useState(false);
+  async function signOut(endWorkFirst: boolean) {
+    setSigningOut(true);
+    try {
+      if (endWorkFirst) await endEod();
+    } catch {
+      toast.error("Couldn't end your work day — try End Work on My Day.");
+      setSigningOut(false);
+      return;
+    }
+    setSignOutAsk(false);
+    if (endWorkFirst) {
+      setSignOutAfterReport(true);
+      return;
+    }
     await logout();
     navigate("/login", { replace: true });
   }
+  useEffect(() => {
+    if (!signOutAfterReport || eodSummary) return;
+    setSignOutAfterReport(false);
+    logout().then(() => navigate("/login", { replace: true }));
+  }, [signOutAfterReport, eodSummary, logout, navigate]);
 
   return (
     <BreakProvider>
@@ -154,6 +236,21 @@ export function AppShell() {
           </button>
         </div>
         {profileOpen && <MyProfileModal onClose={() => setProfileOpen(false)} />}
+        {signOutAsk && (
+          <Modal title="You're still clocked in" onClose={() => setSignOutAsk(false)}>
+            <p style={{ margin: "0 0 14px", lineHeight: 1.5 }}>
+              Signing out doesn't end your work day. End Work now, or stay clocked in if you're just switching to
+              another device.
+            </p>
+            <div className="formfoot">
+              <button className="btn" disabled={signingOut} onClick={() => setSignOutAsk(false)}>Cancel</button>
+              <button className="btn" disabled={signingOut} onClick={() => signOut(false)}>Sign out, stay clocked in</button>
+              <button className="btn btn-primary" disabled={signingOut} onClick={() => signOut(true)}>
+                {signingOut ? "Signing out…" : "End Work and sign out"}
+              </button>
+            </div>
+          </Modal>
+        )}
       </aside>
 
       <main>
@@ -171,11 +268,17 @@ export function AppShell() {
             <div className="sub">{sub}</div>
           </div>
           <div className="spacer" />
+          {lockedOnActivity && (
+            <button className="btn" onClick={() => navigate("/home")}>← My Day</button>
+          )}
+          {/* The bell is a toggle: it opens Activity, and pressed again there it
+              returns to My Day — the Activity page has no other way back. */}
           <button
-            className="btn icon bell-btn"
-            title="Activity"
-            aria-label="Activity"
-            onClick={() => navigate("/activity")}
+            className={"btn icon bell-btn" + (location.pathname === "/activity" ? " on" : "")}
+            title={location.pathname === "/activity" ? "Back to My Day" : "Activity"}
+            aria-label={location.pathname === "/activity" ? "Back to My Day" : "Activity"}
+            aria-pressed={location.pathname === "/activity"}
+            onClick={() => navigate(location.pathname === "/activity" ? "/home" : "/activity")}
           >
             🔔
             {unread > 0 && <span className="bell-dot">{unread > 9 ? "9+" : unread}</span>}
@@ -199,6 +302,7 @@ export function AppShell() {
       </main>
       <BreakWidget />
       <BreakOverlay />
+      <PlanDayModal />
     </div>
     </BreakProvider>
   );

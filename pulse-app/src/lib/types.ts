@@ -28,6 +28,8 @@ export type AppUser = {
   role: Role;
   isSelf: boolean;
   editor_id: string | null;
+  // Set while a "Forgot password?" request is waiting for the admin.
+  resetRequestedAt?: string | null;
 };
 
 export type Editor = {
@@ -146,6 +148,8 @@ export type ContentFormatDef = {
   // Management-metric tag — surfaces goal-vs-achieved for this format under
   // Key / Critical Metrics in Management Performance. null = untagged.
   metric_tier: "key" | "critical" | null;
+  // Must a task of this type carry a delivery link before going to review?
+  review_link_required: boolean;
   // Project-type-only (category='project'): duration bounds a project's Due
   // Date; metrics_description is free-form documentation only (no scoring use).
   duration_days?: number | null;
@@ -167,6 +171,12 @@ export type Task = {
   due_date: string | null;
   created_at: string;
   completed_at: string | null;
+  // The login that created the task — null when unknown or auto-created from a
+  // post. A task you created for yourself is yours to edit; an assigned one isn't.
+  created_by: string | null;
+  // The assignee created this task for themselves (marked on cards, in review
+  // and in My Team so it can be told apart from assigned work).
+  self_created: boolean;
   content_type: string | null;
   platforms: string[];
   attachments: TaskAttachment[];
@@ -205,8 +215,18 @@ export type Task = {
   // task's content_format. Only meaningful for task_type='project'.
   content_format_duration: number | null;
   content_format_metrics: string | null;
+  // The format's "link required for review" switch; null when the task has no format.
+  content_format_link_required: boolean | null;
+  // Whether THIS task needs a delivery link to be submitted for review — its
+  // own setting if one was chosen when assigning, else the format's default.
+  link_required: boolean;
   budget_hours: number | null;
   budget_started_at: string | null;
+  // Time spent waiting for a reviewer, which never counts against the assignee:
+  // when it last went into Review (null while it isn't there), and every
+  // finished wait added up. See workedUntil() in task-points.ts.
+  review_started_at?: string | null;
+  review_wait_seconds?: number;
   // The assignee's break state — offsets the countdown by however long
   // they've been (or are currently) on break, shared across every task
   // they have running. See use-break.ts.
@@ -266,14 +286,17 @@ export type TaskTimeRule = {
 
 export type ActivityVerb =
   | "created" | "completed" | "assigned" | "commented" | "published"
-  | "stage_completed" | "channel_added" | "editor_added";
+  | "stage_completed" | "channel_added" | "editor_added"
+  | "review_requested" | "sent_back" | "reopened" | "deleted"
+  | "held" | "resumed" | "password_reset_requested" | "password_reset" | "sod_submitted";
 
 export type Activity = {
   id: string;
   verb: ActivityVerb;
-  entity_type: "task" | "post" | "comment" | "channel" | "editor";
+  entity_type: "task" | "post" | "comment" | "channel" | "editor" | "user";
   entity_id: string | null;
   channel_id: string | null;
+  actor_id: string | null;
   summary: string;
   meta: Record<string, unknown>;
   created_at: string;
