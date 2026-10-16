@@ -295,7 +295,7 @@ export function TasksPage() {
     // Hold instead. And a held task is frozen until an admin resumes it.
     if (t.status === "in_progress" && target === "todo") return false;
     if (t.on_hold && !isAdmin) return false;
-    // Work starts with Accept — an unaccepted task can't be moved yet.
+    // A task has to be accepted before it can be moved (Start included).
     return isOwner(t) && t.accepted;
   }
   const canMoveStatus = (t: Task) =>
@@ -558,11 +558,12 @@ export function TasksPage() {
         await api(`/tasks/${t.id}`, { method: "PATCH", body: JSON.stringify({ status: "in_progress", startAt: startAt.toISOString() }) });
         toast.success(startAt.getTime() > Date.now() ? "Started — its timer begins as scheduled." : "Started — timer running.");
       } else {
+        // Already under way (sent back for rework): accepting resumes its clock.
         await api(`/tasks/${t.id}/accept`, { method: "POST", body: JSON.stringify({ startAt: startAt.toISOString() }) });
         toast.success(
-          startAt.getTime() > Date.now() ? "Accepted — starts as scheduled."
-            : t.budget_hours != null ? "Accepted — timer started."
-            : "Accepted — it's now In Progress.",
+          startAt.getTime() > Date.now() ? "Accepted — its timer resumes as scheduled."
+            : t.budget_hours != null ? "Accepted — timer running again."
+            : "Accepted.",
         );
       }
       if (user) noteTaskSeen(user.id, t.id);
@@ -592,7 +593,27 @@ export function TasksPage() {
       setReworkNotePrompt({ task: t });
       return;
     }
+    // In To Do, Accept only makes it yours — ▶ Start begins the work and its
+    // timer (with the workload and office-hours checks). A task already under
+    // way resumes straight away instead.
+    if (t.status === "todo") {
+      acceptOnly(t);
+      return;
+    }
     proceedAccept(t);
+  }
+
+  async function acceptOnly(t: Task) {
+    try {
+      await api(`/tasks/${t.id}/accept`, { method: "POST", body: "{}" });
+      toast.success(t.budget_hours != null
+        ? "Accepted — press ▶ Start when you begin. Its timer starts then."
+        : "Accepted — press ▶ Start when you begin.");
+      if (user) noteTaskSeen(user.id, t.id);
+      refetch();
+    } catch (err) {
+      toast.error(err instanceof ApiError ? err.message : "Could not accept this task.");
+    }
   }
 
   // Then the usual checks, in sequence, either of which can pause for a
@@ -870,6 +891,14 @@ export function TasksPage() {
                             <span className="task-check" title="Waiting for the assignee to accept">⏳ Pending accept</span>
                           )
                         ) : (() => {
+                          // Accepted but not started: its timer waits for ▶ Start.
+                          if (t.status === "todo" && t.accepted && t.budget_hours != null && !t.budget_started_at) {
+                            return (
+                              <span className="task-timer" title="The timer starts when the task is started">
+                                ⏱ {fmtHours(Number(t.budget_hours))}h · starts on ▶ Start
+                              </span>
+                            );
+                          }
                           const b = budgetInfo(t, nowMs);
                           if (!b) return null;
                           const cls = b.over ? " over" : b.paused ? " paused" : b.scheduled ? "" : " running";
@@ -1059,7 +1088,7 @@ export function TasksPage() {
                 className="btn btn-primary"
                 onClick={() => { const t = workloadPrompt.task; setWorkloadPrompt(null); checkOfficeHours(t); }}
               >
-                Accept anyway
+                Continue anyway
               </button>
             </div>
           </div>
@@ -2105,7 +2134,10 @@ function Attachments({ links, readOnly, onChange }: { links: TaskAttachment[]; r
       {links.map((a, i) => (
         <div className="tp-link" key={i}>
           <a href={a.url} target="_blank" rel="noopener noreferrer">🔗 {a.label || a.url}</a>
-          {!readOnly && <button className="task-x" title="Remove" onClick={() => onChange(links.filter((_, j) => j !== i))}>✕</button>}
+          {!readOnly && (
+            <button type="button" className="tp-link-x" title="Remove link" aria-label={`Remove ${a.label || a.url}`}
+              onClick={() => onChange(links.filter((_, j) => j !== i))}>✕</button>
+          )}
         </div>
       ))}
       {!readOnly && (

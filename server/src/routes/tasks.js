@@ -623,8 +623,8 @@ tasksRouter.patch("/tasks/:id", requireEditor, requireActiveEod, async (req, res
         push("budget_used_seconds", Number(prior.budget_used_seconds ?? 0) + elapsedSec);
         push("budget_started_at", null);
       }
-      // An already-accepted task (made for yourself, or picked up) starts its
-      // clock here, on its move out of To Do — not when it was created. startAt
+      // An accepted task (assigned and accepted, made for yourself, or picked
+      // up) starts its clock here, on Start — its move out of To Do. startAt
       // lets the board offer "start now or 9 AM tomorrow" after office hours.
       if (prior.status === "todo" && d.status === "in_progress" && prior.accepted
           && prior.budget_hours != null && !prior.budget_started_at) {
@@ -876,13 +876,12 @@ tasksRouter.patch("/tasks/:id", requireEditor, requireActiveEod, async (req, res
   }
 });
 
-// Accept an assignment — only the assignee themselves, and only once. This is
-// what actually starts the time-budget countdown (budget_started_at); until
-// this, an assigned-by-someone-else task just sits pending with no timer.
-// startAt lets the client defer the start (e.g. "9am tomorrow" when accepting
-// now would run the budget past office close) — client computes the wall-clock
-// time since office hours are a local-time concept, not something the server
-// should guess at.
+// Accept an assignment — only the assignee themselves, and only once. For a
+// task in To Do it just marks it theirs; the timer starts later, on Start. For
+// one already under way (sent back for rework) it resumes the countdown.
+// startAt lets the client defer that resume (e.g. "9am tomorrow" when resuming
+// now would run past office close) — client computes the wall-clock time since
+// office hours are a local-time concept, not something the server should guess at.
 tasksRouter.post("/tasks/:id/accept", requireEditor, requireActiveEod, async (req, res, next) => {
   const startAt = req.body?.startAt ? new Date(req.body.startAt) : new Date();
   if (isNaN(startAt.getTime())) return res.status(400).json({ error: "Invalid start time." });
@@ -897,23 +896,28 @@ tasksRouter.post("/tasks/:id/accept", requireEditor, requireActiveEod, async (re
     if (!myEditorId || myEditorId !== prior.editor_id) {
       return res.status(403).json({ error: "Only the person this task is assigned to can accept it." });
     }
-    // Resuming after a pause (sent back from review) picks up where it left
-    // off — the start point shifts back by however much was already banked,
-    // so the countdown reflects only what's actually left, not a fresh
-    // budget_hours. A brand-new assignment has nothing banked, so this is a
-    // no-op for the normal case.
-    const usedSec = Number(prior.budget_used_seconds ?? 0);
-    const effectiveStart = usedSec > 0 ? new Date(startAt.getTime() - usedSec * 1000) : startAt;
-    // Accepting a task still sitting in To Do is also what actually starts
-    // work on it — move it into In Progress in the same step, instead of
-    // requiring a separate manual drag right after.
-    const nextStatus = prior.status === "todo" ? "in_progress" : prior.status;
-    await pool.query(
-      `update task
-          set accepted = true, budget_started_at = $3, budget_used_seconds = 0, pending_note = null, status = $4
-        where id = $1 and org_id = $2`,
-      [req.params.id, req.orgId, prior.budget_hours != null ? effectiveStart : null, nextStatus],
-    );
+    if (prior.status === "todo") {
+      // Accepting a task still in To Do only says "it's mine": it stays in To
+      // Do with no timer running, and starts (status + clock) when the
+      // assignee presses Start — see the To Do → In Progress move in PATCH.
+      await pool.query(
+        "update task set accepted = true, pending_note = null where id = $1 and org_id = $2",
+        [req.params.id, req.orgId],
+      );
+    } else {
+      // Already under way (sent back from review, or handed over mid-work):
+      // accepting resumes it. The start point shifts back by however much was
+      // already banked, so the countdown reflects only what's actually left,
+      // not a fresh budget_hours.
+      const usedSec = Number(prior.budget_used_seconds ?? 0);
+      const effectiveStart = usedSec > 0 ? new Date(startAt.getTime() - usedSec * 1000) : startAt;
+      await pool.query(
+        `update task
+            set accepted = true, budget_started_at = $3, budget_used_seconds = 0, pending_note = null
+          where id = $1 and org_id = $2`,
+        [req.params.id, req.orgId, prior.budget_hours != null ? effectiveStart : null],
+      );
+    }
     const { rows: full } = await pool.query(`${SELECT} where t.id = $1`, [req.params.id]);
     res.json({ task: full[0] });
   } catch (err) {

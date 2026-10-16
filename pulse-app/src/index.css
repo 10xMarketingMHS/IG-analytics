@@ -229,6 +229,8 @@ main{min-width:0;display:flex;flex-direction:column}
 .tp-link{display:flex;align-items:center;gap:8px;padding:5px 0}
 .tp-link a{color:var(--accent-ink);font-size:13px;font-weight:600;text-decoration:none;word-break:break-all;flex:1}
 .tp-link a:hover{text-decoration:underline}
+.tp-link-x{flex:none;border:1px solid var(--border);background:transparent;color:var(--muted);cursor:pointer;font-size:13px;font-weight:800;line-height:1;padding:5px 8px;border-radius:7px}
+.tp-link-x:hover,.tp-link-x:focus-visible{color:var(--rose);border-color:var(--rose);background:rgba(225,29,72,.12)}
 .tp-addlink{display:flex;gap:6px;margin-top:8px}
 .tp-addlink .t{flex:1}
 
