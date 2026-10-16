@@ -20,6 +20,7 @@ import { Modal } from "@/components/modal";
 import { notifyTasksChanged } from "@/lib/task-events";
 import { SodModal } from "@/components/sod-modal";
 import { useTheme } from "@/components/theme-provider";
+import { ChatProvider, useChat } from "@/lib/chat";
 import type { Activity } from "@/lib/types";
 
 // Unread = activity newer than the last timestamp the user saw on /activity.
@@ -80,8 +81,28 @@ function metaFor(pathname: string): [string, string] {
   return hit ? PAGE_META[hit] : ["Pulse", ""];
 }
 
+// Team chat's live stream and unread counts live for as long as you're signed
+// in, so a DM or mention reaches you on any page — see lib/chat.tsx.
 export function AppShell() {
+  return (
+    <ChatProvider>
+      <AppShellInner />
+    </ChatProvider>
+  );
+}
+
+// The sidebar's Team Chat count: red for @mentions and unread DMs, a quiet dot
+// when only channel messages are waiting.
+function ChatBadge() {
+  const { totals } = useChat();
+  if (totals.alerts > 0) return <span className="badge alert">{totals.alerts > 99 ? "99+" : totals.alerts}</span>;
+  if (totals.unread > 0) return <span className="badge dot" aria-label="Unread messages" />;
+  return null;
+}
+
+function AppShellInner() {
   const { user, logout } = useAuth();
+  const { available: chatAvailable } = useChat();
   const { active, isAdmin, hasPermission } = useWorkspaces();
   // EOD lockout: an editor with no open session gets the whole shell grayscaled
   // and non-interactive (except a few live controls) until they Start EOD. The
@@ -179,7 +200,7 @@ export function AppShell() {
           {NAV_SECTIONS.map((section) => (
             <div key={section.key}>
               {section.label && <div className="navsec">{section.label}</div>}
-              {NAV_ITEMS.filter((i) => i.section === section.key && (!i.adminOnly || isAdmin || (i.permission && hasPermission(i.permission)))).map((item) => (
+              {NAV_ITEMS.filter((i) => i.section === section.key && (!i.adminOnly || isAdmin || (i.permission && hasPermission(i.permission))) && (!i.chatBadge || chatAvailable)).map((item) => (
                 <NavLink
                   key={item.href}
                   to={item.href}
@@ -199,6 +220,7 @@ export function AppShell() {
                   {item.showBadge && postCount !== null && (
                     <span className="badge">{postCount}</span>
                   )}
+                  {item.chatBadge && <ChatBadge />}
                 </NavLink>
               ))}
             </div>

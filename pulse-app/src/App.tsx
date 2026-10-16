@@ -30,6 +30,7 @@ import { PostsPage } from "@/pages/posts";
 import { TasksPage } from "@/pages/tasks";
 import { SocialMediaPage } from "@/pages/social-media";
 import { ActivityPage } from "@/pages/activity";
+import { ChatPage } from "@/pages/chat";
 import { AddPostPage } from "@/pages/add-post";
 import { BulkAddPostPage } from "@/pages/bulk-add-post";
 import { useWorkspaces } from "@/lib/workspaces-context";
@@ -117,6 +118,7 @@ function AppRoutes() {
             <Route path="/task-rules" element={<SettingsPage />} />
             <Route path="/social-media" element={<SocialMediaPage />} />
             <Route path="/activity" element={<ActivityPage />} />
+            <Route path="/chat" element={<ChatPage />} />
             {/* Direct visits (no background) still render the form. */}
             <Route path="/posts/new" element={<AddPostGate><BulkAddPostPage /></AddPostGate>} />
             <Route path="/posts/:id/edit" element={<AddPostPage />} />

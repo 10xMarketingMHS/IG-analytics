@@ -21,6 +21,9 @@ export type NavItem = {
   // An adminOnly item may also be shown to holders of this permission grant
   // (Settings → Access) — e.g. Add Post for a create_post grantee.
   permission?: "create_post" | "goal_setting_access";
+  // Team Chat: carries the unread/mention badge, and is hidden from anyone
+  // chat isn't for (viewers).
+  chatBadge?: boolean;
 };
 
 export const NAV_ITEMS: NavItem[] = [
@@ -28,6 +31,7 @@ export const NAV_ITEMS: NavItem[] = [
   // distinct from Dashboard, which shows the same org-wide analytics to
   // everyone. Route stays /home; only the display name changed.
   { title: "My Day", href: "/home", icon: "🏠", section: "Home" },
+  { title: "Team Chat", href: "/chat", icon: "💬", section: "Home", chatBadge: true },
   { title: "Dashboard", href: "/dashboard", icon: "📊", section: "Analytics" },
   // Insights, Trends, Reports — hidden from the sidebar per request; routes/
   // pages still exist (see App.tsx, PAGE_META below), just not linked.
@@ -52,6 +56,7 @@ export const NAV_ITEMS: NavItem[] = [
 // Page title + subtitle shown in the topbar, keyed by pathname.
 export const PAGE_META: Record<string, [string, string]> = {
   "/home": ["My Day", "What needs your attention today"],
+  "/chat": ["Team Chat", "Channels for the team, direct messages for one-to-one"],
   "/dashboard": ["Dashboard", "Live analytics from your content data"],
   "/metrics": ["Social & Ads Pipeline", "Who's working on which Social post or Ad, and where it stands"],
   "/insights": ["Insights", "What your data is telling you — computed automatically"],
