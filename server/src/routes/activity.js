@@ -1,6 +1,6 @@
 import { Router } from "express";
 import { pool } from "../db.js";
-import { reviewAccess } from "../permissions.js";
+import { hasActiveGrant, reviewAccess } from "../permissions.js";
 
 export const activityRouter = Router();
 
@@ -12,7 +12,7 @@ export const activityRouter = Router();
 // things they did themselves,
 // and new team members — plus,
 // for resolve_tasks grantees, tasks submitted for review that fall inside their
-// review scope. Other people's tasks, published posts and channel changes are
+// review scope — and, for assigners, tasks they assigned that went into review. Other people's tasks, published posts and channel changes are
 // left out.
 activityRouter.get("/activity", async (req, res, next) => {
   try {
@@ -31,9 +31,10 @@ activityRouter.get("/activity", async (req, res, next) => {
       const scoped = review.granted && review.scope ? review.scope.editors ?? [] : [];
       const scopeEditors = scoped.filter((e) => e.taskIds == null).map((e) => e.editorId);
       const scopeTasks = scoped.flatMap((e) => e.taskIds ?? []);
-      params.push(req.user.sub, me[0]?.editor_id ?? null, reviewAll, scopeEditors, scopeTasks);
-      const [uid, eid, resolve, sEds, sTasks] =
-        [params.length - 4, params.length - 3, params.length - 2, params.length - 1, params.length];
+      const assigner = await hasActiveGrant(req.orgId, req.user.sub, "assign_tasks");
+      params.push(req.user.sub, me[0]?.editor_id ?? null, reviewAll, scopeEditors, scopeTasks, assigner);
+      const [uid, eid, resolve, sEds, sTasks, asg] =
+        [params.length - 5, params.length - 4, params.length - 3, params.length - 2, params.length - 1, params.length];
       where += ` and (
         a.actor_id = $${uid}
         or a.verb = 'editor_added'
@@ -44,7 +45,8 @@ activityRouter.get("/activity", async (req, res, next) => {
         or (a.verb = 'review_requested' and (
               $${resolve}::boolean
               or exists (select 1 from task t where t.id = a.entity_id
-                          and (t.editor_id = any($${sEds}::uuid[]) or t.id = any($${sTasks}::uuid[])))))
+                          and (t.editor_id = any($${sEds}::uuid[]) or t.id = any($${sTasks}::uuid[])
+                               or ($${asg}::boolean and t.assigned_by = $${uid}::uuid)))))
       )`;
     }
     const limit = Math.min(Number(req.query.limit) || 60, 200);

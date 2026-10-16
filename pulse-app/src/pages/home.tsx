@@ -102,14 +102,16 @@ const STAGE_META: Record<string, { label: string; cls: string }> = {
 export function HomePage() {
   const navigate = useNavigate();
   const { user } = useAuth();
-  const { active, isAdmin, workspaces } = useWorkspaces();
+  const { active, isAdmin, workspaces, hasPermission } = useWorkspaces();
   const { session: eodSession, start: startEod, busy: eodBusy, openSod, openEod } = useEodState();
   const isEditor = active?.role === "editor";
   const { tasks, refetch: refetchTasks } = useTasks();
   // Tasks in Review that THIS person may resolve: all of them for an admin; for
-  // a resolve_tasks grantee, whatever their review scope covers — never their own.
+  // a resolve_tasks grantee, whatever their review scope covers; for an assigner,
+  // the tasks they assigned — never their own.
   const review = useReviewAccess();
-  const canReview = isAdmin || review.granted;
+  const canAssign = isAdmin || hasPermission("assign_tasks");
+  const canReview = isAdmin || review.granted || canAssign;
   // The task whose details panel is open (from a review row). Held by id so the
   // panel always shows the freshest copy after a refetch.
   const [openTaskId, setOpenTaskId] = useState<string | null>(null);
@@ -117,13 +119,14 @@ export function HomePage() {
   const reviewQueue = useMemo(
     () => (tasks ?? [])
       .filter((t) => t.status === "review")
-      .filter((t) => isAdmin
-        || (review.granted && t.editor_id !== user?.editorId && scopeAllowsTask(review.scope, t)))
+      .filter((t) => isAdmin || (t.editor_id !== user?.editorId && (
+        (review.granted && scopeAllowsTask(review.scope, t))
+        || (canAssign && !!user && t.assigned_by === user.id))))
       // Longest-waiting first — the assignee isn't charged for the wait, but
       // their work is stuck until someone looks at it.
       .sort((a, b) => (a.review_started_at ?? "9999").localeCompare(b.review_started_at ?? "9999")
         || (a.due_date ?? "9999").localeCompare(b.due_date ?? "9999")),
-    [tasks, isAdmin, review, user?.editorId],
+    [tasks, isAdmin, review, canAssign, user],
   );
   const { editors } = useEditors();
   const { data: postData } = useResource<{ posts: (Post & { channel_name?: string })[] }>("/posts?channel=all");

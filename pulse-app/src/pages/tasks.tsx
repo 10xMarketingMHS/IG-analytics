@@ -265,13 +265,16 @@ export function TasksPage() {
   const { active, workspaces, isAdmin, hasPermission } = useWorkspaces();
   const role = active?.role;
   // Access grants that give admin-like reach over other people's tasks.
-  // Approve/send back reviews: admins always; a resolve_tasks grantee only for
-  // tasks inside their review scope, and never for a task of their own.
+  // Approve/send back reviews: admins always; a resolve_tasks grantee for tasks
+  // inside their review scope; an assigner for the tasks they assigned — never
+  // anyone for a task of their own.
   const review = useReviewAccess();
-  const canResolveTask = (t: Task) =>
-    isAdmin || (review.granted && !isOwner(t) && scopeAllowsTask(review.scope, t));
   const canHoldAny = isAdmin || hasPermission("hold_tasks");    // hold/resume anyone's task
   const canAssign = isAdmin || hasPermission("assign_tasks");   // set work up for other people
+  const canResolveTask = (t: Task) =>
+    isAdmin || (!isOwner(t) && (
+      (review.granted && scopeAllowsTask(review.scope, t))
+      || (canAssign && !!user && t.assigned_by === user.id)));
   // Deleting erases the work and its points: a completed task is an admin's
   // call; anything else an assigner's — or yours, if you created it for yourself.
   // The server enforces the same rule.
@@ -1725,8 +1728,9 @@ export function TaskPanel({ mode, task, canWrite, editors, channels, onClose, on
   // Delivery Link is writable by the task's assignee or an admin (mirrors the
   // server check); everyone else who can open the panel sees it read-only.
   const isOwnerTask = !!user?.editorId && task?.editor_id === user.editorId;
-  const canResolve = isAdmin
-    || (review.granted && !!task && !isOwnerTask && scopeAllowsTask(review.scope, task));
+  const canResolve = isAdmin || (!!task && !isOwnerTask && (
+    (review.granted && scopeAllowsTask(review.scope, task))
+    || (canAssign && !!user && task.assigned_by === user.id)));
   // Who may change what — mirrors the server (PATCH /tasks/:id):
   //  - a completed task is frozen as approved; only an admin changes it;
   //  - the brief (title, description, brand, type, dates, priority, repeat)

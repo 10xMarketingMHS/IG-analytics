@@ -174,6 +174,9 @@ export type Task = {
   // The login that created the task — null when unknown or auto-created from a
   // post. A task you created for yourself is yours to edit; an assigned one isn't.
   created_by: string | null;
+  // Who handed it to its current assignee (app_user id) — with Assign tasks
+  // access they may also review it. Null when self-made, picked up or automatic.
+  assigned_by?: string | null;
   // The assignee created this task for themselves (marked on cards, in review
   // and in My Team so it can be told apart from assigned work).
   self_created: boolean;

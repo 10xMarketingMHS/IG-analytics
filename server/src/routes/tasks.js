@@ -125,7 +125,7 @@ const SELECT = `
          cf.metrics_description as content_format_metrics,
          cf.review_link_required as content_format_link_required,
          coalesce(t.review_link_required, cf.review_link_required, false) as link_required,
-         t.budget_hours, t.budget_started_at, t.accepted, t.on_hold, t.held_by, t.created_at, t.completed_at, t.created_by,
+         t.budget_hours, t.budget_started_at, t.accepted, t.on_hold, t.held_by, t.created_at, t.completed_at, t.created_by, t.assigned_by,
          -- Time spent waiting for a reviewer, taken off lateness when scoring.
          t.review_started_at, t.review_wait_seconds::float as review_wait_seconds,
          -- The assignee made this task for themselves (marked in the UI, so
@@ -357,7 +357,10 @@ tasksRouter.post("/tasks", requireEditor, requireActiveEod, async (req, res, nex
         startDate,
       ],
     );
-    await pool.query("update task set created_by = $2 where id = $1", [rows[0].id, req.user.sub]);
+    // Handed to someone else → the creator is its assigner (who may review it).
+    const creatorEid = await callerEditorId(req);
+    const assignedBy = d.editorId && d.editorId !== creatorEid ? req.user.sub : null;
+    await pool.query("update task set created_by = $2, assigned_by = $3 where id = $1", [rows[0].id, req.user.sub, assignedBy]);
     if (typeof d.reviewLinkRequired === "boolean" && (await canAssignTasks(req))) {
       await pool.query("update task set review_link_required = $2 where id = $1", [rows[0].id, d.reviewLinkRequired]);
     }
@@ -410,7 +413,7 @@ tasksRouter.patch("/tasks/:id", requireEditor, requireActiveEod, async (req, res
     // Capture prior state so we can spawn the next occurrence on completion,
     // guard task_type for post-linked tasks, and re-resolve the time budget.
     const prior = (await pool.query(
-      "select status, recurrence, post_id, editor_id, channel_id, content_format_id, accepted, budget_hours, budget_started_at, budget_used_seconds, on_hold, sid, ad_id, svid, pid, start_date, due_date, revision, task_type, delivery_link, review_link_required, title, description, priority, content_type, platforms, attachments, meta, created_by, held_by from task where id = $1 and org_id = $2",
+      "select status, recurrence, post_id, editor_id, channel_id, content_format_id, accepted, budget_hours, budget_started_at, budget_used_seconds, on_hold, sid, ad_id, svid, pid, start_date, due_date, revision, task_type, delivery_link, review_link_required, title, description, priority, content_type, platforms, attachments, meta, created_by, held_by, assigned_by from task where id = $1 and org_id = $2",
       [req.params.id, req.orgId],
     )).rows[0];
     if (!prior) return res.status(404).json({ error: "Task not found" });
@@ -511,16 +514,21 @@ tasksRouter.patch("/tasks/:id", requireEditor, requireActiveEod, async (req, res
         // admin power — or a resolve_tasks grantee, within whatever scope their
         // grant carries (everyone / certain people / certain tasks). A grantee
         // can never resolve a task assigned to themselves.
+        // Whoever assigned the task may also resolve it, while they still have
+        // Assign tasks access. Nobody resolves their own task.
         if (req.role !== "admin") {
-          const review = await reviewAccess(req.orgId, req.user.sub);
-          if (!review.granted) {
-            return res.status(403).json({ error: "Only an admin can approve or send back a task in review." });
-          }
           if (prior.editor_id && prior.editor_id === (await callerEditorId(req))) {
             return res.status(403).json({ error: "You can't review a task that's assigned to you." });
           }
-          if (!scopeAllowsTask(review.scope, { id: req.params.id, editor_id: prior.editor_id })) {
-            return res.status(403).json({ error: "You don't have review access for this task." });
+          const asAssigner = !!prior.assigned_by && prior.assigned_by === req.user.sub && (await canAssignTasks(req));
+          if (!asAssigner) {
+            const review = await reviewAccess(req.orgId, req.user.sub);
+            if (!review.granted) {
+              return res.status(403).json({ error: "Only an admin, a reviewer or the person who assigned it can approve or send back this task." });
+            }
+            if (!scopeAllowsTask(review.scope, { id: req.params.id, editor_id: prior.editor_id })) {
+              return res.status(403).json({ error: "You don't have review access for this task." });
+            }
           }
         }
         if (d.status !== "done" && d.status !== "in_progress") {
@@ -767,8 +775,10 @@ tasksRouter.patch("/tasks/:id", requireEditor, requireActiveEod, async (req, res
       const nextEditorId = d.editorId ?? null;
       push("editor_id", nextEditorId);
       if (nextEditorId !== prior.editor_id) {
-        accepted = !nextEditorId || (await callerEditorId(req)) === nextEditorId;
+        const toSelf = (await callerEditorId(req)) === nextEditorId;
+        accepted = !nextEditorId || toSelf;
         push("accepted", accepted);
+        push("assigned_by", nextEditorId && !toSelf ? req.user.sub : null);
       }
     }
     // Format or assignee changed → re-snapshot the budget from current rules.
@@ -930,7 +940,7 @@ tasksRouter.post("/tasks/:id/accept", requireEditor, requireActiveEod, async (re
 async function spawnNextOccurrence(taskId, recurrence) {
   try {
     const t = (await pool.query(
-      "select org_id, editor_id, channel_id, title, description, priority, due_date, task_type, content_format_id, review_link_required, created_by from task where id = $1",
+      "select org_id, editor_id, channel_id, title, description, priority, due_date, task_type, content_format_id, review_link_required, created_by, assigned_by from task where id = $1",
       [taskId],
     )).rows[0];
     if (!t) return;
@@ -947,9 +957,9 @@ async function spawnNextOccurrence(taskId, recurrence) {
     const adId = t.task_type === "ad" && t.channel_id ? await nextBrandTaskRef(t.channel_id, "adid") : null;
     const svid = t.task_type === "service" && t.channel_id ? await nextBrandTaskRef(t.channel_id, "svid") : null;
     const { rows } = await pool.query(
-      `insert into task (org_id, editor_id, channel_id, title, description, priority, due_date, recurrence, status, task_type, content_format_id, budget_hours, budget_started_at, tid, sid, ad_id, svid, review_link_required, accepted, created_by)
+      `insert into task (org_id, editor_id, channel_id, title, description, priority, due_date, recurrence, status, task_type, content_format_id, budget_hours, budget_started_at, tid, sid, ad_id, svid, review_link_required, accepted, created_by, assigned_by)
        values ($1,$2,$3,$4,$5,$6, ${nextDue}, $8, 'todo', $9, $10, $11, null, $12, $13, $14, $15, $16, false, $17) returning id`,
-      [t.org_id, t.editor_id, t.channel_id, t.title, t.description, t.priority, t.due_date, recurrence, t.task_type, t.content_format_id, budgetHours, tid, sid, adId, svid, t.review_link_required, t.created_by],
+      [t.org_id, t.editor_id, t.channel_id, t.title, t.description, t.priority, t.due_date, recurrence, t.task_type, t.content_format_id, budgetHours, tid, sid, adId, svid, t.review_link_required, t.created_by, t.assigned_by],
     );
     const newId = rows[0].id;
     await pool.query(
