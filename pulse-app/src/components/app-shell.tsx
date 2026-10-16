@@ -86,7 +86,10 @@ export function AppShell() {
   // EOD lockout: an editor with no open session gets the whole shell grayscaled
   // and non-interactive (except a few live controls) until they Start EOD. The
   // grayscale/disable is CSS keyed off this class; see index.css `.eod-lock`.
-  const { session: eodSession, loading: eodLoading, unlinked: eodUnlinked, end: endEod, summary: eodSummary } = useEodState();
+  const {
+    session: eodSession, loading: eodLoading, unlinked: eodUnlinked, summary: eodSummary,
+    eodOpen, openEod, signOutAfter, clearSignOutAfter,
+  } = useEodState();
   const eodLocked = active?.role === "editor" && !eodLoading && !eodUnlinked && !eodSession;
   const { editors } = useEditors();
   const { theme, toggle } = useTheme();
@@ -141,31 +144,24 @@ export function AppShell() {
     if (active?.role === "editor" && eodSession) { setSignOutAsk(true); return; }
     await signOut(false);
   }
-  // After "End Work and sign out" the day's report is shown first (so it can be
-  // copied); closing it finishes the sign-out.
-  const [signOutAfterReport, setSignOutAfterReport] = useState(false);
+  // "End Work and sign out" goes through the End of Day window (notes, then
+  // End Work) and the day's summary; closing the summary finishes the sign-out.
+  // Closing the window without ending cancels it.
   async function signOut(endWorkFirst: boolean) {
-    setSigningOut(true);
-    try {
-      if (endWorkFirst) await endEod();
-    } catch {
-      toast.error("Couldn't end your work day — try End Work on My Day.");
-      setSigningOut(false);
-      return;
-    }
     setSignOutAsk(false);
     if (endWorkFirst) {
-      setSignOutAfterReport(true);
+      openEod(true);
       return;
     }
+    setSigningOut(true);
     await logout();
     navigate("/login", { replace: true });
   }
   useEffect(() => {
-    if (!signOutAfterReport || eodSummary) return;
-    setSignOutAfterReport(false);
+    if (!signOutAfter || eodOpen || eodSession || eodSummary) return;
+    clearSignOutAfter();
     logout().then(() => navigate("/login", { replace: true }));
-  }, [signOutAfterReport, eodSummary, logout, navigate]);
+  }, [signOutAfter, eodOpen, eodSession, eodSummary, clearSignOutAfter, logout, navigate]);
 
   return (
     <BreakProvider>

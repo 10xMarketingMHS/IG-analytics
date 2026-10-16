@@ -2,6 +2,7 @@ import { type ReactNode } from "react";
 import { useAuth } from "@/lib/auth-context";
 import { useEodState } from "@/lib/eod-context";
 import { EodSummaryCard } from "@/components/eod-summary-card";
+import { EodWindow } from "@/components/eod-window";
 
 // Root-level host for the EOD summary card. It renders ABOVE the app (a sibling
 // of the shell, outside the grayscale lock), so it stays visible after End EOD
@@ -14,6 +15,7 @@ export function EodGate({ children }: { children: ReactNode }) {
   return (
     <>
       {children}
+      <EodWindow />
       {summary && (
         <EodSummaryCard
           name={(user?.name || user?.email || "You").split(" ")[0].split("@")[0]}

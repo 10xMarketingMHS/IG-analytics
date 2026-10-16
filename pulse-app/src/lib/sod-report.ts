@@ -18,9 +18,15 @@ function fmtDay(date: string): string {
   return new Date(date + "T00:00:00").toLocaleDateString(undefined, { weekday: "long", day: "numeric", month: "long", year: "numeric" });
 }
 
-// "Reel cover (Thumbnail) — due today"
+// "Thumbnail · doctorfarmer" — the content type and the channel, when known.
+export function sodTaskMeta(t: SodTask): string {
+  return [t.format, t.channel].filter(Boolean).join(" · ");
+}
+
+// "Reel cover (Thumbnail · doctorfarmer) — due today"
 export function sodTaskLine(t: SodTask): string {
-  return `${t.title}${t.format ? ` (${t.format})` : ""}${t.reason ? ` — ${t.reason}` : ""}`;
+  const meta = sodTaskMeta(t);
+  return `${t.title}${meta ? ` (${meta})` : ""}${t.reason ? ` — ${t.reason}` : ""}`;
 }
 
 // Plain text for WhatsApp, same style as the End of Day report: today's ticked
@@ -33,7 +39,10 @@ export function buildSodReport(name: string, plan: SodPlan): string {
   const tasks = SOD_GROUPS.flatMap((g) => plan.tasks.filter((t) => t.group === g));
   lines.push(`Today's tasks (${tasks.length}):`);
   if (!tasks.length) lines.push("- Nothing yet");
-  for (const t of tasks) lines.push(`- ${t.title}${t.format ? ` (${t.format})` : ""}`);
+  for (const t of tasks) {
+    const meta = sodTaskMeta(t);
+    lines.push(`- ${t.title}${meta ? ` (${meta})` : ""}`);
+  }
   if (plan.note) {
     lines.push("");
     lines.push(`Note: ${plan.note}`);

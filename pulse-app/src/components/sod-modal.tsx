@@ -5,7 +5,7 @@ import { Modal } from "@/components/modal";
 import { ApiError } from "@/lib/api";
 import { useAuth } from "@/lib/auth-context";
 import { useEodState } from "@/lib/eod-context";
-import { buildSodReport, plannedTasks, sodTime } from "@/lib/sod-report";
+import { buildSodReport, plannedTasks, sodTaskMeta, sodTime } from "@/lib/sod-report";
 import type { SodPlan, SodTask, SodToday } from "@/lib/use-eod";
 
 function todayYmd() {
@@ -97,7 +97,7 @@ export function SodModal() {
               <label key={t.id} className={"plan-row plan-pick" + (chosen.has(t.id) ? "" : " plan-off")}>
                 <input type="checkbox" checked={chosen.has(t.id)} onChange={(e) => toggle(t.id, e.target.checked)} />
                 <span className="plan-title">{t.title}</span>
-                {t.format && <span className="plan-fmt">{t.format}</span>}
+                {sodTaskMeta(t) && <span className="plan-fmt">{sodTaskMeta(t)}</span>}
                 {t.reason && <span className={tagClass(t)}>{t.reason}</span>}
               </label>
             ))}

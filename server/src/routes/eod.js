@@ -1,4 +1,5 @@
 import { Router } from "express";
+import { z } from "zod";
 import { pool } from "../db.js";
 import { requireAdmin } from "../resolve-workspace.js";
 
@@ -46,7 +47,7 @@ async function summaryFor(orgId, editorId, date) {
     [editorId, orgId, date],
   );
   if (!sessions.length) {
-    return { date, status: "not_started", startedAt: null, endedAt: null, groups: [], completedCount: 0, dueToday: 0, dueTodayDone: 0 };
+    return { date, status: "not_started", startedAt: null, endedAt: null, groups: [], completedCount: 0, dueToday: 0, dueTodayDone: 0, tasks: [] };
   }
   const anyOpen = sessions.some((s) => !s.endedAt);
   const startedAt = sessions[0].startedAt;
@@ -127,7 +128,45 @@ async function summaryFor(orgId, editorId, date) {
     date, status: anyOpen ? "active" : "completed", startedAt, endedAt, groups, completedCount,
     dueToday: due[0].n, dueTodayDone: due[0].done,
     workedSeconds, sessionCount: sessions.length, breakSeconds, autoClosed, plan,
+    tasks: await dayTasks(orgId, editorId, date),
   };
+}
+
+// The day's tasks for the End of Day window and report, each with its current
+// status, channel and the note written for it that day. "The day's tasks" are
+// the ones in that day's Start of Day (not the unticked ones), plus any that
+// were finished, created, submitted for review or given a note that day — and,
+// for today, whatever is in progress or in review right now.
+async function dayTasks(orgId, editorId, date) {
+  const { rows } = await pool.query(
+    `with planned as (
+       select (x->>'id')::uuid as id
+         from sod_plan p, jsonb_array_elements(p.tasks) x
+        where p.editor_id = $1 and p.org_id = $2 and p.date = $3 and coalesce(x->>'group', '') <> 'skipped'
+     ), submitted as (
+       select a.entity_id as id
+         from activity a join app_user u on u.id = a.actor_id
+        where u.editor_id = $1 and a.org_id = $2 and a.verb = 'review_requested' and a.entity_type = 'task'
+          and (a.created_at at time zone 'Asia/Kolkata')::date = $3
+     )
+     select t.id, t.title, t.status, t.on_hold as "onHold", t.completed_at as "completedAt",
+            cf.name as format, w.name as channel, n.note
+       from task t
+       left join task_content_format cf on cf.id = t.content_format_id
+       left join workspace w on w.id = t.channel_id
+       left join eod_task_note n on n.task_id = t.id and n.editor_id = $1 and n.date = $3
+      where t.org_id = $2
+        and (n.id is not null or (t.editor_id = $1 and (
+              t.id in (select id from planned)
+           or t.id in (select id from submitted)
+           or (t.completed_at at time zone 'Asia/Kolkata')::date = $3
+           or (t.created_at at time zone 'Asia/Kolkata')::date = $3
+           or ($3::date = (now() at time zone 'Asia/Kolkata')::date and t.status in ('in_progress', 'review'))
+        )))
+      order by case t.status when 'done' then 0 when 'review' then 1 when 'in_progress' then 2 else 3 end, t.title`,
+    [editorId, orgId, date],
+  );
+  return rows;
 }
 
 // The caller's currently-open session (null if none) — drives the frontend gate.
@@ -194,6 +233,45 @@ eodRouter.patch("/eod/end", async (req, res, next) => {
     if (!rows.length) return res.status(400).json({ error: "You haven't started work, so there's nothing to end." });
     const summary = await summaryFor(req.orgId, eid, rows[0].date);
     res.json({ session: rows[0], summary });
+  } catch (err) { next(err); }
+});
+
+// Save the caller's End of Day notes for today's work day — one per task; an
+// empty note removes it. Returns the refreshed day summary.
+eodRouter.put("/eod/notes", async (req, res, next) => {
+  const parsed = z.object({
+    notes: z.array(z.object({ taskId: z.string().uuid(), note: z.string().max(2000) })).max(300),
+  }).safeParse(req.body ?? {});
+  if (!parsed.success) return res.status(400).json({ error: "Those notes couldn't be read." });
+  try {
+    const eid = await callerEditorId(req);
+    if (!eid) return res.status(400).json({ error: "Your account isn't linked to a team member." });
+    const { rows: s } = await pool.query(
+      "select date from eod_session where editor_id = $1 and org_id = $2 and date = current_date limit 1", [eid, req.orgId],
+    );
+    if (!s.length) return res.status(400).json({ error: "Press Start Work first." });
+    const date = s[0].date;
+    // Only the caller's own tasks (or ones they already wrote a note on today).
+    const allowed = new Set((await dayTasks(req.orgId, eid, date)).map((t) => t.id));
+    const ids = parsed.data.notes.map((n) => n.taskId);
+    const { rows: own } = await pool.query(
+      "select id from task where org_id = $1 and editor_id = $2 and id = any($3::uuid[])", [req.orgId, eid, ids],
+    );
+    for (const r of own) allowed.add(r.id);
+    for (const { taskId, note } of parsed.data.notes) {
+      if (!allowed.has(taskId)) continue;
+      const text = note.trim();
+      if (text) {
+        await pool.query(
+          `insert into eod_task_note (org_id, editor_id, date, task_id, note) values ($1, $2, $3, $4, $5)
+           on conflict (editor_id, date, task_id) do update set note = excluded.note, updated_at = now()`,
+          [req.orgId, eid, date, taskId, text],
+        );
+      } else {
+        await pool.query("delete from eod_task_note where editor_id = $1 and date = $2 and task_id = $3", [eid, date, taskId]);
+      }
+    }
+    res.json({ summary: await summaryFor(req.orgId, eid, date) });
   } catch (err) { next(err); }
 });
 

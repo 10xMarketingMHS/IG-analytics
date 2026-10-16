@@ -30,6 +30,20 @@ export type EodSummary = {
   // The Start of Day compared with the day: planned vs done, what from it
   // wasn't done, and what was worked on outside it. null when no SOD was copied.
   plan?: SodComparison | null;
+  // The day's tasks with their status, channel and the note written for each.
+  tasks?: EodDayTask[];
+};
+
+// One of the day's tasks in the End of Day window and report.
+export type EodDayTask = {
+  id: string;
+  title: string;
+  status: "todo" | "in_progress" | "review" | "done";
+  onHold: boolean;
+  completedAt: string | null;
+  format: string | null;
+  channel: string | null;
+  note: string | null;
 };
 
 // Start of Day (SOD) — the list an employee copies for WhatsApp each morning
@@ -45,6 +59,8 @@ export type SodTask = {
   // skipped = added or on their plate but unticked (shown, not counted).
   group: "added" | "today" | "later" | "skipped";
   reason: string;
+  // The task's channel (brand); missing on SODs saved before it was recorded.
+  channel?: string | null;
   // The window's starting tick (only on /sod/today's candidates).
   suggested?: boolean;
 };
@@ -134,6 +150,26 @@ export function useEod() {
 
   const clearSummary = useCallback(() => setSummary(null), []);
 
+  // End of Day: End Work opens this window first — the day's tasks with a note
+  // box each. Notes can be saved along the way; ending saves them, ends the
+  // day and shows the summary. `signOutAfter` is set when it was opened from
+  // "End Work and sign out", so the shell signs out once the summary closes.
+  const [eodOpen, setEodOpen] = useState(false);
+  const [signOutAfter, setSignOutAfter] = useState(false);
+  const openEod = useCallback((thenSignOut = false) => {
+    setSignOutAfter(thenSignOut);
+    setEodOpen(true);
+  }, []);
+  const closeEod = useCallback((ended: boolean) => {
+    setEodOpen(false);
+    if (!ended) setSignOutAfter(false);
+  }, []);
+  const clearSignOutAfter = useCallback(() => setSignOutAfter(false), []);
+  const saveNotes = useCallback(async (notes: { taskId: string; note: string }[]) => {
+    const d = await api<{ summary: EodSummary }>("/eod/notes", { method: "PUT", body: JSON.stringify({ notes }) });
+    return d.summary;
+  }, []);
+
   // Start of Day: the window opened from My Day (openSod) — fetched fresh each
   // time it opens, so tasks just added on the board are there. Copy SOD saves
   // the ticked list (saveSod); nothing waits on it.
@@ -163,6 +199,7 @@ export function useEod() {
 
   return {
     session, unlinked, loading, busy, summary, start, end, clearSummary, refresh,
+    eodOpen, openEod, closeEod, signOutAfter, clearSignOutAfter, saveNotes,
     sod, planOpen, setPlanOpen, openSod, refreshSod, saveSod,
   };
 }

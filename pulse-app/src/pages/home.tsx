@@ -103,7 +103,7 @@ export function HomePage() {
   const navigate = useNavigate();
   const { user } = useAuth();
   const { active, isAdmin, workspaces } = useWorkspaces();
-  const { session: eodSession, start: startEod, end: endEod, busy: eodBusy, openSod } = useEodState();
+  const { session: eodSession, start: startEod, busy: eodBusy, openSod, openEod } = useEodState();
   const isEditor = active?.role === "editor";
   const { tasks, refetch: refetchTasks } = useTasks();
   // Tasks in Review that THIS person may resolve: all of them for an admin; for
@@ -310,7 +310,8 @@ export function HomePage() {
                   <>
                     <button
                       className="btn mh-endeod"
-                      onClick={() => { if (window.confirm("End your work day? The app locks until you press Start Work again.")) endEod(); }}
+                      onClick={() => openEod()}
+                      title="Write today's notes and end your work day"
                       disabled={eodBusy}
                     >
                       {eodBusy ? "Ending…" : "⏹ End Work"}

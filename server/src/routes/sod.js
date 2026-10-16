@@ -29,11 +29,12 @@ async function callerEditorId(req) {
 async function planCandidates(orgId, editorId, userId) {
   const { rows } = await pool.query(
     `select t.id, t.title, t.status, t.accepted, t.pending_note, t.on_hold, t.due_date,
-            cf.name as format,
+            cf.name as format, w.name as channel,
             (t.created_by = $3 and t.created_at::date = current_date) as "addedToday",
             (current_date - t.due_date) as "daysLate"
        from task t
        left join task_content_format cf on cf.id = t.content_format_id
+       left join workspace w on w.id = t.channel_id
       where t.org_id = $1 and t.editor_id = $2 and t.status not in ('done', 'review')
       order by t.due_date nulls last, t.created_at`,
     [orgId, editorId, userId],
@@ -50,7 +51,7 @@ async function planCandidates(orgId, editorId, userId) {
     const group = t.addedToday ? "added" : onPlate ? "today" : "later";
     if (t.daysLate != null && t.daysLate < 0) reasons.push(`due ${t.due_date}`);
     const suggested = t.addedToday || t.daysLate === 0 || !!t.pending_note || (t.status === "in_progress" && !t.on_hold);
-    return { id: t.id, title: t.title, format: t.format, dueDate: t.due_date, status: t.status, group, reason: reasons.join(", "), suggested };
+    return { id: t.id, title: t.title, format: t.format, channel: t.channel, dueDate: t.due_date, status: t.status, group, reason: reasons.join(", "), suggested };
   });
 }
 
