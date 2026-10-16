@@ -45,7 +45,7 @@ export function EodOversightSection() {
       const d = await api<{ plan: SodPlan | null }>(`/sod?editorId=${r.id}&date=${date}`);
       if (d.plan) setOpenPlan({ name: (r.name ?? "Editor").split(" ")[0], plan: d.plan });
     } catch {
-      toast.error("Could not load that plan.");
+      toast.error("Could not load that Start of Day.");
     }
   }
 
@@ -86,7 +86,7 @@ export function EodOversightSection() {
         <div className="card" style={{ overflowX: "auto" }}>
           <table className="tbl">
             <thead>
-              <tr><th>Editor</th><th>Status</th><th>Start</th><th>End</th><th>Worked</th><th>Morning plan</th><th></th></tr>
+              <tr><th>Editor</th><th>Status</th><th>Start</th><th>End</th><th>Worked</th><th>Start of Day</th><th></th></tr>
             </thead>
             <tbody>
               {rows.map((r) => (
@@ -106,11 +106,11 @@ export function EodOversightSection() {
                   <td>{r.status === "not_started" || r.workedSeconds == null ? "—" : `${fmtDuration(r.workedSeconds)}${(r.sessions ?? 1) > 1 ? ` · ${r.sessions} sessions` : ""}`}</td>
                   <td>
                     {r.planSubmittedAt ? (
-                      <button className="linkbtn" onClick={() => showPlan(r)} title="View the plan">
-                        📝 {fmtTime(r.planSubmittedAt)} · {r.planCount ?? 0} {r.planCount === 1 ? "task" : "tasks"}
+                      <button className="linkbtn" onClick={() => showPlan(r)} title="View the Start of Day">
+                        📋 {fmtTime(r.planSubmittedAt)} · {r.planCount ?? 0} {r.planCount === 1 ? "task" : "tasks"}
                       </button>
                     ) : r.status === "active" ? (
-                      <span className="eod-st auto">Not sent yet</span>
+                      <span className="eod-st auto">Not copied yet</span>
                     ) : "—"}
                   </td>
                   <td>

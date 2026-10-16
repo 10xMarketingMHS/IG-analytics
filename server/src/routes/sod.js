@@ -4,13 +4,13 @@ import { pool } from "../db.js";
 import { logActivity } from "../activity.js";
 import { closeStaleSessions } from "./eod.js";
 
-// Start of Day (SOD): once each morning, after the first Start Work, an employee
-// sends their plan for the day — every task they'll work on. Tasks already on
-// their plate (due today or late, in progress, sent back, waiting for Accept) are
-// in it automatically; anything else they first add as a task on the board, and
-// they may also pick up open tasks due later. The plan is saved as sent (a
-// snapshot), the admin sees it, and the End of Day summary compares it with what
-// got done. Until it's sent, task work is refused (requireTodaysPlan).
+// Start of Day (SOD): after Start Work, an employee adds the day's tasks on the
+// board as usual, then opens the Start of Day window on My Day: their open tasks,
+// ticked for today or not, and a report to copy for WhatsApp — the morning twin
+// of the End of Day report. Copying also saves that list as today's SOD (a
+// snapshot; copying again replaces it), so the admin sees it on the Work Day
+// page and the End of Day summary can compare it with what got done. Nothing is
+// locked behind it.
 export const sodRouter = Router();
 
 async function callerEditorId(req) {
@@ -18,12 +18,14 @@ async function callerEditorId(req) {
   return rows[0]?.editor_id ?? null;
 }
 
-// The employee's open tasks, sorted into the plan screen's groups:
-//   added — created by them today (always in the plan)
+// The employee's open tasks, sorted into the Start of Day window's groups:
+//   added — created by them today
 //   today — due today or late, in progress, sent back, or waiting for Accept
-//           (always in the plan)
-//   later — everything else still open (they may tick some in)
-// Tasks waiting in Review are left out: that's the reviewer's move, not theirs.
+//   later — everything else still open
+// "suggested" is the starting tick: work clearly for today (added today, due
+// today, in progress, sent back) — not old overdue or not-yet-accepted tasks,
+// nor ones due later. Tasks waiting in Review are left out: that's the
+// reviewer's move, not theirs.
 async function planCandidates(orgId, editorId, userId) {
   const { rows } = await pool.query(
     `select t.id, t.title, t.status, t.accepted, t.pending_note, t.on_hold, t.due_date,
@@ -47,7 +49,8 @@ async function planCandidates(orgId, editorId, userId) {
     const onPlate = (t.daysLate != null && t.daysLate >= 0) || t.status === "in_progress" || !t.accepted || !!t.pending_note;
     const group = t.addedToday ? "added" : onPlate ? "today" : "later";
     if (t.daysLate != null && t.daysLate < 0) reasons.push(`due ${t.due_date}`);
-    return { id: t.id, title: t.title, format: t.format, dueDate: t.due_date, status: t.status, group, reason: reasons.join(", ") };
+    const suggested = t.addedToday || t.daysLate === 0 || !!t.pending_note || (t.status === "in_progress" && !t.on_hold);
+    return { id: t.id, title: t.title, format: t.format, dueDate: t.due_date, status: t.status, group, reason: reasons.join(", "), suggested };
   });
 }
 
@@ -66,74 +69,73 @@ async function planFor(orgId, editorId, date) {
   return rows[0] ?? null;
 }
 
-// The caller's SOD state: whether a plan is due now (an employee who has started
-// work today and not sent one), the plan if sent, and the plan screen's tasks.
+// The caller's Start of Day: today's saved SOD (if copied yet), when they
+// started work, and their open tasks for the window. "required" is always
+// false — kept so a page loaded before this change never locks itself.
 sodRouter.get("/sod/today", async (req, res, next) => {
   try {
     await closeStaleSessions();
     const eid = await callerEditorId(req);
     if (req.role !== "editor" || !eid) return res.json({ required: false, plan: null, startedAt: null, candidates: [] });
-    const { rows: open } = await pool.query(
-      "select started_at from eod_session where editor_id = $1 and ended_at is null limit 1",
+    const { rows: first } = await pool.query(
+      "select min(started_at) as started_at from eod_session where editor_id = $1 and date = current_date",
       [eid],
     );
-    const plan = await planFor(req.orgId, eid, null);
-    const required = open.length > 0 && !plan;
     res.json({
-      required,
-      plan,
-      startedAt: open[0]?.started_at ?? null,
-      candidates: required ? await planCandidates(req.orgId, eid, req.user.sub) : [],
+      required: false,
+      plan: await planFor(req.orgId, eid, null),
+      startedAt: first[0]?.started_at ?? null,
+      candidates: await planCandidates(req.orgId, eid, req.user.sub),
     });
   } catch (err) { next(err); }
 });
 
-const SendSchema = z.object({
+const SaveSchema = z.object({
   note: z.string().trim().max(1000).optional(),
-  extraTaskIds: z.array(z.string().uuid()).max(200).optional(),
-  skipTaskIds: z.array(z.string().uuid()).max(200).optional(),
+  taskIds: z.array(z.string().uuid()).max(500),
 });
 
-// Send today's plan — once per day. The always-in groups are recomputed here
-// rather than trusted from the browser; `extraTaskIds` are open tasks due later
-// that the employee ticked, `skipTaskIds` tasks already on their plate that
-// they unticked (not working on them today). Those stay in the plan's record as
-// "skipped", so the admin sees what was left out — but they don't count.
+// Save today's SOD — on every Copy SOD; the latest copy replaces the earlier
+// one. `taskIds` are the ticked tasks. The task details are recomputed here
+// rather than trusted from the browser; unticked tasks that were added today or
+// are already on their plate stay in the record as "skipped" (shown to the
+// admin, not counted), unticked ones due later are simply left out.
 sodRouter.post("/sod", async (req, res, next) => {
-  const parsed = SendSchema.safeParse(req.body ?? {});
-  if (!parsed.success) return res.status(400).json({ error: "That plan couldn't be read." });
+  const parsed = SaveSchema.safeParse(req.body ?? {});
+  if (!parsed.success) return res.status(400).json({ error: "That Start of Day couldn't be read." });
   try {
-    if (req.role !== "editor") return res.status(403).json({ error: "Only team members who Start Work send a day plan." });
+    if (req.role !== "editor") return res.status(403).json({ error: "Only team members who Start Work have a Start of Day." });
     const eid = await callerEditorId(req);
     if (!eid) return res.status(400).json({ error: "Your login isn't linked to a team member." });
-    const { rowCount: working } = await pool.query(
-      "select 1 from eod_session where editor_id = $1 and ended_at is null", [eid],
+    const { rowCount: started } = await pool.query(
+      "select 1 from eod_session where editor_id = $1 and date = current_date", [eid],
     );
-    if (!working) return res.status(400).json({ error: "Press Start Work first." });
-    if (await planFor(req.orgId, eid, null)) return res.status(409).json({ error: "Today's plan was already sent." });
+    if (!started) return res.status(400).json({ error: "Press Start Work first." });
 
-    const extra = new Set(parsed.data.extraTaskIds ?? []);
-    const skip = new Set(parsed.data.skipTaskIds ?? []);
+    const picked = new Set(parsed.data.taskIds);
     const tasks = (await planCandidates(req.orgId, eid, req.user.sub))
-      .filter((t) => t.group !== "later" || extra.has(t.id))
-      .map((t) => (t.group === "today" && skip.has(t.id) ? { ...t, group: "skipped" } : t));
+      .filter((t) => picked.has(t.id) || t.group !== "later")
+      .map(({ suggested: _suggested, ...t }) => (picked.has(t.id) ? t : { ...t, group: "skipped" }));
     const inPlan = tasks.filter((t) => t.group !== "skipped").length;
     const note = parsed.data.note || null;
     const { rows } = await pool.query(
       `insert into sod_plan (org_id, editor_id, date, note, tasks)
        values ($1, $2, current_date, $3, $4::jsonb)
-       on conflict (editor_id, date) do nothing
-       returning id`,
+       on conflict (editor_id, date) do update
+         set tasks = excluded.tasks, note = excluded.note, submitted_at = now()
+       returning (xmax = 0) as first`,
       [req.orgId, eid, note, JSON.stringify(tasks)],
     );
-    if (!rows.length) return res.status(409).json({ error: "Today's plan was already sent." });
-    await logActivity({
-      orgId: req.orgId, actorId: req.user.sub, verb: "sod_submitted",
-      entityType: "user", entityId: req.user.sub,
-      summary: `Sent today's plan (${inPlan} task${inPlan === 1 ? "" : "s"})`,
-      meta: { editorId: eid },
-    });
-    res.status(201).json({ plan: await planFor(req.orgId, eid, null) });
+    // The feed hears about the day's first SOD only, not every re-copy.
+    if (rows[0]?.first) {
+      await logActivity({
+        orgId: req.orgId, actorId: req.user.sub, verb: "sod_submitted",
+        entityType: "user", entityId: req.user.sub,
+        summary: `Shared their Start of Day (${inPlan} task${inPlan === 1 ? "" : "s"})`,
+        meta: { editorId: eid },
+      });
+    }
+    res.json({ plan: await planFor(req.orgId, eid, null) });
   } catch (err) { next(err); }
 });
 
@@ -149,19 +151,3 @@ sodRouter.get("/sod", async (req, res, next) => {
     res.json({ plan: await planFor(req.orgId, editorId, date) });
   } catch (err) { next(err); }
 });
-
-// Task work waits for the morning plan: an employee who has started work today
-// must send it before accepting, moving or changing tasks. Creating a task (the
-// plan screen adds them) and deleting one's own new task stay open.
-export async function requireTodaysPlan(req, res, next) {
-  try {
-    if (req.role !== "editor") return next();
-    const eid = await callerEditorId(req);
-    if (!eid) return next();
-    const { rowCount } = await pool.query(
-      "select 1 from sod_plan where editor_id = $1 and date = current_date", [eid],
-    );
-    if (!rowCount) return res.status(403).json({ error: "Send today's plan first — press Plan your day on My Day." });
-    next();
-  } catch (err) { next(err); }
-}

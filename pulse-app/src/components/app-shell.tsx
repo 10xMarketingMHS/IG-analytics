@@ -18,7 +18,7 @@ import { useEodState } from "@/lib/eod-context";
 import { MyProfileModal } from "@/components/my-profile-modal";
 import { Modal } from "@/components/modal";
 import { notifyTasksChanged } from "@/lib/task-events";
-import { PlanDayModal } from "@/components/plan-day-modal";
+import { SodModal } from "@/components/sod-modal";
 import { useTheme } from "@/components/theme-provider";
 import type { Activity } from "@/lib/types";
 
@@ -86,11 +86,8 @@ export function AppShell() {
   // EOD lockout: an editor with no open session gets the whole shell grayscaled
   // and non-interactive (except a few live controls) until they Start EOD. The
   // grayscale/disable is CSS keyed off this class; see index.css `.eod-lock`.
-  const { session: eodSession, loading: eodLoading, unlinked: eodUnlinked, end: endEod, sod, summary: eodSummary } = useEodState();
-  // After Start Work, the morning plan (SOD) has to be sent before task work
-  // opens up — the app stays locked the same way until it is.
-  const planPending = active?.role === "editor" && !!eodSession && !!sod?.required;
-  const eodLocked = (active?.role === "editor" && !eodLoading && !eodUnlinked && !eodSession) || planPending;
+  const { session: eodSession, loading: eodLoading, unlinked: eodUnlinked, end: endEod, summary: eodSummary } = useEodState();
+  const eodLocked = active?.role === "editor" && !eodLoading && !eodUnlinked && !eodSession;
   const { editors } = useEditors();
   const { theme, toggle } = useTheme();
   const location = useLocation();
@@ -302,7 +299,7 @@ export function AppShell() {
       </main>
       <BreakWidget />
       <BreakOverlay />
-      <PlanDayModal />
+      <SodModal />
     </div>
     </BreakProvider>
   );

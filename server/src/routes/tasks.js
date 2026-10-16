@@ -3,7 +3,6 @@ import { z } from "zod";
 import { pool } from "../db.js";
 import { requireEditor } from "../resolve-workspace.js";
 import { requireActiveEod } from "./eod.js";
-import { requireTodaysPlan } from "./sod.js";
 import { hasActiveGrant, reviewAccess, scopeAllowsTask } from "../permissions.js";
 import { logActivity } from "../activity.js";
 
@@ -378,7 +377,7 @@ tasksRouter.post("/tasks", requireEditor, requireActiveEod, async (req, res, nex
   }
 });
 
-tasksRouter.patch("/tasks/:id", requireEditor, requireActiveEod, requireTodaysPlan, async (req, res, next) => {
+tasksRouter.patch("/tasks/:id", requireEditor, requireActiveEod, async (req, res, next) => {
   const parsed = TaskSchema.partial().safeParse(req.body);
   if (!parsed.success) {
     return res.status(400).json({ error: parsed.error.flatten().fieldErrors });
@@ -884,7 +883,7 @@ tasksRouter.patch("/tasks/:id", requireEditor, requireActiveEod, requireTodaysPl
 // now would run the budget past office close) — client computes the wall-clock
 // time since office hours are a local-time concept, not something the server
 // should guess at.
-tasksRouter.post("/tasks/:id/accept", requireEditor, requireActiveEod, requireTodaysPlan, async (req, res, next) => {
+tasksRouter.post("/tasks/:id/accept", requireEditor, requireActiveEod, async (req, res, next) => {
   const startAt = req.body?.startAt ? new Date(req.body.startAt) : new Date();
   if (isNaN(startAt.getTime())) return res.status(400).json({ error: "Invalid start time." });
   try {
@@ -1058,7 +1057,7 @@ tasksRouter.get("/tasks/:id/subtasks", async (req, res, next) => {
   }
 });
 
-tasksRouter.post("/tasks/:id/subtasks", requireEditor, requireActiveEod, requireTodaysPlan, async (req, res, next) => {
+tasksRouter.post("/tasks/:id/subtasks", requireEditor, requireActiveEod, async (req, res, next) => {
   const title = typeof req.body?.title === "string" ? req.body.title.trim() : "";
   if (!title) return res.status(400).json({ error: "A checklist item needs a title." });
   try {
@@ -1077,7 +1076,7 @@ tasksRouter.post("/tasks/:id/subtasks", requireEditor, requireActiveEod, require
   }
 });
 
-tasksRouter.patch("/subtasks/:id", requireEditor, requireActiveEod, requireTodaysPlan, async (req, res, next) => {
+tasksRouter.patch("/subtasks/:id", requireEditor, requireActiveEod, async (req, res, next) => {
   const sets = [];
   const params = [req.params.id, req.orgId];
   if (typeof req.body?.done === "boolean") { params.push(req.body.done); sets.push(`done = $${params.length}`); }
@@ -1101,7 +1100,7 @@ tasksRouter.patch("/subtasks/:id", requireEditor, requireActiveEod, requireToday
   }
 });
 
-tasksRouter.delete("/subtasks/:id", requireEditor, requireActiveEod, requireTodaysPlan, async (req, res, next) => {
+tasksRouter.delete("/subtasks/:id", requireEditor, requireActiveEod, async (req, res, next) => {
   try {
     const parent = await taskOfSubtask(req.params.id, req.orgId);
     if (!parent) return res.status(404).json({ error: "Checklist item not found" });

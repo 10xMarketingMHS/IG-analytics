@@ -26,16 +26,16 @@ function workedLine(s: EodSummary): string | null {
 }
 const AUTO_CLOSED = "End Work wasn't pressed — the day was closed automatically at 6 PM.";
 
-// The morning plan against the day: planned vs done, then what wasn't done and
-// what was worked on outside the plan.
+// The Start of Day against the day: planned vs done, then what wasn't done and
+// what was worked on outside it.
 function planLines(s: EodSummary): string[] {
   const p = s.plan;
   if (!p) return [];
-  const lines = [`Plan (sent ${fmtTime(p.submittedAt)}): ${p.doneCount} of ${p.plannedCount} done`];
+  const lines = [`Start of Day (${fmtTime(p.submittedAt)}): ${p.doneCount} of ${p.plannedCount} done`];
   for (const t of p.notDone) lines.push(`- Not done: ${t}`);
   for (const t of p.removed ?? []) lines.push(`- Removed by admin: ${t}`);
   if (p.unplanned.length) {
-    lines.push(`Outside the plan: ${p.unplanned.length}`);
+    lines.push(`Outside the SOD: ${p.unplanned.length}`);
     for (const t of p.unplanned) lines.push(`- ${t}`);
   }
   return lines;
@@ -104,12 +104,12 @@ export function EodSummaryCard({ name, summary, onClose }: { name: string; summa
         {summary.plan && (
           <div className="eod-sum-plan">
             <div className="eod-sum-plan-head">
-              📝 Plan: <b>{summary.plan.doneCount} of {summary.plan.plannedCount}</b> done
-              <span className="hint" style={{ margin: "0 0 0 8px" }}>sent {fmtTime(summary.plan.submittedAt)}</span>
+              📋 Start of Day: <b>{summary.plan.doneCount} of {summary.plan.plannedCount}</b> done
+              <span className="hint" style={{ margin: "0 0 0 8px" }}>copied {fmtTime(summary.plan.submittedAt)}</span>
             </div>
             {summary.plan.notDone.length > 0 && <div>Not done: {summary.plan.notDone.join(", ")}</div>}
             {(summary.plan.removed?.length ?? 0) > 0 && <div>Removed by admin: {summary.plan.removed!.join(", ")}</div>}
-            {summary.plan.unplanned.length > 0 && <div>Outside the plan: {summary.plan.unplanned.join(", ")}</div>}
+            {summary.plan.unplanned.length > 0 && <div>Outside the SOD: {summary.plan.unplanned.join(", ")}</div>}
           </div>
         )}
         <div className="eod-sum-groups">

@@ -1,14 +1,14 @@
 import type { SodPlan, SodTask } from "@/lib/use-eod";
 
-// The three parts of a morning plan, in reading order.
-export const SOD_GROUPS: SodTask["group"][] = ["today", "added", "later"];
+// The three parts of a Start of Day, in reading order.
+export const SOD_GROUPS: SodTask["group"][] = ["added", "today", "later"];
 export const SOD_GROUP_LABEL: Record<SodTask["group"], string> = {
-  today: "Already on my plate",
-  added: "Added by me",
+  added: "Added today",
+  today: "On my plate",
   later: "Also picking up",
   skipped: "Not working on today",
 };
-// Tasks that count as today's plan (left-out ones are listed, not counted).
+// Tasks that count as today's SOD (unticked ones are listed, not counted).
 export const plannedTasks = (plan: SodPlan) => plan.tasks.filter((t) => t.group !== "skipped");
 
 function fmtTime(iso: string): string {
@@ -23,27 +23,17 @@ export function sodTaskLine(t: SodTask): string {
   return `${t.title}${t.format ? ` (${t.format})` : ""}${t.reason ? ` — ${t.reason}` : ""}`;
 }
 
-// Plain text for WhatsApp, same style as the End of Day report.
+// Plain text for WhatsApp, same style as the End of Day report: today's ticked
+// tasks as one list (unticked ones stay out of the message).
 export function buildSodReport(name: string, plan: SodPlan): string {
   const lines: string[] = [];
   lines.push(`*Start of Day — ${name}*`);
   lines.push(`${fmtDay(plan.date)}${plan.startedAt ? ` · started ${fmtTime(plan.startedAt)}` : ""}`);
   lines.push("");
-  const n = plannedTasks(plan).length;
-  lines.push(`Today's plan (${n} ${n === 1 ? "task" : "tasks"}):`);
-  if (!n) lines.push("- Nothing planned");
-  for (const g of SOD_GROUPS) {
-    const tasks = plan.tasks.filter((t) => t.group === g);
-    if (!tasks.length) continue;
-    lines.push(`${SOD_GROUP_LABEL[g]}:`);
-    for (const t of tasks) lines.push(`- ${sodTaskLine(t)}`);
-  }
-  const skipped = plan.tasks.filter((t) => t.group === "skipped");
-  if (skipped.length) {
-    lines.push("");
-    lines.push(`${SOD_GROUP_LABEL.skipped} (${skipped.length}):`);
-    for (const t of skipped) lines.push(`- ${sodTaskLine(t)}`);
-  }
+  const tasks = SOD_GROUPS.flatMap((g) => plan.tasks.filter((t) => t.group === g));
+  lines.push(`Today's tasks (${tasks.length}):`);
+  if (!tasks.length) lines.push("- Nothing yet");
+  for (const t of tasks) lines.push(`- ${t.title}${t.format ? ` (${t.format})` : ""}`);
   if (plan.note) {
     lines.push("");
     lines.push(`Note: ${plan.note}`);

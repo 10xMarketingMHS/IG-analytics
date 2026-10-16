@@ -27,24 +27,26 @@ export type EodSummary = {
   sessionCount?: number;
   breakSeconds?: number | null;
   autoClosed?: boolean;
-  // The morning plan compared with the day: planned vs done, what from the plan
-  // wasn't done, and what was worked on outside it. null when no plan was sent.
+  // The Start of Day compared with the day: planned vs done, what from it
+  // wasn't done, and what was worked on outside it. null when no SOD was copied.
   plan?: SodComparison | null;
 };
 
-// Start of Day (SOD) — the plan an employee sends once each morning.
+// Start of Day (SOD) — the list an employee copies for WhatsApp each morning
+// (saved on every copy; the latest copy is today's SOD).
 export type SodTask = {
   id: string;
   title: string;
   format: string | null;
   dueDate: string | null;
   status: string;
-  // added = created by them this morning; today = already on their plate (due
-  // today or late, in progress, sent back, waiting for Accept); later = open
-  // but due later, in the plan only if they ticked it.
-  // skipped = on their plate but left out of today's plan (shown, not counted).
+  // added = created by them today; today = already on their plate (due today or
+  // late, in progress, sent back, waiting for Accept); later = open but due later.
+  // skipped = added or on their plate but unticked (shown, not counted).
   group: "added" | "today" | "later" | "skipped";
   reason: string;
+  // The window's starting tick (only on /sod/today's candidates).
+  suggested?: boolean;
 };
 export type SodPlan = {
   id: string;
@@ -55,7 +57,7 @@ export type SodPlan = {
   editorName: string | null;
   startedAt: string | null;
 };
-export type SodToday = { required: boolean; plan: SodPlan | null; startedAt: string | null; candidates: SodTask[] };
+export type SodToday = { plan: SodPlan | null; startedAt: string | null; candidates: SodTask[] };
 export type SodComparison = {
   submittedAt: string;
   note: string | null;
@@ -132,35 +134,35 @@ export function useEod() {
 
   const clearSummary = useCallback(() => setSummary(null), []);
 
-  // Start of Day: fetched whenever a work session opens. While a plan is due the
-  // Plan your day window opens by itself; once sent it can be reopened to view it.
+  // Start of Day: the window opened from My Day (openSod) — fetched fresh each
+  // time it opens, so tasks just added on the board are there. Copy SOD saves
+  // the ticked list (saveSod); nothing waits on it.
   const [sod, setSod] = useState<SodToday | null>(null);
   const [planOpen, setPlanOpen] = useState(false);
   const refreshSod = useCallback(async () => {
     try {
-      const d = await api<SodToday>("/sod/today");
-      setSod(d);
-      if (d.required) setPlanOpen(true);
+      setSod(await api<SodToday>("/sod/today"));
     } catch {
       /* keep last-known state on a transient error */
     }
   }, []);
+  const openSod = useCallback(() => {
+    setPlanOpen(true);
+    refreshSod();
+  }, [refreshSod]);
   const sessionId = session?.id ?? null;
   useEffect(() => {
     if (sessionId) refreshSod();
     else { setSod(null); setPlanOpen(false); }
   }, [sessionId, refreshSod]);
-  const sendPlan = useCallback(async (note: string, extraTaskIds: string[], skipTaskIds: string[] = []) => {
-    const d = await api<{ plan: SodPlan }>("/sod", {
-      method: "POST",
-      body: JSON.stringify({ note: note.trim() || undefined, extraTaskIds, skipTaskIds }),
-    });
-    setSod((s) => ({ required: false, plan: d.plan, startedAt: s?.startedAt ?? null, candidates: [] }));
+  const saveSod = useCallback(async (taskIds: string[]) => {
+    const d = await api<{ plan: SodPlan }>("/sod", { method: "POST", body: JSON.stringify({ taskIds }) });
+    setSod((s) => (s ? { ...s, plan: d.plan } : s));
     return d.plan;
   }, []);
 
   return {
     session, unlinked, loading, busy, summary, start, end, clearSummary, refresh,
-    sod, planOpen, setPlanOpen, refreshSod, sendPlan,
+    sod, planOpen, setPlanOpen, openSod, refreshSod, saveSod,
   };
 }

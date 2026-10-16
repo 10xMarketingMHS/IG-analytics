@@ -1720,10 +1720,6 @@ img.lb-ava{object-fit:cover}
 .plan-pick{cursor:pointer}
 .plan-off .plan-title{opacity:.5;text-decoration:line-through}
 .plan-empty{font-size:13px;color:var(--muted);padding:4px 2px}
-.plan-add{display:grid;grid-template-columns:minmax(0,1fr) 150px 140px auto;gap:8px;margin-top:8px}
-@media(max-width:640px){.plan-add{grid-template-columns:1fr 1fr}}
-.plan-err{font-size:12.5px;font-weight:600;color:var(--rose);margin-top:6px}
-.plan-notebox{width:100%;resize:vertical}
 .plan-foot{margin-top:16px;align-items:center}
 /* Phones: windows, the task panel and the break card stay inside the screen. */
 @media(max-width:640px){
@@ -1734,8 +1730,6 @@ img.lb-ava{object-fit:cover}
 }
 .plan-sent{font-size:13.5px;font-weight:700;color:#22c55e;margin:-4px 0 4px}
 .plan-note{margin-top:10px;font-size:13.5px;color:var(--text)}
-.mh-planchip{all:unset;cursor:pointer;font-size:12.5px;font-weight:700;color:#fff;padding:4px 11px;border-radius:999px;background:rgba(255,255,255,.14);border:1px solid rgba(255,255,255,.25)}
-.mh-planchip:hover{background:rgba(255,255,255,.22)}
 .eod-sum-plan{margin-top:12px;padding:10px 12px;border-radius:10px;background:var(--panel2);border:1px solid var(--border);font-size:13px;line-height:1.6}
 .eod-sum-plan-head{font-size:13.5px;margin-bottom:2px}
 .login-note{font-size:13.5px;line-height:1.55;color:var(--text);text-align:left;padding:12px 14px;border-radius:12px;background:var(--panel2);border:1px solid var(--border)}

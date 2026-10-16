@@ -103,7 +103,7 @@ export function HomePage() {
   const navigate = useNavigate();
   const { user } = useAuth();
   const { active, isAdmin, workspaces } = useWorkspaces();
-  const { session: eodSession, start: startEod, end: endEod, busy: eodBusy, sod, setPlanOpen } = useEodState();
+  const { session: eodSession, start: startEod, end: endEod, busy: eodBusy, openSod } = useEodState();
   const isEditor = active?.role === "editor";
   const { tasks, refetch: refetchTasks } = useTasks();
   // Tasks in Review that THIS person may resolve: all of them for an admin; for
@@ -303,11 +303,6 @@ export function HomePage() {
                 {/* Before Start Work the rest of the app is greyed out — say why. */}
                 <p className="mh-lockhint">Press Start Work to begin your day. The menu and your tasks unlock once you do.</p>
               </div>
-            ) : isEditor && sod?.required ? (
-              <div className="mh-startwrap">
-                <button className="btn btn-primary mh-cta eod-live" onClick={() => setPlanOpen(true)}>📝 Plan your day</button>
-                <p className="mh-lockhint">Send today's plan to unlock your tasks: add everything you'll work on today.</p>
-              </div>
             ) : (
               <div className="mh-cta-row">
                 <button className="btn btn-primary mh-cta" onClick={() => navigate("/tasks")}>▶ Task Board</button>
@@ -321,11 +316,10 @@ export function HomePage() {
                       {eodBusy ? "Ending…" : "⏹ End Work"}
                     </button>
                     <span className="mh-clockedin">🟢 Clocked in since {fmtClock(eodSession.startedAt)}</span>
-                    {sod?.plan && (
-                      <button className="mh-planchip" onClick={() => setPlanOpen(true)} title="View today's plan">
-                        📝 Plan sent {fmtClock(sod.plan.submittedAt)}
-                      </button>
-                    )}
+                    {/* Start of Day: today's tasks and the report to copy for WhatsApp. */}
+                    <button className="btn mh-endeod" onClick={openSod} title="Copy today's Start of Day report">
+                      📋 Start of Day
+                    </button>
                   </>
                 )}
               </div>
