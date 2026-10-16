@@ -63,7 +63,7 @@ export function EodSummaryCard({ name, summary, onClose }: { name: string; summa
           ))}
         </div>
         <div className="eod-sum-reportlabel">Report preview (what gets copied)</div>
-        <pre className="eod-sum-report">{report}</pre>
+        <pre className="eod-sum-report full">{report}</pre>
       </div>
       <div className="formfoot">
         <button className="btn" onClick={onClose}>Close</button>

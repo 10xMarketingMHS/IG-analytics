@@ -2002,3 +2002,19 @@ html[data-theme="dark"] .tmp-note.warn{color:var(--c5)}
 .eod-task-st.todo{color:var(--muted);background:rgba(148,163,184,.14)}
 .eod-task-input{width:100%;margin-top:8px;resize:vertical;font-size:13px}
 .eod-task-note{margin-top:6px;font-size:13px;color:var(--muted);white-space:pre-wrap}
+/* The End of Day window's list: one compact row per task; click to open its note. */
+.eod-list{display:flex;flex-direction:column;border:1px solid var(--border);border-radius:12px;overflow:hidden;margin:10px 0 6px}
+.eod-item + .eod-item{border-top:1px solid var(--border)}
+.eod-item-head{all:unset;box-sizing:border-box;display:flex;align-items:center;gap:10px;width:100%;padding:10px 12px;cursor:pointer;font-size:13.5px}
+.eod-item-head:hover,.eod-item.open .eod-item-head{background:var(--panel2)}
+.eod-item-head:focus-visible{outline:2px solid var(--accent);outline-offset:-2px}
+.eod-chev{flex:none;width:12px;color:var(--muted);transition:transform .15s}
+.eod-item.open .eod-chev{transform:rotate(90deg)}
+.eod-item-main{flex:1;min-width:0;display:flex;flex-direction:column;gap:2px}
+.eod-item-title{font-weight:650;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.eod-item-sub{font-size:12px;color:var(--muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.eod-item-sub.has-note{color:var(--text)}
+.eod-item-body{padding:2px 12px 12px 34px;background:var(--panel2)}
+.eod-item-body .eod-task-input{margin-top:0}
+@media(max-width:560px){.eod-item-head .eod-task-meta{display:none}}
+.eod-sum-report.full{max-height:none}

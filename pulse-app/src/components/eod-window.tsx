@@ -4,7 +4,7 @@ import { Modal } from "@/components/modal";
 import { api, ApiError } from "@/lib/api";
 import { useAuth } from "@/lib/auth-context";
 import { useEodState } from "@/lib/eod-context";
-import { buildReport, eodStatusLabel, eodTaskMeta, eodTime, workedLine } from "@/lib/eod-report";
+import { buildReport, eodStatusLabel, eodTaskMeta, eodTime } from "@/lib/eod-report";
 import { fmtDuration, type EodSummary } from "@/lib/use-eod";
 
 function todayYmd() {
@@ -23,6 +23,8 @@ export function EodWindow() {
   const [notes, setNotes] = useState<Record<string, string>>({});
   const [failed, setFailed] = useState(false);
   const [busy, setBusy] = useState<"save" | "end" | null>(null);
+  // The task whose note box is open (one at a time).
+  const [openId, setOpenId] = useState<string | null>(null);
 
   const sessionId = session?.id ?? null;
   useEffect(() => {
@@ -40,7 +42,7 @@ export function EodWindow() {
   }, [eodOpen, sessionId]);
 
   if (!eodOpen) return null;
-  const close = (ended: boolean) => { closeEod(ended); setDay(null); setNotes({}); };
+  const close = (ended: boolean) => { closeEod(ended); setDay(null); setNotes({}); setOpenId(null); };
   const firstName = (user?.name || user?.email || "You").split(" ")[0].split("@")[0];
   const tasks = day?.tasks ?? [];
   const payload = () => tasks.map((t) => ({ taskId: t.id, note: notes[t.id] ?? "" }));
@@ -80,13 +82,19 @@ export function EodWindow() {
     endedAt: new Date().toISOString(),
     tasks: tasks.map((t) => ({ ...t, note: notes[t.id]?.trim() || null })),
   }) : "";
-  const worked = day ? workedLine(day) : null;
+  const sessions = day?.sessionCount ?? 1;
 
   return (
     <Modal title="End of Day" onClose={() => close(false)} wide>
       <div className="plan-intro">
-        {day ? <>{eodTime(day.startedAt)} – now{worked ? ` · ${worked.replace("Time worked: ", "")} worked` : ""}{day.breakSeconds != null ? ` · breaks ${fmtDuration(day.breakSeconds)}` : ""}. </> : null}
-        Add a line on what you did for each task — empty boxes are left out of the report.
+        {day ? (
+          <>
+            Started {eodTime(day.startedAt)}
+            {day.workedSeconds != null ? ` · ${fmtDuration(day.workedSeconds)} worked${sessions > 1 ? ` (${sessions} sessions)` : ""}` : ""}
+            {day.breakSeconds != null ? ` · breaks ${fmtDuration(day.breakSeconds)}` : ""}.{" "}
+          </>
+        ) : null}
+        Click a task to add a line on what you did. Tasks without a note still appear in the report.
       </div>
 
       {failed ? (
@@ -96,30 +104,47 @@ export function EodWindow() {
       ) : tasks.length === 0 ? (
         <div className="plan-empty" style={{ margin: "12px 0" }}>No tasks today yet.</div>
       ) : (
-        <div className="eod-tasks">
-          {tasks.map((t) => (
-            <div className="eod-task" key={t.id}>
-              <div className="eod-task-head">
-                <span className="eod-task-title">{t.title}</span>
-                {eodTaskMeta(t) && <span className="eod-task-meta">{eodTaskMeta(t)}</span>}
-                <span className={"eod-task-st " + t.status}>{eodStatusLabel(t)}</span>
+        <div className="eod-list">
+          {tasks.map((t) => {
+            const open = openId === t.id;
+            const note = (notes[t.id] ?? "").trim();
+            return (
+              <div className={"eod-item" + (open ? " open" : "")} key={t.id}>
+                <button
+                  type="button" className="eod-item-head" aria-expanded={open}
+                  onClick={() => setOpenId(open ? null : t.id)}
+                >
+                  <span className="eod-chev" aria-hidden="true">▸</span>
+                  <span className="eod-item-main">
+                    <span className="eod-item-title">{t.title}</span>
+                    <span className={"eod-item-sub" + (note ? " has-note" : "")}>
+                      {note ? `📝 ${note.split(/\r?\n/)[0]}` : "Add a note…"}
+                    </span>
+                  </span>
+                  {eodTaskMeta(t) && <span className="eod-task-meta">{eodTaskMeta(t)}</span>}
+                  <span className={"eod-task-st " + t.status}>{eodStatusLabel(t)}</span>
+                </button>
+                {open && (
+                  <div className="eod-item-body">
+                    <textarea
+                      className="t eod-task-input" rows={3} maxLength={2000} autoFocus
+                      placeholder="What did you do on this today?"
+                      aria-label={`What you did on ${t.title}`}
+                      value={notes[t.id] ?? ""}
+                      onChange={(e) => setNotes((n) => ({ ...n, [t.id]: e.target.value }))}
+                    />
+                  </div>
+                )}
               </div>
-              <textarea
-                className="t eod-task-input" rows={2} maxLength={2000}
-                placeholder="What did you do on this today?"
-                aria-label={`What you did on ${t.title}`}
-                value={notes[t.id] ?? ""}
-                onChange={(e) => setNotes((n) => ({ ...n, [t.id]: e.target.value }))}
-              />
-            </div>
-          ))}
+            );
+          })}
         </div>
       )}
 
       {day && (
         <>
           <div className="eod-sum-reportlabel">Report preview (what gets copied)</div>
-          <pre className="eod-sum-report">{preview}</pre>
+          <pre className="eod-sum-report full">{preview}</pre>
         </>
       )}
 
