@@ -3,7 +3,17 @@
   <head>
     <meta charset="UTF-8" />
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+    <!-- Add to Home Screen opens Pulse like an app: full screen, its own icon. -->
+    <link rel="manifest" href="/manifest.webmanifest" />
+    <link rel="apple-touch-icon" href="/app-icon.svg" />
+    <meta name="mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-title" content="Pulse" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="default" />
+    <!-- The phone's status bar matches Pulse's own light/dark setting (set below
+         and by theme-provider.tsx), not the phone's. -->
+    <meta name="theme-color" content="#0a0713" />
     <title>Pulse — DF Foods Instagram Analytics</title>
     <meta
       name="description"
@@ -15,10 +25,9 @@
     <script>
       (function () {
         try {
-          document.documentElement.setAttribute(
-            "data-theme",
-            localStorage.getItem("pulse-theme") || "dark"
-          );
+          var t = localStorage.getItem("pulse-theme") || "dark";
+          document.documentElement.setAttribute("data-theme", t);
+          document.querySelector('meta[name="theme-color"]').setAttribute("content", t === "light" ? "#f3f0fb" : "#0a0713");
         } catch (e) {
           document.documentElement.setAttribute("data-theme", "dark");
         }

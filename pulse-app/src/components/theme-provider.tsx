@@ -24,6 +24,8 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
 
   useEffect(() => {
     document.documentElement.setAttribute("data-theme", theme);
+    // On a phone the status bar takes this colour: the app's background.
+    document.querySelector('meta[name="theme-color"]')?.setAttribute("content", theme === "light" ? "#f3f0fb" : "#0a0713");
     localStorage.setItem(STORAGE_KEY, theme);
   }, [theme]);
 

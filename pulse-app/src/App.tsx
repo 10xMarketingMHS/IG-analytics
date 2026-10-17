@@ -153,7 +153,8 @@ export function App() {
             <AppRoutes />
           </WorkspacesProvider>
         </AuthProvider>
-        <Toaster />
+        {/* on phones, toasts rise above the tab bar (components/mobile.css) */}
+        <Toaster mobileOffset={{ bottom: "calc(var(--m-tab, 0px) + 12px)" }} />
       </BrowserRouter>
     </ThemeProvider>
   );

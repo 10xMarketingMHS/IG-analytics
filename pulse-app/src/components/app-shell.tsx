@@ -21,9 +21,10 @@ import { notifyTasksChanged } from "@/lib/task-events";
 import { SodModal } from "@/components/sod-modal";
 import { useTheme } from "@/components/theme-provider";
 import { ChatProvider, useChat } from "@/lib/chat";
-import { navIcon, SIGN_OUT_ICON, RAIL_ICON, COMPOSE_ICON, SEARCH_ICON, PLUS_ICON, BREAK_ICON, GEAR_ICON } from "@/components/nav-icons";
+import { navIcon, SIGN_OUT_ICON, RAIL_ICON, COMPOSE_ICON, SEARCH_ICON, PLUS_ICON, BREAK_ICON, GEAR_ICON, MORE_ICON } from "@/components/nav-icons";
 import { JumpPalette, type JumpItem } from "@/components/jump-palette";
 import "./sidebar.css";
+import "./mobile.css";
 import type { Account, Activity } from "@/lib/types";
 
 // The sidebar's groups, as in the redesign. Items still come from NAV_ITEMS
@@ -194,6 +195,9 @@ function AppShellInner() {
       ...(gi === SIDEBAR_GROUPS.length - 1 ? NAV_ITEMS.filter((i) => !placed.has(i.href) && !OFF_SIDEBAR.has(i.href)) : []),
     ].filter((i): i is NavItem => !!i && canSee(i)),
   }));
+  // The phone tab bar: the Workspace places you can see; More lights up anywhere else.
+  const tabItems = (sideGroups[0]?.items ?? []).slice(0, 4);
+  const onTab = tabItems.some((i) => location.pathname === i.href || location.pathname.startsWith(i.href + "/"));
   // Channels: each brand with a dot per platform it posts to.
   const { data: acctData } = useResource<{ accounts: Account[] }>("/accounts?channel=all");
   const platformsOf = useMemo(() => {
@@ -455,6 +459,20 @@ function AppShellInner() {
           <Outlet />
         </div>
       </main>
+      {/* Phones: an app-style tab bar (components/mobile.css) — the four
+          Workspace places, and More for the full menu. */}
+      <nav className="tabbar" aria-label="Main">
+        {tabItems.map((item) => (
+          <NavLink key={item.href} to={item.href} className={({ isActive }) => "tab" + (isActive && !menuOpen ? " on" : "")} onClick={() => setMenuOpen(false)}>
+            <span className="tab-ic">{navIcon(item.href) ?? item.icon}{item.chatBadge && <ChatBadge />}</span>
+            <span className="tab-l">{item.title}</span>
+          </NavLink>
+        ))}
+        <button type="button" className={"tab" + (menuOpen || !onTab ? " on" : "")} onClick={() => setMenuOpen((o) => !o)} aria-expanded={menuOpen} aria-label="More: the full menu">
+          <span className="tab-ic">{MORE_ICON}</span>
+          <span className="tab-l">More</span>
+        </button>
+      </nav>
       <BreakWidget />
       <BreakOverlay />
       <SodModal />

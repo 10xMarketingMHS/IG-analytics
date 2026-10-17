@@ -1,0 +1,87 @@
+/* Phones feel like an app: a tab bar along the bottom, a slim top bar, pop-ups
+   that rise from the bottom as sheets, an open conversation on the whole
+   screen, and none of the desktop-only touches (tap flash, zoom on typing,
+   hover lifts). Safe-area insets keep it clear of notches and home bars when
+   Pulse is added to the home screen. */
+.tabbar{display:none}
+
+@media (max-width:768px){
+  :root{--m-top:calc(56px + env(safe-area-inset-top));--m-tab:calc(60px + env(safe-area-inset-bottom))}
+  html{-webkit-tap-highlight-color:transparent}
+  button,a,[role="button"],[role="tab"],label,select{touch-action:manipulation}
+
+  /* the top bar: the page name and a few actions; the menu lives in the tab bar */
+  .app .topbar{height:var(--m-top);padding:env(safe-area-inset-top) 10px 0 16px;gap:8px}
+  .app .topbar .menu-btn,.app .topbar .sub{display:none}
+  .app .topbar h1{font-size:18px;font-weight:800;letter-spacing:-.02em}
+
+  /* room above the tab bar */
+  .content{padding:16px 16px calc(var(--m-tab) + 24px)}
+  .break-widget{bottom:calc(var(--m-tab) + 12px)}
+
+  /* the tab bar */
+  .tabbar{
+    --tab-bg:rgba(255,255,255,.84);--tab-line:rgba(30,20,80,.08);--tab-text:#6b6b75;
+    --tab-on:oklch(0.48 0.19 290);--tab-pill:oklch(0.94 0.045 290);--tab-alert:oklch(0.58 0.21 22);
+    position:fixed;left:0;right:0;bottom:0;z-index:150;display:grid;grid-auto-flow:column;grid-auto-columns:minmax(0,1fr);
+    height:var(--m-tab);padding:5px 4px env(safe-area-inset-bottom);box-sizing:border-box;
+    background:var(--tab-bg);border-top:1px solid var(--tab-line);
+    backdrop-filter:blur(18px) saturate(170%);-webkit-backdrop-filter:blur(18px) saturate(170%);
+    font-family:'Plus Jakarta Sans',system-ui,sans-serif
+  }
+  html[data-theme="dark"] .tabbar{--tab-bg:rgba(16,14,26,.86);--tab-line:rgba(255,255,255,.08);--tab-text:#8b8b96;--tab-on:oklch(0.84 0.1 290);--tab-pill:oklch(0.33 0.08 290)}
+  .tab{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:3px;min-width:0;padding:0;border:0;background:transparent;
+    color:var(--tab-text);font:600 10.5px/1.2 'Plus Jakarta Sans',sans-serif;text-decoration:none;cursor:pointer;-webkit-user-select:none;user-select:none}
+  .tab-ic{position:relative;display:grid;place-items:center;width:54px;height:30px;border-radius:15px;transition:background-color .2s,transform .12s}
+  .tab-ic svg{width:21px;height:21px}
+  .tab-l{max-width:100%;padding:0 2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .tab.on{color:var(--tab-on)}
+  .tab.on .tab-ic{background:var(--tab-pill)}
+  .tab.on .tab-l{font-weight:700}
+  .tab:active .tab-ic{transform:scale(.92)}
+  .tab:focus-visible{outline:none}
+  .tab:focus-visible .tab-ic{outline:2px solid var(--tab-on);outline-offset:1px}
+  .tab-ic .badge{position:absolute;margin:0}
+  .tab-ic .badge.alert{top:-3px;right:7px;min-width:17px;height:17px;padding:0 4px;border-radius:9px;box-sizing:border-box;background:var(--tab-alert);color:#fff;
+    font:700 10px/17px 'Plus Jakarta Sans',sans-serif;text-align:center;box-shadow:0 0 0 2px var(--tab-bg)}
+  .tab-ic .badge.dot{top:3px;right:15px;width:8px;height:8px;padding:0;border-radius:50%;background:var(--tab-alert);box-shadow:0 0 0 2px var(--tab-bg)}
+  /* End of Day lock: the places wait like the sidebar does; More still opens the menu */
+  .eod-lock .tabbar a.tab{pointer-events:none;filter:grayscale(100%);opacity:.6}
+
+  /* the full menu (More) */
+  .app>aside.sb2{--sb-w:min(300px,86vw);width:min(300px,86vw);padding-top:env(safe-area-inset-top);padding-bottom:env(safe-area-inset-bottom);box-sizing:border-box}
+
+  /* pop-ups rise from the bottom as sheets */
+  .modal-overlay:not(.drawer){align-items:flex-end;padding:0}
+  .modal-overlay:not(.drawer)>.modal-card{margin:0;max-width:none;max-height:calc(100dvh - env(safe-area-inset-top) - 16px);overflow-y:auto;overscroll-behavior:contain;
+    border-radius:22px 22px 0 0;padding:28px 18px calc(20px + env(safe-area-inset-bottom));animation:m-sheet .32s cubic-bezier(.2,.8,.2,1)}
+  .modal-overlay:not(.drawer)>.modal-card::before{content:"";position:absolute;top:9px;left:50%;width:40px;height:4px;margin-left:-20px;border-radius:2px;background:var(--border)}
+  .modal-overlay:not(.drawer) .modal-close{top:12px;right:12px}
+  /* a task opened from a list fills the screen, as a page would in an app */
+  .task-panel.tp2.tp2-drawer{width:100%;max-width:none;margin:0;border:0;border-radius:0;padding-top:env(safe-area-inset-top)}
+
+  /* chat: the list sits above the tab bar; an open conversation takes the whole
+     screen with its own header and back button, like a messaging app */
+  .chat{height:calc(100dvh - var(--m-top) - var(--m-tab))!important}
+  .app:has(.chat.has-conv) .topbar,.app:has(.chat.has-conv) .tabbar{display:none}
+  .chat.has-conv{height:100dvh!important;padding-top:env(safe-area-inset-top);padding-bottom:env(safe-area-inset-bottom);box-sizing:border-box}
+
+  /* rows of tabs that don't fit swipe sideways instead of widening the page */
+  .seg{max-width:100%;overflow-x:auto;scrollbar-width:none;-webkit-overflow-scrolling:touch}
+  .seg::-webkit-scrollbar{display:none}
+  .seg>button{flex:none;white-space:nowrap}
+}
+@keyframes m-sheet{from{transform:translateY(100%)}to{transform:none}}
+
+/* touch screens: no hover lifts, and text fields large enough that iOS
+   doesn't zoom the page when you start typing */
+@media (hover:none){
+  .an-topcard:hover,.an-pod:hover,.mt-person:hover{transform:none}
+}
+@media (pointer:coarse){
+  input:not([type="checkbox"]):not([type="radio"]):not([type="range"]):not([type="color"]),select,textarea{font-size:16px!important}
+}
+@media (prefers-reduced-motion:reduce){
+  .modal-overlay:not(.drawer)>.modal-card{animation:none}
+  .tab-ic{transition:none}
+}

@@ -1,0 +1,14 @@
+{
+  "name": "Pulse — Content Analytics",
+  "short_name": "Pulse",
+  "description": "Tasks, team chat and content analytics for DF Foods Marketing.",
+  "start_url": "/home",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#0a0713",
+  "theme_color": "#0a0713",
+  "icons": [
+    { "src": "/app-icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any" }
+  ]
+}
