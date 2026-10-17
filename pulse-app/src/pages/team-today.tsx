@@ -162,7 +162,7 @@ export function TeamToday({ tasks, editors, onOpenTask, focusId }: {
       {tasks === null || editors === null ? (
         <div className="mt-card mt-empty">Loading…</div>
       ) : people.length === 0 ? (
-        <div className="mt-card mt-empty">No team members yet. <Link to="/teams">Add people in Settings</Link>.</div>
+        <div className="mt-card mt-empty">No team members yet. <Link to="/my-team?tab=roster">Add people on the Roster</Link>.</div>
       ) : (
         <>
           {shown.length === 0 ? <div className="mt-card mt-empty">Nobody is {TONE_LABEL[filter as Tone].toLowerCase()} right now.</div> : (
@@ -198,7 +198,7 @@ export function TeamToday({ tasks, editors, onOpenTask, focusId }: {
                   <span><b>{hm(sel.loggedSec)}</b><span>Time logged</span></span>
                   <span><b>{Math.round(sel.breakUsedSec / 60)} / 75m</b><span>Break used</span></span>
                 </div>
-                <button type="button" className="mt-goalcard" onClick={() => navigate(goal ? `/goals-board?editor=${sel.editor.id}` : "/goals")}>
+                <button type="button" className="mt-goalcard" onClick={() => navigate(goal ? `/goals-board?editor=${sel.editor.id}` : "/goals-board?tab=set")}>
                   <span className="mt-goalrow">
                     <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M5 21V4" /><path d="M5 4h11l-2 4 2 4H5" /></svg>
                     <span>Goal · {periodLabel(month, per)}</span><span className="mt-grow" />
@@ -206,7 +206,7 @@ export function TeamToday({ tasks, editors, onOpenTask, focusId }: {
                   </span>
                   <span className="mt-goalbar"><span className={goalTone} style={{ width: `${goal ? Math.min(100, goal.x * 100) : 0}%` }} /></span>
                   <span className="mt-goalsub">
-                    {goal ? `${goal.done} of ${goal.target} jobs · ${goal.missed ? `${goal.missed} goal${goal.missed === 1 ? "" : "s"} to review` : "all goals met"} · open in Goals` : `Set ${monthName(month, "short")} goals in Goal Setting`}
+                    {goal ? `${goal.done} of ${goal.target} jobs · ${goal.missed ? `${goal.missed} goal${goal.missed === 1 ? "" : "s"} to review` : "all goals met"} · open in Goals` : `Set ${monthName(month, "short")} goals in Set goals`}
                     <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M5 12h14M13 6l6 6-6 6" /></svg>
                   </span>
                 </button>

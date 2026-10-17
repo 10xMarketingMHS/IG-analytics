@@ -23,6 +23,7 @@ import { useTheme, ACCENTS } from "@/components/theme-provider";
 import { ChatProvider, useChat } from "@/lib/chat";
 import { navIcon, SIGN_OUT_ICON, RAIL_ICON, COMPOSE_ICON, SEARCH_ICON, PLUS_ICON, BREAK_ICON, GEAR_ICON, MORE_ICON } from "@/components/nav-icons";
 import { JumpPalette, type JumpItem } from "@/components/jump-palette";
+import { channelTile, initialsOf } from "@/lib/editor-visuals";
 import "./sidebar.css";
 import "./mobile.css";
 import "./sheet.css";
@@ -42,13 +43,6 @@ const RAIL_KEY = "pulse-sidebar-rail";
 // page titles keep them in full).
 const TAB_SHORT: Record<string, string> = { "/chat": "Chat", "/tasks": "Tasks" };
 const PLATFORM_DOT: Record<string, string> = { instagram: "#e1306c", facebook: "#1877f2", youtube: "#ff0033" };
-const CHANNEL_TILES = ["#7c3aed", "#16a34a", "#2563eb", "#d97706", "#db2777", "#0891b2"];
-function channelTile(id: string) {
-  let h = 0;
-  for (const c of id) h = (h * 31 + c.charCodeAt(0)) >>> 0;
-  return CHANNEL_TILES[h % CHANNEL_TILES.length];
-}
-const initialsOf = (name: string) => name.split(/\s+/).map((w) => w[0]).join("").slice(0, 2).toUpperCase();
 
 // Break time used today, for anyone whose breaks are tracked (an employee
 // who's clocked in, or anyone on a break right now) — the same people the
@@ -61,7 +55,7 @@ function SidebarBreak() {
   if (!status) return null;
   if (status.unlinked) {
     return (
-      <div className="sb2-break off" title="Breaks are tracked for logins linked to a team member (Settings › Team).">
+      <div className="sb2-break off" title="Breaks are tracked for logins linked to a team member (Team › Roster).">
         {BREAK_ICON}
         <span className="sb2-label">Break</span>
         <span className="sb2-break-off sb2-label">Not tracked</span>

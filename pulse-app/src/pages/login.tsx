@@ -13,7 +13,7 @@ export function LoginPage() {
   const [error, setError] = useState<string | null>(null);
   const [pending, setPending] = useState(false);
   // "Forgot password?" — Pulse can't email anyone, so this asks the admin to set
-  // a temporary password (they see the request in Activity and Settings → Team).
+  // a temporary password (they see the request in Activity and Team › Roster).
   const [forgot, setForgot] = useState(false);
   const [forgotSent, setForgotSent] = useState(false);
 

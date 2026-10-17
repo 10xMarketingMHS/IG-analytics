@@ -1,33 +1,46 @@
-import { Fragment, useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
+import { Link } from "react-router-dom";
 import { toast } from "sonner";
 import { api, ApiError } from "@/lib/api";
 import type { PermissionKey } from "@/lib/workspaces-context";
 import { useEditors } from "@/lib/use-editors";
 import { useTasks } from "@/lib/use-tasks";
+import { gradFor } from "@/lib/editor-visuals";
 import type { ReviewScope } from "@/lib/use-review-access";
+import { SI, Seg } from "@/pages/settings-ui";
 
-// Settings → Access — admin-only. Grant SPECIFIC named permissions to a
-// SPECIFIC user, additive on top of their role. Same "pick someone, tick what
-// they get, Save" shape as Set Goals — an occasional action, not a bulk table.
-// Grants are meaningless for admins, so admin users are left out of the picker.
+// Settings › Access (Pulse Redesign v5) — admin or the access_manage grant.
+// Pick a person, tick the extra permissions they get on top of their role,
+// Save. Grants are meaningless for admins, so admins are left out of the
+// picker. Resolve reviews can be narrowed to some people, and for each of them
+// to all their tasks or a hand-picked few.
 
 type UserRow = { id: string; email: string; name: string | null; active: boolean; editor_id: string | null; role: "admin" | "editor" | "viewer" };
 
+const ROLE_LABEL: Record<UserRow["role"], string> = { admin: "Admin", editor: "Editor", viewer: "Viewer" };
+
 // Two groups: self-scoped grants (only ever act on the grantee's own data) and
 // admin-capability grants (act as admin for one feature — cross-user/org power).
-const PERMISSIONS: { key: PermissionKey; label: string; desc: string; scope: "self" | "admin" }[] = [
-  { key: "create_post", label: "Create posts", scope: "self", desc: "Add posts via Add Post. Any editing task it creates is always assigned to them — never to anyone else." },
-  { key: "goal_setting_access", label: "View Goal Setting", scope: "self", desc: "Read-only access to their OWN Set Goals & Performance. Cannot edit targets or award discipline." },
-  { key: "task_settings", label: "Task Settings", scope: "admin", desc: "Manage content formats, points per format, and time budgets — org-wide, affects everyone's scoring." },
-  { key: "channels", label: "Channels & Integrations", scope: "admin", desc: "Add/rename/delete channels and connect Instagram, Facebook & YouTube." },
-  { key: "content_taxonomy", label: "Content Taxonomy", scope: "admin", desc: "Edit the shared pillars, avatars, content types and formats." },
-  { key: "access_manage", label: "Manage Access", scope: "admin", desc: "Grant or revoke permissions for other users. ⚠️ Lets them extend their own access too." },
-  { key: "assign_tasks", label: "Assign tasks", scope: "admin", desc: "Assign tasks to other editors (not just themselves) when creating a task." },
-  { key: "resolve_tasks", label: "Resolve reviews", scope: "admin", desc: "Approve or send back tasks sitting in Review — for everyone, or only the people and tasks you choose below." },
-  { key: "hold_tasks", label: "Hold any task", scope: "admin", desc: "Put on hold / resume anyone's task, not only their own." },
-  { key: "edit_goals", label: "Edit Goals", scope: "admin", desc: "Set and edit any editor's goals and capacity." },
-  { key: "discipline", label: "Discipline", scope: "admin", desc: "Award discipline ratings for any editor (the whole-team Discipline table)." },
+const GROUPS: { scope: "self" | "admin"; l: string; d: string }[] = [
+  { scope: "self", l: "Self-scoped", d: "Acts only on their own work" },
+  { scope: "admin", l: "Admin capabilities", d: "Power over other people's work and org settings" },
 ];
+const PERMISSIONS: { key: PermissionKey; label: string; desc: string; scope: "self" | "admin"; warn?: boolean }[] = [
+  { key: "create_post", label: "Create posts", scope: "self", desc: "Add posts; any editing task it creates is assigned to them, never to anyone else" },
+  { key: "goal_setting_access", label: "View own goals", scope: "self", desc: "Read-only Set goals for themselves; can't change targets or give discipline" },
+  { key: "task_settings", label: "Task settings", scope: "admin", desc: "Task types, points and time budgets — affects everyone's scoring" },
+  { key: "channels", label: "Channels & integrations", scope: "admin", desc: "Add, rename and delete channels; connect Instagram, Facebook and YouTube" },
+  { key: "content_taxonomy", label: "Content taxonomy", scope: "admin", desc: "Pillars, avatars, content types and formats" },
+  { key: "access_manage", label: "Manage access", scope: "admin", desc: "Grant or revoke permissions for other people", warn: true },
+  { key: "assign_tasks", label: "Assign tasks", scope: "admin", desc: "Assign tasks to other editors, not only themselves" },
+  { key: "resolve_tasks", label: "Resolve reviews", scope: "admin", desc: "Approve or send back work waiting in review" },
+  { key: "hold_tasks", label: "Hold any task", scope: "admin", desc: "Pause or resume anyone's task, not only their own" },
+  { key: "edit_goals", label: "Edit goals", scope: "admin", desc: "Set any editor's goals and capacity" },
+  { key: "discipline", label: "Discipline", scope: "admin", desc: "Give discipline ratings for the whole team" },
+];
+
+const initials = (n: string) => n.split(/\s+/).filter(Boolean).map((w) => w[0]).join("").slice(0, 2).toUpperCase();
+const sameJson = (a: unknown, b: unknown) => JSON.stringify(a) === JSON.stringify(b);
 
 export function AccessSection() {
   const [users, setUsers] = useState<UserRow[] | null>(null);
@@ -35,31 +48,36 @@ export function AccessSection() {
   const [checked, setChecked] = useState<Record<string, boolean>>({});
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
-  // Resolve reviews scope: everyone, or only the ticked people — and for each
-  // of them either all their tasks or a hand-picked few.
   const [reviewAll, setReviewAll] = useState(true);
   const [reviewWho, setReviewWho] = useState<Record<string, { all: boolean; taskIds: string[] }>>({});
+  // What's saved, to tell when there's something to save.
+  const [saved, setSaved] = useState<{ checked: Record<string, boolean>; reviewAll: boolean; reviewWho: Record<string, { all: boolean; taskIds: string[] }> } | null>(null);
   const { editors } = useEditors();
   const { tasks } = useTasks();
 
   useEffect(() => {
     api<{ users: UserRow[] }>("/users")
-      .then((d) => setUsers(d.users.filter((u) => u.role !== "admin")))
-      .catch((e) => toast.error(e instanceof ApiError ? e.message : "Couldn't load users."));
+      .then((d) => {
+        const list = d.users.filter((u) => u.role !== "admin" && u.active);
+        setUsers(list);
+        setUserId((cur) => cur || list[0]?.id || "");
+      })
+      .catch((e) => toast.error(e instanceof ApiError ? e.message : "Couldn't load people."));
   }, []);
 
-  // Load the selected user's current active grants into the checklist.
+  // Load the picked person's current grants.
   useEffect(() => {
-    if (!userId) { setChecked({}); return; }
+    if (!userId) { setChecked({}); setSaved(null); return; }
     setLoading(true);
     api<{ permissions: PermissionKey[]; reviewScope: ReviewScope }>(`/access/grants?userId=${userId}`)
       .then((d) => {
-        setChecked(Object.fromEntries(PERMISSIONS.map((p) => [p.key, d.permissions.includes(p.key)])));
-        setReviewAll(!d.reviewScope);
-        setReviewWho(Object.fromEntries((d.reviewScope?.editors ?? []).map((e) =>
-          [e.editorId, { all: e.taskIds == null, taskIds: e.taskIds ?? [] }])));
+        const c = Object.fromEntries(PERMISSIONS.map((p) => [p.key, d.permissions.includes(p.key)]));
+        const all = !d.reviewScope;
+        const who = Object.fromEntries((d.reviewScope?.editors ?? []).map((e) => [e.editorId, { all: e.taskIds == null, taskIds: e.taskIds ?? [] }]));
+        setChecked(c); setReviewAll(all); setReviewWho(who);
+        setSaved({ checked: c, reviewAll: all, reviewWho: who });
       })
-      .catch((e) => toast.error(e instanceof ApiError ? e.message : "Couldn't load access."))
+      .catch((e) => toast.error(e instanceof ApiError ? e.message : "Couldn't load their access."))
       .finally(() => setLoading(false));
   }, [userId]);
 
@@ -71,7 +89,8 @@ export function AccessSection() {
         editors: Object.entries(reviewWho).map(([editorId, w]) => ({ editorId, taskIds: w.all ? null : w.taskIds })),
       };
       await api("/access/grants", { method: "PUT", body: JSON.stringify({ userId, permissions, reviewScope }) });
-      toast.success("Access updated.");
+      setSaved({ checked, reviewAll, reviewWho });
+      toast.success("Access saved.");
     } catch (e) {
       toast.error(e instanceof ApiError ? e.message : "Couldn't save access.");
     } finally {
@@ -79,137 +98,129 @@ export function AccessSection() {
     }
   }
 
-  const activeUsers = (users ?? []).filter((u) => u.active);
-  // People whose work can be handed to this reviewer — everyone on the team
-  // except the reviewer themselves (nobody reviews their own tasks).
-  const selfEditorId = users?.find((u) => u.id === userId)?.editor_id ?? null;
-  const reviewable = (editors ?? []).filter((e) => e.active && e.id !== selfEditorId);
-  const openTasksOf = (editorId: string) =>
-    (tasks ?? []).filter((t) => t.editor_id === editorId && t.status !== "done");
+  const person = users?.find((u) => u.id === userId) ?? null;
+  const editorOf = (u: UserRow | null) => (u?.editor_id ? (editors ?? []).find((e) => e.id === u.editor_id) ?? null : null);
+  const ed = editorOf(person);
+  const nameOf = (u: UserRow) => u.name || ed?.name || u.email.split("@")[0];
+  // Whose work this reviewer can be handed — everyone active except themselves.
+  const reviewable = useMemo(() => (editors ?? []).filter((e) => e.active && e.id !== person?.editor_id), [editors, person?.editor_id]);
+  const openTasksOf = (editorId: string) => (tasks ?? []).filter((t) => t.editor_id === editorId && t.status !== "done");
+  const extra = Object.values(saved?.checked ?? {}).filter(Boolean).length;
+  const dirty = !!saved && !(sameJson(saved.checked, checked) && saved.reviewAll === reviewAll && sameJson(saved.reviewWho, reviewWho));
 
   return (
     <>
-      <div className="sectitle">
-        <span className="dot" />Access
-        <span className="s">grant specific permissions to a user — additive on top of their role</span>
-      </div>
+      <section className="st-card">
+        {users === null ? (
+          <div className="st-empty">Loading…</div>
+        ) : users.length === 0 ? (
+          <div className="st-empty">Nobody to give permissions to yet — everyone with a login is an admin.</div>
+        ) : (
+          <div className="st-who">
+            {ed?.image_url
+              ? <img className="st-ava" src={ed.image_url} alt="" />
+              : <span className="st-ava" style={{ background: gradFor(person ? nameOf(person) : "?") }}>{person ? initials(nameOf(person)) : "?"}</span>}
+            <select className="st-in" value={userId} onChange={(e) => setUserId(e.target.value)} aria-label="Person">
+              {users.map((u) => <option key={u.id} value={u.id}>{u.name || u.email} · {ROLE_LABEL[u.role]}</option>)}
+            </select>
+            {person && <span className="st-chip">{ROLE_LABEL[person.role]}</span>}
+            <span className="st-note">{extra ? `${extra} extra permission${extra === 1 ? "" : "s"} on top of ${person ? ROLE_LABEL[person.role] : "their role"}` : "No extra permissions"}</span>
+            <Link to="/my-team?tab=roster" className="st-link">Change role{SI.arrow}</Link>
+          </div>
+        )}
+      </section>
 
-      <div className="card pad" style={{ display: "flex", gap: 12, alignItems: "center", flexWrap: "wrap" }}>
-        <label className="f" style={{ margin: 0 }}>User{" "}
-          <select className="t" style={{ maxWidth: 240, display: "inline-block" }} value={userId} onChange={(e) => setUserId(e.target.value)}>
-            <option value="">Select a user…</option>
-            {activeUsers.map((u) => (
-              <option key={u.id} value={u.id}>{u.name || u.email} · {u.role}</option>
-            ))}
-          </select>
-        </label>
-      </div>
-
-      {!userId ? (
-        <div className="card pad"><div className="hint">Pick a user to grant or revoke their permissions.</div></div>
-      ) : loading ? (
-        <div className="card pad"><div className="hint">Loading…</div></div>
-      ) : (
-        <div className="card pad">
-          {(["self", "admin"] as const).map((scope) => (
-            <div key={scope} style={{ marginBottom: 18 }}>
-              <div className="f" style={{ marginBottom: 10 }}>
-                {scope === "self" ? "Self-scoped — acts only on the user's own data" : "Admin capabilities — power over other users' data & org settings"}
-              </div>
-              <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
-                {PERMISSIONS.filter((p) => p.scope === scope).map((p) => (
-                  <Fragment key={p.key}>
-                  <label style={{ display: "flex", gap: 12, alignItems: "flex-start", cursor: "pointer" }}>
-                    <input
-                      type="checkbox"
-                      checked={!!checked[p.key]}
-                      onChange={(e) => setChecked((c) => ({ ...c, [p.key]: e.target.checked }))}
-                      style={{ marginTop: 3, width: 18, height: 18, flex: "none" }}
-                    />
-                    <span>
-                      <span style={{ fontWeight: 700, fontSize: 14 }}>{p.label}</span>
-                      <span style={{ display: "block", fontSize: 12.5, color: "var(--muted)", marginTop: 2 }}>{p.desc}</span>
-                    </span>
-                  </label>
-                  {p.key === "resolve_tasks" && checked.resolve_tasks && (
-                    <div className="rv-scope">
-                      <label className="rv-opt">
-                        <input type="radio" name="rv-mode" checked={reviewAll} onChange={() => setReviewAll(true)} />
-                        <span><b>Everyone</b> — can review every task</span>
-                      </label>
-                      <label className="rv-opt">
-                        <input type="radio" name="rv-mode" checked={!reviewAll} onChange={() => setReviewAll(false)} />
-                        <span><b>Only these people</b> — tick whose work they can review</span>
-                      </label>
-                      {!reviewAll && (
-                        <div className="rv-people">
-                          {reviewable.length === 0 && <div className="hint">No other team members yet.</div>}
+      {userId && (loading ? (
+        <section className="st-card"><div className="st-empty">Loading…</div></section>
+      ) : GROUPS.map((g) => (
+        <section className="st-card" key={g.scope}>
+          <div className="st-cardhead"><b>{g.l}</b><span>{g.d}</span></div>
+          {PERMISSIONS.filter((p) => p.scope === g.scope).map((p) => (
+            <div className="st-perm" key={p.key}>
+              <label>
+                <input type="checkbox" checked={!!checked[p.key]} onChange={(e) => setChecked((c) => ({ ...c, [p.key]: e.target.checked }))} />
+                <span className="st-box" aria-hidden="true">{SI.check}</span>
+                <span><b>{p.label}</b><small>{p.desc}</small></span>
+                {p.warn && <span className="st-chip warn">{SI.warning}Can widen own access</span>}
+              </label>
+              {p.key === "resolve_tasks" && checked.resolve_tasks && (
+                <div className="st-scope">
+                  <div className="st-scopeline">
+                    Whose reviews
+                    <Seg label="Whose reviews" value={reviewAll ? "all" : "some"} options={[["all", "Everyone"], ["some", "Selected people"]]}
+                      onChange={(v) => setReviewAll(v === "all")} />
+                  </div>
+                  {!reviewAll && (
+                    reviewable.length === 0 ? <span className="st-note">No other team members yet.</span> : (
+                      <>
+                        <div className="st-people">
                           {reviewable.map((e) => {
-                            const w = reviewWho[e.id];
-                            const open = openTasksOf(e.id);
+                            const on = !!reviewWho[e.id];
                             return (
-                              <div key={e.id} className="rv-person">
-                                <label className="rv-opt">
-                                  <input
-                                    type="checkbox"
-                                    checked={!!w}
-                                    onChange={(ev) => setReviewWho((s) => {
-                                      const next = { ...s };
-                                      if (ev.target.checked) next[e.id] = { all: true, taskIds: [] };
-                                      else delete next[e.id];
-                                      return next;
-                                    })}
-                                  />
-                                  <span><b>{e.name}</b></span>
-                                </label>
-                                {w && (
-                                  <select
-                                    className="t rv-which"
-                                    aria-label={`Which of ${e.name}'s tasks`}
-                                    value={w.all ? "all" : "some"}
-                                    onChange={(ev) => setReviewWho((s) => ({ ...s, [e.id]: { ...w, all: ev.target.value === "all" } }))}
-                                  >
-                                    <option value="all">All tasks</option>
-                                    <option value="some">Selected tasks</option>
-                                  </select>
-                                )}
-                                {w && !w.all && (
-                                  <div className="rv-tasks">
-                                    {open.length === 0 && <div className="hint">{e.name} has no open tasks right now.</div>}
-                                    {open.map((t) => (
-                                      <label key={t.id} className="rv-opt">
-                                        <input
-                                          type="checkbox"
-                                          checked={w.taskIds.includes(t.id)}
-                                          onChange={(ev) => setReviewWho((s) => ({
-                                            ...s,
-                                            [e.id]: {
-                                              ...w,
-                                              taskIds: ev.target.checked ? [...w.taskIds, t.id] : w.taskIds.filter((id) => id !== t.id),
-                                            },
-                                          }))}
-                                        />
-                                        <span>{t.tid ? `${t.tid} · ` : ""}{t.title}</span>
-                                      </label>
-                                    ))}
-                                  </div>
-                                )}
-                              </div>
+                              <button key={e.id} type="button" className={"st-pill" + (on ? " on" : "")} aria-pressed={on}
+                                onClick={() => setReviewWho((s) => {
+                                  const next = { ...s };
+                                  if (on) delete next[e.id]; else next[e.id] = { all: true, taskIds: [] };
+                                  return next;
+                                })}>
+                                {e.image_url
+                                  ? <img className="st-ava sm" src={e.image_url} alt="" />
+                                  : <span className="st-ava sm" style={{ background: gradFor(e.name) }}>{initials(e.name)}</span>}
+                                {e.name.split(" ")[0]}
+                              </button>
                             );
                           })}
                         </div>
-                      )}
-                    </div>
+                        {Object.keys(reviewWho).length > 0 && (
+                          <div className="st-picks">
+                            {reviewable.filter((e) => reviewWho[e.id]).map((e) => {
+                              const w = reviewWho[e.id];
+                              const open = openTasksOf(e.id);
+                              return (
+                                <div className="st-pickrow" key={e.id}>
+                                  <b>{e.name}</b>
+                                  <select className="st-in" aria-label={`Which of ${e.name}'s tasks`} value={w.all ? "all" : "some"}
+                                    onChange={(ev) => setReviewWho((s) => ({ ...s, [e.id]: { ...w, all: ev.target.value === "all" } }))}>
+                                    <option value="all">All their tasks</option>
+                                    <option value="some">Only some tasks</option>
+                                  </select>
+                                  {!w.all && (
+                                    <div className="st-tasks">
+                                      {open.length === 0 && <span className="st-note">{e.name} has no open tasks right now.</span>}
+                                      {open.map((t) => (
+                                        <label key={t.id}>
+                                          <input type="checkbox" checked={w.taskIds.includes(t.id)}
+                                            onChange={(ev) => setReviewWho((s) => ({
+                                              ...s,
+                                              [e.id]: { ...w, taskIds: ev.target.checked ? [...w.taskIds, t.id] : w.taskIds.filter((id) => id !== t.id) },
+                                            }))} />
+                                          <span>{t.tid ? `${t.tid} · ` : ""}{t.title}</span>
+                                        </label>
+                                      ))}
+                                    </div>
+                                  )}
+                                </div>
+                              );
+                            })}
+                          </div>
+                        )}
+                      </>
+                    )
                   )}
-                  </Fragment>
-                ))}
-              </div>
+                </div>
+              )}
             </div>
           ))}
-          <div>
-            <button className="btn btn-primary" disabled={saving} onClick={save}>{saving ? "Saving…" : "Save access"}</button>
+        </section>
+      )))}
+
+      {userId && !loading && (
+        <section className="st-card">
+          <div className="st-foot" style={{ borderTop: 0 }}>
+            <span className="st-note">Permissions add to the person's role — they never take anything away.</span>
+            <button type="button" className="st-btn grad" disabled={!dirty || saving} onClick={save}>{SI.check}{saving ? "Saving…" : dirty ? "Save access" : "Saved"}</button>
           </div>
-        </div>
+        </section>
       )}
     </>
   );

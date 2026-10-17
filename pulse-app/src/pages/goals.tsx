@@ -15,14 +15,16 @@ import {
 } from "@/lib/goal-periods";
 import type { Editor } from "@/lib/types";
 import { OrgGoals } from "@/pages/goals-org";
+import { SetGoals } from "@/pages/goals-set";
 import "./goals.css";
 
 // Goals (Pulse Redesign v5): Team goals — each person's monthly goals by
-// content type (set in Settings › Goal Setting) against what they finished,
-// for a review period or the month; Org goals — the admin-entered goals; and
-// Discipline — the five ratings that make up 20% of each person's score.
+// content type against what they finished, for a review period or the month;
+// Org goals — the admin-entered goals; Set goals — each person's job counts for
+// the month, checked against their hours; and Discipline — the five ratings
+// that make up 20% of each person's score.
 
-type Tab = "team" | "org" | "disc";
+type Tab = "team" | "org" | "set" | "disc";
 const sv = (d: ReactNode, size = 16) => (
   <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">{d}</svg>
 );
@@ -30,6 +32,7 @@ const IC = {
   team: sv(<><circle cx="9" cy="8" r="3.5" /><path d="M2.5 20a6.5 6.5 0 0 1 13 0" /><path d="M16 4.6a3.5 3.5 0 0 1 0 6.8M18 14.6a6.5 6.5 0 0 1 3.5 5.4" /></>),
   flag: sv(<><path d="M5 21V4" /><path d="M5 4h11l-2 4 2 4H5" /></>),
   verified: sv(<><path d="M12 3 4 6v6c0 4.5 3.4 8.3 8 9 4.6-.7 8-4.5 8-9V6z" /><path d="m9 12 2 2 4-4" /></>),
+  tune: sv(<><path d="M4 7h10M18 7h2M4 17h4M12 17h8" /><circle cx="16" cy="7" r="2" /><circle cx="10" cy="17" r="2" /></>),
   download: sv(<><path d="M12 3v12" /><path d="m7 10 5 5 5-5" /><path d="M5 21h14" /></>, 15),
   group: sv(<><circle cx="9" cy="8" r="3.5" /><path d="M2.5 20a6.5 6.5 0 0 1 13 0" /></>, 14),
   edit: sv(<><path d="M12 20h9" /><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z" /></>, 14),
@@ -51,8 +54,9 @@ export function GoalsPage() {
   const { isAdmin, hasPermission } = useWorkspaces();
   const [params, setParams] = useSearchParams();
   const canDisc = isAdmin || hasPermission("discipline");
+  const canSet = hasPermission("edit_goals") || hasPermission("goal_setting_access");
   const raw = params.get("tab");
-  const tab: Tab = raw === "org" ? "org" : raw === "disc" && canDisc ? "disc" : "team";
+  const tab: Tab = raw === "org" ? "org" : raw === "set" && canSet ? "set" : raw === "disc" && canDisc ? "disc" : "team";
   const setTab = (t: Tab) => setParams(t === "team" ? {} : { tab: t }, { replace: true });
   const thisMonth = ymd(new Date()).slice(0, 7);
   const [month, setMonth] = useState(thisMonth);
@@ -62,6 +66,7 @@ export function GoalsPage() {
   const TABS: { k: Tab; l: string; icon: ReactNode; admin?: boolean; show: boolean }[] = [
     { k: "team", l: "Team goals", icon: IC.team, show: true },
     { k: "org", l: "Org goals", icon: IC.flag, show: isAdmin },
+    { k: "set", l: "Set goals", icon: IC.tune, admin: true, show: canSet },
     { k: "disc", l: "Discipline", icon: IC.verified, admin: true, show: canDisc },
   ];
   return (
@@ -73,7 +78,7 @@ export function GoalsPage() {
           </button>
         ))}
         <span className="gl-grow" />
-        {tab !== "org" && (
+        {tab !== "org" && tab !== "set" && (
           <select className="gl-select gl-month" value={month} onChange={(e) => setMonth(e.target.value)} aria-label="Month">
             {months.map((m) => <option key={m} value={m}>{monthName(m)}</option>)}
           </select>
@@ -81,6 +86,7 @@ export function GoalsPage() {
       </div>
       {tab === "team" && <TeamGoals month={month} isCurrent={month === thisMonth} focusId={params.get("editor")} />}
       {tab === "org" && <OrgGoals />}
+      {tab === "set" && <SetGoals />}
       {tab === "disc" && <Discipline month={month} />}
     </section>
   );
@@ -183,7 +189,7 @@ function TeamGoals({ month, isCurrent, focusId }: { month: string; isCurrent: bo
         </div>
         <span className="gl-hint">Counts come from approved tasks, by content type</span>
         <span className="gl-grow" />
-        <Link to="/goals" className="gl-btn">{IC.edit}Set goals</Link>
+        <Link to="/goals-board?tab=set" className="gl-btn">{IC.edit}Set goals</Link>
         {isAdmin && (
           <button type="button" className="gl-btn pri" onClick={onExport} disabled={exporting} title={`Download ${monthName(month)}'s goals and performance as an Excel file`}>
             {IC.download}{exporting ? "Preparing…" : "Excel report"}
@@ -194,7 +200,7 @@ function TeamGoals({ month, isCurrent, focusId }: { month: string; isCurrent: bo
       {perf === null ? (
         <div className="gl-card gl-empty">Loading goals…</div>
       ) : people.length === 0 ? (
-        <div className="gl-card gl-empty">No goals set for {per === "m" ? monthName(month) : label} yet. <Link to="/goals">Set them in Goal Setting</Link>.</div>
+        <div className="gl-card gl-empty">No goals set for {per === "m" ? monthName(month) : label} yet. <Link to="/goals-board?tab=set">Set them in Set goals</Link>.</div>
       ) : (
         <>
           <div className="gl-kpis">
@@ -224,7 +230,7 @@ function TeamGoals({ month, isCurrent, focusId }: { month: string; isCurrent: bo
                   );
                 })}
                 {noGoals.length > 0 && (
-                  <p className="gl-nogoal">{noGoals.length === 1 ? `${noGoals[0].name} has` : `${noGoals.length} people have`} no goals for {monthName(month, "short")}. <Link to="/goals">Set them</Link>.</p>
+                  <p className="gl-nogoal">{noGoals.length === 1 ? `${noGoals[0].name} has` : `${noGoals.length} people have`} no goals for {monthName(month, "short")}. <Link to="/goals-board?tab=set">Set them</Link>.</p>
                 )}
               </section>
 

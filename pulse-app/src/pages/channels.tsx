@@ -1,26 +1,19 @@
-import { Fragment, useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import { useWorkspaces } from "@/lib/workspaces-context";
 import { useResource } from "@/lib/use-resource";
 import { api, ApiError, API_BASE } from "@/lib/api";
 import { toast } from "sonner";
 import { Modal } from "@/components/modal";
-import { MultiSelect, type Opt } from "@/components/multi-select";
 import { compactNum } from "@/lib/date-range";
+import { channelTile, initialsOf } from "@/lib/editor-visuals";
 import type { Platform, Account, PlatformConnection, IntegrationStatus } from "@/lib/types";
+import { SI, Toggle } from "@/pages/settings-ui";
 
-// Channel-status filters (scale: narrow a long list to what needs action).
-const STATUS_FILTERS: Opt[] = [
-  { value: "ig_connected", label: "Instagram connected" },
-  { value: "ig_unlinked", label: "Instagram not connected" },
-  { value: "yt_live", label: "YouTube synced" },
-  { value: "empty", label: "No posts yet" },
-];
-
-const BRAND: Record<string, { bg: string; label: string; icon: string }> = {
-  instagram: { bg: "linear-gradient(135deg,#f9737d,#c13584,#833ab4)", label: "Instagram", icon: "📸" },
-  facebook: { bg: "#1877f2", label: "Facebook", icon: "👍" },
-  youtube: { bg: "#ff0000", label: "YouTube", icon: "▶️" },
+const BRAND: Record<string, { bg: string; label: string; ab: string }> = {
+  instagram: { bg: "linear-gradient(135deg,#f9737d,#c13584,#833ab4)", label: "Instagram", ab: "IG" },
+  facebook: { bg: "#1877f2", label: "Facebook", ab: "FB" },
+  youtube: { bg: "#ff0000", label: "YouTube", ab: "YT" },
 };
 
 const CALLBACK_ERRORS: Record<string, string> = {
@@ -45,8 +38,11 @@ function relTime(iso: string | null) {
   return `${Math.round(h / 24)}d ago`;
 }
 
-// Rendered as one tab inside the master Settings page (see settings.tsx) —
-// no outer <section className="screen"> here, that's Settings' job.
+// Settings › Channels (Pulse Redesign v5): one card per channel, a row per
+// platform — whether it's connected and syncing, or its numbers come from the
+// Posts page — with Sync / Connect on the row. Admins (or the channels grant)
+// rename, add and delete channels, and add or remove a platform. Rendered inside
+// the Settings page.
 export function ChannelsSection() {
   const { workspaces, active, isAdmin, hasPermission, refresh, switchTo } = useWorkspaces();
   // Admin, or a channels grantee — manage channels & connect integrations.
@@ -62,12 +58,10 @@ export function ChannelsSection() {
   const accounts = acctData?.accounts ?? [];
   const [newName, setNewName] = useState("");
   const [busy, setBusy] = useState(false);
-  // Table view: search, status filter, and which row is expanded for management.
+  // A search box once there are enough channels to need one.
   const [query, setQuery] = useState("");
-  const [statuses, setStatuses] = useState<Set<string>>(new Set());
-  const [expanded, setExpanded] = useState<string | null>(null);
   // Post counts per channel (surfaces "structure built ahead of content" empties).
-  const { data: postData } = useResource<{ posts: { channel_id?: string; is_collab_mirror?: boolean }[] }>("/posts?channel=all");
+  const { data: postData } = useResource<{ posts: { channel_id?: string; is_collab_mirror?: boolean; status?: string }[] }>("/posts?channel=all");
 
   // Integration state (connect/sync per Instagram account).
   const [syncing, setSyncing] = useState<string | null>(null);
@@ -103,58 +97,28 @@ export function ChannelsSection() {
     for (const a of accounts) (m[a.channel_id] ||= {})[a.platform_id] = a;
     return m;
   }, [accounts]);
-  // channelId -> the channel's Instagram account (the syncable one).
-  const igAccountByChannel = useMemo(() => {
-    const m = new Map<string, Account>();
-    for (const a of accounts) if (a.platform_key === "instagram") m.set(a.channel_id, a);
-    return m;
-  }, [accounts]);
-  // channelId -> the channel's Facebook account.
-  const fbAccountByChannel = useMemo(() => {
-    const m = new Map<string, Account>();
-    for (const a of accounts) if (a.platform_key === "facebook") m.set(a.channel_id, a);
-    return m;
-  }, [accounts]);
-  // channelId -> the channel's YouTube account.
-  const ytAccountByChannel = useMemo(() => {
-    const m = new Map<string, Account>();
-    for (const a of accounts) if (a.platform_key === "youtube") m.set(a.channel_id, a);
-    return m;
-  }, [accounts]);
   const connByAccount = useMemo(() => {
     const m = new Map<string, PlatformConnection>();
     for (const c of connData?.connections ?? []) m.set(c.account_id, c);
     return m;
   }, [connData]);
-  // channelId -> real (non-mirror) post count.
+  // channelId -> real (non-mirror) post count, and how many are published.
   const postCountByChannel = useMemo(() => {
-    const m = new Map<string, number>();
+    const m = new Map<string, { all: number; pub: number }>();
     for (const p of postData?.posts ?? []) {
       if (p.is_collab_mirror || !p.channel_id) continue;
-      m.set(p.channel_id, (m.get(p.channel_id) ?? 0) + 1);
+      const c = m.get(p.channel_id) ?? { all: 0, pub: 0 };
+      c.all++;
+      if (p.status === "published") c.pub++;
+      m.set(p.channel_id, c);
     }
     return m;
   }, [postData]);
 
-  // Search + status filter applied to the channel list (OR within the filter).
   const visibleChannels = useMemo(() => {
     const q = query.trim().toLowerCase();
-    return workspaces.filter((w) => {
-      if (q && !w.name.toLowerCase().includes(q)) return false;
-      if (statuses.size === 0) return true;
-      const igAcc = igAccountByChannel.get(w.id);
-      const conn = igAcc ? connByAccount.get(igAcc.id) : undefined;
-      const ytAcc = ytAccountByChannel.get(w.id);
-      const posts = postCountByChannel.get(w.id) ?? 0;
-      const flags: Record<string, boolean> = {
-        ig_connected: !!conn,
-        ig_unlinked: !!igAcc && !conn,
-        yt_live: !!(ytAcc && connByAccount.get(ytAcc.id)),
-        empty: posts === 0,
-      };
-      return [...statuses].some((s) => flags[s]);
-    });
-  }, [workspaces, query, statuses, igAccountByChannel, connByAccount, ytAccountByChannel, postCountByChannel]);
+    return q ? workspaces.filter((w) => w.name.toLowerCase().includes(q)) : workspaces;
+  }, [workspaces, query]);
 
   // Surface the OAuth callback result once (redirected here), then clean the URL.
   const connectedParam = params.get("connected");
@@ -393,70 +357,83 @@ export function ChannelsSection() {
     return null;
   }
 
-  // Compact per-platform status for a table cell.
-  function statusCell(acc: Account | undefined) {
-    if (!acc) return <span className="st dim">—</span>;
-    const conn = connByAccount.get(acc.id);
-    if (conn) {
-      if (conn.last_error_type === "permanent") return <span className="st off">⚠ Reconnect</span>;
-      return conn.last_synced_at
-        ? <span className="st ok">● Live · {relTime(conn.last_synced_at)}</span>
-        : <span className="st ok">● Connected</span>;
+  // One platform on one channel: its connection, when it last synced, and what
+  // to do next — or, when the channel isn't on that platform, a way to add it.
+  function platformRow(channelId: string, p: Platform) {
+    const acc = acctMap[channelId]?.[p.id];
+    const brand = BRAND[p.key];
+    const label = brand?.label ?? p.name;
+    const tile = <i style={{ background: brand?.bg ?? "#71717a" }}>{brand?.ab ?? p.name.slice(0, 2).toUpperCase()}</i>;
+    if (!acc) {
+      return (
+        <div className="st-row" key={p.id}>
+          <span className="st-plat off">{tile}<span><b>{label}</b><small>Not on this channel</small></span></span>
+          {canManage && <button type="button" className="st-btn sm" onClick={() => toggle(channelId, p)}>{SI.plus}Add {label}</button>}
+        </div>
+      );
     }
-    return <span className="st off">○ Connect</span>;
-  }
-
-  // The symmetric connection block (Connect/Disconnect · name · status · synced ·
-  // Sync) rendered identically for Instagram, Facebook, and YouTube.
-  function platformBlock(acc: Account | undefined, p: Prov) {
-    if (!acc) return null;
+    const prov = (p.key in PLAT_META ? p.key : null) as Prov | null;
     const conn = connByAccount.get(acc.id);
-    const meta = PLAT_META[p];
-    const ready = platReady(p);
+    const meta = prov ? PLAT_META[prov] : null;
+    const ready = prov ? platReady(prov) : false;
+    const health = conn ? connHealth(conn) : null;
+    const removeBtn = canManage && (acc.has_posts ? (
+      <button type="button" className="st-icobtn locked" disabled title={`${label} has posts on this channel — move or delete them before removing it`} aria-label={`${label} has posts`}>{SI.lock}</button>
+    ) : (
+      <button type="button" className="st-icobtn" onClick={() => toggle(channelId, p)} title={`Remove ${label} from this channel`} aria-label={`Remove ${label}`}>{SI.trash}</button>
+    ));
+    const name = conn?.external_name ?? acc.handle;
     return (
-      <div className="chan-int" key={p}>
-        <span className="chan-int-logo">{meta.icon}</span>
+      <div className="st-row" key={p.id}>
+        <span className="st-plat">
+          {tile}
+          <span>
+            <b>{label}{name ? <em> {name}</em> : null}</b>
+            <small>
+              {conn ? (
+                <>
+                  Synced {relTime(conn.last_synced_at)}
+                  {conn.follower_count != null && meta ? ` · ${compactNum(conn.follower_count)} ${meta.unit}` : ""}
+                  {health ? <span className={`sync-health ${health.cls}`}> · {health.label}</span> : null}
+                </>
+              ) : !prov ? "Numbers entered by the team on Posts"
+                : ready ? "Numbers entered by the team on Posts — connect to pull them live"
+                : prov === "youtube"
+                  ? (canManage ? "Add the org YouTube API key on Connect, then connect this channel" : "An admin must add the org YouTube API key first")
+                  : "Set the Meta app keys or token on the server first"}
+            </small>
+          </span>
+        </span>
         {conn ? (
           <>
-            <div className="chan-int-info">
-              <span className="int-badge ok">
-                ● {conn.external_name ?? meta.label}
-                {conn.follower_count != null ? ` · ${compactNum(conn.follower_count)} ${meta.unit}` : ""}
-              </span>
-              <span className="chan-int-sub">
-                Synced {relTime(conn.last_synced_at)}{conn.last_sync_status ? ` · ${conn.last_sync_status}` : ""}
-                {(() => { const h = connHealth(conn); return h ? <span className={`sync-health ${h.cls}`}> · {h.label}</span> : null; })()}
-              </span>
-            </div>
-            <div className="chan-int-act">
-              <button className="btn btn-primary btn-sm" disabled={syncing === acc.id} onClick={() => syncPlatform(acc.id, p)}>
-                {syncing === acc.id ? "Syncing…" : "🔄 Sync"}
-              </button>
-              {canManage && <button className="btn btn-sm" onClick={() => disconnect(conn.id, `${meta.label}${conn.external_name ? " " + conn.external_name : ""}`)}>Disconnect</button>}
-            </div>
+            <span className={"st-chip " + (health?.cls === "err" ? "bad" : health ? "warn" : "good")}>
+              {health?.cls === "err" ? "Needs reconnect" : autoSync?.enabled ? "Auto-sync" : "Connected"}
+            </span>
+            <button type="button" className="st-btn sm" disabled={syncing === acc.id} onClick={() => syncPlatform(acc.id, prov!)}>
+              {SI.sync}{syncing === acc.id ? "Syncing…" : "Sync now"}
+            </button>
+            {canManage && (
+              <button type="button" className="st-icobtn" onClick={() => disconnect(conn.id, `${label}${conn.external_name ? " " + conn.external_name : ""}`)}
+                title={`Disconnect ${label}`} aria-label={`Disconnect ${label}`}>{SI.unlink}</button>
+            )}
           </>
         ) : (
           <>
-            <div className="chan-int-info">
-              <span className="int-badge off">○ {meta.label} not connected</span>
-              <span className="chan-int-sub">
-                {ready
-                  ? "Connect to pull live metrics onto this channel's posts"
-                  : p === "youtube"
-                    ? (canManage ? "Add the org YouTube API key here, then connect this channel" : "An admin must add the org YouTube API key first")
-                    : "Set the Meta app keys / token on the server first"}
-              </span>
-            </div>
-            <button
-              className="btn btn-primary btn-sm"
-              /* YouTube's "not ready" is fixable in-app (enter the key), so admins
-                 can open it even before a key exists. IG/FB need server config. */
-              disabled={(p === "youtube" ? !canManage : (!ready || !canManage)) || connecting === acc.id}
-              title={!canManage ? "Admins only" : (p !== "youtube" && !ready) ? "Not configured on the server" : `Connect ${meta.label}`}
-              onClick={() => setConnectFor({ account: acc, platform: p })}
-            >
-              {connecting === acc.id ? "Connecting…" : "Connect"}
-            </button>
+            <span className="st-chip">Manual</span>
+            {prov && (
+              <button
+                type="button"
+                className="st-btn sm"
+                /* YouTube's "not ready" is fixable in-app (enter the key), so admins
+                   can open it even before a key exists. IG/FB need server config. */
+                disabled={(prov === "youtube" ? !canManage : (!ready || !canManage)) || connecting === acc.id}
+                title={!canManage ? "Admins only" : (prov !== "youtube" && !ready) ? "Not configured on the server" : `Connect ${label}`}
+                onClick={() => setConnectFor({ account: acc, platform: prov })}
+              >
+                {SI.link}{connecting === acc.id ? "Connecting…" : "Connect"}
+              </button>
+            )}
+            {removeBtn}
           </>
         )}
       </div>
@@ -465,188 +442,110 @@ export function ChannelsSection() {
 
   return (
     <>
-      <div className="hint" style={{ marginBottom: 16 }}>
-        🌐 Add brand channels, choose which platforms each is on, and connect Instagram or YouTube to pull live metrics — all in one place.
-        {!canManage && <span style={{ color: "var(--amber)", marginLeft: 6 }}>· Read-only (admins can edit).</span>}
-      </div>
-
-      {autoSync && (
-        <div className="autosync">
-          <span className="as-title">🔄 Auto-sync</span>
-          <button className={`btn btn-sm ${autoSync.enabled ? "btn-primary" : ""}`} disabled={!canManage || savingAutoSync}
-            onClick={() => saveAutoSync({ enabled: !autoSync.enabled })}>
-            {autoSync.enabled ? "On" : "Off"}
-          </button>
-          <span className="as-sub">refresh every</span>
-          <input className="t as-int" type="number" min={5} max={1440} disabled={!canManage || savingAutoSync}
-            key={autoSync.intervalMinutes} defaultValue={autoSync.intervalMinutes}
-            onBlur={(e) => { const v = Number(e.target.value); if (v >= 5 && v <= 1440 && v !== autoSync.intervalMinutes) saveAutoSync({ intervalMinutes: v }); }} />
-          <span className="as-sub">min</span>
-          <span className="as-spacer" />
-          <span className="as-sub">
-            {autoSync.enabled
-              ? "Live metrics refresh automatically while you're logged in (any page, when the tab is active)."
-              : "Off — pull metrics with the Sync button below."}
-            {!canManage && " · admins can change"}
-          </span>
-        </div>
-      )}
-
-      {/* YouTube key is org-wide (one key), so surface the gap ONCE here — not as
-          a chip on every row. It's now entered in-app by an admin, no env var. */}
-      {ytEnabledAnywhere && !ytStatus?.ready && (
-        <div className="card pad int-setup" style={{ marginBottom: 16 }}>
-          <div className="int-setup-ic">▶️</div>
-          <div>
-            <b>YouTube isn't set up yet.</b>
-            <div className="hint" style={{ margin: "4px 0 0" }}>
-              {canManage
-                ? "One-time, org-wide: click Connect on any channel's YouTube column and paste your YouTube Data API key. After that, connect any number of channels by URL — no server config."
-                : "An admin needs to add the org's YouTube API key once (from a channel's YouTube Connect), then channels can be connected."}
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* Instagram sync setup notice (only if there are IG accounts but it's not switched on) */}
-      {anyIg && !igReady && igStatus && (
-        <div className="card pad int-setup" style={{ marginBottom: 16 }}>
-          <div className="int-setup-ic">🔌</div>
-          <div>
-            <b>Instagram sync isn't switched on yet.</b>
-            <div className="hint" style={{ margin: "4px 0 0" }}>
-              Set <code>APP_ENCRYPTION_KEY</code> on the server to paste a token per account, and/or a shared
-              <code>META_SYSTEM_TOKEN</code> for one-click connect. Status: per-account tokens {igStatus.pasteToken ? "✅" : "❌"} ·
-              system token {igStatus.systemToken ? "✅" : "❌"}. Add the env var(s) in Render, then reload.
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* Toolbar: search + status filter + count + add channel */}
-      <div className="chan-toolbar">
-        <div className="search">
-          <span aria-hidden>🔎</span>
-          <input placeholder="Search channels…" value={query} onChange={(e) => setQuery(e.target.value)} />
-        </div>
-        <MultiSelect
-          label="Status"
-          options={STATUS_FILTERS}
-          selected={statuses}
-          onToggle={(v) => setStatuses((s) => { const n = new Set(s); if (n.has(v)) n.delete(v); else n.add(v); return n; })}
-        />
-        <span className="chan-total">{visibleChannels.length} channel{visibleChannels.length === 1 ? "" : "s"}</span>
-        {canManage && (
-          <div className="chan-add">
-            <input
-              className="t"
-              placeholder="New channel name…"
-              value={newName}
-              disabled={busy}
-              onChange={(e) => setNewName(e.target.value)}
-              onKeyDown={(e) => { if (e.key === "Enter" && !busy) addChannel(); }}
-            />
-            <button className="btn btn-primary" onClick={addChannel} disabled={busy || !newName.trim()}>
-              {busy ? "Adding…" : "＋ Add"}
-            </button>
+      <section className="st-card">
+        {autoSync && (
+          <div className="st-row" style={{ borderTop: 0 }}>
+            <span className="st-label">
+              <b>Auto-sync</b>
+              <small>
+                {autoSync.enabled
+                  ? "Live numbers refresh by themselves while someone is signed in with Pulse open."
+                  : "Off — pull numbers with Sync now on each platform."}
+                {!canManage && " Admins can change this."}
+              </small>
+            </span>
+            {autoSync.enabled && (
+              <span className="st-pct">
+                every
+                <input className="st-in" type="number" min={5} max={1440} disabled={!canManage || savingAutoSync} aria-label="Minutes between syncs"
+                  key={autoSync.intervalMinutes} defaultValue={autoSync.intervalMinutes}
+                  onBlur={(e) => { const v = Number(e.target.value); if (v >= 5 && v <= 1440 && v !== autoSync.intervalMinutes) saveAutoSync({ intervalMinutes: v }); }} />
+                min
+              </span>
+            )}
+            <Toggle on={autoSync.enabled} label="Auto-sync" disabled={!canManage || savingAutoSync} onChange={(v) => saveAutoSync({ enabled: v })} />
           </div>
         )}
-      </div>
+        {workspaces.length > 6 && (
+          <div className="st-row">
+            <input className="st-in grow" placeholder="Search channels…" value={query} onChange={(e) => setQuery(e.target.value)} aria-label="Search channels" />
+            <span className="st-note">{visibleChannels.length} of {workspaces.length}</span>
+          </div>
+        )}
+        {canManage && (
+          <div className="st-foot">
+            <input className="st-in grow" placeholder="New channel name" value={newName} disabled={busy}
+              onChange={(e) => setNewName(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter" && !busy) addChannel(); }} />
+            <button type="button" className="st-btn pri" onClick={addChannel} disabled={busy || !newName.trim()}>{SI.plus}{busy ? "Adding…" : "Add channel"}</button>
+          </div>
+        )}
+      </section>
 
-      <div className="card pad chan-tablewrap">
-        <table className="tbl chan-tbl">
-          <thead>
-            <tr>
-              <th>Channel</th>
-              <th>Instagram</th>
-              <th>Facebook</th>
-              <th>YouTube</th>
-              <th className="num">Posts</th>
-              <th aria-label="expand" />
-            </tr>
-          </thead>
-          <tbody>
-            {accounts.length === 0 && workspaces.length === 0 ? (
-              <tr><td colSpan={6} className="chan-emptyrow">Loading…</td></tr>
-            ) : visibleChannels.length === 0 ? (
-              <tr><td colSpan={6} className="chan-emptyrow">No channels match your search or filters.</td></tr>
-            ) : (
-              visibleChannels.map((w) => {
-                const igAcc = igAccountByChannel.get(w.id);
-                const fbAcc = fbAccountByChannel.get(w.id);
-                const ytAcc = ytAccountByChannel.get(w.id);
-                const posts = postCountByChannel.get(w.id) ?? 0;
-                const open = expanded === w.id;
-                return (
-                  <Fragment key={w.id}>
-                    <tr className={"clickrow chan-row" + (open ? " open" : "")} onClick={() => setExpanded(open ? null : w.id)}>
-                      <td><b>{w.name}</b></td>
-                      <td>{statusCell(igAcc)}</td>
-                      <td>{statusCell(fbAcc)}</td>
-                      <td>{statusCell(ytAcc)}</td>
-                      <td className="num">{posts}</td>
-                      <td className="chev">{open ? "▾" : "▸"}</td>
-                    </tr>
-                    {open && (
-                      <tr className="exp-row">
-                        <td className="exp-cell" colSpan={6}>
-                          <div className="exp-inner" onClick={(e) => e.stopPropagation()}>
-                            {canManage && (
-                              <div className="exp-head">
-                                <input
-                                  className="chan-name"
-                                  defaultValue={w.name}
-                                  onBlur={(e) => rename(w.id, e.target.value, w.name)}
-                                  onKeyDown={(e) => { if (e.key === "Enter") (e.target as HTMLInputElement).blur(); }}
-                                />
-                                {workspaces.length > 1 && (
-                                  <button className="btn btn-sm chan-del" title="Delete channel" onClick={() => deleteChannel(w.id, w.name)}>🗑 Delete channel</button>
-                                )}
-                              </div>
-                            )}
+      {/* YouTube key is org-wide (one key), so surface the gap ONCE here — not on
+          every row. It's entered in-app by an admin, no env var. */}
+      {ytEnabledAnywhere && !ytStatus?.ready && (
+        <section className="st-card">
+          <div className="st-row" style={{ borderTop: 0 }}>
+            <span className="st-label">
+              <b>YouTube isn't set up yet</b>
+              <small>
+                {canManage
+                  ? "One-time, for the whole org: press Connect on any channel's YouTube row and paste your YouTube Data API key. After that, connect any channel by its URL."
+                  : "An admin needs to add the org's YouTube API key once (from a channel's YouTube Connect), then channels can be connected."}
+              </small>
+            </span>
+          </div>
+        </section>
+      )}
+      {/* Instagram sync setup notice (only if there are IG accounts but it's not switched on) */}
+      {anyIg && !igReady && igStatus && (
+        <section className="st-card">
+          <div className="st-row" style={{ borderTop: 0 }}>
+            <span className="st-label">
+              <b>Instagram sync isn't switched on yet</b>
+              <small>
+                Set <code>APP_ENCRYPTION_KEY</code> on the server to paste a token per account, and/or a shared <code>META_SYSTEM_TOKEN</code> for
+                one-click connect. Per-account tokens: {igStatus.pasteToken ? "on" : "off"} · system token: {igStatus.systemToken ? "on" : "off"}. Add them in Render, then reload.
+              </small>
+            </span>
+          </div>
+        </section>
+      )}
 
-                            <div className="exp-plats">
-                              {platforms.map((p) => {
-                                const acct = acctMap[w.id]?.[p.id];
-                                const pon = !!acct;
-                                const locked = pon && !!acct?.has_posts;
-                                const brand = BRAND[p.key];
-                                return (
-                                  <button
-                                    key={p.id}
-                                    className={"chan-chip" + (pon ? " on" : "") + (locked ? " locked" : "")}
-                                    style={pon ? { background: brand?.bg } : undefined}
-                                    onClick={() => canManage && !locked && toggle(w.id, p)}
-                                    disabled={!canManage || locked}
-                                    title={locked
-                                      ? `${brand?.label ?? p.name} has posts on this channel — remove them before disabling`
-                                      : pon ? `Disable ${brand?.label ?? p.name}` : `Enable ${brand?.label ?? p.name}`}
-                                  >
-                                    <span>{brand?.icon ?? "📱"}</span>
-                                    {brand?.label ?? p.name}
-                                    <span className="chan-mark">{locked ? "🔒" : pon ? "✓" : "+"}</span>
-                                  </button>
-                                );
-                              })}
-                            </div>
-
-                            {/* Symmetric per-platform connection blocks (IG / FB / YT) */}
-                            <div className="exp-ints">
-                              {platformBlock(igAcc, "instagram")}
-                              {platformBlock(fbAcc, "facebook")}
-                              {platformBlock(ytAcc, "youtube")}
-                            </div>
-                          </div>
-                        </td>
-                      </tr>
-                    )}
-                  </Fragment>
-                );
-              })
-            )}
-          </tbody>
-        </table>
-      </div>
+      {accounts.length === 0 && workspaces.length === 0 ? (
+        <section className="st-card"><div className="st-empty">Loading…</div></section>
+      ) : visibleChannels.length === 0 ? (
+        <section className="st-card"><div className="st-empty">No channels match your search.</div></section>
+      ) : visibleChannels.map((w) => {
+        const posts = postCountByChannel.get(w.id) ?? { all: 0, pub: 0 };
+        return (
+          <section className="st-card" key={w.id}>
+            <div className="st-chhead">
+              {w.logo_url
+                ? <img className="st-chtile" src={w.logo_url} alt="" />
+                : <span className="st-chtile" style={{ backgroundColor: channelTile(w.id) }}>{initialsOf(w.name)}</span>}
+              <span className="st-chname">
+                {canManage ? (
+                  <input defaultValue={w.name} key={w.name} aria-label="Channel name" title="Click to rename"
+                    onBlur={(e) => rename(w.id, e.target.value, w.name)}
+                    onKeyDown={(e) => { if (e.key === "Enter") (e.target as HTMLInputElement).blur(); }} />
+                ) : <b>{w.name}</b>}
+                <small>{posts.all} post{posts.all === 1 ? "" : "s"} · {posts.pub} published</small>
+              </span>
+              {canManage && workspaces.length > 1 && (
+                <button type="button" className="st-btn sm danger" onClick={() => deleteChannel(w.id, w.name)}>{SI.trash}Delete channel</button>
+              )}
+            </div>
+            {platforms.length === 0
+              ? <div className="st-row"><span className="st-note">No platforms are set up on the server yet.</span></div>
+              : platforms.map((p) => platformRow(w.id, p))}
+          </section>
+        );
+      })}
+      <span className="st-note">
+        Only published posts count in Analytics. A platform that isn't connected gets its numbers from the Posts page.
+        {!canManage && " Read-only — admins can edit channels."}
+      </span>
 
       {connectFor && connectFor.platform === "youtube" && (
         <Modal onClose={closeConnect} title={`Connect ${connectFor.account.channel_name} to YouTube`}>

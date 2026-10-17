@@ -125,11 +125,11 @@ function AppRoutes() {
             <Route path="/posts/:id/edit" element={<AddPostPage />} />
             <Route path="/analytics/:type" element={<FormatAnalyticsPage />} />
             <Route path="/settings" element={<SettingsPage />} />
-            {/* Goals: Team goals, Org goals (the old Goals board) and Discipline. */}
+            {/* Goals: Team goals, Org goals (the old Goals board), Set goals and Discipline. */}
             <Route path="/goals-board" element={<GoalsPage />} />
-            {/* Goal Setting (Settings) — where Goals links to set the targets. */}
-            <Route path="/goals" element={<SettingsPage />} />
-            <Route path="/teams" element={<SettingsPage />} />
+            {/* Old Goal Setting link — each person's goals are now Goals › Set goals. */}
+            <Route path="/goals" element={<Navigate to="/goals-board?tab=set" replace />} />
+            <Route path="/teams" element={<Navigate to="/my-team?tab=roster" replace />} />
           </Route>
         </Route>
 

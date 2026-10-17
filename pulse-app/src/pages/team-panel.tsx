@@ -342,7 +342,7 @@ export function TeamPanel({ tasks, editors, onOpenTask, focusId }: {
       {tasks === null || editors === null ? (
         <div className="mt-card mt-empty">Loading…</div>
       ) : ranked.length === 0 ? (
-        <div className="mt-card mt-empty">No team members yet. <Link to="/teams">Add people in Settings</Link>.</div>
+        <div className="mt-card mt-empty">No team members yet. <Link to="/my-team?tab=roster">Add people on the Roster</Link>.</div>
       ) : (
         <>
           <div className="mt-people" role="tablist" aria-label={`Team ranking, ${rangeLabel}`}>

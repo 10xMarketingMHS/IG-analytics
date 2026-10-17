@@ -147,8 +147,68 @@ html[data-theme="dark"] .mt{
   color:var(--mt-text3);font:700 13px 'Plus Jakarta Sans',sans-serif;cursor:pointer;white-space:nowrap}
 .mt-tabs>button:hover{color:var(--mt-text)}
 .mt-tabs>button.on{color:var(--mt-text);border-bottom-color:var(--mt-ac)}
-.mt a.mt-rosterlink{margin-bottom:4px;font-size:12px;color:var(--mt-text3);font-weight:600}
-.mt a.mt-rosterlink:hover{color:var(--mt-acText)}
+
+/* roster: everyone's position, login and role, changed on the row */
+.mt-muted{color:var(--mt-text3);font-size:12.5px}
+.mt-btn.pri{border:0;background:var(--mt-acGrad);color:#fff;box-shadow:0 8px 22px -6px oklch(0.55 0.22 var(--acH) / .55)}
+.mt-btn.pri:hover:not(:disabled){filter:brightness(1.06)}
+.mt-roster{overflow:hidden}
+.mt-rhead{display:flex;align-items:center;gap:10px;flex-wrap:wrap;padding:14px 20px 12px}
+.mt-rhead>b{font-size:14px;font-weight:800}
+.mt-roles{display:flex;flex-wrap:wrap;gap:6px 18px;padding:10px 20px;border-top:1px solid var(--mt-line2);border-bottom:1px solid var(--mt-line2);background:var(--mt-sunk);
+  font-size:12px;color:var(--mt-text3)}
+.mt-roles b{color:var(--mt-text);font-weight:700}
+.mt-rscroll{overflow-x:auto}
+.mt-rtable{min-width:960px}
+.mt-rrow{display:grid;grid-template-columns:minmax(0,1.5fr) minmax(0,1.1fr) minmax(0,1.5fr) minmax(0,.9fr) minmax(0,1fr) 230px;gap:12px;align-items:center;padding:11px 20px;
+  border-top:1px solid var(--mt-line2)}
+.mt-rrow:first-child{border-top:0}
+.mt-rrow.mt-rth{padding-top:10px;padding-bottom:10px;font-size:11px;font-weight:800;letter-spacing:.06em;text-transform:uppercase;color:var(--mt-text3)}
+.mt-rrow .r{text-align:right}
+.mt-rrow.dim .mt-rwho,.mt-rrow.dim .mt-rmail{opacity:.6}
+.mt-rwho{display:flex;align-items:center;gap:10px;min-width:0}
+.mt-rava{flex:none;width:34px;height:34px;border-radius:50%;display:grid;place-items:center;color:#fff;font-size:12px;font-weight:800;object-fit:cover}
+.mt-rwho>span:last-child{min-width:0;display:flex;flex-direction:column;line-height:1.3}
+.mt-rwho b{display:flex;align-items:center;gap:6px;font-size:13px;font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.mt-rwho small{font-size:11.5px;color:var(--mt-text3)}
+.mt-you{display:inline-flex;align-items:center;height:17px;padding:0 6px;border-radius:5px;background:var(--mt-acSoft);color:var(--mt-acText);font-size:9.5px;font-weight:800;
+  font-style:normal;letter-spacing:.04em}
+.mt-rin{width:100%;max-width:190px;height:30px;padding:0 8px;border:1px solid var(--mt-line);border-radius:8px;background:var(--mt-solid);color:var(--mt-text);
+  font:500 12.5px 'Plus Jakarta Sans',sans-serif;outline:none;cursor:pointer}
+.mt-rin:focus{border-color:var(--mt-ac)}
+.mt-rin:disabled{opacity:.6;cursor:default}
+.mt-rmail{font-size:12.5px;color:var(--mt-text2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.mt-rmail.none{color:var(--mt-text3);font-style:italic}
+.mt-rst{display:inline-flex;align-items:center;gap:5px;height:24px;padding:0 9px;border-radius:7px;background:var(--mt-sunk);color:var(--mt-text3);font-size:11.5px;font-weight:700;white-space:nowrap}
+.mt-rst.good{background:var(--mt-goodSoft);color:var(--mt-good)}
+.mt-rst.warn{background:var(--mt-warnSoft);color:var(--mt-warn)}
+.mt-rst.bad{background:var(--mt-badSoft);color:var(--mt-bad)}
+.mt-racts{display:flex;align-items:center;justify-content:flex-end;gap:14px}
+.mt-rlink{padding:0;border:0;background:transparent;color:var(--mt-acText);font:600 12.5px 'Plus Jakarta Sans',sans-serif;cursor:pointer;white-space:nowrap}
+.mt-rlink:hover:not(:disabled){text-decoration:underline}
+.mt-rlink.bad{color:var(--mt-bad)}
+.mt-rlink.good{color:var(--mt-good)}
+.mt-rlink:disabled{opacity:.5;cursor:default}
+.mt-ricon{flex:none;width:30px;height:30px;display:grid;place-items:center;padding:0;border:1px solid var(--mt-line);border-radius:8px;background:var(--mt-solid);color:var(--mt-text2);cursor:pointer}
+.mt-ricon:hover{color:var(--mt-text);border-color:var(--mt-text3)}
+/* phones: each person is a small card — name and status, position and role, login, actions */
+@media (max-width:768px){
+  .mt-rhead,.mt-roles,.mt-rnote{padding-left:14px;padding-right:14px}
+  .mt-rtable{min-width:0}
+  .mt-rrow.mt-rth{display:none}
+  .mt-rrow{grid-template-columns:minmax(0,1fr) minmax(0,1fr);grid-template-areas:"who st" "pos role" "mail mail" "acts acts";gap:8px 10px;padding:12px 14px}
+  .mt-rrow:nth-child(2){border-top:0}
+  .mt-rwho{grid-area:who}
+  .mt-rstc{grid-area:st;justify-self:end}
+  .mt-rpos{grid-area:pos}
+  .mt-rrole{grid-area:role}
+  .mt-rmail{grid-area:mail}
+  .mt-racts{grid-area:acts;justify-content:flex-start;gap:16px}
+  .mt-racts .mt-ricon{margin-left:auto}
+  .mt-rin{max-width:none}
+}
+.mt-rnote{margin:0;padding:12px 20px 14px;border-top:1px solid var(--mt-line2);font-size:12px;color:var(--mt-text3)}
+.mt-rnote b{color:var(--mt-text2)}
 
 /* today: filters, live label */
 .mt{--mt-work:oklch(0.55 0.15 150);--mt-workSoft:oklch(0.95 0.04 150);--mt-done:oklch(0.55 0.18 300);--mt-doneSoft:oklch(0.95 0.035 300)}

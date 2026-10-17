@@ -403,8 +403,8 @@ export function HomePage() {
     linked: !!user?.editorId,
     hint: user?.editorId ? null
       : active?.role === "viewer" ? "You have view-only access: you can look at tasks, posts and analytics, but not change them."
-      : isAdmin ? "You're not on the team roster yet, so nothing personal shows here. Add yourself in Settings → Team (Edit on your own row)."
-      : "You're not on the team roster yet, so nothing personal shows here. Ask an admin to link you under Settings → Team.",
+      : isAdmin ? "You're not on the team roster yet, so nothing personal shows here. Add yourself on Team › Roster (Edit on your own row)."
+      : "You're not on the team roster yet, so nothing personal shows here. Ask an admin to link you on Team › Roster.",
     counts: { overdue: ops.overdue, dueToday: ops.dueToday, inReview: inReviewCount, awaitingMetrics },
     countNotes: {
       overdue: ops.overdue ? `Oldest is ${ops.oldestLate} day${ops.oldestLate === 1 ? "" : "s"} late` : "Everything is on time",

@@ -28,9 +28,9 @@ function fmtTime(iso: string | null): string {
   return iso ? new Date(iso).toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" }) : "—";
 }
 const STATUS: Record<TeamRow["status"], { label: string; cls: string }> = {
-  not_started: { label: "Not started", cls: "ns" },
-  active: { label: "Active", cls: "ac" },
-  completed: { label: "Completed", cls: "cp" },
+  not_started: { label: "Not started", cls: "" },
+  active: { label: "Active", cls: "good" },
+  completed: { label: "Completed", cls: "ac" },
 };
 
 export function EodOversightSection() {
@@ -71,62 +71,65 @@ export function EodOversightSection() {
   }
 
   return (
-    <div>
-      <div className="goalt-owner" style={{ marginBottom: 16 }}>
-        <span className="goalt-owner-l">Date</span>
-        <input className="t" type="date" value={date} max={todayStr()} onChange={(e) => setDate(e.target.value)} style={{ maxWidth: 180 }} />
-        <span className="goalt-owner-hint">Each person's Start Work / End Work for the day. A day nobody ended is closed automatically at 6 PM and marked.</span>
-      </div>
-
-      {rows === null ? (
-        <div className="card pad hint">Loading…</div>
-      ) : rows.length === 0 ? (
-        <div className="card pad home-empty">No editors to show.</div>
-      ) : (
-        <div className="card" style={{ overflowX: "auto" }}>
-          <table className="tbl">
-            <thead>
-              <tr><th>Editor</th><th>Status</th><th>Start</th><th>End</th><th>Worked</th><th>Start of Day</th><th></th></tr>
-            </thead>
-            <tbody>
-              {rows.map((r) => (
-                <tr key={r.id}>
-                  <td><b style={{ fontWeight: 650 }}>{r.name ?? "—"}</b></td>
-                  <td>
-                    <span
-                      className={"eod-st " + (r.autoClosed ? "auto" : STATUS[r.status].cls)}
-                      title={r.autoClosed ? "End Work wasn't pressed — closed automatically at 6 PM" : undefined}
-                    >
-                      {r.status === "active" && r.startedAt ? `Active since ${fmtTime(r.startedAt)}`
-                        : r.autoClosed ? "Ended automatically" : STATUS[r.status].label}
-                    </span>
-                  </td>
-                  <td>{fmtTime(r.startedAt)}</td>
-                  <td>{fmtTime(r.endedAt)}</td>
-                  <td>{r.status === "not_started" || r.workedSeconds == null ? "—" : `${fmtDuration(r.workedSeconds)}${(r.sessions ?? 1) > 1 ? ` · ${r.sessions} sessions` : ""}`}</td>
-                  <td>
-                    {r.planSubmittedAt ? (
-                      <button className="linkbtn" onClick={() => showPlan(r)} title="View the Start of Day">
-                        📋 {fmtTime(r.planSubmittedAt)} · {r.planCount ?? 0} {r.planCount === 1 ? "task" : "tasks"}
-                      </button>
-                    ) : r.status === "active" ? (
-                      <span className="eod-st auto">Not copied yet</span>
-                    ) : "—"}
-                  </td>
-                  <td>
-                    <button className="btn" disabled={r.status === "not_started" || loadingSum} onClick={() => openSummary(r)}>
-                      View summary
-                    </button>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+    <>
+      <section className="st-card">
+        <div className="st-row" style={{ borderTop: 0 }}>
+          <span className="st-label">
+            <b>Date</b>
+            <small>Each person's Start Work and End Work for the day. A day nobody ended is closed automatically at 6 PM and marked.</small>
+          </span>
+          <input className="st-in" type="date" value={date} max={todayStr()} onChange={(e) => setDate(e.target.value)} style={{ width: 170 }} />
         </div>
-      )}
+        {rows === null ? (
+          <div className="st-empty">Loading…</div>
+        ) : rows.length === 0 ? (
+          <div className="st-empty">No editors to show.</div>
+        ) : (
+          <div style={{ overflowX: "auto" }}>
+            <table className="st-wd">
+              <thead>
+                <tr><th>Editor</th><th>Status</th><th>Start</th><th>End</th><th>Worked</th><th>Start of Day</th><th></th></tr>
+              </thead>
+              <tbody>
+                {rows.map((r) => (
+                  <tr key={r.id}>
+                    <td><b style={{ fontWeight: 650 }}>{r.name ?? "—"}</b></td>
+                    <td>
+                      <span
+                        className={"st-chip " + (r.autoClosed ? "warn" : STATUS[r.status].cls)}
+                        title={r.autoClosed ? "End Work wasn't pressed — closed automatically at 6 PM" : undefined}
+                      >
+                        {r.status === "active" && r.startedAt ? `Active since ${fmtTime(r.startedAt)}`
+                          : r.autoClosed ? "Ended automatically" : STATUS[r.status].label}
+                      </span>
+                    </td>
+                    <td>{fmtTime(r.startedAt)}</td>
+                    <td>{fmtTime(r.endedAt)}</td>
+                    <td>{r.status === "not_started" || r.workedSeconds == null ? "—" : `${fmtDuration(r.workedSeconds)}${(r.sessions ?? 1) > 1 ? ` · ${r.sessions} sessions` : ""}`}</td>
+                    <td>
+                      {r.planSubmittedAt ? (
+                        <button type="button" className="st-link" onClick={() => showPlan(r)} title="View the Start of Day">
+                          {fmtTime(r.planSubmittedAt)} · {r.planCount ?? 0} {r.planCount === 1 ? "task" : "tasks"}
+                        </button>
+                      ) : r.status === "active" ? (
+                        <span className="st-chip warn">Not copied yet</span>
+                      ) : "—"}
+                    </td>
+                    <td className="num">
+                      <button type="button" className="st-btn sm" disabled={r.status === "not_started" || loadingSum} onClick={() => openSummary(r)}>
+                        View summary
+                      </button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </section>
 
       {open && <EodSummaryCard name={open.name} summary={open.summary} onClose={() => setOpen(null)} />}
       {openPlan && <SodReportModal name={openPlan.name} plan={openPlan.plan} onClose={() => setOpenPlan(null)} />}
-    </div>
+    </>
   );
 }

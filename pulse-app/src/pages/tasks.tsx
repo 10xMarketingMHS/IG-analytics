@@ -960,8 +960,8 @@ export function TasksPage() {
         <div className="card pad" style={{ color: "var(--muted)", fontSize: 13, marginBottom: 16 }}>
           Your account isn't on the team roster yet, so there's nothing to show here.{" "}
           {isAdmin
-            ? "To add yourself, go to Settings → Team and press Edit on your own row."
-            : "Ask an admin to link you under Settings → Team."}
+            ? "To add yourself, go to Team › Roster and press Edit on your own row."
+            : "Ask an admin to link you on Team › Roster."}
         </div>
       )}
 
@@ -2162,11 +2162,11 @@ export function TaskPanel({ mode, task, canWrite, editors, channels, onClose, on
   const ref = task ? taskRef(task) : null;
   const otherIds = task ? [task.tid, showId(task.sid), showId(task.ad_id), task.svid, task.pid].filter((x): x is string => !!x && x !== ref) : [];
   const createHint = !category ? `Choose a category — Social, Ads, Service or Project${isAdmin ? " or Admin" : ""} — to begin.`
-    : adminNeedsRoster ? "You're not on the team roster yet, so an Admin task would have no owner. Add yourself under Settings → Team (Edit on your row) first."
+    : adminNeedsRoster ? "You're not on the team roster yet, so an Admin task would have no owner. Add yourself on Team › Roster (Edit on your row) first."
     : adminTask ? (!title.trim() ? "Add a title — Admin tasks need nothing else." : "Admin task — just for you.")
     : !draft.channel_id ? "Pick a Brand — Social, Ads, Service and Project tasks are numbered per brand."
     : !title.trim() ? "Add a task title."
-    : category === "project" && contentTypeChoices.length === 0 ? "No project types exist yet. Add one under Settings → Task Settings → Project first."
+    : category === "project" && contentTypeChoices.length === 0 ? "No project types exist yet. Add one under Settings › Tasks & time (as a Project type) first."
     : category === "project" && !draft.content_format_id ? "Pick a project type."
     : "Checklist & comments become available after you create the task.";
   const rule = creating || !task ? ""

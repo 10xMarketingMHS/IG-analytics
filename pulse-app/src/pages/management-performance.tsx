@@ -1,11 +1,11 @@
 import { Fragment, useEffect, useState } from "react";
-import { toast } from "sonner";
-import { api, ApiError } from "@/lib/api";
+import { api } from "@/lib/api";
 
-// Management Performance (points-based). Admin-only Settings config + Leaderboard
-// tab. The measure is Overall Performance % — the Earned (80%) + Discipline (20%)
-// split of Total Goal Points (the same Goal Setting computation), banded EPI/MPI/
-// LPI by percentage thresholds. Nothing here is hours-denominated.
+// Management Performance (points-based): the Leaderboard tab. The measure is
+// Overall Performance % — the Earned (80%) + Discipline (20%) split of Total
+// Goal Points (the same Goals computation), banded EPI/MPI/LPI by percentage
+// thresholds, which are set in Settings › Scoring. Nothing here is
+// hours-denominated.
 
 type Thresholds = { epiMinPct: number; mpiMinPct: number; isDefault?: boolean };
 type Level = "EPI" | "MPI" | "LPI";
@@ -47,76 +47,6 @@ function LevelCell({ level }: { level: Level | null }) {
 // ---------------------------------------------------------------------------
 // Settings → Management Performance — EPI/MPI percentage thresholds.
 // ---------------------------------------------------------------------------
-export function ManagementPerformanceSettings() {
-  const [thr, setThr] = useState<Thresholds | null>(null);
-  const [epi, setEpi] = useState("85");
-  const [mpi, setMpi] = useState("75");
-  const [saving, setSaving] = useState(false);
-
-  useEffect(() => {
-    api<Thresholds>("/management-performance/thresholds")
-      .then((d) => { setThr(d); setEpi(String(d.epiMinPct)); setMpi(String(d.mpiMinPct)); })
-      .catch(() => setThr({ epiMinPct: 85, mpiMinPct: 75, isDefault: true }));
-  }, []);
-
-  const epiN = Number(epi), mpiN = Number(mpi);
-  const valid = epiN > 0 && mpiN > 0 && epiN <= 100 && mpiN <= 100 && mpiN <= epiN;
-
-  async function save() {
-    if (!valid) { toast.error("MPI minimum can't be higher than EPI minimum."); return; }
-    setSaving(true);
-    try {
-      const saved = await api<Thresholds>("/management-performance/thresholds", {
-        method: "PUT", body: JSON.stringify({ epiMinPct: epiN, mpiMinPct: mpiN }),
-      });
-      setThr(saved);
-      toast.success("Thresholds saved.");
-    } catch (err) {
-      toast.error(err instanceof ApiError ? err.message : "Failed to save.");
-    } finally { setSaving(false); }
-  }
-
-  if (!thr) return <div className="card pad hint">Loading…</div>;
-
-  return (
-    <div>
-      <div className="sectitle"><span className="dot" />Management Performance<span className="s">EPI / MPI / LPI bands on Overall Performance %</span></div>
-      <div className="card pad" style={{ maxWidth: 640 }}>
-        <p className="hint" style={{ marginTop: 0 }}>
-          Performance is scored as <b>Overall Performance %</b> = Total Points (Earned 80% + Discipline 20%) ÷ Total Goal
-          Points. Set the two band cut-offs below; <b>LPI</b> is everything under the MPI minimum.
-        </p>
-
-        <div className="mp-thr-grid">
-          <label className="f">EPI — minimum %</label>
-          <div className="mp-thr-in">
-            <input className="t" type="number" step="1" min="0" max="100" value={epi} onChange={(e) => setEpi(e.target.value)} />
-            <span className="mp-thr-hint">and above</span>
-          </div>
-          <label className="f">MPI — minimum %</label>
-          <div className="mp-thr-in">
-            <input className="t" type="number" step="1" min="0" max="100" value={mpi} onChange={(e) => setMpi(e.target.value)} />
-            <span className="mp-thr-hint">up to {epiN}%</span>
-          </div>
-        </div>
-
-        <div className="mp-bands">
-          <div className="mp-band epi"><LevelBadge level="EPI" /><span>{epiN}% and above</span></div>
-          <div className="mp-band mpi"><LevelBadge level="MPI" /><span>{mpiN}%–{(epiN - 0.01).toFixed(2)}%</span></div>
-          <div className="mp-band lpi"><LevelBadge level="LPI" /><span>below {mpiN}%</span></div>
-        </div>
-
-        {!valid && <div className="hint" style={{ color: "var(--rose)" }}>MPI minimum can't be higher than EPI minimum.</div>}
-
-        <div style={{ marginTop: 16, display: "flex", gap: 10, alignItems: "center" }}>
-          <button className="btn btn-primary" onClick={save} disabled={!valid || saving}>{saving ? "Saving…" : "Save thresholds"}</button>
-          {thr.isDefault && <span className="hint" style={{ margin: 0 }}>Using defaults (not yet saved).</span>}
-        </div>
-      </div>
-    </div>
-  );
-}
-
 // ---------------------------------------------------------------------------
 // Leaderboard → Management Performance tab.
 // ---------------------------------------------------------------------------

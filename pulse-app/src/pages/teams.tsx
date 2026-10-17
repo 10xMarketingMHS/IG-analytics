@@ -1,10 +1,10 @@
-import { useCallback, useEffect, useRef, useState, type FormEvent } from "react";
+import { useRef, useState, type FormEvent } from "react";
 import { toast } from "sonner";
 import { api, ApiError } from "@/lib/api";
-import { useWorkspaces } from "@/lib/workspaces-context";
-import { useEditors } from "@/lib/use-editors";
 import { fileToSquareDataUrl } from "@/lib/image";
 import type { AppUser, Editor, Role } from "@/lib/types";
+
+// The add / edit window for one team member — used by Team › Roster.
 
 // Common titles across a content team's hierarchy — a suggestion list, not a
 // closed set. Anyone can still type a custom designation (Freelancer, Intern
@@ -13,201 +13,29 @@ import type { AppUser, Editor, Role } from "@/lib/types";
 // specialties. This is a free-text field with suggestions, not an enum —
 // someone who's both a level and a specialty (e.g. a Team Lead who also
 // does video edits) can just type both: "Team Lead – Video Editor".
-const DESIGNATIONS = [
+export const DESIGNATIONS = [
   "Manager", "Team Lead", "Senior Editor", "Editor", "Junior Editor", "Fresher / Intern",
   "Video Editor", "Motion Designer", "Graphic Designer", "Copywriter", "Thumbnail Designer",
 ];
 
-const ROLE_LABEL: Record<Role, string> = { admin: "Admin", editor: "Editor", viewer: "Viewer" };
-const ROLE_HINT: Record<Role, string> = {
+export const ROLE_LABEL: Record<Role, string> = { admin: "Admin", editor: "Editor", viewer: "Viewer" };
+export const ROLE_HINT: Record<Role, string> = {
   admin: "Full access — manage content, taxonomy, team & users.",
   editor: "Create & edit posts and tasks. No access to settings management.",
   viewer: "Read-only — can view dashboards & posts.",
 };
 
-function gradFor(seed: string) {
-  const grads = [
-    "linear-gradient(135deg,#6366f1,#8b5cf6)", "linear-gradient(135deg,#0d9488,#0ea5e9)",
-    "linear-gradient(135deg,#f59e0b,#ef4444)", "linear-gradient(135deg,#ec4899,#8b5cf6)",
-  ];
-  let h = 0;
-  for (const c of seed) h = (h * 31 + c.charCodeAt(0)) >>> 0;
-  return grads[h % grads.length];
-}
-
 // One row = one person, however they exist in the system: on the roster
 // (assignable to posts/tasks), with a login (can sign in), or both — the
 // common case. Merged by editor_id so "add a person" is one flow either way.
-type Row = { editor: Editor | null; user: AppUser | null };
+export type TeamRow = { editor: Editor | null; user: AppUser | null };
 
-// Rendered as one tab inside the master Settings page (see settings.tsx) —
-// no outer <section className="screen"> here, that's Settings' job.
-export function TeamsSection() {
-  const { active, isAdmin } = useWorkspaces();
-  const { editors, refetch: refetchEditors } = useEditors();
-  const [users, setUsers] = useState<AppUser[] | null>(null);
-  const [modal, setModal] = useState<{ row: Row } | null>(null);
-
-  const loadUsers = useCallback(() => {
-    api<{ users: AppUser[] }>("/users").then(({ users }) => setUsers(users)).catch(() => setUsers([]));
-  }, []);
-  useEffect(() => { if (isAdmin) loadUsers(); }, [isAdmin, loadUsers]);
-
-  function refetchAll() { refetchEditors(); loadUsers(); }
-
-  if (!isAdmin) {
-    return (
-      <div className="card pad" style={{ color: "var(--muted)", fontSize: 13 }}>
-        You're signed in as {/^[aeiou]/.test(active?.role ?? "member") ? "an" : "a"} <b style={{ color: "var(--text)" }}>{active?.role ?? "member"}</b> of this
-        workspace. Only admins can manage the team.
-      </div>
-    );
-  }
-
-  const loading = editors === null || users === null;
-  const rows: Row[] = loading ? [] : [
-    ...editors.map((ed) => ({ editor: ed, user: users.find((u) => u.editor_id === ed.id) ?? null })),
-    ...users.filter((u) => !u.editor_id).map((u) => ({ editor: null, user: u })),
-  ];
-
-  async function removeEditor(ed: Editor) {
-    if (!window.confirm(`Remove "${ed.name}" from the team roster? Their posts stay but become unassigned.${" "}Any login they have keeps working, just unlinked.`)) return;
-    try {
-      await api(`/editors/${ed.id}`, { method: "DELETE" });
-      toast.success("Removed from roster.");
-      refetchAll();
-    } catch (err) {
-      toast.error(err instanceof ApiError ? err.message : "Failed to remove.");
-    }
-  }
-  async function changeRole(u: AppUser, role: Role) {
-    try {
-      await api(`/users/${u.id}`, { method: "PATCH", body: JSON.stringify({ role }) });
-      toast.success(`${u.name || u.email} is now ${ROLE_LABEL[role]}.`);
-      loadUsers();
-    } catch (err) {
-      toast.error(err instanceof ApiError ? err.message : "Failed to change role.");
-    }
-  }
-  async function resetPassword(u: AppUser) {
-    const password = window.prompt(`Set a new password for ${u.email} (min 6 chars)`);
-    if (!password) return;
-    if (password.length < 6) return toast.error("Password must be at least 6 characters.");
-    try {
-      await api(`/users/${u.id}`, { method: "PATCH", body: JSON.stringify({ password }) });
-      toast.success("Password reset. Tell them the temporary password — they can change it under My Profile.");
-      refetchAll();
-    } catch (err) {
-      toast.error(err instanceof ApiError ? err.message : "Failed to reset password.");
-    }
-  }
-  async function toggleActive(u: AppUser) {
-    try {
-      await api(`/users/${u.id}`, { method: "PATCH", body: JSON.stringify({ active: !u.active }) });
-      toast.success(u.active ? "Login deactivated." : "Login reactivated.");
-      loadUsers();
-    } catch (err) {
-      toast.error(err instanceof ApiError ? err.message : "Failed to update.");
-    }
-  }
-  async function removeLogin(u: AppUser) {
-    if (!window.confirm(`Remove ${u.email}'s login access? They'll stay on the roster, just can't sign in.`)) return;
-    try {
-      await api(`/users/${u.id}`, { method: "DELETE" });
-      toast.success("Login access removed.");
-      refetchAll();
-    } catch (err) {
-      toast.error(err instanceof ApiError ? err.message : "Failed to remove access.");
-    }
-  }
-
-  return (
-    <>
-      <p className="hint" style={{ margin: "0 0 14px" }}>
-        Everyone who works on content, whether they sign in to Pulse or not — designation shows their role on
-        the team, login access (optional) controls what they can do here.
-      </p>
-      <div className="card pad">
-        {loading ? (
-          <div className="hint">Loading…</div>
-        ) : rows.length === 0 ? (
-          <div className="hint">No team members yet.</div>
-        ) : (
-          <div className="teamlist">
-            {rows.map((r) => {
-              const key = r.editor?.id ?? r.user!.id;
-              const displayName = r.editor?.name ?? r.user?.name ?? r.user?.email.split("@")[0] ?? "?";
-              const photo = r.editor?.image_url ?? null;
-              return (
-                <div className="member" key={key}>
-                  {photo ? (
-                    <img className="avatar" src={photo} alt="" style={{ objectFit: "cover" }} />
-                  ) : (
-                    <div className="avatar" style={{ background: gradFor(r.user?.email ?? displayName), opacity: r.user && !r.user.active ? 0.5 : 1 }}>
-                      {displayName.charAt(0).toUpperCase()}
-                    </div>
-                  )}
-                  <div style={{ flex: 1, minWidth: 0, cursor: "pointer" }} onClick={() => setModal({ row: r })}>
-                    <b style={{ fontSize: 13.5 }}>
-                      {displayName}
-                      {r.user?.isSelf && <span style={{ color: "var(--muted)", fontWeight: 500 }}> · you</span>}
-                      {r.user && !r.user.active && <span className="stbadge st-planned" style={{ marginLeft: 8 }}>deactivated</span>}
-                    </b>
-                    <div style={{ fontSize: 12, color: "var(--muted)", display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
-                      {r.editor?.designation && <span className="ptbadge pt-reel" style={{ fontSize: 10 }}>{r.editor.designation}</span>}
-                      {r.user ? <span>{r.user.email}</span> : <span style={{ fontStyle: "italic" }}>No login access</span>}
-                      {!r.editor && <span style={{ fontStyle: "italic" }}>Not on roster</span>}
-                    </div>
-                  </div>
-
-                  {r.user ? (
-                    <select className="mini" value={r.user.role} title={ROLE_HINT[r.user.role]} onChange={(e) => changeRole(r.user!, e.target.value as Role)}>
-                      <option value="admin">Admin</option>
-                      <option value="editor">Editor</option>
-                      <option value="viewer">Viewer</option>
-                    </select>
-                  ) : (
-                    <span className="hint" style={{ margin: 0 }}>—</span>
-                  )}
-
-                  <button className="linkbtn" onClick={() => setModal({ row: r })}>Edit</button>
-                  {r.user?.resetRequestedAt && (
-                    <span className="reset-req" title={`Asked on ${new Date(r.user.resetRequestedAt).toLocaleString()}`}>🔑 Asked for a password reset</span>
-                  )}
-                  {r.user && <button className="linkbtn" onClick={() => resetPassword(r.user!)}>Reset password</button>}
-                  {r.user && (
-                    <button className="linkbtn" onClick={() => toggleActive(r.user!)} disabled={r.user.isSelf} style={{ color: r.user.active ? "var(--amber)" : "var(--good)" }}>
-                      {r.user.active ? "Deactivate" : "Reactivate"}
-                    </button>
-                  )}
-                  {r.user && <button className="linkbtn" onClick={() => removeLogin(r.user!)} disabled={r.user.isSelf} style={{ color: "var(--rose)" }}>Remove login</button>}
-                  {r.editor && <button className="linkbtn" onClick={() => removeEditor(r.editor!)} style={{ color: "var(--rose)" }}>Remove</button>}
-                </div>
-              );
-            })}
-          </div>
-        )}
-        <button className="btn" style={{ marginTop: 14 }} onClick={() => setModal({ row: { editor: null, user: null } })}>
-          ＋ Add team member
-        </button>
-        <div className="hint" style={{ marginTop: 10 }}>
-          Roles apply to <b>{active?.name ?? "this workspace"}</b>. Deactivating a login blocks sign-in
-          everywhere; removing it only revokes access here — the person stays on the roster.
-        </div>
-      </div>
-
-      {modal && (
-        <TeamMemberModal
-          row={modal.row} onClose={() => setModal(null)} onSaved={refetchAll}
-          existingEmails={(users ?? []).map((u) => u.email.toLowerCase())}
-        />
-      )}
-    </>
-  );
-}
-
-function TeamMemberModal({ row, onClose, onSaved, existingEmails }: {
-  row: Row; onClose: () => void; onSaved: () => void; existingEmails: string[];
+export function TeamMemberModal({ row, onClose, onSaved, existingEmails, startWithLogin, onRemoveEditor, onRemoveLogin }: {
+  row: TeamRow; onClose: () => void; onSaved: () => void; existingEmails: string[];
+  // Open with "Give login access" already ticked (the roster's Give login).
+  startWithLogin?: boolean;
+  onRemoveEditor?: (ed: Editor) => void;
+  onRemoveLogin?: (u: AppUser) => void;
 }) {
   const { editor, user } = row;
   const editingEditor = Boolean(editor);
@@ -217,7 +45,7 @@ function TeamMemberModal({ row, onClose, onSaved, existingEmails }: {
   const [designation, setDesignation] = useState(editor?.designation ?? "");
   const [imageUrl, setImageUrl] = useState<string | null>(editor?.image_url ?? null);
 
-  const [giveLogin, setGiveLogin] = useState(Boolean(user));
+  const [giveLogin, setGiveLogin] = useState(Boolean(user) || Boolean(startWithLogin));
   const [email, setEmail] = useState(user?.email ?? "");
   const [password, setPassword] = useState("");
   const [role, setRole] = useState<Role>(user?.role ?? "editor");
@@ -292,9 +120,8 @@ function TeamMemberModal({ row, onClose, onSaved, existingEmails }: {
     <div className="modal-bg show" onClick={onClose}>
       <div className="modal" style={{ width: 480 }} onClick={(e) => e.stopPropagation()}>
         <div className="mhead">
-          <span style={{ fontSize: 18 }}>🧑‍🤝‍🧑</span>
           <h3>{editor || user ? "Edit team member" : "Add team member"}</h3>
-          <button className="x" onClick={onClose}>×</button>
+          <button className="x" onClick={onClose} aria-label="Close">×</button>
         </div>
         <form onSubmit={submit}>
           <div className="mbody">
@@ -303,7 +130,7 @@ function TeamMemberModal({ row, onClose, onSaved, existingEmails }: {
                 type="button" onClick={() => fileRef.current?.click()} title="Upload profile image"
                 style={{
                   width: 64, height: 64, borderRadius: 14, border: "1px solid var(--border)",
-                  background: imageUrl ? undefined : "linear-gradient(135deg,#6366f1,#8b5cf6)",
+                  background: imageUrl ? undefined : "var(--grad)",
                   display: "grid", placeItems: "center", color: "#fff", fontWeight: 800,
                   fontSize: 22, overflow: "hidden", padding: 0, flex: "none", cursor: "pointer",
                 }}
@@ -312,7 +139,7 @@ function TeamMemberModal({ row, onClose, onSaved, existingEmails }: {
               </button>
               <div>
                 <button type="button" className="btn" onClick={() => fileRef.current?.click()}>
-                  📷 {imageUrl ? "Change image" : "Upload image"}
+                  {imageUrl ? "Change photo" : "Upload photo"}
                 </button>
                 {imageUrl && <button type="button" className="linkbtn" style={{ marginLeft: 6 }} onClick={() => setImageUrl(null)}>Remove</button>}
               </div>
@@ -324,7 +151,7 @@ function TeamMemberModal({ row, onClose, onSaved, existingEmails }: {
               <input className="t" value={name} onChange={(e) => setName(e.target.value)} autoFocus />
             </div>
             <div className="field">
-              <label className="f">Designation</label>
+              <label className="f">Position</label>
               <input className="t" list="team-designations" placeholder="e.g. Senior Editor" value={designation} onChange={(e) => setDesignation(e.target.value)} />
               <datalist id="team-designations">
                 {DESIGNATIONS.map((d) => <option key={d} value={d} />)}
@@ -336,7 +163,7 @@ function TeamMemberModal({ row, onClose, onSaved, existingEmails }: {
               <input type="checkbox" checked={giveLogin} disabled={Boolean(user)} onChange={(e) => setGiveLogin(e.target.checked)} style={{ width: 16, height: 16, accentColor: "var(--accent)" }} />
               Give this person login access to Pulse
             </label>
-            {user && <div className="hint" style={{ margin: "0 0 8px" }}>They already have a login — remove it from the team list instead of unchecking here.</div>}
+            {user && <div className="hint" style={{ margin: "0 0 8px" }}>They already have a login — use Remove login below to take it away.</div>}
 
             {giveLogin && (
               <div style={{ marginTop: 10, paddingLeft: 2 }}>
@@ -365,6 +192,12 @@ function TeamMemberModal({ row, onClose, onSaved, existingEmails }: {
             {error && <p className="login-err">{error}</p>}
           </div>
           <div className="mfoot">
+            {editor && onRemoveEditor && (
+              <button type="button" className="linkbtn" style={{ color: "var(--rose)", marginRight: "auto" }} onClick={() => onRemoveEditor(editor)}>Remove from team</button>
+            )}
+            {user && !user.isSelf && onRemoveLogin && (
+              <button type="button" className="linkbtn" style={{ color: "var(--rose)", marginRight: editor && onRemoveEditor ? undefined : "auto" }} onClick={() => onRemoveLogin(user)}>Remove login</button>
+            )}
             <button type="button" className="btn" onClick={onClose}>Cancel</button>
             <button type="submit" className="btn btn-primary" disabled={saving}>
               {saving ? "Saving…" : editingEditor || user ? "Save changes" : "Add team member"}
