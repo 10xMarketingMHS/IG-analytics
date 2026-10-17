@@ -25,6 +25,7 @@ import { navIcon, SIGN_OUT_ICON, RAIL_ICON, COMPOSE_ICON, SEARCH_ICON, PLUS_ICON
 import { JumpPalette, type JumpItem } from "@/components/jump-palette";
 import "./sidebar.css";
 import "./mobile.css";
+import "./sheet.css";
 import type { Account, Activity } from "@/lib/types";
 
 // The sidebar's groups, as in the redesign. Items still come from NAV_ITEMS

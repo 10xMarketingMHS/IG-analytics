@@ -1,0 +1,38 @@
+/* No floating cards. Every page is one solid sheet joined to the sidebar and
+   the top bar, so the tinted background never shows as a gap around panels,
+   and the panels lie flat on it: a thin line, no drop shadow, no glass, no
+   lift on hover. A page's main list or table runs edge to edge, touching the
+   sidebar, as Team Chat does. (Banners — the Home hero, the Leaderboard's
+   top editor — keep their own look.) */
+:root{--sheet:#fcfbfe;--sheet-panel:#ffffff}
+html[data-theme="dark"]{--sheet:#0e0c16;--sheet-panel:rgba(255,255,255,.025)}
+
+.app>main{background:var(--sheet)}
+.app .topbar{background:color-mix(in srgb,var(--sheet) 90%,transparent)}
+.app .content{--content-x:26px;max-width:none}
+@media (max-width:768px){.app .content{--content-x:16px}}
+
+/* panels: flat on the sheet */
+.app .content :is(
+  .card,.an-card,.an-kpis,.an-pod,.an-topcard,
+  .mt-card,.mt-person,.mt-lcard,
+  .gl-card,.gl-kpis,
+  .md-card,.md-stat,.md-tile,
+  .tb-bar,.task-col,.task-card,.tb-list,
+  .lb-tabs,.lb-row
+){box-shadow:none;backdrop-filter:none;-webkit-backdrop-filter:none}
+.app .content :is(.card,.an-card,.an-kpis,.mt-card,.gl-card,.gl-kpis,.md-card,.tb-bar,.lb-tabs){background-color:var(--sheet-panel)}
+.app .content :is(.an-topcard,.an-pod,.mt-person,.mt-lcard,.gl-goal,.lb-row,.task-card):hover{transform:none;box-shadow:none}
+/* a picked person keeps its ring, without the lift */
+.app .content :is(.mt-person,.mt-lcard).on{box-shadow:0 0 0 3px var(--mt-acGlow)}
+
+/* the main list or table of a page runs edge to edge */
+.app .content>.screen>.card:not(.pad),
+.app .content .act-feed .act-card{
+  margin-inline:calc(-1 * var(--content-x));border-radius:0;border-left-width:0;border-right-width:0
+}
+/* Task Board: its toolbar becomes a band joined to the top bar */
+.app .content:has(> .screen.tb){padding-top:0}
+.app .content>.screen.tb>.tb-bar{margin:0 calc(-1 * var(--content-x)) 16px;border-radius:0;border-width:0 0 1px;padding-inline:var(--content-x)}
+/* the Leaderboard's pinned column titles sit on the sheet too */
+.app .content .lb-table-wrap .lb-head{background:var(--sheet)}
