@@ -8,12 +8,13 @@ import { useWorkspaces } from "@/lib/workspaces-context";
 import { useAuth } from "@/lib/auth-context";
 import { Modal } from "@/components/modal";
 
-// Goals — admin-only manual goal-tracking dashboard. Every number is entered by
+// Org goals — admin-only manual goal tracking (the Org goals tab of Goals,
+// pages/goals.tsx, uses the pieces exported here). Every number is entered by
 // an admin (POST /goal-tracker + progress updates); nothing wires to Task Points
 // or Goal Setting. See server/src/routes/goal-tracker.js.
 
-type GoalType = "revenue" | "overall_team" | "project_work" | "custom";
-type Goal = {
+export type GoalType = "revenue" | "overall_team" | "project_work" | "custom";
+export type Goal = {
   id: string;
   type: GoalType;
   title: string;
@@ -29,23 +30,23 @@ type Goal = {
   createdAt: string;
   updateCount?: number;
 };
-type GoalUpdate = { id: string; value: number; note: string | null; updatedAt: string; byName: string | null };
-type Admin = { id: string; name: string | null; email: string };
+export type GoalUpdate = { id: string; value: number; note: string | null; updatedAt: string; byName: string | null };
+export type Admin = { id: string; name: string | null; email: string };
 
-const TYPE_META: Record<GoalType, { label: string; icon: string; cls: string }> = {
+export const TYPE_META: Record<GoalType, { label: string; icon: string; cls: string }> = {
   revenue: { label: "Revenue", icon: "💰", cls: "rev" },
   overall_team: { label: "Overall Team", icon: "🌟", cls: "team" },
   project_work: { label: "Project / Work", icon: "📋", cls: "proj" },
   custom: { label: "Custom", icon: "🎯", cls: "custom" },
 };
-const TYPE_ORDER: GoalType[] = ["revenue", "overall_team", "project_work", "custom"];
+export const TYPE_ORDER: GoalType[] = ["revenue", "overall_team", "project_work", "custom"];
 
 // How far below the "time elapsed" pace counts as Behind rather than On track.
 // Tunable — not a fixed spec.
 const BEHIND_MARGIN = 0.15;
 
-type StatusKey = "completed" | "overdue" | "ontrack" | "behind" | "open";
-const STATUS_META: Record<StatusKey, { label: string; cls: string }> = {
+export type StatusKey = "completed" | "overdue" | "ontrack" | "behind" | "open";
+export const STATUS_META: Record<StatusKey, { label: string; cls: string }> = {
   completed: { label: "Completed", cls: "cp" },
   overdue: { label: "Overdue", cls: "ov" },
   ontrack: { label: "On track", cls: "ok" },
@@ -54,7 +55,7 @@ const STATUS_META: Record<StatusKey, { label: string; cls: string }> = {
 };
 
 // Derived, never stored — real math on admin-entered numbers.
-function deriveStatus(g: Goal): StatusKey {
+export function deriveStatus(g: Goal): StatusKey {
   if (g.targetValue > 0 && g.currentValue >= g.targetValue) return "completed";
   const now = new Date();
   if (g.deadline) {
@@ -71,14 +72,14 @@ function deriveStatus(g: Goal): StatusKey {
 }
 
 const CURRENCY = new Set(["₹", "$", "€", "£", "¥"]);
-function fmtVal(v: number, unit: string | null): string {
+export function fmtVal(v: number, unit: string | null): string {
   const n = Number.isInteger(v) ? v.toLocaleString() : v.toLocaleString(undefined, { maximumFractionDigits: 2 });
   if (!unit) return n;
   if (CURRENCY.has(unit)) return unit + n;
   if (unit === "%") return n + "%";
   return `${n} ${unit}`;
 }
-function pctOf(g: Goal): number {
+export function pctOf(g: Goal): number {
   if (g.targetValue <= 0) return g.currentValue > 0 ? 100 : 0;
   return Math.round((g.currentValue / g.targetValue) * 100);
 }
@@ -225,7 +226,7 @@ export function GoalsTrackerSection() {
 }
 
 // ---- Create ----
-function CreateGoalModal({ admins, defaultOwner, onClose, onCreated }: { admins: Admin[]; defaultOwner: string; onClose: () => void; onCreated: () => void }) {
+export function CreateGoalModal({ admins, defaultOwner, onClose, onCreated }: { admins: Admin[]; defaultOwner: string; onClose: () => void; onCreated: () => void }) {
   const { workspaces } = useWorkspaces();
   const [type, setType] = useState<GoalType>("revenue");
   const [title, setTitle] = useState("");

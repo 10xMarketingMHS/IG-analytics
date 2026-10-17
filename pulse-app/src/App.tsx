@@ -37,7 +37,7 @@ import { useWorkspaces } from "@/lib/workspaces-context";
 // page (see settings.tsx) — /task-rules, /channels, /teams still route here
 // so any old link keeps working, just pre-selecting the matching tab.
 import { SettingsPage } from "@/pages/settings";
-import { GoalsTrackerPage } from "@/pages/goals-tracker";
+import { GoalsPage } from "@/pages/goals";
 import { FormatAnalyticsPage } from "@/pages/format-analytics";
 import { LeaderboardPage } from "@/pages/leaderboard";
 import { MyTeamPage } from "@/pages/my-team";
@@ -125,7 +125,10 @@ function AppRoutes() {
             <Route path="/posts/:id/edit" element={<AddPostPage />} />
             <Route path="/analytics/:type" element={<FormatAnalyticsPage />} />
             <Route path="/settings" element={<SettingsPage />} />
-            <Route path="/goals-board" element={<GoalsTrackerPage />} />
+            {/* Goals: Team goals, Org goals (the old Goals board) and Discipline. */}
+            <Route path="/goals-board" element={<GoalsPage />} />
+            {/* Goal Setting (Settings) — where Goals links to set the targets. */}
+            <Route path="/goals" element={<SettingsPage />} />
             <Route path="/teams" element={<SettingsPage />} />
           </Route>
         </Route>

@@ -67,14 +67,38 @@ function daysLate(t: Task): number {
   return Math.max(0, lateDays(t));
 }
 
-type RankedRow = { editor: Editor; tasks: Task[]; points: number; done: number; open: number; late: number };
+export type RankedRow = { editor: Editor; tasks: Task[]; points: number; done: number; open: number; late: number };
+
+// Everyone on the active roster with their tasks in the range, ranked: points,
+// then tasks completed, then name. (My Team's Ranking and Today's Day report.)
+export function rankTeam(tasks: Task[], editors: Editor[], from: string, to: string, today: string): RankedRow[] {
+  return editors
+    .filter((e) => e.active)
+    .map((e) => {
+      const own = tasks
+        .filter((t) => t.editor_id === e.id)
+        .filter((t) => { const d = taskDay(t, today); return d >= from && d <= to; })
+        .sort((a, b) => taskDay(b, today).localeCompare(taskDay(a, today)));
+      const done = own.filter((t) => t.status === "done");
+      const open = own.filter((t) => t.status !== "done");
+      return {
+        editor: e,
+        tasks: own,
+        points: done.filter(isScorableTask).reduce((s, t) => s + taskPoints(t), 0),
+        done: done.length,
+        open: open.length,
+        late: open.filter((t) => lateDays(t) > 0).length,
+      };
+    })
+    .sort((a, b) => b.points - a.points || b.done - a.done || a.editor.name.localeCompare(b.editor.name));
+}
 
 // The report for a weekly or month-end meeting: exactly what the panel shows for
 // the chosen dates, as an Excel file — a Summary sheet (one row per person, in
 // rank order), an All tasks sheet, and a sheet per person with every task in
 // full, including the link to the finished work. The Excel library is loaded
 // only when someone actually exports.
-async function exportReport(ranked: RankedRow[], from: string, to: string, today: string) {
+export async function exportReport(ranked: RankedRow[], from: string, to: string, today: string) {
   const { default: ExcelJS } = await import("exceljs");
   const wb = new ExcelJS.Workbook();
   const period = from === to ? from : `${from} to ${to}`;
@@ -222,14 +246,14 @@ const ICON_ARROW = (
   <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M5 12h14M13 6l6 6-6 6" /></svg>
 );
 
-export function TeamPanel({ tasks, editors, onOpenTask }: {
-  tasks: Task[] | null; editors: Editor[] | null; onOpenTask: (t: Task) => void;
+export function TeamPanel({ tasks, editors, onOpenTask, focusId }: {
+  tasks: Task[] | null; editors: Editor[] | null; onOpenTask: (t: Task) => void; focusId?: string | null;
 }) {
   const today = ymd(new Date());
   const [rangeKey, setRangeKey] = useState<RangeKey>("month");
   const [custom, setCustom] = useState<[string, string]>(() => presetRange("month", new Date()));
   const [from, to] = rangeKey === "custom" ? custom : presetRange(rangeKey, new Date());
-  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [selectedId, setSelectedId] = useState<string | null>(focusId ?? null);
   const [exporting, setExporting] = useState(false);
   // The task row whose extra details are showing (one at a time).
   const [expandedId, setExpandedId] = useState<string | null>(null);
@@ -238,29 +262,7 @@ export function TeamPanel({ tasks, editors, onOpenTask }: {
   // This month's goal per person (Goal Setting), the same figure the Leaderboard shows.
   const { data: goalData } = useResource<{ totals: { editorId: string; goalPoints: number }[] }>(`/goals/totals?month=${today.slice(0, 7)}-01`);
 
-  // Everyone on the active roster, ranked: points, then tasks completed, then name.
-  const ranked = useMemo((): RankedRow[] => {
-    const all = tasks ?? [];
-    return (editors ?? [])
-      .filter((e) => e.active)
-      .map((e) => {
-        const own = all
-          .filter((t) => t.editor_id === e.id)
-          .filter((t) => { const d = taskDay(t, today); return d >= from && d <= to; })
-          .sort((a, b) => taskDay(b, today).localeCompare(taskDay(a, today)));
-        const done = own.filter((t) => t.status === "done");
-        const open = own.filter((t) => t.status !== "done");
-        return {
-          editor: e,
-          tasks: own,
-          points: done.filter(isScorableTask).reduce((s, t) => s + taskPoints(t), 0),
-          done: done.length,
-          open: open.length,
-          late: open.filter((t) => lateDays(t) > 0).length,
-        };
-      })
-      .sort((a, b) => b.points - a.points || b.done - a.done || a.editor.name.localeCompare(b.editor.name));
-  }, [tasks, editors, from, to, today]);
+  const ranked = useMemo(() => rankTeam(tasks ?? [], editors ?? [], from, to, today), [tasks, editors, from, to, today]);
 
   // Points earned this calendar month, for the goal bar whatever range is picked.
   const monthPoints = useMemo(() => {

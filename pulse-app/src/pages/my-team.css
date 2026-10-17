@@ -140,6 +140,86 @@ html[data-theme="dark"] .mt{
 .mt-labels{display:grid;grid-template-columns:repeat(4,1fr);gap:4px;font-size:11px;color:var(--mt-text3)}
 .mt-labels .cur{color:var(--mt-acText);font-weight:700}
 @media (prefers-reduced-motion:reduce){.mt-person{transition:none}.mt-person:hover{transform:none}}
+/* the page: Today / Ranking */
+.screen.mt-page{display:flex;flex-direction:column;gap:16px}
+.mt.mt-tabs{flex-direction:row;align-items:center;gap:18px;flex-wrap:wrap;border-bottom:1px solid var(--mt-line)}
+.mt-tabs>button{display:flex;align-items:center;gap:6px;height:38px;padding:0 2px;margin-bottom:-1px;border:0;border-bottom:2px solid transparent;background:transparent;
+  color:var(--mt-text3);font:700 13px 'Plus Jakarta Sans',sans-serif;cursor:pointer;white-space:nowrap}
+.mt-tabs>button:hover{color:var(--mt-text)}
+.mt-tabs>button.on{color:var(--mt-text);border-bottom-color:var(--mt-ac)}
+.mt a.mt-rosterlink{margin-bottom:4px;font-size:12px;color:var(--mt-text3);font-weight:600}
+.mt a.mt-rosterlink:hover{color:var(--mt-acText)}
+
+/* today: filters, live label */
+.mt{--mt-work:oklch(0.55 0.15 150);--mt-workSoft:oklch(0.95 0.04 150);--mt-done:oklch(0.55 0.18 300);--mt-doneSoft:oklch(0.95 0.035 300)}
+html[data-theme="dark"] .mt{--mt-work:oklch(0.76 0.15 150);--mt-workSoft:oklch(0.28 0.05 150);--mt-done:oklch(0.78 0.13 300);--mt-doneSoft:oklch(0.3 0.06 300)}
+.mt-filters{display:flex;gap:8px;flex-wrap:wrap}
+.mt-filters button{display:inline-flex;align-items:center;gap:7px;height:34px;padding:0 13px 0 11px;border:1px solid var(--mt-line);border-radius:999px;background:var(--mt-panel);
+  color:var(--mt-text2);font:700 12.5px 'Plus Jakarta Sans',sans-serif;cursor:pointer;white-space:nowrap}
+.mt-filters button:hover{border-color:var(--mt-text3)}
+.mt-filters button.on{border-color:var(--mt-ac);background:var(--mt-acSoft);color:var(--mt-acText)}
+.mt-filters button>span{font:600 11.5px 'Geist Mono',ui-monospace,monospace;color:var(--mt-text3)}
+.mt i.all,.mt i.work,.mt i.break,.mt i.idle,.mt i.done{flex:none;width:8px;height:8px;border-radius:50%;background:var(--mt-text3)}
+.mt i.work{background:var(--mt-work)}
+.mt i.break{background:var(--mt-rev)}
+.mt i.done{background:var(--mt-done)}
+.mt-livelbl{display:inline-flex;align-items:center;gap:6px;font-size:12px;color:var(--mt-text3);white-space:nowrap}
+.mt-livelbl i{width:7px;height:7px;border-radius:50%;background:var(--mt-work);box-shadow:0 0 0 0 var(--mt-work);animation:mt-live 2s ease-out infinite}
+@keyframes mt-live{0%{box-shadow:0 0 0 0 color-mix(in srgb,var(--mt-work) 55%,transparent)}100%{box-shadow:0 0 0 7px transparent}}
+
+/* today: the people */
+.mt-livegrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(min(100%,232px),1fr));gap:12px}
+.mt-lcard{display:flex;flex-direction:column;gap:10px;min-width:0;padding:14px;border:1px solid var(--mt-line);border-radius:var(--mt-rc);background:var(--mt-panel);
+  box-shadow:var(--mt-sh1);backdrop-filter:var(--mt-blur);-webkit-backdrop-filter:var(--mt-blur);color:var(--mt-text);font:inherit;text-align:left;cursor:pointer;transition:border-color .15s,transform .2s}
+.mt-lcard:hover{transform:translateY(-2px)}
+.mt-lcard.on{border-color:var(--mt-ac);background:color-mix(in srgb,var(--mt-acSoft) 70%,var(--mt-panel));box-shadow:0 0 0 3px var(--mt-acGlow),var(--mt-sh1)}
+.mt-lcard:focus-visible{outline:2px solid var(--mt-ac);outline-offset:2px}
+.mt-lhead{display:flex;align-items:center;gap:10px;min-width:0}
+.mt-lhead .mt-who{flex:1}
+.mt-tface{position:relative;flex:none;width:36px;height:36px}
+.mt-tface>img,.mt-tface>span{width:100%;height:100%;border-radius:50%;object-fit:cover;display:grid;place-items:center;color:#fff;font-size:12px;font-weight:800}
+.mt-tface.big{width:52px;height:52px}
+.mt-tface.big>img,.mt-tface.big>span{border-radius:16px;font-size:18px}
+.mt-tface>i{position:absolute;right:-1px;bottom:-1px;width:11px!important;height:11px!important;border:2px solid var(--mt-solid)}
+.mt-pill{flex:none;display:inline-flex;align-items:center;height:22px;padding:0 8px;border-radius:6px;font-size:11px;font-weight:700;white-space:nowrap;background:var(--mt-sunk2);color:var(--mt-text3)}
+.mt-pill.work{background:var(--mt-workSoft);color:var(--mt-work)}
+.mt-pill.break{background:var(--mt-revSoft);color:var(--mt-rev)}
+.mt-pill.done{background:var(--mt-doneSoft);color:var(--mt-done)}
+.mt-now{display:flex;flex-direction:column;justify-content:center;gap:2px;min-height:44px;padding:9px 10px;border-radius:10px;background:var(--mt-sunk)}
+.mt-now b{font-size:12.5px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.mt-now span{font:500 11px 'Geist Mono',ui-monospace,monospace;color:var(--mt-text3);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.mt-lfoot{display:flex;flex-wrap:wrap;gap:4px 12px;font-size:11.5px;color:var(--mt-text3)}
+.mt-lfoot b{color:var(--mt-text)}
+
+/* today: the picked person */
+.mt-livebox b{font-weight:700}
+.mt-livebox span{min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.mt-livebox.work{background:var(--mt-workSoft)}
+.mt-livebox.work b{color:var(--mt-work)}
+.mt-livebox.break{background:var(--mt-revSoft)}
+.mt-livebox.break b{color:var(--mt-rev)}
+.mt-livebox.done{background:var(--mt-doneSoft)}
+.mt-livebox.done b{color:var(--mt-done)}
+.mt-livebox.work i{background:var(--mt-work)}
+.mt-livebox.done i{background:var(--mt-done)}
+.mt-goalcard{display:flex;flex-direction:column;gap:7px;width:100%;padding:12px;border:1px solid var(--mt-line);border-radius:12px;background:var(--mt-solid);color:var(--mt-text);font:inherit;text-align:left;cursor:pointer}
+.mt-goalcard:hover{border-color:var(--mt-ac)}
+.mt-goalrow{display:flex;align-items:center;gap:6px;font-size:12px}
+.mt-goalrow>svg{color:var(--mt-acText)}
+.mt-goalrow>span:first-of-type{color:var(--mt-text2)}
+.mt-goalrow b.good{color:var(--mt-good)}
+.mt-goalrow b.warn{color:var(--mt-warn)}
+.mt-goalrow b.bad{color:var(--mt-bad)}
+.mt-goalrow em{font-style:normal;color:var(--mt-text3)}
+.mt-goalcard .mt-goalbar span.good{background:var(--mt-good)}
+.mt-goalcard .mt-goalbar span.warn{background:var(--mt-warn)}
+.mt-goalcard .mt-goalbar span.bad{background:var(--mt-bad)}
+.mt-goalsub{display:flex;align-items:center;gap:4px;font-size:11.5px;font-weight:700;color:var(--mt-acText)}
+.mt-list.today{min-width:600px}
+.mt-list.today .mt-lh,.mt-list.today .mt-lr{grid-template-columns:minmax(220px,2.4fr) 1fr 1fr .8fr .8fr}
+.mt-mono{font:500 12px 'Geist Mono',ui-monospace,monospace;color:var(--mt-text2)}
+@media (prefers-reduced-motion:reduce){.mt-livelbl i{animation:none}.mt-lcard{transition:none}.mt-lcard:hover{transform:none}}
+
 /* too narrow for the two side by side: the profile spans the page, its numbers in one row */
 @container (max-width:999px){
   .mt-profile{flex-basis:100%;max-width:none}
