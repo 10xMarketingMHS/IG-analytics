@@ -32,10 +32,11 @@ export const NAV_ITEMS: NavItem[] = [
   // everyone. Shown as "My Day" until 2026-10-17; the route was always /home.
   { title: "Home", href: "/home", icon: "🏠", section: "Home" },
   { title: "Team Chat", href: "/chat", icon: "💬", section: "Home", chatBadge: true },
-  { title: "Dashboard", href: "/dashboard", icon: "📊", section: "Analytics" },
+  // Analytics — the Dashboard and Top Performers merged into one page with an
+  // Overview tab and a Top performers tab (/dashboard and /top redirect here).
   // Insights, Trends, Reports — hidden from the sidebar per request; routes/
   // pages still exist (see App.tsx, PAGE_META below), just not linked.
-  { title: "Top Performers", href: "/top", icon: "🥇", section: "Analytics" },
+  { title: "Analytics", href: "/analytics", icon: "📈", section: "Analytics" },
   { title: "Leaderboard", href: "/leaderboard", icon: "🏆", section: "Analytics" },
   { title: "Task Board", href: "/tasks", icon: "✅", section: "Tasks" },
   // My Team — admin-only: everyone ranked for a date range, with their tasks.
@@ -57,11 +58,11 @@ export const NAV_ITEMS: NavItem[] = [
 export const PAGE_META: Record<string, [string, string]> = {
   "/home": ["Home", "What needs your attention today"],
   "/chat": ["Team Chat", "Channels for the team, direct messages for one-to-one"],
-  "/dashboard": ["Dashboard", "Live analytics from your content data"],
+  "/analytics/": ["Format analytics", "Total performance across all posts of one format"],
+  "/analytics": ["Analytics", "Content performance across your channels and platforms"],
   "/metrics": ["Social & Ads Pipeline", "Who's working on which Social post or Ad, and where it stands"],
   "/insights": ["Insights", "What your data is telling you — computed automatically"],
   "/trends": ["Trends", "How your content is performing over time, and platform vs platform"],
-  "/top": ["Top Performers", "Your best-performing content, ranked separately for each platform"],
   "/leaderboard": ["Editor Leaderboard", "Editor performance & rankings from published posts"],
   "/reports": ["Reports", "Export and share performance summaries"],
   "/posts/new": ["Add Post", "Create the post record now — log its metrics after you publish"],
@@ -75,5 +76,4 @@ export const PAGE_META: Record<string, [string, string]> = {
   "/activity": ["Activity", "Updates on your tasks and the team, newest first"],
   "/teams": ["Teams", "Roster, hierarchy, and login access — one place for everyone on the team"],
   "/settings": ["Settings", "Content taxonomy, task rules, channels, and your team — all in one place"],
-  "/analytics": ["Format analytics", "Total performance across all posts of one format"],
 };

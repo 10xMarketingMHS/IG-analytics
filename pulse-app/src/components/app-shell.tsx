@@ -31,7 +31,7 @@ import type { Account, Activity } from "@/lib/types";
 // Add Post on the top bar, so neither is listed. Anything new in NAV_ITEMS
 // that isn't placed here lands at the end of Operations.
 const SIDEBAR_GROUPS: { label: string; hrefs: string[] }[] = [
-  { label: "Workspace", hrefs: ["/home", "/chat", "/tasks", "/dashboard", "/top"] },
+  { label: "Workspace", hrefs: ["/home", "/chat", "/tasks", "/analytics"] },
   { label: "Operations", hrefs: ["/metrics", "/posts", "/leaderboard", "/goals-board", "/my-team"] },
 ];
 const OFF_SIDEBAR = new Set(["/settings", "/posts/new"]);

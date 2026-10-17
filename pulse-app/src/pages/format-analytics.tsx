@@ -67,8 +67,8 @@ export function FormatAnalyticsPage() {
 
   return (
     <section className="screen">
-      <button className="btn" style={{ marginBottom: 16 }} onClick={() => navigate("/dashboard")}>
-        ← Back to Dashboard
+      <button className="btn" style={{ marginBottom: 16 }} onClick={() => navigate("/analytics")}>
+        ← Back to Analytics
       </button>
 
       <div className="sectitle" style={{ marginTop: 0 }}>

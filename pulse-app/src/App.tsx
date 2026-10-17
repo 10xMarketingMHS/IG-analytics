@@ -18,12 +18,11 @@ import { Modal } from "@/components/modal";
 import { Toaster } from "@/components/ui/sonner";
 import { LoginPage } from "@/pages/login";
 import { HomePage } from "@/pages/home";
-import { DashboardPage } from "@/pages/dashboard";
+import { AnalyticsPage } from "@/pages/analytics";
 import { lazy, Suspense } from "react";
 import { InsightsPage } from "@/pages/insights";
 // Trends pulls in Recharts (heavy) — load it only when visited.
 const TrendsPage = lazy(() => import("@/pages/trends").then((m) => ({ default: m.TrendsPage })));
-import { TopPerformersPage } from "@/pages/top-performers";
 import { MetricsPage } from "@/pages/metrics";
 import { ReportsPage } from "@/pages/reports";
 import { PostsPage } from "@/pages/posts";
@@ -93,7 +92,9 @@ function AppRoutes() {
         <Route element={<ProtectedRoute />}>
           <Route element={<AppShell />}>
             <Route path="/home" element={<HomePage />} />
-            <Route path="/dashboard" element={<DashboardPage />} />
+            {/* Dashboard and Top Performers live on as the two tabs of Analytics. */}
+            <Route path="/analytics" element={<AnalyticsPage />} />
+            <Route path="/dashboard" element={<Navigate to="/analytics" replace />} />
             <Route path="/metrics" element={<MetricsPage />} />
             <Route path="/insights" element={<InsightsPage />} />
             <Route
@@ -105,7 +106,7 @@ function AppRoutes() {
               }
             />
             <Route path="/leaderboard" element={<LeaderboardPage />} />
-            <Route path="/top" element={<TopPerformersPage />} />
+            <Route path="/top" element={<Navigate to="/analytics?tab=top" replace />} />
             <Route path="/reports" element={<ReportsPage />} />
             <Route path="/posts" element={<PostsPage />} />
             {/* Channels, Task Settings, Teams all live inside Settings now — these

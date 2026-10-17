@@ -833,7 +833,7 @@ function FocusLayout({ d, goal, onOpen, onChanged, flow }: LayoutProps) {
         )}
       </div>
       <ReviewCard d={d} onOpen={onOpen} onChanged={onChanged} full />
-      <Card title="The team this month" action={<span className="md-links">{linkTo("/metrics", "Pipeline")}{linkTo("/dashboard", "Dashboard")}</span>}>
+      <Card title="The team this month" action={<span className="md-links">{linkTo("/metrics", "Pipeline")}{linkTo("/analytics", "Analytics")}</span>}>
         <div className="md-teamstrip">
           <div className="md-teamstrip-pipe"><PipelineStack d={d} /></div>
           <MonthNumbers d={d} />
@@ -868,7 +868,7 @@ function DashboardLayout({ d, goal, onOpen, onChanged }: LayoutProps) {
         {d.linked && <MonthCard d={d} goal={goal} />}
       </div>
       <div className="md-split stretch">
-        <Card title="Views this month" action={linkTo("/dashboard", "Open Dashboard")} className="md-wide">
+        <Card title="Views this month" action={linkTo("/analytics", "Open Analytics")} className="md-wide">
           <MonthNumbers d={d} />
           <ViewsChart d={d} />
         </Card>
@@ -939,7 +939,7 @@ function TeamLayout({ d, goal, onOpen, onChanged }: LayoutProps) {
           ))}
         </div>
         <ReviewCard d={d} onOpen={onOpen} onChanged={onChanged} stacked />
-        <Card title="This month" action={linkTo("/dashboard", "Dashboard")}>
+        <Card title="This month" action={linkTo("/analytics", "Analytics")}>
           <MonthNumbers d={d} />
           <div className="md-divide"><PipelineStack d={d} /></div>
           <div className="md-divide"><BestPost d={d} /></div>
