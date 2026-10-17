@@ -1,5 +1,6 @@
 import { useEffect } from "react";
 import { toast } from "sonner";
+import { useAlertGate } from "@/lib/notify-prefs";
 import { useAuth } from "@/lib/auth-context";
 import { api } from "@/lib/api";
 import type { Task } from "@/lib/types";
@@ -43,6 +44,7 @@ export function noteTaskSeen(userId: string, taskId: string) {
 // already existed before this session started.
 export function useTaskAssignNotify() {
   const { user } = useAuth();
+  const gate = useAlertGate();
 
   useEffect(() => {
     if (!user?.editorId) return;
@@ -50,12 +52,14 @@ export function useTaskAssignNotify() {
 
     async function poll() {
       try {
+        // Quiet hours: leave them unseen, so they show inside working hours.
+        if (!gate.off("assigned") && gate.held()) return;
         const { tasks } = await api<{ tasks: Task[] }>("/tasks?assignee=me");
         if (cancelled) return;
         const key = SEEN_KEY_PREFIX + user!.id;
         const isFirstEver = window.localStorage.getItem(key) === null;
         const seen = readSeen(user!.id);
-        if (!isFirstEver) {
+        if (!isFirstEver && !gate.off("assigned")) {
           for (const t of tasks) {
             if (seen.has(t.id)) continue;
             // A task you created yourself isn't news to you.

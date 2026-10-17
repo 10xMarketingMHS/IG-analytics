@@ -194,6 +194,8 @@ const SelfUpdateSchema = z.object({
   // A CSS gradient/color value (e.g. "linear-gradient(135deg,#ec4899,#8b5cf6)"),
   // not just a short hex code — needs real room.
   color: z.string().max(120).nullable().optional(),
+  // Settings › Notifications: alert key → on/off.
+  notifyPrefs: z.record(z.string().max(40), z.boolean()).optional(),
 });
 
 // Self-service profile — any authenticated user can update their own display
@@ -246,6 +248,13 @@ usersRouter.patch("/users/me", async (req, res, next) => {
   if (d.name !== undefined) push("name", d.name);
   if (d.imageUrl !== undefined) push("image_url", d.imageUrl);
   if (d.color !== undefined) push("color", d.color);
+  if (d.notifyPrefs !== undefined) {
+    if (!(await hasColumn("app_user", "notify_prefs"))) {
+      return res.status(409).json({ error: "Notification choices need a database update first — ask whoever runs the database to apply 20261023120000_org_settings_notify_prefs." });
+    }
+    params.push(JSON.stringify(d.notifyPrefs));
+    sets.push(`notify_prefs = coalesce(notify_prefs, '{}'::jsonb) || $${params.length}::jsonb`);
+  }
   if (!sets.length) return res.status(400).json({ error: "Nothing to update." });
   try {
     await pool.query(`update app_user set ${sets.join(", ")} where id = $1`, params);

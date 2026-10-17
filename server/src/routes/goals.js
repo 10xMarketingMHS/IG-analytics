@@ -5,6 +5,8 @@ import { pool } from "../db.js";
 import { requireAdmin, requireEditor } from "../resolve-workspace.js";
 import { requirePermission } from "../permissions.js";
 import { resolveBudgetHours } from "./tasks.js";
+import { hasColumn } from "../schema-flags.js";
+import { capacityFor } from "../work-calendar.js";
 
 export const goalsRouter = Router();
 
@@ -19,6 +21,19 @@ const DEFAULT_CAPACITY = { working_days: 22, hours_per_day: 8 };
 // Effective monthly capacity for an editor: their own override → the org-wide
 // default for that month → carry-forward (most recent org default before it) →
 // a constant. Returns the numbers plus which source they came from.
+// A month with no saved capacity follows the work calendar (Settings ›
+// General), when one is saved; before that, the last saved month carries on.
+async function calendarCapacity(orgId, month) {
+  if (!(await hasColumn("org", "settings"))) return null;
+  const { rows } = await pool.query("select settings -> 'calendar' as cal from org where id = $1", [orgId]);
+  const cal = rows[0]?.cal;
+  if (!cal) return null;
+  const m = new Date(month);
+  const c = capacityFor(cal, m.getUTCFullYear(), m.getUTCMonth());
+  if (!c.workingDays) return null;
+  return { working_days: c.workingDays, hours_per_day: Math.round((c.minutes / 60 / c.workingDays) * 10000) / 10000 };
+}
+
 export async function effectiveCapacity(orgId, editorId, month) {
   const q = (sql, params) => pool.query(sql, params);
   let r = await q(
@@ -31,6 +46,8 @@ export async function effectiveCapacity(orgId, editorId, month) {
     [orgId, month],
   );
   if (r.rows[0]) return { ...r.rows[0], source: "org" };
+  const fromCal = await calendarCapacity(orgId, month);
+  if (fromCal) return { ...fromCal, source: "calendar" };
   r = await q(
     "select working_days, hours_per_day from editor_capacity where org_id=$1 and editor_id is null and period_month < $2 order by period_month desc limit 1",
     [orgId, month],

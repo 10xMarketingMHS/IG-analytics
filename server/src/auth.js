@@ -5,6 +5,7 @@ import { z } from "zod";
 import { config } from "./config.js";
 import { pool } from "./db.js";
 import { logActivity } from "./activity.js";
+import { hasColumn } from "./schema-flags.js";
 
 const COOKIE_NAME = "pulse_session";
 const SESSION_TTL = "7d";
@@ -117,13 +118,18 @@ authRouter.get("/me", async (req, res) => {
     // editor_id (and profile fields, which the user can change themselves)
     // can change after login, so they're looked up fresh rather than trusted
     // from the token, which only ever carries id + email.
+    const withPrefs = await hasColumn("app_user", "notify_prefs");
     const { rows } = await pool.query(
-      "select editor_id, name, image_url, color from app_user where id = $1",
+      `select editor_id, name, image_url, color${withPrefs ? ", notify_prefs" : ""} from app_user where id = $1`,
       [payload.sub],
     );
     const u = rows[0];
     res.json({
-      user: { id: payload.sub, email: payload.email, editorId: u?.editor_id ?? null, name: u?.name ?? null, imageUrl: u?.image_url ?? null, color: u?.color ?? null },
+      user: {
+        id: payload.sub, email: payload.email, editorId: u?.editor_id ?? null, name: u?.name ?? null, imageUrl: u?.image_url ?? null, color: u?.color ?? null,
+        // Which in-app alerts they get (Settings › Notifications); a missing key is on.
+        notifyPrefs: u?.notify_prefs ?? {},
+      },
     });
   } catch {
     res.status(401).json({ error: "Session expired" });

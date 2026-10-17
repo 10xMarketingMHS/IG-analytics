@@ -18,6 +18,8 @@ type AuthUser = {
   name: string | null;
   imageUrl: string | null;
   color: string | null;
+  // Which in-app alerts they get (Settings › Notifications); a missing key is on.
+  notifyPrefs?: Record<string, boolean>;
 };
 
 type AuthContextValue = {

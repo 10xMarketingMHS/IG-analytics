@@ -16,6 +16,7 @@ export const SI = {
   chart: sv(<><path d="M4 20V10M10 20V4M16 20v-7M22 20H2" /></>),
   admin: sv(<><path d="M12 3 4.5 6v5.5c0 4.4 3.1 8.2 7.5 9.5 4.4-1.3 7.5-5.1 7.5-9.5V6z" /><circle cx="12" cy="10.5" r="2.5" /><path d="M8.5 16a4 4 0 0 1 7 0" /></>),
   clock: sv(<><circle cx="12" cy="12" r="9" /><path d="M12 7v5l3 2" /></>),
+  bell: sv(<><path d="M6 16V11a6 6 0 0 1 12 0v5l1.5 2h-15z" /><path d="M10 20a2 2 0 0 0 4 0" /></>),
   shield: sv(<><path d="M12 3 4.5 6v5.5c0 4.4 3.1 8.2 7.5 9.5 4.4-1.3 7.5-5.1 7.5-9.5V6z" /><path d="m9 12 2 2 4-4" /></>, 15),
   lock: sv(<><rect x="5" y="11" width="14" height="10" rx="2" /><path d="M8 11V7a4 4 0 0 1 8 0v4" /></>, 16),
   lockSm: sv(<><rect x="5" y="11" width="14" height="10" rx="2" /><path d="M8 11V7a4 4 0 0 1 8 0v4" /></>, 13),

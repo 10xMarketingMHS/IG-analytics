@@ -10,7 +10,10 @@ import { useResource } from "@/lib/use-resource";
 import { useAutoSync } from "@/lib/auto-sync";
 import { getActivitySeen, onActivitySeenChange } from "@/lib/activity-seen";
 import { hasSeenTask, useTaskAssignNotify } from "@/lib/use-task-notify";
-import { useOverdueTaskNotify } from "@/lib/use-overdue-notify";
+import { useDueOverdueNotify, useOverdueTaskNotify, useReviewWaitingNotify } from "@/lib/use-overdue-notify";
+import { scopeAllowsTask, useReviewAccess } from "@/lib/use-review-access";
+import { useOrg } from "@/lib/use-org";
+import { setWeekStart } from "@/lib/date-range";
 import { BreakWidget } from "@/components/break-widget";
 import { BreakOverlay } from "@/components/break-overlay";
 import { BreakProvider, useBreakState } from "@/lib/break-context";
@@ -237,6 +240,13 @@ function AppShellInner() {
   useLiveNotices(activityItems, user?.id, user?.editorId);
   useTaskAssignNotify();
   useOverdueTaskNotify();
+  useDueOverdueNotify();
+  // Anyone who reviews hears when work lands in review (within their scope).
+  const review = useReviewAccess();
+  useReviewWaitingNotify(isAdmin || review.granted, (t) => isAdmin || scopeAllowsTask(review.scope, t));
+  // The organisation's name (sidebar) and week start (date ranges).
+  const { org } = useOrg();
+  useEffect(() => { if (org) setWeekStart(org.weekStart); }, [org?.weekStart]); // eslint-disable-line react-hooks/exhaustive-deps
   // App-wide auto-sync: only ADMIN tabs poll (keeps the trigger surface small
   // with many users online); runs on any page while the tab is active, on the
   // org's interval. No-op unless an admin enabled the kill switch.
@@ -365,7 +375,7 @@ function AppShellInner() {
           <div className="logo">◐</div>
           <div className="sb2-label sb2-brandtx">
             <b>Pulse</b>
-            <small>Content Analytics</small>
+            <small>{org?.name || "Content Analytics"}</small>
           </div>
           <button type="button" className="sb2-iconbtn sb2-railbtn" onClick={toggleRail} aria-pressed={rail}
             title={rail ? "Expand the sidebar" : "Collapse the sidebar"} aria-label={rail ? "Expand the sidebar" : "Collapse the sidebar"}>

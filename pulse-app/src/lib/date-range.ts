@@ -19,10 +19,13 @@ function addDays(d: Date, n: number) {
   c.setDate(c.getDate() + n);
   return c;
 }
+// Which day a week starts on — Monday unless Settings › General says Sunday
+// (set once the organisation's settings load; see app-shell.tsx).
+let weekStartsSunday = false;
+export function setWeekStart(ws: "mon" | "sun") { weekStartsSunday = ws === "sun"; }
 function startOfWeek(d: Date) {
-  // Monday-based (PRD §10.4 weekly rollup is Mon–Sun)
   const c = new Date(d);
-  const day = (c.getDay() + 6) % 7;
+  const day = weekStartsSunday ? c.getDay() : (c.getDay() + 6) % 7;
   return addDays(c, -day);
 }
 

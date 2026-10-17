@@ -4,8 +4,13 @@ import { toast } from "sonner";
 import { api, ApiError } from "@/lib/api";
 import { useTaxonomy } from "@/lib/use-taxonomy";
 import { useWorkspaces } from "@/lib/workspaces-context";
-import { useEditors } from "@/lib/use-editors";
 import { useResource } from "@/lib/use-resource";
+import { useAuth } from "@/lib/auth-context";
+import { useOrg } from "@/lib/use-org";
+import { useReviewAccess } from "@/lib/use-review-access";
+import { setWeekStart } from "@/lib/date-range";
+import { notifyOn, type NotifyKey } from "@/lib/notify-prefs";
+import { CALENDAR_DEFAULTS, LUNCH_MIN, TEA_MIN, capacityFor, storedCapacity, type WorkCalendar } from "@/lib/work-calendar";
 import { ACCENTS, useTheme } from "@/components/theme-provider";
 import { SCORE_WEIGHTS } from "@/lib/score";
 import { DISCIPLINE_CRITERIA } from "@/lib/goal-points";
@@ -14,42 +19,60 @@ import { TaskRulesSection } from "@/pages/task-rules";
 import { ChannelsSection } from "@/pages/channels";
 import { EodOversightSection } from "@/pages/eod-oversight";
 import { AccessSection } from "@/pages/access";
-import { SI, Seg, Stepper, fmtHours } from "@/pages/settings-ui";
+import { SI, Seg, Stepper, Toggle, fmtHours } from "@/pages/settings-ui";
 import "./settings.css";
 
 // Settings (Pulse Redesign v5): one page, a menu of sections on the left —
-// General, Channels, Content, Tasks & time, Scoring, Access and Work day — each
-// a stack of flat panels with one setting per row. Sections a person can't use
-// at all are left out of the menu. People, logins and roles moved to Team ›
-// Roster; each person's goals to Goals › Set goals. /channels and /task-rules
-// still land here on their own section; ?s= picks one.
-type Section = "general" | "channels" | "content" | "tasks" | "scoring" | "access" | "workday";
+// General, Channels, Content, Tasks & time, Scoring, Access, Notifications and
+// Work day — each a stack of flat panels with one setting per row. Sections a
+// person can't use at all are left out of the menu. General keeps its changes
+// as a draft ("Unsaved changes") until Save; the others save as you go.
+// People, logins and roles live in Team › Roster; each person's goals in
+// Goals › Set goals. /channels and /task-rules still land here on their own
+// section; ?s= picks one.
+type Section = "general" | "channels" | "content" | "tasks" | "scoring" | "access" | "alerts" | "workday";
 const SECTION_FOR_PATH: Record<string, Section> = { "/channels": "channels", "/task-rules": "tasks" };
+const LEAVE_UNSAVED = "You have changes that aren't saved. Leave them?";
 
 export function SettingsPage() {
   const { isAdmin, hasPermission } = useWorkspaces();
   const location = useLocation();
   const navigate = useNavigate();
   const [params] = useSearchParams();
-  const canCalendar = hasPermission("edit_goals");
+  const [dirty, setDirty] = useState(false);
 
   const SECTIONS: { k: Section; l: string; d: string; icon: ReactNode; show: boolean }[] = [
-    { k: "general", l: "General", d: "Work calendar, review cycle, look", icon: SI.tune, show: true },
+    { k: "general", l: "General", d: "Workspace, work calendar, look", icon: SI.tune, show: true },
     { k: "channels", l: "Channels", d: "Brands and platform accounts", icon: SI.hub, show: true },
     { k: "content", l: "Content", d: "Pillars, types, avatars, formats", icon: SI.category, show: true },
-    { k: "tasks", l: "Tasks & time", d: "Task types, points, time budgets", icon: SI.timer, show: hasPermission("task_settings") },
-    { k: "scoring", l: "Scoring", d: "How scores and rankings work", icon: SI.chart, show: true },
+    { k: "tasks", l: "Tasks & time", d: "Task types, budgets, breaks", icon: SI.timer, show: hasPermission("task_settings") },
+    { k: "scoring", l: "Scoring", d: "How rankings are calculated", icon: SI.chart, show: true },
     { k: "access", l: "Access", d: "Extra permissions per person", icon: SI.admin, show: hasPermission("access_manage") },
+    { k: "alerts", l: "Notifications", d: "What pings you, and where", icon: SI.bell, show: true },
     { k: "workday", l: "Work day", d: "Who started and ended their day", icon: SI.clock, show: isAdmin },
   ];
   const shown = SECTIONS.filter((s) => s.show);
   const want = (params.get("s") as Section | null) ?? SECTION_FOR_PATH[location.pathname] ?? "general";
   const cur = shown.find((s) => s.k === want) ?? shown[0];
-  const go = (k: Section) => navigate(k === "general" ? "/settings" : `/settings?s=${k}`, { replace: true });
+  function go(k: Section) {
+    if (k === cur.k) return;
+    if (dirty && !window.confirm(LEAVE_UNSAVED)) return;
+    setDirty(false);
+    navigate(k === "general" ? "/settings" : `/settings?s=${k}`, { replace: true });
+  }
+  // Closing or reloading the tab with a draft asks first.
+  useEffect(() => {
+    if (!dirty) return;
+    const warn = (e: BeforeUnloadEvent) => { e.preventDefault(); e.returnValue = ""; };
+    window.addEventListener("beforeunload", warn);
+    return () => window.removeEventListener("beforeunload", warn);
+  }, [dirty]);
 
   return (
     <section className="screen st">
       <div className="st-head">
+        {dirty && <span className="st-chip warn st-unsaved"><i />Unsaved changes</span>}
+        <span className="st-grow" />
         <span className="st-note">
           {SI.shield}
           {isAdmin ? "Super Admin & Admin · changes apply to everyone" : "Some sections can only be changed by an admin"}
@@ -72,12 +95,13 @@ export function SettingsPage() {
         </nav>
         <div className="st-main">
           <div className="st-sechead"><h2>{cur.l}</h2><span>{cur.d}</span></div>
-          {cur.k === "general" && <GeneralSection canCalendar={canCalendar} />}
+          {cur.k === "general" && <GeneralSection onDirty={setDirty} />}
           {cur.k === "channels" && <ChannelsSection />}
           {cur.k === "content" && <ContentSection />}
           {cur.k === "tasks" && <TaskRulesSection />}
           {cur.k === "scoring" && <ScoringSection />}
           {cur.k === "access" && <AccessSection />}
+          {cur.k === "alerts" && <NotificationsSection />}
           {cur.k === "workday" && <EodOversightSection />}
         </div>
       </div>
@@ -88,10 +112,167 @@ export function SettingsPage() {
 // ── General ──────────────────────────────────────────────────────────────────
 const ymOf = (d: Date) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
 
-function GeneralSection({ canCalendar }: { canCalendar: boolean }) {
+// The workspace (name, time zone, week start) and the work calendar, kept as a
+// draft until Save; then the review cycle and how Pulse looks for you.
+function GeneralSection({ onDirty }: { onDirty: (dirty: boolean) => void }) {
+  const { isAdmin, hasPermission } = useWorkspaces();
+  const canCal = hasPermission("edit_goals");
+  const { org, refetch } = useOrg();
+  const months = useMemo(() => {
+    const d = new Date();
+    return [ymOf(new Date(d.getFullYear(), d.getMonth(), 1)), ymOf(new Date(d.getFullYear(), d.getMonth() + 1, 1))];
+  }, []);
+  const [month, setMonth] = useState(months[0]);
+  // Draft values; null = not touched (showing what's saved).
+  const [name, setName] = useState<string | null>(null);
+  const [week, setWeek] = useState<"mon" | "sun" | null>(null);
+  const [cal, setCal] = useState<WorkCalendar | null>(null);
+  const [saving, setSaving] = useState(false);
+
+  const savedCal = org?.calendar ?? CALENDAR_DEFAULTS;
+  const c = cal ?? savedCal;
+  const nameDirty = name !== null && name.trim() !== (org?.name ?? "") && name.trim() !== "";
+  const weekDirty = week !== null && week !== org?.weekStart;
+  const calDirty = cal !== null && JSON.stringify(cal) !== JSON.stringify(savedCal);
+  const dirty = nameDirty || weekDirty || calDirty;
+  useEffect(() => { onDirty(dirty); }, [dirty, onDirty]);
+  useEffect(() => () => onDirty(false), [onDirty]);
+  const setC = (patch: Partial<WorkCalendar>) => setCal({ ...c, ...patch });
+  const canStore = org?.canSaveSettings ?? false;
+
+  const [y, m] = month.split("-").map(Number);
+  const cc = capacityFor(c, y, m - 1);
+
+  function discard() { setName(null); setWeek(null); setCal(null); }
+  async function save() {
+    if (!dirty) return;
+    setSaving(true);
+    try {
+      const body: Record<string, unknown> = {};
+      if (nameDirty) body.name = name!.trim();
+      if (weekDirty) body.weekStart = week;
+      if (calDirty) body.calendar = cal;
+      await api("/org", { method: "PATCH", body: JSON.stringify(body) });
+      // The calendar sets this month's and next month's capacity for everyone
+      // without their own hours; later months follow it as they come.
+      if (calDirty && cal) {
+        for (const k of months) {
+          const [yy, mm] = k.split("-").map(Number);
+          const sc = storedCapacity(cal, yy, mm - 1);
+          await api("/goals/capacity", { method: "PUT", body: JSON.stringify({ scope: "org", month: `${k}-01`, ...sc }) });
+        }
+      }
+      if (weekDirty && week) setWeekStart(week);
+      await refetch();
+      discard();
+      toast.success("Settings saved.");
+    } catch (e) {
+      toast.error(e instanceof ApiError ? e.message : "Couldn't save the settings.");
+    } finally {
+      setSaving(false);
+    }
+  }
+
   return (
     <>
-      {canCalendar && <WorkCalendar />}
+      {isAdmin && (
+        <section className="st-card">
+          <div className="st-cardhead"><b>Workspace</b></div>
+          <div className="st-row">
+            <span className="st-label"><b>Name</b><small>Shown in the sidebar under Pulse</small></span>
+            <input className="st-in st-wide" value={name ?? org?.name ?? ""} maxLength={60} aria-label="Workspace name"
+              onChange={(e) => setName(e.target.value)} disabled={!org} />
+          </div>
+          <div className="st-row">
+            <span className="st-label"><b>Time zone</b><small>Pulse runs on India time: timers, due dates and the 6 PM wrap-up</small></span>
+            <select className="st-in st-wide" disabled aria-label="Time zone" value="ist"><option value="ist">India · IST (UTC+5:30)</option></select>
+          </div>
+          <div className="st-row">
+            <span className="st-label"><b>Week starts on</b><small>Used by This week and Last week across Pulse</small></span>
+            <Seg label="Week starts on" value={week ?? org?.weekStart ?? "mon"} options={[["mon", "Monday"], ["sun", "Sunday"]]}
+              onChange={(v) => { if (canStore) setWeek(v); else toast.error("The week start needs a database update first."); }} />
+          </div>
+        </section>
+      )}
+
+      {canCal && (
+        <section className="st-card">
+          <div className="st-cardhead">
+            <b>Work calendar</b>
+            <span>Sets each editor's monthly capacity. Goals set on Goals · Set goals must fit inside it.</span>
+          </div>
+          {!org ? <div className="st-empty">Loading…</div> : (
+            <>
+              <div className="st-row">
+                <span className="st-label"><b>Monday – Friday</b><small>{fmtHours(cc.wdMin / 60)} of work after breaks</small></span>
+                <span className="st-times">
+                  <input type="time" className="st-in" value={c.wdFrom} onChange={(e) => setC({ wdFrom: e.target.value })} aria-label="Weekdays start" disabled={!canStore} />
+                  to
+                  <input type="time" className="st-in" value={c.wdTo} onChange={(e) => setC({ wdTo: e.target.value })} aria-label="Weekdays end" disabled={!canStore} />
+                </span>
+              </div>
+              <div className="st-row">
+                <span className="st-label"><b>Saturday</b><small>{c.satOff ? "Not a working day" : `${fmtHours(cc.satMin / 60)} of work${c.satBreaks ? " after breaks" : ""}`}</small></span>
+                <span className="st-times">
+                  <input type="time" className="st-in" value={c.satFrom} onChange={(e) => setC({ satFrom: e.target.value })} aria-label="Saturday start" disabled={!canStore || c.satOff} />
+                  to
+                  <input type="time" className="st-in" value={c.satTo} onChange={(e) => setC({ satTo: e.target.value })} aria-label="Saturday end" disabled={!canStore || c.satOff} />
+                  <Toggle on={!c.satOff} onChange={(v) => setC({ satOff: !v })} label="Saturday is a working day" disabled={!canStore} />
+                </span>
+              </div>
+              <div className="st-row">
+                <span className="st-label"><b>Sunday</b><small>Never counted</small></span>
+                <span className="st-chip">Off</span>
+              </div>
+              <div className="st-row">
+                <span className="st-label"><b>Lunch break</b><small>The same for everyone — part of the 1h 15m daily break allowance</small></span>
+                <span className="st-value st-mono">{LUNCH_MIN}m</span>
+              </div>
+              <div className="st-row">
+                <span className="st-label"><b>Tea break</b><small>Two of 15 minutes</small></span>
+                <span className="st-value st-mono">{TEA_MIN}m</span>
+              </div>
+              <div className="st-row">
+                <span className="st-label"><b>Breaks on Saturday too</b></span>
+                <Toggle on={c.satBreaks} onChange={(v) => setC({ satBreaks: v })} label="Breaks on Saturday too" disabled={!canStore || c.satOff} />
+              </div>
+              <div className="st-row">
+                <span className="st-label"><b>Sick-leave buffer</b><small>Days per month kept out of every editor's capacity</small></span>
+                <Stepper label="sick-leave days" value={`${c.sickDays} day${c.sickDays === 1 ? "" : "s"}`} decDisabled={!canStore || c.sickDays <= 0} incDisabled={!canStore || c.sickDays >= 10}
+                  onDec={() => setC({ sickDays: c.sickDays - 1 })} onInc={() => setC({ sickDays: c.sickDays + 1 })} />
+              </div>
+              <div className="st-row">
+                <span className="st-label"><b>Capacity adjustment</b><small>Add or remove hours from every editor's monthly capacity</small></span>
+                <Stepper label="adjustment hours" value={`${c.adjustHours > 0 ? "+" : ""}${c.adjustHours}h`} decDisabled={!canStore || c.adjustHours <= -100} incDisabled={!canStore || c.adjustHours >= 100}
+                  onDec={() => setC({ adjustHours: c.adjustHours - 1 })} onInc={() => setC({ adjustHours: c.adjustHours + 1 })} />
+              </div>
+              <div className="st-row sunk">
+                <span className="st-calc">
+                  <span className="st-calcmonth">
+                    <Seg label="Month" value={month} options={months.map((k) => [k, monthName(k, "short")] as [string, string])} onChange={setMonth} />
+                    {monthName(month)} · per editor
+                  </span>
+                  <span>{cc.days} days − {cc.sundays} Sundays{c.satOff ? ` − ${cc.satCount} Saturdays` : ""} − {cc.sick} sick leave = {cc.workingDays} working days</span>
+                  <span>
+                    {cc.weekdays} weekdays × {fmtHours(cc.wdMin / 60)}
+                    {!c.satOff && ` + ${cc.sats} Saturdays × ${fmtHours(cc.satMin / 60)}`}
+                    {c.adjustHours ? ` ${c.adjustHours > 0 ? "+" : "−"} ${Math.abs(c.adjustHours)}h` : ""} = {fmtHours(cc.minutes / 60)}
+                  </span>
+                </span>
+                <span className="st-big"><b>{fmtHours(cc.minutes / 60)}</b><span>capacity / editor</span></span>
+              </div>
+              <div className="st-foot">
+                <span className="st-note">
+                  {canStore
+                    ? `Saving sets ${monthName(months[0]).split(" ")[0]} and ${monthName(months[1]).split(" ")[0]} for everyone without their own hours; later months follow it. Change one person's hours on Goals · Set goals.`
+                    : "The work calendar needs a database update before it can be saved."}
+                </span>
+              </div>
+            </>
+          )}
+        </section>
+      )}
+
       <section className="st-card">
         <div className="st-cardhead">
           <b>Review cycle</b>
@@ -104,123 +285,16 @@ function GeneralSection({ canCalendar }: { canCalendar: boolean }) {
         </div>
       </section>
       <Appearance />
-    </>
-  );
-}
 
-type CapResp = {
-  capacity: { workingDays: number; hoursPerDay: number; source: string };
-  orgDefault: { workingDays: number; hoursPerDay: number } | null;
-};
-
-// The team's working days and hours a day for a month — every editor's
-// capacity unless they have their own (set on Goals › Set goals). Read from any
-// editor without their own hours; nothing saved means the server's 22 × 8.
-function WorkCalendar() {
-  const { editors } = useEditors();
-  const months = useMemo(() => {
-    const d = new Date();
-    return [ymOf(new Date(d.getFullYear(), d.getMonth(), 1)), ymOf(new Date(d.getFullYear(), d.getMonth() + 1, 1))];
-  }, []);
-  const [month, setMonth] = useState(months[0]);
-  const [base, setBase] = useState<{ days: number; hours: number; source: string } | null>(null);
-  const [days, setDays] = useState(22);
-  const [hours, setHours] = useState(8);
-  const [saving, setSaving] = useState(false);
-  const [rev, setRev] = useState(0);
-  const ids = (editors ?? []).filter((e) => e.active).map((e) => e.id).join(",");
-
-  useEffect(() => {
-    if (!ids) return;
-    let live = true;
-    setBase(null);
-    (async () => {
-      let found: { days: number; hours: number; source: string } | null = null;
-      for (const id of ids.split(",")) {
-        try {
-          const d = await api<CapResp>(`/goals?editorId=${id}&month=${month}-01`);
-          if (d.orgDefault) found = { days: d.orgDefault.workingDays, hours: d.orgDefault.hoursPerDay, source: "org" };
-          else if (d.capacity.source !== "editor") found = { days: d.capacity.workingDays, hours: d.capacity.hoursPerDay, source: d.capacity.source };
-          if (found) break;
-        } catch { /* try the next person */ }
-      }
-      found ??= { days: 22, hours: 8, source: "default" };
-      if (live) { setBase(found); setDays(found.days); setHours(found.hours); }
-    })();
-    return () => { live = false; };
-  }, [ids, month, rev]);
-
-  const [y, m] = month.split("-").map(Number);
-  const dim = new Date(y, m, 0).getDate();
-  let sundays = 0;
-  for (let d = 1; d <= dim; d++) if (new Date(y, m - 1, d).getDay() === 0) sundays++;
-  const cap = days * hours;
-  const mon = monthName(month).split(" ")[0];
-  const changed = !!base && (days !== base.days || hours !== base.hours);
-  const canSave = !!base && (changed || base.source !== "org");
-
-  async function save() {
-    setSaving(true);
-    try {
-      await api("/goals/capacity", { method: "PUT", body: JSON.stringify({ scope: "org", month: `${month}-01`, workingDays: days, hoursPerDay: hours }) });
-      toast.success(`Work calendar saved for ${monthName(month)}.`);
-      setRev((r) => r + 1);
-    } catch (e) {
-      toast.error(e instanceof ApiError ? e.message : "Couldn't save the work calendar.");
-    } finally {
-      setSaving(false);
-    }
-  }
-
-  return (
-    <section className="st-card">
-      <div className="st-cardhead">
-        <b>Work calendar</b>
-        <span>Sets each editor's monthly capacity. Goals set on Goals · Set goals must fit inside it.</span>
-      </div>
-      <div className="st-row">
-        <span className="st-label"><b>Month</b></span>
-        <Seg label="Month" value={month} options={months.map((k) => [k, monthName(k)] as [string, string])} onChange={setMonth} />
-      </div>
-      {!base ? (
-        <div className="st-empty">Loading…</div>
-      ) : (
-        <>
-          <div className="st-row">
-            <span className="st-label">
-              <b>Working days</b>
-              <small>{dim} days in {mon} − {sundays} Sundays = {dim - sundays} days that aren't Sunday</small>
-            </span>
-            <Stepper label="working days" value={`${days} days`} onDec={() => setDays((d) => Math.max(0, d - 1))} onInc={() => setDays((d) => Math.min(dim, d + 1))}
-              decDisabled={days <= 0} incDisabled={days >= dim} />
-          </div>
-          <div className="st-row">
-            <span className="st-label">
-              <b>Hours a day</b>
-              <small>Working hours after lunch and tea</small>
-            </span>
-            <Stepper label="hours a day" value={fmtHours(hours)} onDec={() => setHours((h) => Math.max(0.5, h - 0.25))} onInc={() => setHours((h) => Math.min(16, h + 0.25))}
-              decDisabled={hours <= 0.5} incDisabled={hours >= 16} />
-          </div>
-          <div className="st-row sunk">
-            <span className="st-calc">
-              <span>{monthName(month)} · per editor</span>
-              <span>{days} working days × {fmtHours(hours)} = {fmtHours(cap)}</span>
-              <span>{base.source === "org" ? (changed ? "Not saved yet" : `Saved for ${mon}`)
-                : base.source === "carry" ? `Not saved for ${mon} yet — carried over from an earlier month`
-                : "Not saved yet — the standard 22 days × 8h"}</span>
-            </span>
-            <span className="st-big"><b>{fmtHours(cap)}</b><span>capacity / editor</span></span>
-          </div>
-          <div className="st-foot">
-            <span className="st-note">People with their own hours keep them. Change those on Goals · Set goals.</span>
-            <button type="button" className="st-btn pri" disabled={!canSave || saving} onClick={save}>
-              {saving ? "Saving…" : `Save for ${mon}`}
-            </button>
-          </div>
-        </>
+      {dirty && (
+        <div className="st-savebar" role="region" aria-label="Unsaved changes">
+          <span><i />Unsaved changes</span>
+          <span className="st-grow" />
+          <button type="button" className="st-btn" onClick={discard} disabled={saving}>Discard</button>
+          <button type="button" className="st-btn grad" onClick={save} disabled={saving}>{SI.check}{saving ? "Saving…" : "Save changes"}</button>
+        </div>
       )}
-    </section>
+    </>
   );
 }
 
@@ -246,6 +320,62 @@ function Appearance() {
         </div>
       </div>
     </section>
+  );
+}
+
+// ── Notifications ────────────────────────────────────────────────────────────
+// Which pop-ups Pulse shows you, saved on your login so they follow you to any
+// browser. Each switch saves as you flip it.
+function NotificationsSection() {
+  const { user, refreshUser } = useAuth();
+  const { isAdmin } = useWorkspaces();
+  const review = useReviewAccess();
+  const [flip, setFlip] = useState<Partial<Record<NotifyKey, boolean>>>({});
+  const on = (k: NotifyKey) => flip[k] ?? notifyOn(user?.notifyPrefs, k);
+  async function set(k: NotifyKey, v: boolean) {
+    setFlip((s) => ({ ...s, [k]: v }));
+    try {
+      await api("/users/me", { method: "PATCH", body: JSON.stringify({ notifyPrefs: { [k]: v } }) });
+      await refreshUser();
+      setFlip((s) => { const n = { ...s }; delete n[k]; return n; });
+    } catch (e) {
+      setFlip((s) => { const n = { ...s }; delete n[k]; return n; });
+      toast.error(e instanceof ApiError ? e.message : "Couldn't save that.");
+    }
+  }
+  const ROWS: [NotifyKey, string, string, boolean][] = [
+    ["assigned", "A task is assigned to me", "Someone gives you a task, or a post makes one for you", !!user?.editorId],
+    ["review", "Work is waiting for my review", "A task you can approve lands in review", isAdmin || review.granted],
+    ["overdue", "A task of mine goes overdue", "One of your tasks passes its due date unfinished", !!user?.editorId],
+    ["budget", "A task passes its time budget", "Any task on the team runs past its time", isAdmin],
+  ];
+  const rows = ROWS.filter((r) => r[3]);
+  return (
+    <>
+      <section className="st-card">
+        <div className="st-row st-colhead" style={{ borderTop: 0 }}>
+          <span className="st-label"><small>Notify me when</small></span>
+          <small>In Pulse</small>
+        </div>
+        {rows.length === 0 ? (
+          <div className="st-empty">Your login isn't linked to a team member, so there's nothing to tell you about yet.</div>
+        ) : rows.map(([k, l, d]) => (
+          <div className="st-row" key={k}>
+            <span className="st-label"><b>{l}</b><small>{d}</small></span>
+            <Toggle on={on(k)} onChange={(v) => set(k, v)} label={l} />
+          </div>
+        ))}
+      </section>
+      <section className="st-card">
+        <div className="st-row" style={{ borderTop: 0 }}>
+          <span className="st-label"><b>Quiet outside working hours</b><small>Hold everything except overdue alerts until working hours (the work calendar in General)</small></span>
+          <Toggle on={on("quiet")} onChange={(v) => set("quiet", v)} label="Quiet outside working hours" />
+        </div>
+      </section>
+      <span className="st-note">
+        These are pop-ups inside Pulse while it's open. Email alerts and a daily digest email need an email service, which Pulse doesn't have yet.
+      </span>
+    </>
   );
 }
 
