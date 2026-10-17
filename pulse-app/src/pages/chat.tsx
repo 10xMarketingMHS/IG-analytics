@@ -1449,7 +1449,7 @@ function useFitHeight(ready: boolean) {
     const fit = () => {
       const el = ref.current;
       if (!el) return;
-      el.style.height = `${Math.max(window.innerHeight - el.getBoundingClientRect().top - 14, 360)}px`;
+      el.style.height = `${Math.max(window.innerHeight - el.getBoundingClientRect().top, 360)}px`;
     };
     fit();
     window.addEventListener("resize", fit);

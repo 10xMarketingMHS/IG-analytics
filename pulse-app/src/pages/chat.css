@@ -8,7 +8,9 @@
 .navitem.active .badge.alert{background:#fff;color:var(--rose)}
 .navitem .badge.dot{width:8px;height:8px;padding:0;border-radius:50%;background:var(--accent)}
 .navitem.active .badge.dot{background:#fff}
-.content:has(> .chat){max-width:none;padding-bottom:14px}
+/* The chat fills the page edge to edge: no gap under the top bar or beside
+   the sidebar, as in the redesign. */
+.content:has(> .chat){max-width:none;padding:0}
 
 .chat{
   --cx-text:#18181b;--cx-text2:#52525b;--cx-text3:#6b6b75;
@@ -25,7 +27,6 @@
   --cx-warn:oklch(0.55 0.14 60);--cx-warnSoft:oklch(0.96 0.04 75);
   --cx-good:oklch(0.5 0.14 155);--cx-online:#22c55e;
   display:grid;grid-template-columns:256px minmax(0,1fr);position:relative;min-height:360px;overflow:hidden;
-  border:1px solid var(--cx-line);border-radius:18px;box-shadow:var(--cx-sh1);
   background:color-mix(in srgb,var(--cx-panel) 55%,transparent);
   backdrop-filter:blur(16px) saturate(160%);-webkit-backdrop-filter:blur(16px) saturate(160%);
   color:var(--cx-text);font:400 13px/1.5 'Plus Jakarta Sans',system-ui,-apple-system,'Segoe UI',sans-serif;
