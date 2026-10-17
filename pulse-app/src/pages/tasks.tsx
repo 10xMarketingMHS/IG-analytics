@@ -179,12 +179,12 @@ function budgetInfo(t: Task, nowMs: number) {
 
 // Office hours the acceptance dual-confirmation checks against.
 const OFFICE_OPEN_HOUR = 9;
-function officeCloseToday(from: Date) {
+export function officeCloseToday(from: Date) {
   const d = new Date(from);
   d.setHours(OFFICE_CLOSE_HOUR, 0, 0, 0);
   return d;
 }
-function nineAmTomorrow(from: Date) {
+export function nineAmTomorrow(from: Date) {
   const d = new Date(from);
   d.setDate(d.getDate() + 1);
   d.setHours(OFFICE_OPEN_HOUR, 0, 0, 0);
@@ -197,16 +197,16 @@ function nineAmTomorrow(from: Date) {
 // via the explicit button, or self-assigned straight from Add/Edit Task.
 const WORKLOAD_WARN_HOURS = 6;
 const WORKLOAD_FULL_HOURS = 9;
-function classifyWorkload(totalHours: number): 0 | 1 | 2 {
+export function classifyWorkload(totalHours: number): 0 | 1 | 2 {
   if (totalHours > WORKLOAD_FULL_HOURS) return 2;
   if (totalHours > WORKLOAD_WARN_HOURS) return 1;
   return 0;
 }
-function fmtHours(n: number) {
+export function fmtHours(n: number) {
   return Number.isInteger(n) ? String(n) : n.toFixed(1);
 }
 // Time left before office close: "24 min", or "1h 24m" once it's an hour or more.
-function fmtCloseIn(mins: number) {
+export function fmtCloseIn(mins: number) {
   return mins < 60 ? `${mins} min` : `${Math.floor(mins / 60)}h ${mins % 60}m`;
 }
 
