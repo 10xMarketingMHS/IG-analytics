@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState, type FormEvent, type ReactNode } from "react";
+import { useLocation, useNavigate } from "react-router-dom";
 import {
   DndContext, DragOverlay, MouseSensor, TouchSensor, KeyboardSensor,
   useSensor, useSensors, useDraggable, useDroppable, closestCorners,
@@ -451,6 +452,17 @@ export function TasksPage() {
   // "New Task" (and every per-column ＋) opens the full categorized creation
   // card — Social/Ads → Brand → Content Type. Every new task starts in To Do.
   const startNewTask = () => { setSelectedId(null); setCreating(true); };
+  // The sidebar's New task button lands here with { newTask: true }: open the
+  // sheet once, then clear the flag so Back or a refresh doesn't reopen it.
+  const location = useLocation();
+  const navigate = useNavigate();
+  const wantsNewTask = !!(location.state as { newTask?: boolean } | null)?.newTask;
+  useEffect(() => {
+    if (!wantsNewTask) return;
+    if (canWrite) startNewTask();
+    navigate(location.pathname + location.search, { replace: true, state: null });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [wantsNewTask]);
   const selectedTask = (tasks ?? []).find((t) => t.id === selectedId) ?? null;
   // Dual-confirmation prompt when accepting would run the budget past office
   // close — null when no prompt is showing.
