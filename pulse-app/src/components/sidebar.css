@@ -1,0 +1,136 @@
+/* Sidebar — the Pulse Redesign v4 structure: brand with a collapse button,
+   Search (Ctrl/⌘ K) and New task, the Workspace / Operations groups, your
+   Channels, then break time and you. Light by default, its own dark values,
+   and an icon-only rail when collapsed. Scoped by .sb2 on the <aside>; the
+   phone drawer and the End-of-Day lock still come from the shared sheet. */
+
+.app>aside.sb2{
+  --sb-bg:rgba(255,255,255,.55);--sb-panel:#fff;
+  --sb-text:#18181b;--sb-text2:#52525b;--sb-text3:#6b6b75;
+  --sb-line:rgba(30,20,80,.08);--sb-hover:rgba(30,20,80,.05);
+  --sb-on:#fff;--sb-onSh:0 1px 2px rgba(30,20,80,.06),0 6px 16px -6px rgba(60,40,140,.22);
+  --sb-ac:oklch(0.55 0.2 290);--sb-acText:oklch(0.48 0.19 290);
+  --sb-acGrad:linear-gradient(135deg,oklch(0.56 0.22 290),oklch(0.62 0.2 330));
+  --sb-warn:oklch(0.62 0.15 60);--sb-good:#22c55e;
+  background:var(--sb-bg);border-right:1px solid var(--sb-line);color:var(--sb-text);
+  backdrop-filter:blur(16px) saturate(160%);-webkit-backdrop-filter:blur(16px) saturate(160%);
+  font-family:'Plus Jakarta Sans',system-ui,-apple-system,'Segoe UI',sans-serif;-webkit-font-smoothing:antialiased
+}
+html[data-theme="dark"] .app>aside.sb2{
+  --sb-bg:rgba(16,14,26,.72);--sb-panel:rgba(255,255,255,.05);
+  --sb-text:#ededf0;--sb-text2:#b4b4bc;--sb-text3:#8b8b96;
+  --sb-line:rgba(255,255,255,.08);--sb-hover:rgba(255,255,255,.06);
+  --sb-on:rgba(255,255,255,.09);--sb-onSh:inset 0 1px 0 rgba(255,255,255,.06);
+  --sb-ac:oklch(0.72 0.16 290);--sb-acText:oklch(0.82 0.11 290);--sb-warn:oklch(0.8 0.13 75)
+}
+@media (max-width:768px){.app>aside.sb2{--sb-bg:var(--panel)}}
+/* the redesign is a little wider than before (232px), on desktop only */
+@media (min-width:993px){.app:not(.sb-rail):has(>aside.sb2){grid-template-columns:232px minmax(0,1fr)}}
+
+.sb2-iconbtn{flex:none;width:30px;height:30px;display:grid;place-items:center;padding:0;border:0;border-radius:8px;background:transparent;color:var(--sb-text3);cursor:pointer;text-decoration:none}
+.sb2-iconbtn:hover,.sb2-iconbtn.active{background:var(--sb-hover);color:var(--sb-text)}
+.sb2 svg{flex:none}
+
+/* brand + collapse */
+.sb2 .brand{gap:10px;padding:14px 12px 10px 14px}
+.sb2 .logo{width:30px;height:30px;border-radius:9px;font-size:14px;font-weight:800;background:var(--sb-acGrad);box-shadow:0 6px 14px -6px oklch(0.55 0.22 290 / .6)}
+.sb2-brandtx{flex:1;min-width:0;line-height:1.2}
+.sb2 .brand b{font-size:14px;font-weight:700;letter-spacing:-.01em;color:var(--sb-text)}
+.sb2 .brand small{margin-top:1px;font-size:11px;font-weight:500;color:var(--sb-text3);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+
+/* search + new task */
+.sb2-tools{display:flex;align-items:center;gap:6px;padding:2px 12px 8px}
+.sb2-search{flex:1;min-width:0;display:flex;align-items:center;gap:8px;height:34px;padding:0 10px;border:1px solid var(--sb-line);border-radius:10px;background:var(--sb-panel);
+  color:var(--sb-text3);font:500 13px 'Plus Jakarta Sans',sans-serif;cursor:pointer;box-shadow:0 1px 2px rgba(30,20,80,.04);white-space:nowrap;overflow:hidden}
+.sb2-search:hover{border-color:var(--sb-text3)}
+.sb2-search kbd{margin-left:auto;padding:1px 5px;border:1px solid var(--sb-line);border-radius:4px;background:transparent;font:500 10.5px 'Geist Mono',ui-monospace,monospace;color:var(--sb-text3)}
+.sb2-compose{flex:none;width:34px;height:34px;display:grid;place-items:center;padding:0;border:0;border-radius:10px;background:var(--sb-acGrad);color:#fff;cursor:pointer;
+  box-shadow:0 8px 18px -8px oklch(0.55 0.22 290 / .7)}
+.sb2-compose:hover{filter:brightness(1.07)}
+
+/* the menu */
+.sb2 nav.side{padding:2px 10px 10px;gap:1px;scrollbar-width:thin;scrollbar-color:var(--sb-line) transparent}
+.sb2 nav.side::-webkit-scrollbar-thumb{background:var(--sb-line)}
+.sb2-group{display:flex;flex-direction:column;gap:1px;padding-bottom:6px}
+.sb2 .navsec{display:flex;align-items:center;justify-content:space-between;min-height:28px;padding:8px 6px 2px 8px;font-size:11.5px;font-weight:500;letter-spacing:0;text-transform:none;color:var(--sb-text3);box-sizing:border-box}
+.sb2-secbtn{width:22px;height:22px;display:grid;place-items:center;border-radius:6px;color:var(--sb-text3)}
+.sb2-secbtn svg{width:15px;height:15px}
+.sb2-secbtn:hover{background:var(--sb-hover);color:var(--sb-text)}
+/* a long name (Social & Ads Pipeline) wraps onto a second line rather than squeezing */
+.sb2 .navitem{position:relative;min-height:34px;height:auto;padding:7px 10px;gap:10px;border:0;border-radius:10px;background:transparent;color:var(--sb-text2);
+  font:500 13px/1.3 'Plus Jakarta Sans',sans-serif;box-sizing:border-box;cursor:pointer;text-align:left}
+.sb2 .navitem .ic{flex:none;width:18px;height:18px;display:grid;place-items:center;font-size:14px;color:var(--sb-text3)}
+.sb2 .navitem:hover{background:var(--sb-hover);color:var(--sb-text)}
+.sb2 .navitem:focus-visible{outline:2px solid var(--sb-ac);outline-offset:-2px}
+.sb2 .navitem.active{background:var(--sb-on);color:var(--sb-text);font-weight:600;box-shadow:var(--sb-onSh)}
+.sb2 .navitem.active .ic{color:var(--sb-ac)}
+/* counts: quiet numbers on the right; Team Chat's alert stays red */
+.sb2 .navitem .badge{margin-left:auto;padding:0;border-radius:0;background:transparent;color:var(--sb-text3);font:500 11px 'Geist Mono',ui-monospace,monospace}
+.sb2 .navitem.active .badge{background:transparent;color:var(--sb-text2)}
+.sb2 .navitem .badge.alert,.sb2 .navitem.active .badge.alert{min-width:18px;height:18px;padding:0 5px;border-radius:9px;box-sizing:border-box;
+  background:oklch(0.58 0.21 22);color:#fff;font:600 10.5px/18px 'Plus Jakarta Sans',sans-serif;text-align:center}
+.sb2 .navitem .badge.dot,.sb2 .navitem.active .badge.dot{width:8px;height:8px;padding:0;border-radius:50%;background:var(--sb-ac)}
+/* channels */
+.sb2-channel{width:100%}
+.sb2 .sb2-chtile{width:18px;height:18px;border-radius:5px;color:#fff;font-size:8.5px;font-weight:700;letter-spacing:.02em}
+.sb2-plats{margin-left:auto;display:flex;gap:3px}
+.sb2-plats span{width:5px;height:5px;border-radius:50%}
+
+/* break time, then you */
+.sb2-break{display:flex;align-items:center;gap:8px;margin:0;padding:10px 16px;border-top:1px solid var(--sb-line);font-size:12px;font-weight:500;color:var(--sb-text3);white-space:nowrap}
+.sb2-bar{flex:1;min-width:30px;height:4px;border-radius:2px;background:var(--sb-hover);overflow:hidden}
+.sb2-bar span{display:block;height:100%;border-radius:2px;background:var(--sb-warn)}
+.sb2-break.on{color:var(--sb-warn)}
+.sb2-break-n{font:500 11.5px 'Geist Mono',ui-monospace,monospace;color:var(--sb-text2)}
+.sb2 .userchip{margin:0;padding:10px 10px 14px 14px;gap:6px;border:0;border-top:1px solid var(--sb-line);border-radius:0;background:transparent}
+.sb2 .avatar-ring{border-radius:50%}
+.sb2 .avatar,.sb2 .avatar-ring.admin .avatar{width:30px;height:30px;border-radius:50%;font-size:11.5px;font-weight:600}
+.sb2 .userchip .nm{font-size:13px;font-weight:600;color:var(--sb-text)}
+.sb2 .userchip .rl{margin-top:1px;font-size:11px;color:var(--sb-text3)}
+.sb2 .userchip-open:focus-visible{outline:2px solid var(--sb-ac);outline-offset:3px;border-radius:8px}
+.sb2 .logout{width:30px;height:30px;display:grid;place-items:center;padding:0;border-radius:8px;color:var(--sb-text3)}
+.sb2 .logout:hover{background:var(--sb-hover);color:var(--sb-text)}
+
+/* End of Day lock: search and new task wait too */
+.eod-lock .sb2-tools{pointer-events:none;filter:grayscale(100%);opacity:.6}
+
+/* collapsed: an icon rail (not on phones, where the sidebar is a drawer) */
+@media (min-width:769px){
+  .app.sb-rail{grid-template-columns:68px minmax(0,1fr)}
+  .app.sb-rail>aside.sb2{width:68px}
+  .sb-rail .sb2 .sb2-label{display:none!important}
+  .sb-rail .sb2 .brand{flex-direction:column;gap:10px;padding:14px 0 8px;align-items:center}
+  .sb-rail .sb2-tools{flex-direction:column;gap:8px;padding:0 0 8px;align-items:center}
+  .sb-rail .sb2-search{flex:none;width:34px;padding:0;justify-content:center}
+  .sb-rail .sb2 nav.side{padding:2px 12px 10px}
+  .sb-rail .sb2 .navsec{min-height:0;height:1px;margin:8px 4px;padding:0;background:var(--sb-line)}
+  .sb-rail .sb2-secbtn{display:none}
+  .sb-rail .sb2 .navitem{justify-content:center;width:44px;min-height:40px;padding:0;margin:0 auto}
+  .sb-rail .sb2 .navitem .badge:not(.alert):not(.dot){display:none}
+  .sb-rail .sb2 .navitem .badge.alert,.sb-rail .sb2 .navitem .badge.dot{position:absolute;top:3px;right:2px;margin:0}
+  .sb-rail .sb2 .navitem .badge.alert{min-width:16px;height:16px;padding:0 4px;font-size:9.5px;line-height:16px}
+  .sb-rail .sb2-break{justify-content:center;padding:10px 0}
+  .sb-rail .sb2 .userchip{flex-direction:column;align-items:center;gap:6px;padding:10px 0 14px}
+  .sb-rail .sb2 .userchip-open{flex:none!important}
+  .sb-rail .sb2 .userchip-open>div:not(.avatar-ring){display:none}
+}
+
+/* Search or jump to… */
+.jp-scrim{position:fixed;inset:0;z-index:400;display:flex;justify-content:center;align-items:flex-start;padding:14vh 16px 16px;background:rgba(16,16,24,.28);
+  backdrop-filter:blur(3px);-webkit-backdrop-filter:blur(3px)}
+.jp{--jp-bg:#fff;--jp-line:rgba(30,20,80,.09);--jp-text:#18181b;--jp-text3:#6b6b75;--jp-hover:rgba(30,20,80,.05);--jp-ac:oklch(0.55 0.2 290);
+  width:600px;max-width:100%;border:1px solid var(--jp-line);border-radius:14px;background:var(--jp-bg);color:var(--jp-text);overflow:hidden;
+  box-shadow:0 24px 64px rgba(16,16,24,.18),0 2px 6px rgba(16,16,24,.08);font-family:'Plus Jakarta Sans',system-ui,sans-serif}
+html[data-theme="dark"] .jp{--jp-bg:#18161f;--jp-line:rgba(255,255,255,.09);--jp-text:#ededf0;--jp-text3:#8b8b96;--jp-hover:rgba(255,255,255,.06);--jp-ac:oklch(0.72 0.16 290)}
+html[data-theme="dark"] .jp-scrim{background:rgba(0,0,0,.55)}
+.jp-head{display:flex;align-items:center;gap:10px;height:52px;padding:0 16px;border-bottom:1px solid var(--jp-line);color:var(--jp-text3)}
+.jp-head input{flex:1;min-width:0;border:0;outline:none;background:transparent;color:var(--jp-text);font:15px 'Plus Jakarta Sans',sans-serif}
+.jp-head kbd{padding:2px 6px;border:1px solid var(--jp-line);border-radius:4px;font:500 10.5px 'Geist Mono',ui-monospace,monospace;color:var(--jp-text3)}
+.jp-list{max-height:380px;overflow-y:auto;padding:6px}
+.jp-group{padding:8px 10px 4px;font-size:11.5px;color:var(--jp-text3)}
+.jp-item{display:flex;align-items:center;gap:10px;width:100%;height:36px;padding:0 10px;border:0;border-radius:8px;background:transparent;color:var(--jp-text);
+  font:500 13.5px 'Plus Jakarta Sans',sans-serif;text-align:left;cursor:pointer}
+.jp-item.on{background:var(--jp-hover)}
+.jp-ic{display:grid;place-items:center;width:20px;color:var(--jp-text3)}
+.jp-item.on .jp-ic{color:var(--jp-ac)}
+.jp-empty{padding:16px 10px;font-size:13px;color:var(--jp-text3)}

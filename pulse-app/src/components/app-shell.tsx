@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 import { NavLink, Outlet, useLocation, useNavigate } from "react-router-dom";
-import { NAV_ITEMS, NAV_SECTIONS, PAGE_META } from "@/lib/nav";
+import { NAV_ITEMS, PAGE_META, type NavItem } from "@/lib/nav";
 import { useAuth } from "@/lib/auth-context";
 import { useWorkspaces } from "@/lib/workspaces-context";
 import { useEditors } from "@/lib/use-editors";
@@ -13,7 +13,7 @@ import { hasSeenTask, useTaskAssignNotify } from "@/lib/use-task-notify";
 import { useOverdueTaskNotify } from "@/lib/use-overdue-notify";
 import { BreakWidget } from "@/components/break-widget";
 import { BreakOverlay } from "@/components/break-overlay";
-import { BreakProvider } from "@/lib/break-context";
+import { BreakProvider, useBreakState } from "@/lib/break-context";
 import { useEodState } from "@/lib/eod-context";
 import { MyProfileModal } from "@/components/my-profile-modal";
 import { Modal } from "@/components/modal";
@@ -21,7 +21,51 @@ import { notifyTasksChanged } from "@/lib/task-events";
 import { SodModal } from "@/components/sod-modal";
 import { useTheme } from "@/components/theme-provider";
 import { ChatProvider, useChat } from "@/lib/chat";
-import type { Activity } from "@/lib/types";
+import { navIcon, SIGN_OUT_ICON, RAIL_ICON, COMPOSE_ICON, SEARCH_ICON, PLUS_ICON, BREAK_ICON, GEAR_ICON } from "@/components/nav-icons";
+import { JumpPalette, type JumpItem } from "@/components/jump-palette";
+import "./sidebar.css";
+import type { Account, Activity } from "@/lib/types";
+
+// The sidebar's groups, as in the redesign. Items still come from NAV_ITEMS
+// with their own access rules; Settings lives on the gear by your name and
+// Add Post on the top bar, so neither is listed. Anything new in NAV_ITEMS
+// that isn't placed here lands at the end of Operations.
+const SIDEBAR_GROUPS: { label: string; hrefs: string[] }[] = [
+  { label: "Workspace", hrefs: ["/home", "/chat", "/tasks", "/dashboard", "/top"] },
+  { label: "Operations", hrefs: ["/metrics", "/posts", "/leaderboard", "/goals-board", "/my-team"] },
+];
+const OFF_SIDEBAR = new Set(["/settings", "/posts/new"]);
+const RAIL_KEY = "pulse-sidebar-rail";
+const PLATFORM_DOT: Record<string, string> = { instagram: "#e1306c", facebook: "#1877f2", youtube: "#ff0033" };
+const CHANNEL_TILES = ["#7c3aed", "#16a34a", "#2563eb", "#d97706", "#db2777", "#0891b2"];
+function channelTile(id: string) {
+  let h = 0;
+  for (const c of id) h = (h * 31 + c.charCodeAt(0)) >>> 0;
+  return CHANNEL_TILES[h % CHANNEL_TILES.length];
+}
+const initialsOf = (name: string) => name.split(/\s+/).map((w) => w[0]).join("").slice(0, 2).toUpperCase();
+
+// Break time used today, for anyone whose breaks are tracked (an employee
+// who's clocked in, or anyone on a break right now) — the same people the
+// Task Board's break button is for. Display only; that button starts/ends it.
+function SidebarBreak() {
+  const { status, displayRemaining } = useBreakState();
+  const { active } = useWorkspaces();
+  const { session } = useEodState();
+  if (!status || status.unlinked) return null;
+  if (!status.onBreak && (active?.role !== "editor" || !session)) return null;
+  const cap = Math.max(60, status.dailyCapSeconds);
+  const remaining = Math.min(cap, Math.max(0, displayRemaining ?? status.remainingSeconds));
+  const used = cap - remaining;
+  return (
+    <div className={"sb2-break" + (status.onBreak ? " on" : "")} title={status.onBreak ? "On a break — your task timers are paused" : "Break time used today"}>
+      {BREAK_ICON}
+      <span className="sb2-label">{status.onBreak ? "On break" : "Break"}</span>
+      <span className="sb2-bar sb2-label"><span style={{ width: `${((100 * used) / cap).toFixed(1)}%` }} /></span>
+      <span className="sb2-break-n sb2-label">{Math.round(used / 60)}/{Math.round(cap / 60)}m</span>
+    </div>
+  );
+}
 
 // Unread = activity newer than the last timestamp the user saw on /activity.
 // Polls lightly so the badge stays fresh while the shell stays mounted.
@@ -103,7 +147,7 @@ function ChatBadge() {
 function AppShellInner() {
   const { user, logout } = useAuth();
   const { available: chatAvailable } = useChat();
-  const { active, isAdmin, hasPermission } = useWorkspaces();
+  const { active, workspaces, isAdmin, hasPermission } = useWorkspaces();
   // EOD lockout: an editor with no open session gets the whole shell grayscaled
   // and non-interactive (except a few live controls) until they Start EOD. The
   // grayscale/disable is CSS keyed off this class; see index.css `.eod-lock`.
@@ -129,10 +173,60 @@ function AppShellInner() {
   const [menuOpen, setMenuOpen] = useState(false);
   const [profileOpen, setProfileOpen] = useState(false);
 
+  // Sidebar: collapsed to an icon rail (remembered on this device), and the
+  // Search or jump to… palette (also Ctrl/⌘ K).
+  const [rail, setRail] = useState(() => { try { return window.localStorage.getItem(RAIL_KEY) === "1"; } catch { return false; } });
+  function toggleRail() {
+    setRail((r) => {
+      try { window.localStorage.setItem(RAIL_KEY, r ? "0" : "1"); } catch { /* fine, just not remembered */ }
+      return !r;
+    });
+  }
+  const [jumpOpen, setJumpOpen] = useState(false);
+  const canWrite = active?.role !== "viewer";
+  const canSee = (i: NavItem) => (!i.adminOnly || isAdmin || (!!i.permission && hasPermission(i.permission))) && (!i.chatBadge || chatAvailable);
+  const placed = new Set(SIDEBAR_GROUPS.flatMap((g) => g.hrefs));
+  const sideGroups = SIDEBAR_GROUPS.map((g, gi) => ({
+    label: g.label,
+    items: [
+      ...g.hrefs.map((h) => NAV_ITEMS.find((i) => i.href === h)),
+      ...(gi === SIDEBAR_GROUPS.length - 1 ? NAV_ITEMS.filter((i) => !placed.has(i.href) && !OFF_SIDEBAR.has(i.href)) : []),
+    ].filter((i): i is NavItem => !!i && canSee(i)),
+  }));
+  // Channels: each brand with a dot per platform it posts to.
+  const { data: acctData } = useResource<{ accounts: Account[] }>("/accounts?channel=all");
+  const platformsOf = useMemo(() => {
+    const m = new Map<string, Set<string>>();
+    for (const a of acctData?.accounts ?? []) {
+      if (!m.has(a.channel_id)) m.set(a.channel_id, new Set());
+      m.get(a.channel_id)!.add(a.platform_key);
+    }
+    return m;
+  }, [acctData]);
+  const addPostItem = NAV_ITEMS.find((i) => i.href === "/posts/new");
+  const settingsItem = NAV_ITEMS.find((i) => i.href === "/settings");
+  const jumpItems: JumpItem[] = [
+    ...sideGroups.flatMap((g) => g.items.map((i) => ({ title: i.title, href: i.href, icon: navIcon(i.href) ?? i.icon, group: g.label }))),
+    ...(addPostItem && canSee(addPostItem) ? [{ title: addPostItem.title, href: addPostItem.href, icon: navIcon(addPostItem.href) ?? addPostItem.icon, group: "Create", state: { backgroundLocation: location } }] : []),
+    ...(settingsItem ? [{ title: settingsItem.title, href: settingsItem.href, icon: GEAR_ICON, group: "Account" }] : []),
+  ];
+
   // Close the mobile drawer whenever the route changes.
   useEffect(() => {
     setMenuOpen(false);
   }, [location.pathname]);
+
+  // Ctrl/⌘ K opens Search or jump to… (not while the day is locked).
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if ((e.metaKey || e.ctrlKey) && !e.altKey && e.key.toLowerCase() === "k") {
+        e.preventDefault();
+        if (!eodLocked) setJumpOpen((o) => !o);
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [eodLocked]);
 
   // A locked editor can only act on My Day (it holds the live Start EOD button)
   // and the lock disables the nav, so landing anywhere else — sign-in, refresh,
@@ -186,37 +280,50 @@ function AppShellInner() {
 
   return (
     <BreakProvider>
-    <div className={"app" + (menuOpen ? " menu-open" : "") + (eodLocked ? " eod-lock" : "")}>
+    <div className={"app" + (menuOpen ? " menu-open" : "") + (eodLocked ? " eod-lock" : "") + (rail ? " sb-rail" : "")}>
       <div className="app-backdrop" onClick={() => setMenuOpen(false)} />
-      <aside>
+      {/* sb2: the redesign's sidebar (components/sidebar.css) — brand and
+          collapse, search and new task, the Workspace / Operations groups,
+          your channels, then break time and you. */}
+      <aside className="sb2">
         <div className="brand">
           <div className="logo">◐</div>
-          <div>
+          <div className="sb2-label sb2-brandtx">
             <b>Pulse</b>
             <small>Content Analytics</small>
           </div>
+          <button type="button" className="sb2-iconbtn sb2-railbtn" onClick={toggleRail} aria-pressed={rail}
+            title={rail ? "Expand the sidebar" : "Collapse the sidebar"} aria-label={rail ? "Expand the sidebar" : "Collapse the sidebar"}>
+            {RAIL_ICON}
+          </button>
+        </div>
+        <div className="sb2-tools">
+          <button type="button" className="sb2-search" onClick={() => setJumpOpen(true)} title="Search or jump to… (Ctrl K)" aria-label="Search or jump to">
+            {SEARCH_ICON}<span className="sb2-label">Search</span><kbd className="sb2-label">Ctrl K</kbd>
+          </button>
+          {canWrite && (
+            <button type="button" className="sb2-compose" title="New task" aria-label="New task"
+              onClick={() => { setMenuOpen(false); navigate("/tasks", { state: { newTask: true } }); }}>
+              {COMPOSE_ICON}
+            </button>
+          )}
         </div>
         <nav className="side">
-          {NAV_SECTIONS.map((section) => (
-            <div key={section.key}>
-              {section.label && <div className="navsec">{section.label}</div>}
-              {NAV_ITEMS.filter((i) => i.section === section.key && (!i.adminOnly || isAdmin || (i.permission && hasPermission(i.permission))) && (!i.chatBadge || chatAvailable)).map((item) => (
+          {sideGroups.filter((g) => g.items.length > 0).map((g) => (
+            <div key={g.label} className="sb2-group">
+              <div className="navsec"><span className="sb2-label">{g.label}</span></div>
+              {g.items.map((item) => (
                 <NavLink
                   key={item.href}
                   to={item.href}
                   end={item.href === "/posts"}
-                  // Add Post opens as a modal over the current page.
-                  state={
-                    item.href === "/posts/new"
-                      ? { backgroundLocation: location }
-                      : undefined
-                  }
+                  title={rail ? item.title : undefined}
                   onClick={() => setMenuOpen(false)}
                   className={({ isActive }) =>
                     "navitem" + (isActive ? " active" : "")
                   }
                 >
-                  <span className="ic">{item.icon}</span> {item.title}
+                  <span className="ic">{navIcon(item.href) ?? item.icon}</span> <span className="sb2-label">{item.title}</span>
                   {item.showBadge && postCount !== null && (
                     <span className="badge">{postCount}</span>
                   )}
@@ -225,7 +332,28 @@ function AppShellInner() {
               ))}
             </div>
           ))}
+          {workspaces.length > 0 && (
+            <div className="sb2-group sb2-channels">
+              <div className="navsec">
+                <span className="sb2-label">Channels</span>
+                {isAdmin && (
+                  <NavLink to="/channels" className="sb2-secbtn" title="Add or edit channels" aria-label="Add or edit channels" onClick={() => setMenuOpen(false)}>{PLUS_ICON}</NavLink>
+                )}
+              </div>
+              {workspaces.map((w) => (
+                <button key={w.id} type="button" className="navitem sb2-channel" title={rail ? w.name : `${w.name} — see its posts`}
+                  onClick={() => { setMenuOpen(false); navigate("/posts", { state: { channel: w.id } }); }}>
+                  <span className="ic sb2-chtile" style={{ background: channelTile(w.id) }}>{initialsOf(w.name)}</span>
+                  <span className="sb2-label">{w.name}</span>
+                  <span className="sb2-plats sb2-label">
+                    {[...(platformsOf.get(w.id) ?? [])].map((p) => <span key={p} title={p} style={{ background: PLATFORM_DOT[p] ?? "currentColor" }} />)}
+                  </span>
+                </button>
+              ))}
+            </div>
+          )}
         </nav>
+        <SidebarBreak />
         <div className="userchip">
           <button
             type="button"
@@ -246,10 +374,17 @@ function AppShellInner() {
               {subtitle && <div className="rl">{subtitle}</div>}
             </div>
           </button>
-          <button className="logout" title="Sign out" onClick={handleSignOut}>
-            ⎋
+          {settingsItem && (
+            <NavLink to={settingsItem.href} className={({ isActive }) => "sb2-iconbtn sb2-gear" + (isActive ? " active" : "")}
+              title="Settings" aria-label="Settings" onClick={() => setMenuOpen(false)}>
+              {GEAR_ICON}
+            </NavLink>
+          )}
+          <button className="logout" title="Sign out" aria-label="Sign out" onClick={handleSignOut}>
+            {SIGN_OUT_ICON}
           </button>
         </div>
+        {jumpOpen && <JumpPalette items={jumpItems} onClose={() => setJumpOpen(false)} />}
         {profileOpen && <MyProfileModal onClose={() => setProfileOpen(false)} />}
         {signOutAsk && (
           <Modal title="You're still clocked in" onClose={() => setSignOutAsk(false)}>
