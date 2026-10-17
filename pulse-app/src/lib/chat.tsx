@@ -100,6 +100,9 @@ type ChatContextValue = {
   // False for anyone chat isn't for (viewers) — the sidebar hides the link.
   available: boolean;
   state: ChatState | null;
+  // Why chat couldn't load (a server error, not "not for you") — so the page
+  // can say so instead of loading forever. Null once a load succeeds.
+  loadError: string | null;
   people: Map<string, ChatPerson>;
   online: Set<string>;
   // alerts = @mentions + unread DMs (the red count); unread = other channel messages.
@@ -183,14 +186,17 @@ export function ChatProvider({ children }: { children: ReactNode }) {
   const stateRef = useRef<ChatState | null>(null);
   stateRef.current = state;
 
+  const [loadError, setLoadError] = useState<string | null>(null);
   const refresh = useCallback(async () => {
     try {
       const s = await api<ChatState>("/chat/state");
       setState(s);
       setOnline(new Set(s.online));
       setAvailable(true);
+      setLoadError(null);
     } catch (err) {
       if (err instanceof ApiError && err.status === 403) setAvailable(false);
+      else setLoadError(err instanceof ApiError ? err.message : "Couldn't reach the server.");
     }
   }, []);
 
@@ -321,8 +327,8 @@ export function ChatProvider({ children }: { children: ReactNode }) {
   }, [totals.alerts]);
 
   const value = useMemo<ChatContextValue>(() => ({
-    available, state, people, online, totals, refresh, subscribe, setViewing, markRead,
-  }), [available, state, people, online, totals, refresh, subscribe, setViewing, markRead]);
+    available, state, loadError, people, online, totals, refresh, subscribe, setViewing, markRead,
+  }), [available, state, loadError, people, online, totals, refresh, subscribe, setViewing, markRead]);
 
   return <ChatContext.Provider value={value}>{children}</ChatContext.Provider>;
 }

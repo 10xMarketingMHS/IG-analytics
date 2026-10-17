@@ -1463,6 +1463,8 @@ export function ChatPage() {
   const { state, people, available } = chat;
   const { user } = useAuth();
   const { isAdmin, hasPermission } = useWorkspaces();
+  // A failed first load can leave the page with nothing to show; it says why
+  // (below) and offers Try again instead of a spinner that never ends.
   const review = useReviewAccess();
   const [params, setParams] = useSearchParams();
   const channelId = params.get("c");
@@ -1533,6 +1535,19 @@ export function ChatPage() {
 
   if (!available) {
     return <div className="card pad" style={{ maxWidth: 520 }}>Team chat is for admins and editors. Ask an admin if you need access.</div>;
+  }
+  if (!state && chat.loadError) {
+    return (
+      <div className="card pad" style={{ maxWidth: 560 }}>
+        <b>Team Chat couldn't load.</b>
+        <p style={{ margin: "6px 0 12px", lineHeight: 1.55, color: "var(--muted)" }}>
+          The server answered: “{chat.loadError}”. On a server that's new to Team Chat this usually means
+          its chat tables haven't been added to the database yet — the Team Chat database change
+          (<code>20261021120000_team_chat.sql</code>) needs to be run once.
+        </p>
+        <button type="button" className="btn btn-sm" onClick={() => { chat.refresh(); }}>Try again</button>
+      </div>
+    );
   }
   if (!state) return <Loader />;
 
