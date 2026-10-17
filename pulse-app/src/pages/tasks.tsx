@@ -243,9 +243,10 @@ function daysOverdue(due: string): number {
 }
 
 // A status column that accepts dropped cards; highlights while hovered.
-function DroppableColumn({ id, children }: { id: TaskStatus; children: ReactNode }) {
+// On phones only the open stage shows (m-open), under its tile.
+function DroppableColumn({ id, open, children }: { id: TaskStatus; open?: boolean; children: ReactNode }) {
   const { setNodeRef, isOver } = useDroppable({ id });
-  return <div ref={setNodeRef} data-col={id} className={"task-col" + (isOver ? " dnd-over" : "")}>{children}</div>;
+  return <div ref={setNodeRef} id={`tb-col-${id}`} data-col={id} className={"task-col" + (isOver ? " dnd-over" : "") + (open ? " m-open" : "")}>{children}</div>;
 }
 
 // ---- Board card pieces (the redesign's layout: number, title, brand and
@@ -285,6 +286,14 @@ const TB_ICON = {
   check: tbSvg(<path d="M20 6 9 17l-5-5" />, 15),
   info: tbSvg(<><circle cx="12" cy="12" r="9" /><path d="M12 16v-4M12 8h.01" /></>, 15),
 };
+// Phones: each stage is a tile you tap to open its cards (see .tb-mtiles).
+const STAGE_ICON: Record<TaskStatus, ReactNode> = {
+  todo: tbSvg(<circle cx="12" cy="12" r="8" />, 19),
+  in_progress: tbSvg(<><circle cx="12" cy="12" r="8" /><path d="M12 4a8 8 0 0 1 0 16z" fill="currentColor" stroke="none" /></>, 19),
+  review: tbSvg(<><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12z" /><circle cx="12" cy="12" r="3" /></>, 19),
+  done: tbSvg(<path d="M20 6 9 17l-5-5" />, 19),
+};
+const MOBILE_STAGE_KEY = "pulse-tasks-mobile-stage";
 
 // The number people know a task by: its brand's SID/AID/SVID/PID, else the TID.
 function taskRef(t: Task) {
@@ -541,6 +550,12 @@ export function TasksPage() {
   );
 
   const byStatus = (s: TaskStatus) => filtered.filter((t) => t.status === s);
+  // Done resets daily on the board — only today's completions show there, so
+  // it never grows into an endless scroll. Anything finished on an earlier day
+  // is still there, just not on the board — the Calendar shows every day's
+  // completions by the day they were actually finished (see TaskCalendar).
+  const stageItems = (s: TaskStatus) =>
+    s === "done" ? byStatus(s).filter((t) => t.completed_at && ymd(new Date(t.completed_at)) === today()) : byStatus(s);
 
   // Toolbar summary strip — counts across every OTHER filter (type/format/
   // due-tab/search don't shrink it, so it reads as a stable at-a-glance
@@ -599,6 +614,16 @@ export function TasksPage() {
   // toolbar is one row; Filters opens it, remembered on this device. The
   // number on Filters is how many of those are set while it's folded.
   const [barOpen, setBarOpen] = useState(() => { try { return window.localStorage.getItem("pulse-tasks-toolbar-open") === "1"; } catch { return false; } });
+  // Phones: which stage's cards are unfolded under the tiles (none to start;
+  // kept while you move around the app).
+  const [mobileStage, setMobileStage] = useState<TaskStatus | null>(() => {
+    try { return (window.sessionStorage.getItem(MOBILE_STAGE_KEY) as TaskStatus | null) || null; } catch { return null; }
+  });
+  const toggleMobileStage = (k: TaskStatus) => setMobileStage((cur) => {
+    const next = cur === k ? null : k;
+    try { if (next) window.sessionStorage.setItem(MOBILE_STAGE_KEY, next); else window.sessionStorage.removeItem(MOBILE_STAGE_KEY); } catch { /* fine, just not remembered */ }
+    return next;
+  });
   const toggleBar = () => setBarOpen((o) => {
     try { window.localStorage.setItem("pulse-tasks-toolbar-open", o ? "0" : "1"); } catch { /* fine, just not remembered */ }
     return !o;
@@ -951,6 +976,26 @@ export function TasksPage() {
       ) : view === "calendar" ? (
         <TaskCalendar tasks={filtered} onOpen={openTask} />
       ) : (
+        <>
+        {/* Phones: the stages as tiles; tap one to unfold its cards, tap again to fold. */}
+        <div className="tb-mtiles" role="tablist" aria-label="Stages">
+          {COLUMNS.map((col) => {
+            const items = stageItems(col.key);
+            const late = col.key === "done" ? 0 : items.filter((t) => t.due_date && t.due_date < today()).length;
+            const on = mobileStage === col.key;
+            const sub = col.key === "done" ? "Finished today" : late > 0 ? `${late} overdue` : items.length === 0 ? "Nothing here" : "On track";
+            return (
+              <button key={col.key} type="button" role="tab" aria-selected={on} aria-controls={`tb-col-${col.key}`}
+                className={"tb-mtile " + col.key + (on ? " on" : "")} onClick={() => toggleMobileStage(col.key)}>
+                <span className="tb-mtile-ic">{STAGE_ICON[col.key]}</span>
+                <b className="tb-mtile-n">{items.length}</b>
+                <span className="tb-mtile-l">{col.label}</span>
+                <span className={"tb-mtile-s" + (late > 0 ? " bad" : "")}>{sub}</span>
+              </button>
+            );
+          })}
+        </div>
+        {!mobileStage && <p className="tb-mhint">Tap a stage to see its tasks.</p>}
         <DndContext
           sensors={sensors}
           collisionDetection={closestCorners}
@@ -960,17 +1005,11 @@ export function TasksPage() {
         >
         <div className="task-board" ref={boardRef}>
           {COLUMNS.map((col, ci) => {
-            const allItems = byStatus(col.key);
-            // Done resets daily on the board — only today's completions show
-            // here, so it never grows into an endless scroll. Anything
-            // finished on an earlier day is still there, just not on the
-            // board — the Calendar shows every day's completions by the day
-            // they were actually finished (see TaskCalendar below).
             const isDone = col.key === "done";
-            const items = isDone ? allItems.filter((t) => t.completed_at && ymd(new Date(t.completed_at)) === today()) : allItems;
-            const olderDoneCount = isDone ? allItems.length - items.length : 0;
+            const items = stageItems(col.key);
+            const olderDoneCount = isDone ? byStatus(col.key).length - items.length : 0;
             return (
-              <DroppableColumn id={col.key} key={col.key}>
+              <DroppableColumn id={col.key} key={col.key} open={mobileStage === col.key}>
                 <div className="task-colhead">
                   <span className={"tdot " + col.key} /> {col.label}
                   <span className="task-count">{items.length}</span>
@@ -1169,6 +1208,7 @@ export function TasksPage() {
             ) : null}
           </DragOverlay>
         </DndContext>
+        </>
       )}
 
       {creating && (

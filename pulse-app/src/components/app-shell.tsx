@@ -37,6 +37,9 @@ const SIDEBAR_GROUPS: { label: string; hrefs: string[] }[] = [
 ];
 const OFF_SIDEBAR = new Set(["/settings", "/posts/new"]);
 const RAIL_KEY = "pulse-sidebar-rail";
+// The phone tab bar has ~54px a tab: two names go short there (the sidebar and
+// page titles keep them in full).
+const TAB_SHORT: Record<string, string> = { "/chat": "Chat", "/tasks": "Tasks" };
 const PLATFORM_DOT: Record<string, string> = { instagram: "#e1306c", facebook: "#1877f2", youtube: "#ff0033" };
 const CHANNEL_TILES = ["#7c3aed", "#16a34a", "#2563eb", "#d97706", "#db2777", "#0891b2"];
 function channelTile(id: string) {
@@ -460,12 +463,13 @@ function AppShellInner() {
         </div>
       </main>
       {/* Phones: an app-style tab bar (components/mobile.css) — the four
-          Workspace places, and More for the full menu. */}
-      <nav className="tabbar" aria-label="Main">
+          Workspace places and More for the full menu, in a floating pill, with
+          New task as a round button beside it. */}
+      <nav className={"tabbar" + (canWrite ? " has-fab" : "")} aria-label="Main">
         {tabItems.map((item) => (
-          <NavLink key={item.href} to={item.href} className={({ isActive }) => "tab" + (isActive && !menuOpen ? " on" : "")} onClick={() => setMenuOpen(false)}>
+          <NavLink key={item.href} to={item.href} aria-label={item.title} className={({ isActive }) => "tab" + (isActive && !menuOpen ? " on" : "")} onClick={() => setMenuOpen(false)}>
             <span className="tab-ic">{navIcon(item.href) ?? item.icon}{item.chatBadge && <ChatBadge />}</span>
-            <span className="tab-l">{item.title}</span>
+            <span className="tab-l" aria-hidden="true">{TAB_SHORT[item.href] ?? item.title}</span>
           </NavLink>
         ))}
         <button type="button" className={"tab" + (menuOpen || !onTab ? " on" : "")} onClick={() => setMenuOpen((o) => !o)} aria-expanded={menuOpen} aria-label="More: the full menu">
@@ -473,6 +477,12 @@ function AppShellInner() {
           <span className="tab-l">More</span>
         </button>
       </nav>
+      {canWrite && (
+        <button type="button" className="tab-fab" title="New task" aria-label="New task"
+          onClick={() => { setMenuOpen(false); navigate("/tasks", { state: { newTask: true } }); }}>
+          {PLUS_ICON}
+        </button>
+      )}
       <BreakWidget />
       <BreakOverlay />
       <SodModal />

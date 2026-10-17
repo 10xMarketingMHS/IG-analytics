@@ -442,3 +442,46 @@ html[data-theme="dark"] .task-panel-scrim.tp2-scrim{background:rgba(0,0,0,.55)}
   .tp2-foot-hint{flex-basis:100%}
   .tp2-foot .tp2-btn{flex:1;justify-content:center}
 }
+
+/* Phones (ClickUp-style): the stages as a 2×2 grid of tiles, each with its
+   count; tapping one unfolds its cards underneath, tapping again folds them.
+   The toolbar keeps to two rows: views and whose tasks, then the due chips
+   swiping sideways. New task moves to the round + by the tab bar. */
+.tb-mtiles,.tb-mhint{display:none}
+@media (max-width:768px){
+  .tb-mtiles{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px;margin:0 0 14px}
+  .tb-mhint{display:block;margin:-2px 0 0;text-align:center;font-size:12.5px;color:var(--tb-text3)}
+  .tb .task-board{display:block;height:auto}
+  .tb .task-col{display:none}
+  .tb .task-col.m-open{display:flex;animation:tb-mopen .24s cubic-bezier(.2,.8,.2,1)}
+  .tb .task-col.m-open .tb-col-body{max-height:none;overflow:visible}
+  .tb-mtile{--c:var(--tb-todo);display:grid;grid-template-columns:auto minmax(0,1fr);align-content:start;gap:0 8px;min-height:116px;padding:14px;
+    border:1px solid var(--tb-line);border-radius:20px;background:linear-gradient(145deg,color-mix(in srgb,var(--c) 14%,var(--tb-panel)),var(--tb-panel) 72%);
+    box-shadow:var(--tb-sh1);color:var(--tb-text);font:inherit;text-align:left;cursor:pointer;transition:border-color .15s,box-shadow .15s,transform .12s}
+  .tb-mtile.in_progress{--c:var(--tb-prog)}
+  .tb-mtile.review{--c:var(--tb-rev)}
+  .tb-mtile.done{--c:var(--tb-done)}
+  .tb-mtile:active{transform:scale(.97)}
+  .tb-mtile.on{border-color:var(--c);box-shadow:0 0 0 3px color-mix(in srgb,var(--c) 24%,transparent),var(--tb-sh1)}
+  .tb-mtile-ic{width:38px;height:38px;border-radius:11px;display:grid;place-items:center;background:var(--c);color:#fff;box-shadow:0 6px 14px -6px var(--c)}
+  .tb-mtile-n{justify-self:end;font-size:28px;font-weight:800;letter-spacing:-.03em;line-height:1.1;font-variant-numeric:tabular-nums}
+  .tb-mtile-l{grid-column:1 / -1;padding-top:14px;font-size:15px;font-weight:700}
+  .tb-mtile-s{grid-column:1 / -1;margin-top:1px;font-size:12px;color:var(--tb-text3)}
+  .tb-mtile-s.bad{color:var(--tb-bad);font-weight:700}
+  /* the toolbar */
+  /* row 1: the views as icons and whose tasks; row 2: the due chips, swiping, then Filters */
+  .tb .tb-bar .seg{flex:none;width:auto}
+  .tb .tb-bar>.tb-row{gap:8px}
+  .tb .tb-bar .tb-views button{gap:0;font-size:0;padding:0 9px}
+  .tb .tb-bar .tb-scope button{padding:0 9px 0 7px}
+  .tb .tb-bar .tb-views button .tb-ic{width:17px;height:17px}
+  .tb .tb-grow{display:none}
+  .tb .tb-new{display:none}
+  .tb .tb-fold{order:11;flex:none;gap:4px;padding:0 10px;font-size:0}
+  .tb .tb-chips{order:10;flex:1 1 calc(100% - 90px);min-width:0;flex-wrap:nowrap;overflow-x:auto;scrollbar-width:none;margin-left:-12px;padding:2px 0 2px 12px;
+    -webkit-mask-image:linear-gradient(90deg,#000 calc(100% - 18px),transparent);mask-image:linear-gradient(90deg,#000 calc(100% - 18px),transparent)}
+  .tb .tb-chips::-webkit-scrollbar{display:none}
+  .tb .tb-chip{flex:none}
+}
+@keyframes tb-mopen{from{opacity:0;transform:translateY(-6px)}to{opacity:1;transform:none}}
+@media (prefers-reduced-motion:reduce){.tb .task-col.m-open{animation:none}.tb-mtile{transition:none}}

@@ -97,6 +97,25 @@ html[data-theme="dark"] .myday{
 @container (max-width:700px){.mhc-brand,.mhc-sep{display:none}}
 @container (max-width:520px){.mhc-label{display:none}.mhc-ghost{display:none}.mhc-primary{padding:0 10px}}
 
+/* phones: the full banner as a short card — the headline with a small shrink
+   button, the date and greeting on a line each, then Task Board beside the
+   Team / Just me switch. The tagline, Replay intro and sub-greeting step aside. */
+@media (max-width:768px){
+  .myday-hero:not(.compact){border-radius:20px;margin-bottom:14px}
+  .myday-hero:not(.compact) .mh-inner{display:grid;grid-template-columns:minmax(0,1fr) auto;grid-template-areas:'head head' 'date date' 'greet greet' 'cta scope';
+    align-items:center;gap:0 10px;padding:18px 18px 16px;min-height:0}
+  .myday-hero:not(.compact) .mh-left,.myday-hero:not(.compact) .mh-right{display:contents}
+  .myday-hero:not(.compact) .mh-headline{grid-area:head;font-size:26px;letter-spacing:-.8px;padding-right:44px}
+  .myday-hero:not(.compact) .mh-tag,.myday-hero:not(.compact) .mh-greetsub,.myday-hero:not(.compact) .mh-cta-row>.mh-glass,.myday-hero:not(.compact) .mh-clockedin{display:none}
+  .myday-hero:not(.compact) .mh-date{grid-area:date;margin-top:14px;text-align:left}
+  .myday-hero:not(.compact) .mh-greet{grid-area:greet;margin:2px 0 12px;font-size:19px;text-align:left;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .myday-hero:not(.compact) .mh-cta-row,.myday-hero:not(.compact) .mh-startwrap{grid-area:cta;gap:8px}
+  .myday-hero:not(.compact) .mh-cta{padding:9px 16px;font-size:13px}
+  .myday-hero:not(.compact) .mh-endeod{padding:8px 12px;font-size:12.5px}
+  .myday-hero:not(.compact) .mh-scope{grid-area:scope;align-self:end;justify-self:end;margin-top:0}
+  .myday .mh-compact-btn{top:14px;right:14px;bottom:auto;width:32px;height:32px;padding:0;justify-content:center;gap:0;font-size:0}
+}
+
 /* ============================== the page body ============================== */
 .md-body{display:flex;flex-direction:column;gap:18px;margin-top:6px}
 .md-top{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
