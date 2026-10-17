@@ -19,7 +19,7 @@ import { MyProfileModal } from "@/components/my-profile-modal";
 import { Modal } from "@/components/modal";
 import { notifyTasksChanged } from "@/lib/task-events";
 import { SodModal } from "@/components/sod-modal";
-import { useTheme } from "@/components/theme-provider";
+import { useTheme, ACCENTS } from "@/components/theme-provider";
 import { ChatProvider, useChat } from "@/lib/chat";
 import { navIcon, SIGN_OUT_ICON, RAIL_ICON, COMPOSE_ICON, SEARCH_ICON, PLUS_ICON, BREAK_ICON, GEAR_ICON, MORE_ICON } from "@/components/nav-icons";
 import { JumpPalette, type JumpItem } from "@/components/jump-palette";
@@ -142,6 +142,60 @@ export function AppShell() {
 
 // The sidebar's Team Chat count: red for @mentions and unread DMs, a quiet dot
 // when only channel messages are waiting.
+// The accent colour picker in the top bar: violet, blue or green tints the
+// background and every highlight (index.css --acH).
+function AccentPicker() {
+  const { accent, setAccent } = useTheme();
+  const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!open) return;
+    const close = (e: MouseEvent) => { if (!ref.current?.contains(e.target as Node)) setOpen(false); };
+    const esc = (e: KeyboardEvent) => { if (e.key === "Escape") setOpen(false); };
+    document.addEventListener("mousedown", close);
+    document.addEventListener("keydown", esc);
+    return () => { document.removeEventListener("mousedown", close); document.removeEventListener("keydown", esc); };
+  }, [open]);
+  const cur = ACCENTS.find((a) => a.key === accent) ?? ACCENTS[0];
+  return (
+    <div className="accent-pick" ref={ref}>
+      <button type="button" className="btn icon" title="Accent colour" aria-label={`Accent colour: ${cur.label}`} aria-haspopup="menu" aria-expanded={open} onClick={() => setOpen((o) => !o)}>
+        <span className="accent-dot" style={{ background: cur.swatch }} />
+      </button>
+      {open && (
+        <div className="accent-pop" role="menu" aria-label="Accent colour">
+          <b>Accent colour</b>
+          {ACCENTS.map((a) => (
+            <button key={a.key} type="button" role="menuitemradio" aria-checked={accent === a.key} className={accent === a.key ? "on" : ""}
+              onClick={() => { setAccent(a.key); setOpen(false); }}>
+              <span className="accent-dot" style={{ background: a.swatch }} />{a.label}
+              {accent === a.key && (
+                <svg className="accent-tick" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M20 6 9 17l-5-5" /></svg>
+              )}
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// Phones: the same choice as three dots in the More menu, so the top bar keeps room for the page name.
+function AccentRow() {
+  const { accent, setAccent } = useTheme();
+  return (
+    <div className="sb2-accent" role="radiogroup" aria-label="Accent colour">
+      <span>Accent colour</span>
+      {ACCENTS.map((a) => (
+        <button key={a.key} type="button" role="radio" aria-checked={accent === a.key} aria-label={a.label} title={a.label}
+          className={accent === a.key ? "on" : ""} onClick={() => setAccent(a.key)}>
+          <span className="accent-dot" style={{ background: a.swatch }} />
+        </button>
+      ))}
+    </div>
+  );
+}
+
 function ChatBadge() {
   const { totals } = useChat();
   if (totals.alerts > 0) return <span className="badge alert">{totals.alerts > 99 ? "99+" : totals.alerts}</span>;
@@ -367,6 +421,7 @@ function AppShellInner() {
           )}
         </nav>
         <SidebarBreak />
+        <AccentRow />
         <div className="userchip">
           <button
             type="button"
@@ -446,6 +501,7 @@ function AppShellInner() {
             🔔
             {unread > 0 && <span className="bell-dot">{unread > 9 ? "9+" : unread}</span>}
           </button>
+          <AccentPicker />
           <button className="btn icon" title="Theme" onClick={toggle}>
             {theme === "dark" ? "☀️" : "🌙"}
           </button>

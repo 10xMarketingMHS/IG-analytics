@@ -6,8 +6,8 @@
   --gl-sunk:rgba(30,20,80,.035);--gl-sunk2:rgba(30,20,80,.07);--gl-hover:rgba(30,20,80,.05);
   --gl-sh1:0 1px 2px rgba(30,20,80,.04),0 10px 28px -8px rgba(60,40,140,.14);
   --gl-sh2:0 2px 4px rgba(30,20,80,.05),0 22px 44px -10px rgba(60,40,140,.24);
-  --gl-ac:oklch(0.55 0.2 290);--gl-acSoft:oklch(0.96 0.025 290);--gl-acText:oklch(0.48 0.19 290);--gl-acGlow:oklch(0.55 0.2 290 / .16);
-  --gl-acGrad:linear-gradient(135deg,oklch(0.56 0.22 290),oklch(0.62 0.2 330));--gl-acShadow:0 8px 22px -6px oklch(0.55 0.22 290 / .55);
+  --gl-ac:oklch(0.55 0.2 var(--acH));--gl-acSoft:oklch(0.96 0.025 var(--acH));--gl-acText:oklch(0.48 0.19 var(--acH));--gl-acGlow:oklch(0.55 0.2 var(--acH) / .16);
+  --gl-acGrad:linear-gradient(135deg,oklch(0.56 0.22 var(--acH)),oklch(0.62 0.2 calc(var(--acH) + 40)));--gl-acShadow:0 8px 22px -6px oklch(0.55 0.22 var(--acH) / .55);
   --gl-good:oklch(0.52 0.14 155);--gl-goodSoft:oklch(0.96 0.03 155);--gl-bad:oklch(0.55 0.2 25);--gl-badSoft:oklch(0.96 0.03 25);
   --gl-warn:oklch(0.55 0.14 60);--gl-warnSoft:oklch(0.96 0.04 75);--gl-rev:oklch(0.55 0.15 250);--gl-revSoft:oklch(0.95 0.03 250);
   --gl-star:oklch(0.78 0.15 80);
@@ -19,7 +19,7 @@ html[data-theme="dark"] .gl{
   --gl-panel:rgba(26,24,40,.8);--gl-solid:#18161f;--gl-line:rgba(255,255,255,.08);--gl-line2:rgba(255,255,255,.05);
   --gl-sunk:rgba(255,255,255,.04);--gl-sunk2:rgba(255,255,255,.08);--gl-hover:rgba(255,255,255,.06);
   --gl-sh1:0 1px 2px rgba(0,0,0,.3),0 12px 30px -10px rgba(0,0,0,.55);--gl-sh2:0 24px 50px -12px rgba(0,0,0,.65);
-  --gl-ac:oklch(0.68 0.18 290);--gl-acSoft:oklch(0.3 0.07 290);--gl-acText:oklch(0.82 0.11 290);--gl-acGlow:oklch(0.66 0.18 290 / .22);
+  --gl-ac:oklch(0.68 0.18 var(--acH));--gl-acSoft:oklch(0.3 0.07 var(--acH));--gl-acText:oklch(0.82 0.11 var(--acH));--gl-acGlow:oklch(0.66 0.18 var(--acH) / .22);
   --gl-good:oklch(0.74 0.14 155);--gl-goodSoft:oklch(0.27 0.05 155);--gl-bad:oklch(0.72 0.16 25);--gl-badSoft:oklch(0.28 0.06 25);
   --gl-warn:oklch(0.8 0.13 75);--gl-warnSoft:oklch(0.3 0.05 70);--gl-rev:oklch(0.74 0.12 250);--gl-revSoft:oklch(0.3 0.05 250)
 }

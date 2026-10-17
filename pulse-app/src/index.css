@@ -1,31 +1,47 @@
-/* Pulse design system — purple glassmorphism */
+/* Pulse design system — glass on a soft tint of the accent colour. One hue,
+   --acH, drives the accent everywhere: violet (290) unless the person picked
+   blue (255) or green (160) — see theme-provider.tsx, set on <html> as
+   data-accent before first paint (index.html). */
 :root{
-  --bg:#f3f0fb; --panel:#ffffff; --panel2:#f7f4fe; --text:#1a1035; --muted:#5a5182; --faint:#6f6699;
-  --border:#e7e0f7; --border2:#efeafa; --accent:#7c3aed; --accent-weak:#ede9fe; --accent-ink:#6d28d9;
-  --indigo:#7c3aed; --indigo-weak:#ede9fe; --amber:#b45309; --rose:#e11d48; --good:#16a34a;
-  --grad:linear-gradient(135deg,#7c3aed,#a855f7); --grad-soft:linear-gradient(135deg,#8b5cf6,#c084fc);
-  --glass:rgba(255,255,255,.72); --glass-brd:rgba(124,58,237,.16); --glass-solid:rgba(255,255,255,.95);
-  --shadow:0 2px 8px rgba(80,40,160,.06),0 18px 40px rgba(80,40,160,.10); --radius:18px;
-  --c1:#7c3aed;--c2:#a855f7;--c3:#22d3ee;--c4:#f472b6;--c5:#f59e0b;
+  --acH:290;
+  --bg:oklch(0.97 0.012 var(--acH)); --panel:#ffffff; --panel2:oklch(0.975 0.014 var(--acH));
+  --text:oklch(0.22 0.06 var(--acH)); --muted:oklch(0.46 0.07 var(--acH)); --faint:oklch(0.54 0.06 var(--acH));
+  --border:oklch(0.92 0.035 var(--acH)); --border2:oklch(0.95 0.02 var(--acH));
+  --accent:oklch(0.55 0.21 var(--acH)); --accent-weak:oklch(0.94 0.04 var(--acH)); --accent-ink:oklch(0.48 0.2 var(--acH));
+  --indigo:oklch(0.55 0.21 var(--acH)); --indigo-weak:oklch(0.94 0.04 var(--acH)); --amber:#b45309; --rose:#e11d48; --good:#16a34a;
+  --grad:linear-gradient(135deg,oklch(0.55 0.22 var(--acH)),oklch(0.63 0.2 calc(var(--acH) + 15)));
+  --grad-soft:linear-gradient(135deg,oklch(0.6 0.2 var(--acH)),oklch(0.72 0.15 calc(var(--acH) + 15)));
+  --glass:rgba(255,255,255,.72); --glass-brd:oklch(0.55 0.2 var(--acH) / .16); --glass-solid:rgba(255,255,255,.95);
+  --shadow:0 2px 8px oklch(0.4 0.15 var(--acH) / .06),0 18px 40px oklch(0.4 0.15 var(--acH) / .1); --radius:18px;
+  --c1:oklch(0.55 0.21 var(--acH));--c2:oklch(0.63 0.2 calc(var(--acH) + 15));--c3:#22d3ee;--c4:#f472b6;--c5:#f59e0b;
 }
+html[data-accent="blue"]{--acH:255}
+html[data-accent="green"]{--acH:160}
 html[data-theme="dark"]{
-  --bg:#0a0713; --panel:#171128; --panel2:#130e22; --text:#f1eefa; --muted:#b3a9d6; --faint:#9088b5;
-  --border:rgba(150,120,240,.14); --border2:rgba(150,120,240,.08); --accent:#8b5cf6; --accent-weak:rgba(139,92,246,.22); --accent-ink:#d3c4ff;
-  --indigo:#a78bfa; --indigo-weak:rgba(139,92,246,.22);
-  --grad:linear-gradient(135deg,#7c3aed,#a855f7); --grad-soft:linear-gradient(135deg,#8b5cf6,#c084fc);
-  --glass:rgba(32,24,58,.62); --glass-brd:rgba(168,140,255,.18); --glass-solid:rgba(26,19,46,.94);
-  --shadow:0 2px 8px rgba(0,0,0,.35),0 24px 55px rgba(60,25,120,.40);
-  --c1:#8b5cf6;--c2:#c084fc;--c3:#22d3ee;--c4:#f472b6;--c5:#fbbf24;
+  --bg:oklch(0.14 0.025 var(--acH)); --panel:oklch(0.2 0.045 var(--acH)); --panel2:oklch(0.175 0.04 var(--acH));
+  --text:oklch(0.96 0.012 var(--acH)); --muted:oklch(0.76 0.06 var(--acH)); --faint:oklch(0.66 0.06 var(--acH));
+  --border:oklch(0.7 0.12 var(--acH) / .14); --border2:oklch(0.7 0.12 var(--acH) / .08);
+  --accent:oklch(0.62 0.2 var(--acH)); --accent-weak:oklch(0.62 0.2 var(--acH) / .22); --accent-ink:oklch(0.85 0.09 var(--acH));
+  --indigo:oklch(0.72 0.15 var(--acH)); --indigo-weak:oklch(0.62 0.2 var(--acH) / .22);
+  --glass:oklch(0.24 0.06 var(--acH) / .62); --glass-brd:oklch(0.75 0.12 var(--acH) / .18); --glass-solid:oklch(0.2 0.05 var(--acH) / .94);
+  --shadow:0 2px 8px rgba(0,0,0,.35),0 24px 55px oklch(0.3 0.15 var(--acH) / .4);
+  --c1:oklch(0.62 0.2 var(--acH));--c2:oklch(0.72 0.15 calc(var(--acH) + 15));--c3:#22d3ee;--c4:#f472b6;--c5:#fbbf24;
 }
 *{box-sizing:border-box}
 html,body{margin:0;height:100%}
 body{font-family:'Inter',-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Arial,sans-serif;background:var(--bg);color:var(--text);-webkit-font-smoothing:antialiased}
-/* Ambient purple glow behind everything — the glass cards blur this. */
+/* The page background: three soft glows tinted by the accent (Pulse Redesign
+   v5), so the whole app takes the colour the person picked. */
 body::before{content:'';position:fixed;inset:0;z-index:-1;pointer-events:none;
   background:
-    radial-gradient(62% 55% at 12% -5%,rgba(124,58,237,.30),transparent 60%),
-    radial-gradient(50% 55% at 105% 105%,rgba(168,85,247,.24),transparent 60%),
-    radial-gradient(42% 42% at 92% 8%,rgba(56,189,248,.10),transparent 60%);}
+    radial-gradient(900px 520px at 0% 0%,oklch(0.92 0.07 var(--acH) / .85),transparent 62%),
+    radial-gradient(800px 520px at 100% 0%,oklch(0.94 0.06 calc(var(--acH) + 60) / .75),transparent 60%),
+    radial-gradient(760px 620px at 85% 100%,oklch(0.95 0.05 calc(var(--acH) - 70) / .7),transparent 60%)}
+html[data-theme="dark"] body::before{
+  background:
+    radial-gradient(900px 520px at 0% 0%,oklch(0.32 0.12 var(--acH) / .5),transparent 62%),
+    radial-gradient(800px 520px at 100% 0%,oklch(0.3 0.1 calc(var(--acH) + 60) / .4),transparent 60%),
+    radial-gradient(760px 620px at 85% 100%,oklch(0.28 0.09 calc(var(--acH) - 70) / .35),transparent 60%)}
 button{font-family:inherit;cursor:pointer}
 a{color:inherit}
 #root{min-height:100vh}
@@ -1212,7 +1228,7 @@ img.lb-ava{object-fit:cover}
 .lb-layout{display:grid;grid-template-columns:minmax(0,1fr) 300px;gap:20px;align-items:start}
 .lb-main{min-width:0}
 .lb-featured{position:sticky;top:14px;height:auto;border-radius:22px;overflow:hidden;padding:18px 18px 22px;text-align:center;
-  background:radial-gradient(120% 75% at 50% -5%,#7c3aed,#3b1a78 52%,#1a0b3a);
+  background:radial-gradient(120% 75% at 50% -5%,oklch(0.55 0.22 var(--acH)),oklch(0.32 0.13 var(--acH)) 52%,oklch(0.18 0.07 var(--acH)));
   border:1px solid rgba(180,140,255,.30);
   box-shadow:0 24px 60px rgba(8,20,60,.5),inset 0 1px 0 rgba(255,255,255,.07);
   animation:fxpop .45s cubic-bezier(.22,.61,.36,1)}

@@ -1,14 +1,12 @@
-/* No floating cards. Every page is one solid sheet joined to the sidebar and
-   the top bar, so the tinted background never shows as a gap around panels,
-   and the panels lie flat on it: a thin line, no drop shadow, no glass, no
-   lift on hover. A page's main list or table runs edge to edge, touching the
-   sidebar, as Team Chat does. (Banners — the Home hero, the Leaderboard's
-   top editor — keep their own look.) */
-:root{--sheet:#fcfbfe;--sheet-panel:#ffffff}
-html[data-theme="dark"]{--sheet:#0e0c16;--sheet-panel:rgba(255,255,255,.025)}
+/* No floating cards. Pages sit on the soft accent-tinted background (index.css)
+   and their panels lie flat on it: a thin line, no drop shadow, no lift on
+   hover. A page's main list or table runs edge to edge, touching the sidebar,
+   as Team Chat does. (Banners — the Home hero, the Leaderboard's top editor —
+   keep their own look.) */
+:root{--sheet-panel:rgba(255,255,255,.86)}
+html[data-theme="dark"]{--sheet-panel:oklch(0.2 0.04 var(--acH) / .72)}
 
-.app>main{background:var(--sheet)}
-.app .topbar{background:color-mix(in srgb,var(--sheet) 90%,transparent)}
+.app .topbar{background:color-mix(in srgb,var(--bg) 72%,transparent)}
 .app .content{--content-x:26px;max-width:none}
 @media (max-width:768px){.app .content{--content-x:16px}}
 
@@ -20,7 +18,7 @@ html[data-theme="dark"]{--sheet:#0e0c16;--sheet-panel:rgba(255,255,255,.025)}
   .md-card,.md-stat,.md-tile,
   .tb-bar,.task-col,.task-card,.tb-list,
   .lb-tabs,.lb-row
-){box-shadow:none;backdrop-filter:none;-webkit-backdrop-filter:none}
+){box-shadow:none}
 .app .content :is(.card,.an-card,.an-kpis,.mt-card,.gl-card,.gl-kpis,.md-card,.tb-bar,.lb-tabs){background-color:var(--sheet-panel)}
 .app .content :is(.an-topcard,.an-pod,.mt-person,.mt-lcard,.gl-goal,.lb-row,.task-card):hover{transform:none;box-shadow:none}
 /* a picked person keeps its ring, without the lift */
@@ -35,4 +33,26 @@ html[data-theme="dark"]{--sheet:#0e0c16;--sheet-panel:rgba(255,255,255,.025)}
 .app .content:has(> .screen.tb){padding-top:0}
 .app .content>.screen.tb>.tb-bar{margin:0 calc(-1 * var(--content-x)) 16px;border-radius:0;border-width:0 0 1px;padding-inline:var(--content-x)}
 /* the Leaderboard's pinned column titles sit on the sheet too */
-.app .content .lb-table-wrap .lb-head{background:var(--sheet)}
+.app .content .lb-table-wrap .lb-head{background:color-mix(in srgb,var(--bg) 88%,transparent);backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px)}
+
+/* the accent colour picker in the top bar */
+.accent-pick{position:relative}
+.accent-dot{display:inline-block;flex:none;width:16px;height:16px;border-radius:50%;box-shadow:inset 0 0 0 2px rgba(255,255,255,.55),0 0 0 1px rgba(0,0,0,.08)}
+.accent-pop{position:absolute;top:calc(100% + 8px);right:0;z-index:60;display:flex;flex-direction:column;gap:2px;min-width:180px;padding:8px;
+  border:1px solid var(--border);border-radius:14px;background:var(--glass-solid);box-shadow:0 18px 44px -12px rgba(0,0,0,.35)}
+.accent-pop>b{padding:4px 8px 6px;font-size:11px;font-weight:800;letter-spacing:.06em;text-transform:uppercase;color:var(--muted)}
+.accent-pop>button{display:flex;align-items:center;gap:10px;height:36px;padding:0 10px;border:0;border-radius:9px;background:transparent;color:var(--text);
+  font:600 13px 'Plus Jakarta Sans',sans-serif;text-align:left;cursor:pointer}
+.accent-pop>button:hover{background:var(--accent-weak)}
+.accent-pop>button.on{color:var(--accent-ink)}
+.accent-tick{margin-left:auto}
+/* phones: the choice lives in the More menu instead of the top bar */
+.sb2-accent{display:none}
+@media (max-width:768px){
+  .app .topbar .accent-pick{display:none}
+  .sb2-accent{display:flex;align-items:center;gap:6px;padding:10px 16px;border-top:1px solid var(--sb-line);font-size:12px;font-weight:500;color:var(--sb-text3)}
+  .sb2-accent>span{margin-right:auto}
+  .sb2-accent button{width:32px;height:32px;display:grid;place-items:center;padding:0;border:0;border-radius:50%;background:transparent;cursor:pointer}
+  .sb2-accent button.on{box-shadow:0 0 0 2px var(--sb-ac)}
+  .sb2-accent .accent-dot{width:20px;height:20px}
+}

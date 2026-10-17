@@ -16,8 +16,8 @@
   --sb-text:#18181b;--sb-text2:#52525b;--sb-text3:#6b6b75;
   --sb-line:rgba(30,20,80,.08);--sb-hover:rgba(30,20,80,.05);
   --sb-on:#fff;--sb-onSh:0 1px 2px rgba(30,20,80,.06),0 6px 16px -6px rgba(60,40,140,.22);
-  --sb-ac:oklch(0.55 0.2 290);--sb-acText:oklch(0.48 0.19 290);
-  --sb-acGrad:linear-gradient(135deg,oklch(0.56 0.22 290),oklch(0.62 0.2 330));
+  --sb-ac:oklch(0.55 0.2 var(--acH));--sb-acText:oklch(0.48 0.19 var(--acH));
+  --sb-acGrad:linear-gradient(135deg,oklch(0.56 0.22 var(--acH)),oklch(0.62 0.2 calc(var(--acH) + 40)));
   --sb-warn:oklch(0.62 0.15 60);--sb-good:#22c55e;
   background:var(--sb-bg);border-right:1px solid var(--sb-line);color:var(--sb-text);
   backdrop-filter:blur(16px) saturate(160%);-webkit-backdrop-filter:blur(16px) saturate(160%);
@@ -28,7 +28,7 @@ html[data-theme="dark"] .app>aside.sb2{
   --sb-text:#ededf0;--sb-text2:#b4b4bc;--sb-text3:#8b8b96;
   --sb-line:rgba(255,255,255,.08);--sb-hover:rgba(255,255,255,.06);
   --sb-on:rgba(255,255,255,.09);--sb-onSh:inset 0 1px 0 rgba(255,255,255,.06);
-  --sb-ac:oklch(0.72 0.16 290);--sb-acText:oklch(0.82 0.11 290);--sb-warn:oklch(0.8 0.13 75)
+  --sb-ac:oklch(0.72 0.16 var(--acH));--sb-acText:oklch(0.82 0.11 var(--acH));--sb-warn:oklch(0.8 0.13 75)
 }
 
 /* widths: 210px on desktop, 193px on mid-size screens, the 250px drawer on
@@ -57,7 +57,7 @@ html[data-theme="dark"] .app>aside.sb2{
 
 /* brand + collapse */
 .sb2 .brand{position:relative;gap:10px;padding:14px 12px 10px 14px;transition:padding var(--sb-t) var(--sb-ease)}
-.sb2 .logo{flex:none;width:30px;height:30px;border-radius:9px;font-size:14px;font-weight:800;background:var(--sb-acGrad);box-shadow:0 6px 14px -6px oklch(0.55 0.22 290 / .6)}
+.sb2 .logo{flex:none;width:30px;height:30px;border-radius:9px;font-size:14px;font-weight:800;background:var(--sb-acGrad);box-shadow:0 6px 14px -6px oklch(0.55 0.22 var(--acH) / .6)}
 .sb2-brandtx{flex:none;width:calc(var(--sb-w) - 106px);min-width:0;overflow:hidden;line-height:1.2}
 .sb2 .brand b{display:block;font-size:14px;font-weight:700;letter-spacing:-.01em;color:var(--sb-text);white-space:nowrap}
 .sb2 .brand small{margin-top:1px;font-size:11px;font-weight:500;color:var(--sb-text3);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
@@ -70,7 +70,7 @@ html[data-theme="dark"] .app>aside.sb2{
 .sb2-search:hover{border-color:var(--sb-text3)}
 .sb2-search kbd{margin-left:auto;padding:1px 4px;border:1px solid var(--sb-line);border-radius:4px;background:transparent;font:500 10.5px 'Geist Mono',ui-monospace,monospace;color:var(--sb-text3)}
 .sb2-compose{flex:none;width:34px;height:34px;display:grid;place-items:center;padding:0;border:0;border-radius:10px;background:var(--sb-acGrad);color:#fff;cursor:pointer;
-  box-shadow:0 8px 18px -8px oklch(0.55 0.22 290 / .7)}
+  box-shadow:0 8px 18px -8px oklch(0.55 0.22 var(--acH) / .7)}
 .sb2-compose:hover{filter:brightness(1.07)}
 .sb2-railsearch{display:none}
 
@@ -167,10 +167,10 @@ html[data-theme="dark"] .app>aside.sb2{
 /* Search or jump to… */
 .jp-scrim{position:fixed;inset:0;z-index:400;display:flex;justify-content:center;align-items:flex-start;padding:14vh 16px 16px;background:rgba(16,16,24,.28);
   backdrop-filter:blur(3px);-webkit-backdrop-filter:blur(3px)}
-.jp{--jp-bg:#fff;--jp-line:rgba(30,20,80,.09);--jp-text:#18181b;--jp-text3:#6b6b75;--jp-hover:rgba(30,20,80,.05);--jp-ac:oklch(0.55 0.2 290);
+.jp{--jp-bg:#fff;--jp-line:rgba(30,20,80,.09);--jp-text:#18181b;--jp-text3:#6b6b75;--jp-hover:rgba(30,20,80,.05);--jp-ac:oklch(0.55 0.2 var(--acH));
   width:600px;max-width:100%;border:1px solid var(--jp-line);border-radius:14px;background:var(--jp-bg);color:var(--jp-text);overflow:hidden;
   box-shadow:0 24px 64px rgba(16,16,24,.18),0 2px 6px rgba(16,16,24,.08);font-family:'Plus Jakarta Sans',system-ui,sans-serif}
-html[data-theme="dark"] .jp{--jp-bg:#18161f;--jp-line:rgba(255,255,255,.09);--jp-text:#ededf0;--jp-text3:#8b8b96;--jp-hover:rgba(255,255,255,.06);--jp-ac:oklch(0.72 0.16 290)}
+html[data-theme="dark"] .jp{--jp-bg:#18161f;--jp-line:rgba(255,255,255,.09);--jp-text:#ededf0;--jp-text3:#8b8b96;--jp-hover:rgba(255,255,255,.06);--jp-ac:oklch(0.72 0.16 var(--acH))}
 html[data-theme="dark"] .jp-scrim{background:rgba(0,0,0,.55)}
 .jp-head{display:flex;align-items:center;gap:10px;height:52px;padding:0 16px;border-bottom:1px solid var(--jp-line);color:var(--jp-text3)}
 .jp-head input{flex:1;min-width:0;border:0;outline:none;background:transparent;color:var(--jp-text);font:15px 'Plus Jakarta Sans',sans-serif}
