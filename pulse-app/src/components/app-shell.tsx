@@ -14,6 +14,7 @@ import { useDueOverdueNotify, useOverdueTaskNotify, useReviewWaitingNotify } fro
 import { scopeAllowsTask, useReviewAccess } from "@/lib/use-review-access";
 import { useOrg } from "@/lib/use-org";
 import { setWeekStart } from "@/lib/date-range";
+import { ViewAsBar, ViewAsModal } from "@/components/view-as";
 import { BreakWidget } from "@/components/break-widget";
 import { BreakOverlay } from "@/components/break-overlay";
 import { BreakProvider, useBreakState } from "@/lib/break-context";
@@ -229,7 +230,9 @@ function AppShellInner() {
     session: eodSession, loading: eodLoading, unlinked: eodUnlinked, summary: eodSummary,
     eodOpen, openEod, signOutAfter, clearSignOutAfter,
   } = useEodState();
-  const eodLocked = active?.role === "editor" && !eodLoading && !eodUnlinked && !eodSession;
+  // Viewing as someone is look-only, so their Start Work lock doesn't apply.
+  const eodLocked = !user?.viewingAs && active?.role === "editor" && !eodLoading && !eodUnlinked && !eodSession;
+  const [viewAsOpen, setViewAsOpen] = useState(false);
   const { editors } = useEditors();
   const { theme, toggle } = useTheme();
   const location = useLocation();
@@ -372,7 +375,11 @@ function AppShellInner() {
           your channels, then break time and you. */}
       <aside className="sb2">
         <div className="brand">
-          <div className="logo">◐</div>
+          {user?.isSuperAdmin && !user.viewingAs ? (
+            <button type="button" className="logo" onClick={() => setViewAsOpen(true)} title="View Pulse as someone (test)" aria-label="View Pulse as someone">◐</button>
+          ) : (
+            <div className="logo">◐</div>
+          )}
           <div className="sb2-label sb2-brandtx">
             <b>Pulse</b>
             <small>{org?.name || "Content Analytics"}</small>
@@ -567,6 +574,8 @@ function AppShellInner() {
       <BreakWidget />
       <BreakOverlay />
       <SodModal />
+      {viewAsOpen && <ViewAsModal onClose={() => setViewAsOpen(false)} />}
+      {user?.viewingAs && <ViewAsBar name={user.name || user.email} realName={user.viewingAs.name} />}
     </div>
     </BreakProvider>
   );

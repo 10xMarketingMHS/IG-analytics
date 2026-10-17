@@ -20,6 +20,9 @@ type AuthUser = {
   color: string | null;
   // Which in-app alerts they get (Settings › Notifications); a missing key is on.
   notifyPrefs?: Record<string, boolean>;
+  isSuperAdmin?: boolean;
+  // Set while a Super Admin views Pulse as this person (read-only): who they really are.
+  viewingAs?: { id: string; name: string } | null;
 };
 
 type AuthContextValue = {

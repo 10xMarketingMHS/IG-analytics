@@ -15,7 +15,8 @@ export function EodGate({ children }: { children: ReactNode }) {
   return (
     <>
       {children}
-      <EodWindow />
+      {/* Viewing as someone (read-only): no start / end of day prompts. */}
+      {!user?.viewingAs && <EodWindow />}
       {summary && (
         <EodSummaryCard
           name={(user?.name || user?.email || "You").split(" ")[0].split("@")[0]}
