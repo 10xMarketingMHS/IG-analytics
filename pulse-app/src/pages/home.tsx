@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { useTasks } from "@/lib/use-tasks";
 import { useAuth } from "@/lib/auth-context";
@@ -142,9 +142,29 @@ export function HomePage() {
   const [scopePref, setScopePref] = useState<"team" | "me">(() => (readPref(SCOPE_KEY, "team") === "me" ? "me" : "team"));
   const teamScope = isAdmin && scopePref === "team";
   const [replay, setReplay] = useState(0);
+  const heroRef = useRef<HTMLDivElement>(null);
+  const heroFrom = useRef<number | null>(null);
   function toggleCompact() {
+    heroFrom.current = heroRef.current?.offsetHeight ?? null;
     setCompact((c) => { writePref(COMPACT_KEY, c ? "0" : "1"); return !c; });
   }
+  // Resize the banner smoothly: measure the height it had and the height it
+  // lands on, then animate between the two. (A CSS transition can't reach the
+  // full banner's natural height, so expanding snapped most of the way first.)
+  // The new contents fade in as it opens.
+  useLayoutEffect(() => {
+    const el = heroRef.current;
+    const from = heroFrom.current;
+    heroFrom.current = null;
+    if (!el || from == null || typeof el.animate !== "function") return;
+    if (window.matchMedia?.("(prefers-reduced-motion: reduce)").matches) return;
+    const to = el.offsetHeight;
+    const ease = "cubic-bezier(.2,.8,.2,1)";
+    el.animate([{ height: `${from}px`, minHeight: `${from}px` }, { height: `${to}px`, minHeight: `${to}px` }], { duration: 450, easing: ease });
+    el.querySelectorAll(compact ? ".mhc" : ".mh-inner, .mh-podium, .mh-compact-btn").forEach((n) => {
+      n.animate([{ opacity: 0, transform: "translateY(6px)" }, { opacity: 1, transform: "none" }], { duration: 320, delay: 150, easing: "ease-out", fill: "backwards" });
+    });
+  }, [compact]);
   function pickScope(s: "team" | "me") {
     setScopePref(s);
     writePref(SCOPE_KEY, s);
@@ -415,9 +435,11 @@ export function HomePage() {
           every role. Full size, or a compact strip (remembered per browser). The
           video is decorative; a gradient shows through until the assets are
           present, and a scrim keeps the text legible. */}
-      <div className={"myday-hero" + (compact ? " compact" : "")}>
+      <div ref={heroRef} className={"myday-hero" + (compact ? " compact" : "")}>
         <HeroVideo replay={replay} />
+        {/* Two shadings, cross-faded: the full banner's, and the compact strip's. */}
         <div className="mh-scrim" />
+        <div className="mh-scrim c" />
         {compact ? (
           <div className="mhc">
             <div className="mhc-brand" aria-hidden="true"><b>Small Tasks</b><b className="g">Big Wins</b></div>

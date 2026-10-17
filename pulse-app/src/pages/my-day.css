@@ -36,7 +36,14 @@ html[data-theme="dark"] .myday{
 .myday .mono,.myday .md-delta{font-variant-numeric:tabular-nums}
 
 /* ============================== hero additions ============================== */
-.myday-hero{transition:min-height .45s cubic-bezier(.2,.8,.2,1),border-radius .45s}
+/* Size changes are animated from home.tsx (measured heights); these carry the
+   rest of the change: corner radius, video framing and the two shadings. */
+.myday-hero{transition:border-radius .45s cubic-bezier(.2,.8,.2,1)}
+.myday .mh-video{transition:opacity .5s ease,object-position .45s cubic-bezier(.2,.8,.2,1)}
+.myday .mh-scrim{transition:opacity .35s ease}
+.myday .mh-scrim.c{opacity:0;background:linear-gradient(90deg,rgba(10,8,25,.88) 0%,rgba(10,8,25,.55) 40%,rgba(10,8,25,.45) 60%,rgba(10,8,25,.85) 100%)}
+.myday-hero.compact .mh-scrim.c{opacity:1}
+.myday-hero.compact .mh-scrim:not(.c){opacity:0}
 /* glassy secondary buttons on the video */
 .myday .mh-glass{display:inline-flex;align-items:center;gap:6px;height:42px;padding:0 14px;border:1px solid rgba(255,255,255,.25);border-radius:12px;
   background:rgba(255,255,255,.1);backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px);color:#fff;font:600 13px 'Plus Jakarta Sans',sans-serif;cursor:pointer;white-space:nowrap}
@@ -60,7 +67,6 @@ html[data-theme="dark"] .myday{
 /* compact strip */
 .myday-hero.compact{min-height:84px;height:84px;border-radius:20px;container-type:inline-size}
 .myday-hero.compact .mh-video{object-position:center 34%}
-.myday-hero.compact .mh-scrim{background:linear-gradient(90deg,rgba(10,8,25,.88) 0%,rgba(10,8,25,.55) 40%,rgba(10,8,25,.45) 60%,rgba(10,8,25,.85) 100%)}
 .mhc{position:absolute;inset:0;z-index:2;display:flex;align-items:center;gap:clamp(10px,1.6vw,20px);padding:0 14px 0 clamp(16px,2vw,26px);color:#fff}
 .mhc-brand{flex:none;display:flex;flex-direction:column;line-height:.95}
 .mhc-brand b{font-size:19px;font-weight:800;font-style:italic;letter-spacing:-.03em;white-space:nowrap}
