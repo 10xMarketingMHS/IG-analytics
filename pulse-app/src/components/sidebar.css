@@ -2,9 +2,16 @@
    Search (Ctrl/⌘ K) and New task, the Workspace / Operations groups, your
    Channels, then break time and you. Light by default, its own dark values,
    and an icon-only rail when collapsed. Scoped by .sb2 on the <aside>; the
-   phone drawer and the End-of-Day lock still come from the shared sheet. */
+   phone drawer and the End-of-Day lock still come from the shared sheet.
+
+   Collapsing is one continuous glide with nothing disappearing: the icons sit
+   on the same line in both sizes, labels keep a fixed width (so they never
+   rewrap while the width changes) and are simply covered by the narrowing
+   edge as they fade, and the few things that move do so by transition. */
 
 .app>aside.sb2{
+  --sb-w:210px;
+  --sb-ease:cubic-bezier(.2,.8,.2,1);--sb-t:.3s;
   --sb-bg:rgba(255,255,255,.55);--sb-panel:#fff;
   --sb-text:#18181b;--sb-text2:#52525b;--sb-text3:#6b6b75;
   --sb-line:rgba(30,20,80,.08);--sb-hover:rgba(30,20,80,.05);
@@ -23,38 +30,43 @@ html[data-theme="dark"] .app>aside.sb2{
   --sb-on:rgba(255,255,255,.09);--sb-onSh:inset 0 1px 0 rgba(255,255,255,.06);
   --sb-ac:oklch(0.72 0.16 290);--sb-acText:oklch(0.82 0.11 290);--sb-warn:oklch(0.8 0.13 75)
 }
-@media (max-width:768px){.app>aside.sb2{--sb-bg:var(--panel)}}
-/* 200px on desktop — about 15% narrower than the first redesign pass (232px) */
-@media (min-width:993px){.app:not(.sb-rail):has(>aside.sb2){grid-template-columns:200px minmax(0,1fr)}}
-/* Collapse / expand: the column glides between sizes. Both sizes are written
-   as "<width> minmax(0,1fr)" so the browser can animate between them; the
-   shell adds sb-fade for the glide, fading the contents out and back in. */
-@media (min-width:769px) and (max-width:992px){.app:not(.sb-rail):has(>aside.sb2){grid-template-columns:184px minmax(0,1fr)}.app:not(.sb-rail)>aside.sb2{width:184px}.sb2-search kbd{display:none}}
-@media (min-width:769px){
-  .app:has(>aside.sb2){transition:grid-template-columns .26s cubic-bezier(.2,.8,.2,1)}
-  .app>aside.sb2{overflow:hidden;transition:width .26s cubic-bezier(.2,.8,.2,1)}
-  .app>aside.sb2>*{transition:opacity .11s ease}
-  .app.sb-fade>aside.sb2>*{opacity:0}
+
+/* widths: 210px on desktop, 193px on mid-size screens, the 250px drawer on
+   phones. Every size is written "<width> minmax(0,1fr)" so the browser can
+   glide between them, and the sidebar has no width of its own: it fills its
+   grid column, so it moves with the glide instead of jumping ahead of it. */
+@media (min-width:993px){.app:not(.sb-rail):has(>aside.sb2){grid-template-columns:210px minmax(0,1fr)}}
+@media (min-width:769px) and (max-width:992px){
+  .app>aside.sb2{--sb-w:193px}
+  .app:not(.sb-rail):has(>aside.sb2){grid-template-columns:193px minmax(0,1fr)}
+  .sb2-search kbd{display:none}
 }
-@media (prefers-reduced-motion:reduce){
-  .app:has(>aside.sb2),.app>aside.sb2,.app>aside.sb2>*{transition:none}
+@media (max-width:768px){.app>aside.sb2{--sb-w:250px;--sb-bg:var(--panel)}}
+@media (min-width:769px){
+  .app:has(>aside.sb2){transition:grid-template-columns .3s cubic-bezier(.2,.8,.2,1)}
+  .app>aside.sb2{width:auto;overflow:hidden}
 }
 
 .sb2-iconbtn{flex:none;width:30px;height:30px;display:grid;place-items:center;padding:0;border:0;border-radius:8px;background:transparent;color:var(--sb-text3);cursor:pointer;text-decoration:none}
 .sb2-iconbtn:hover,.sb2-iconbtn.active{background:var(--sb-hover);color:var(--sb-text)}
 .sb2 svg{flex:none}
 
+/* what fades: labels, counts, small buttons. They fade back in a beat after
+   the sidebar starts opening, and out at once when it closes. */
+.sb2 .sb2-label,.sb2 .sb2-secbtn,.sb2 .navitem .badge,.sb2 .sb2-gear,.sb2 .logout{transition:opacity .22s ease .1s}
+
 /* brand + collapse */
-.sb2 .brand{gap:10px;padding:14px 12px 10px 14px}
-.sb2 .logo{width:30px;height:30px;border-radius:9px;font-size:14px;font-weight:800;background:var(--sb-acGrad);box-shadow:0 6px 14px -6px oklch(0.55 0.22 290 / .6)}
-.sb2-brandtx{flex:1;min-width:0;line-height:1.2}
-.sb2 .brand b{font-size:14px;font-weight:700;letter-spacing:-.01em;color:var(--sb-text)}
+.sb2 .brand{position:relative;gap:10px;padding:14px 12px 10px 14px;transition:padding var(--sb-t) var(--sb-ease)}
+.sb2 .logo{flex:none;width:30px;height:30px;border-radius:9px;font-size:14px;font-weight:800;background:var(--sb-acGrad);box-shadow:0 6px 14px -6px oklch(0.55 0.22 290 / .6)}
+.sb2-brandtx{flex:none;width:calc(var(--sb-w) - 106px);min-width:0;overflow:hidden;line-height:1.2}
+.sb2 .brand b{display:block;font-size:14px;font-weight:700;letter-spacing:-.01em;color:var(--sb-text);white-space:nowrap}
 .sb2 .brand small{margin-top:1px;font-size:11px;font-weight:500;color:var(--sb-text3);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 
 /* search + new task */
-.sb2-tools{display:flex;align-items:center;gap:6px;padding:2px 12px 8px}
+.sb2-tools{display:flex;align-items:center;gap:6px;padding:2px 12px 8px;transition:padding var(--sb-t) var(--sb-ease),gap var(--sb-t) var(--sb-ease)}
 .sb2-search{flex:1;min-width:0;display:flex;align-items:center;gap:6px;height:34px;padding:0 8px;border:1px solid var(--sb-line);border-radius:10px;background:var(--sb-panel);
-  color:var(--sb-text3);font:500 13px 'Plus Jakarta Sans',sans-serif;cursor:pointer;box-shadow:0 1px 2px rgba(30,20,80,.04);white-space:nowrap;overflow:hidden}
+  color:var(--sb-text3);font:500 13px 'Plus Jakarta Sans',sans-serif;cursor:pointer;box-shadow:0 1px 2px rgba(30,20,80,.04);white-space:nowrap;overflow:hidden;
+  transition:padding var(--sb-t) var(--sb-ease),border-width var(--sb-t) var(--sb-ease),opacity .22s ease .1s}
 .sb2-search:hover{border-color:var(--sb-text3)}
 .sb2-search kbd{margin-left:auto;padding:1px 4px;border:1px solid var(--sb-line);border-radius:4px;background:transparent;font:500 10.5px 'Geist Mono',ui-monospace,monospace;color:var(--sb-text3)}
 .sb2-compose{flex:none;width:34px;height:34px;display:grid;place-items:center;padding:0;border:0;border-radius:10px;background:var(--sb-acGrad);color:#fff;cursor:pointer;
@@ -62,23 +74,27 @@ html[data-theme="dark"] .app>aside.sb2{
 .sb2-compose:hover{filter:brightness(1.07)}
 
 /* the menu */
-.sb2 nav.side{padding:2px 10px 10px;gap:1px;scrollbar-width:thin;scrollbar-color:var(--sb-line) transparent}
+.sb2 nav.side{padding:2px 10px 10px;gap:1px;overflow-x:hidden;scrollbar-width:thin;scrollbar-color:var(--sb-line) transparent;transition:padding var(--sb-t) var(--sb-ease)}
 .sb2 nav.side::-webkit-scrollbar-thumb{background:var(--sb-line)}
 .sb2-group{display:flex;flex-direction:column;gap:1px;padding-bottom:6px}
-.sb2 .navsec{display:flex;align-items:center;justify-content:space-between;min-height:28px;padding:8px 6px 2px 8px;font-size:11.5px;font-weight:500;letter-spacing:0;text-transform:none;color:var(--sb-text3);box-sizing:border-box}
-.sb2-secbtn{width:22px;height:22px;display:grid;place-items:center;border-radius:6px;color:var(--sb-text3)}
+.sb2 .navsec{position:relative;display:flex;align-items:center;min-height:28px;padding:8px 6px 2px 8px;font-size:11.5px;font-weight:500;letter-spacing:0;text-transform:none;
+  color:var(--sb-text3);box-sizing:border-box;white-space:nowrap}
+.sb2-secbtn{position:absolute;right:4px;bottom:0;width:22px;height:22px;display:grid;place-items:center;border-radius:6px;color:var(--sb-text3)}
 .sb2-secbtn svg{width:15px;height:15px}
 .sb2-secbtn:hover{background:var(--sb-hover);color:var(--sb-text)}
-/* a long name (Social & Ads Pipeline) wraps onto a second line rather than squeezing */
-.sb2 .navitem{position:relative;min-height:34px;height:auto;padding:7px 10px;gap:10px;border:0;border-radius:10px;background:transparent;color:var(--sb-text2);
-  font:500 13px/1.3 'Plus Jakarta Sans',sans-serif;box-sizing:border-box;cursor:pointer;text-align:left}
+.sb2 .navitem{position:relative;min-height:34px;height:auto;padding:7px 10px;gap:10px;border:0;border-radius:10px;background:transparent;color:var(--sb-text2);overflow:hidden;
+  font:500 13px/1.3 'Plus Jakarta Sans',sans-serif;box-sizing:border-box;cursor:pointer;text-align:left;transition:padding var(--sb-t) var(--sb-ease),background-color .15s}
 .sb2 .navitem .ic{flex:none;width:18px;height:18px;display:grid;place-items:center;font-size:14px;color:var(--sb-text3)}
+/* a label is as wide as it is when open, so it never rewraps mid-glide */
+.sb2 .navitem>.sb2-label:not(.sb2-plats){flex:none;width:calc(var(--sb-w) - 68px)}
 .sb2 .navitem:hover{background:var(--sb-hover);color:var(--sb-text)}
 .sb2 .navitem:focus-visible{outline:2px solid var(--sb-ac);outline-offset:-2px}
 .sb2 .navitem.active{background:var(--sb-on);color:var(--sb-text);font-weight:600;box-shadow:var(--sb-onSh)}
 .sb2 .navitem.active .ic{color:var(--sb-ac)}
 /* counts: quiet numbers on the right; Team Chat's alert stays red */
-.sb2 .navitem .badge{margin-left:auto;padding:0;border-radius:0;background:transparent;color:var(--sb-text3);font:500 11px 'Geist Mono',ui-monospace,monospace}
+.sb2 .navitem .badge{position:absolute;right:10px;top:50%;transform:translateY(-50%);margin:0;padding:0;border-radius:0;background:transparent;color:var(--sb-text3);
+  font:500 11px 'Geist Mono',ui-monospace,monospace;
+  transition:opacity .22s ease .1s,right var(--sb-t) var(--sb-ease),top var(--sb-t) var(--sb-ease),transform var(--sb-t) var(--sb-ease)}
 .sb2 .navitem.active .badge{background:transparent;color:var(--sb-text2)}
 .sb2 .navitem .badge.alert,.sb2 .navitem.active .badge.alert{min-width:18px;height:18px;padding:0 5px;border-radius:9px;box-sizing:border-box;
   background:oklch(0.58 0.21 22);color:#fff;font:600 10.5px/18px 'Plus Jakarta Sans',sans-serif;text-align:center}
@@ -86,46 +102,55 @@ html[data-theme="dark"] .app>aside.sb2{
 /* channels */
 .sb2-channel{width:100%}
 .sb2 .sb2-chtile{width:18px;height:18px;border-radius:5px;color:#fff;font-size:8.5px;font-weight:700;letter-spacing:.02em}
-.sb2-plats{margin-left:auto;display:flex;gap:3px}
+.sb2-plats{position:absolute;right:12px;top:50%;transform:translateY(-50%);display:flex;gap:3px}
 .sb2-plats span{width:5px;height:5px;border-radius:50%}
 
 /* break time, then you */
-.sb2-break{display:flex;align-items:center;gap:8px;margin:0;padding:10px 16px;border-top:1px solid var(--sb-line);font-size:12px;font-weight:500;color:var(--sb-text3);white-space:nowrap}
-.sb2-bar{flex:1;min-width:30px;height:4px;border-radius:2px;background:var(--sb-hover);overflow:hidden}
+.sb2-break{display:flex;align-items:center;gap:8px;margin:0;padding:10px 16px;border-top:1px solid var(--sb-line);font-size:12px;font-weight:500;color:var(--sb-text3);
+  white-space:nowrap;overflow:hidden;transition:padding var(--sb-t) var(--sb-ease)}
+.sb2-break>svg,.sb2-break>span:not(.sb2-bar){flex:none}
+.sb2-bar{flex:1;min-width:0;height:4px;border-radius:2px;background:var(--sb-hover);overflow:hidden}
 .sb2-bar span{display:block;height:100%;border-radius:2px;background:var(--sb-warn)}
 .sb2-break.on{color:var(--sb-warn)}
 .sb2-break-n{font:500 11.5px 'Geist Mono',ui-monospace,monospace;color:var(--sb-text2)}
-.sb2 .userchip{margin:0;padding:10px 10px 14px 14px;gap:6px;border:0;border-top:1px solid var(--sb-line);border-radius:0;background:transparent}
-.sb2 .avatar-ring{border-radius:50%}
+.sb2 .userchip{margin:0;padding:10px 10px 14px 14px;gap:6px;border:0;border-top:1px solid var(--sb-line);border-radius:0;background:transparent;overflow:hidden;
+  transition:padding var(--sb-t) var(--sb-ease)}
+.sb2 .avatar-ring{flex:none;border-radius:50%}
 .sb2 .avatar,.sb2 .avatar-ring.admin .avatar{width:30px;height:30px;border-radius:50%;font-size:11.5px;font-weight:600}
+.sb2 .userchip .nm,.sb2 .userchip .rl{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .sb2 .userchip .nm{font-size:13px;font-weight:600;color:var(--sb-text)}
 .sb2 .userchip .rl{margin-top:1px;font-size:11px;color:var(--sb-text3)}
 .sb2 .userchip-open:focus-visible{outline:2px solid var(--sb-ac);outline-offset:3px;border-radius:8px}
-.sb2 .logout{width:30px;height:30px;display:grid;place-items:center;padding:0;border-radius:8px;color:var(--sb-text3)}
+.sb2 .sb2-gear{flex:none}
+.sb2 .logout{flex:none;width:30px;height:30px;display:grid;place-items:center;padding:0;border-radius:8px;color:var(--sb-text3)}
 .sb2 .logout:hover{background:var(--sb-hover);color:var(--sb-text)}
 
 /* End of Day lock: search and new task wait too */
 .eod-lock .sb2-tools{pointer-events:none;filter:grayscale(100%);opacity:.6}
 
-/* collapsed: an icon rail (not on phones, where the sidebar is a drawer) */
+/* collapsed: an icon rail, 68px (not on phones, where the sidebar is a drawer).
+   Icons are centred on x=25–43 in both sizes; the paddings glide to get there. */
 @media (min-width:769px){
   .app.sb-rail{grid-template-columns:68px minmax(0,1fr)}
-  .app.sb-rail>aside.sb2{width:68px}
-  .sb-rail .sb2 .sb2-label{display:none!important}
-  .sb-rail .sb2 .brand{flex-direction:column;gap:10px;padding:14px 0 8px;align-items:center}
-  .sb-rail .sb2-tools{flex-direction:column;gap:8px;padding:0 0 8px;align-items:center}
-  .sb-rail .sb2-search{flex:none;width:34px;padding:0;justify-content:center}
+  .sb-rail .sb2 .sb2-label,.sb-rail .sb2 .sb2-secbtn,.sb-rail .sb2 .navitem .badge:not(.alert):not(.dot),
+  .sb-rail .sb2 .sb2-gear,.sb-rail .sb2 .logout,.sb-rail .sb2-search{opacity:0;pointer-events:none;transition-delay:0s;transition-duration:.12s}
+  /* brand: the logo centres; the collapse button fades in under it */
+  .sb-rail .sb2 .brand{padding:14px 12px 46px 19px}
+  .sb-rail .sb2 .sb2-railbtn{position:absolute;left:19px;top:52px;animation:sb2-in .22s ease .26s both}
+  /* search folds away; New task centres */
+  .sb-rail .sb2-tools{gap:0;padding:2px 17px 8px}
+  .sb-rail .sb2-search{padding:0;border-width:0}
   .sb-rail .sb2 nav.side{padding:2px 12px 10px}
-  .sb-rail .sb2 .navsec{min-height:0;height:1px;margin:8px 4px;padding:0;background:var(--sb-line)}
-  .sb-rail .sb2-secbtn{display:none}
-  .sb-rail .sb2 .navitem{justify-content:center;width:44px;min-height:40px;padding:0;margin:0 auto}
-  .sb-rail .sb2 .navitem .badge:not(.alert):not(.dot){display:none}
-  .sb-rail .sb2 .navitem .badge.alert,.sb-rail .sb2 .navitem .badge.dot{position:absolute;top:3px;right:2px;margin:0}
+  .sb-rail .sb2 .navitem{padding:7px 13px}
+  /* the chat alert settles on the icon's corner */
+  .sb-rail .sb2 .navitem .badge.alert,.sb-rail .sb2 .navitem .badge.dot{right:4px;top:4px;transform:none}
   .sb-rail .sb2 .navitem .badge.alert{min-width:16px;height:16px;padding:0 4px;font-size:9.5px;line-height:16px}
-  .sb-rail .sb2-break{justify-content:center;padding:10px 0}
-  .sb-rail .sb2 .userchip{flex-direction:column;align-items:center;gap:6px;padding:10px 0 14px}
-  .sb-rail .sb2 .userchip-open{flex:none!important}
-  .sb-rail .sb2 .userchip-open>div:not(.avatar-ring){display:none}
+  .sb-rail .sb2-break{padding:10px 25px}
+  .sb-rail .sb2 .userchip{padding:10px 10px 14px 19px}
+}
+@keyframes sb2-in{from{opacity:0}to{opacity:1}}
+@media (prefers-reduced-motion:reduce){
+  .app:has(>aside.sb2),.app>aside.sb2,.sb2 *{transition:none!important;animation:none!important}
 }
 
 /* Search or jump to… */
