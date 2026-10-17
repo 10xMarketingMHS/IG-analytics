@@ -428,7 +428,9 @@ function AppShellInner() {
               {workspaces.map((w) => (
                 <button key={w.id} type="button" className="navitem sb2-channel" title={rail ? w.name : `${w.name} — see its posts`}
                   onClick={() => { setMenuOpen(false); navigate("/posts", { state: { channel: w.id } }); }}>
-                  <span className="ic sb2-chtile" style={{ background: channelTile(w.id) }}>{initialsOf(w.name)}</span>
+                  <span className="ic sb2-chtile" style={w.logo_url ? undefined : { backgroundColor: channelTile(w.id) }}>
+                    {w.logo_url ? <img src={w.logo_url} alt="" /> : initialsOf(w.name)}
+                  </span>
                   <span className="sb2-label">{w.name}</span>
                   <span className="sb2-plats sb2-label">
                     {[...(platformsOf.get(w.id) ?? [])].map((p) => <span key={p} title={p} style={{ background: PLATFORM_DOT[p] ?? "currentColor" }} />)}

@@ -90,19 +90,25 @@ html[data-theme="dark"] .app>aside.sb2{
 .sb2 .navitem>.sb2-label:not(.sb2-plats){flex:none;width:calc(var(--sb-w) - 68px)}
 .sb2 .navitem:hover{background:var(--sb-hover);color:var(--sb-text)}
 .sb2 .navitem:focus-visible{outline:2px solid var(--sb-ac);outline-offset:-2px}
-.sb2 .navitem.active{background:var(--sb-on);color:var(--sb-text);font-weight:600;box-shadow:var(--sb-onSh)}
-.sb2 .navitem.active .ic{color:var(--sb-ac)}
+/* the page you're on: filled with the accent colour */
+.sb2 .navitem.active{background:var(--sb-acGrad);color:#fff;font-weight:600;box-shadow:0 8px 18px -8px oklch(0.5 0.22 var(--acH) / .65)}
+.sb2 .navitem.active:hover{background:var(--sb-acGrad);color:#fff;filter:brightness(1.05)}
+.sb2 .navitem.active .ic{color:#fff}
 /* counts: quiet numbers on the right; Team Chat's alert stays red */
 .sb2 .navitem .badge{position:absolute;right:10px;top:50%;transform:translateY(-50%);margin:0;padding:0;border-radius:0;background:transparent;color:var(--sb-text3);
   font:500 11px 'Geist Mono',ui-monospace,monospace;
   transition:opacity .22s ease .1s,right var(--sb-t) var(--sb-ease),top var(--sb-t) var(--sb-ease),transform var(--sb-t) var(--sb-ease)}
-.sb2 .navitem.active .badge{background:transparent;color:var(--sb-text2)}
+.sb2 .navitem.active .badge{background:transparent;color:rgba(255,255,255,.85)}
 .sb2 .navitem .badge.alert,.sb2 .navitem.active .badge.alert{min-width:18px;height:18px;padding:0 5px;border-radius:9px;box-sizing:border-box;
   background:oklch(0.58 0.21 22);color:#fff;font:600 10.5px/18px 'Plus Jakarta Sans',sans-serif;text-align:center}
 .sb2 .navitem .badge.dot,.sb2 .navitem.active .badge.dot{width:8px;height:8px;padding:0;border-radius:50%;background:var(--sb-ac)}
+.sb2 .navitem.active .badge.dot{background:#fff}
 /* channels */
 .sb2-channel{width:100%}
-.sb2 .sb2-chtile{width:18px;height:18px;border-radius:5px;color:#fff;font-size:8.5px;font-weight:700;letter-spacing:.02em}
+/* a channel's tile: its logo, or its initials in white on its colour */
+.sb2 .navitem .ic.sb2-chtile{width:20px;height:20px;margin:-1px;border-radius:6px;overflow:hidden;color:#fff;font:800 9px/1 'Plus Jakarta Sans',sans-serif;letter-spacing:.02em;
+  background-image:linear-gradient(160deg,rgba(255,255,255,.3),rgba(255,255,255,0) 62%);box-shadow:inset 0 0 0 1px rgba(255,255,255,.2),0 2px 6px -2px rgba(0,0,0,.28)}
+.sb2 .navitem .ic.sb2-chtile img{width:100%;height:100%;object-fit:cover}
 .sb2-plats{position:absolute;right:12px;top:50%;transform:translateY(-50%);display:flex;gap:3px}
 .sb2-plats span{width:5px;height:5px;border-radius:50%}
 
