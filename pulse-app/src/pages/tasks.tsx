@@ -1927,6 +1927,15 @@ export function TaskPanel({ mode, task, canWrite, editors, channels, onClose, on
   const [title, setTitle] = useState(task?.title ?? "");
   const [description, setDescription] = useState(task?.description ?? "");
   const [busy, setBusy] = useState(false);
+  // Closing plays the sheet back down (the drawer back out) before the panel
+  // goes, the way it came in. Skipped when the viewer asks for less motion.
+  const [leaving, setLeaving] = useState(false);
+  function close() {
+    if (leaving) return;
+    if (window.matchMedia?.("(prefers-reduced-motion: reduce)").matches) { onClose(); return; }
+    setLeaving(true);
+    window.setTimeout(onClose, creating ? 320 : 220);
+  }
   // New task: whether it needs a delivery link for review. null = follow the
   // chosen content type; set once the assigner ticks/unticks it themselves.
   const [linkOverride, setLinkOverride] = useState<boolean | null>(null);
@@ -2222,8 +2231,8 @@ export function TaskPanel({ mode, task, canWrite, editors, channels, onClose, on
 
   if (creating) {
     return (
-      <div className="task-panel-scrim center tp2-scrim" onClick={onClose}>
-        <div className="task-panel centered tp2 tp2-sheet" role="dialog" aria-label="New task" onClick={(e) => e.stopPropagation()}>
+      <div className={"task-panel-scrim center tp2-scrim" + (leaving ? " leaving" : "")} onClick={close}>
+        <div className={"task-panel centered tp2 tp2-sheet" + (leaving ? " leaving" : "")} role="dialog" aria-label="New task" onClick={(e) => e.stopPropagation()}>
           <div className="tp2-grab" aria-hidden="true"><span /></div>
           <div className="tp2-head">
             <span className="tp2-headic">{TB_ICON.addTask}</span>
@@ -2232,7 +2241,7 @@ export function TaskPanel({ mode, task, canWrite, editors, channels, onClose, on
               <span>{pfx ? `${CATEGORY_LABEL[category!]} · gets its ${pfx} number when you create it · starts in To Do` : "Fill in the details below"}</span>
             </span>
             <span className="tp2-grow" />
-            <button type="button" className="tp2-x" onClick={onClose} aria-label="Close">{TB_ICON.close}</button>
+            <button type="button" className="tp2-x" onClick={close} aria-label="Close">{TB_ICON.close}</button>
           </div>
           <div className="tp-body tp2-body">
             <input className={"tp-title tp2-title" + (title.trim() ? " filled" : "")} autoFocus placeholder="Task title…" value={title}
@@ -2263,7 +2272,7 @@ export function TaskPanel({ mode, task, canWrite, editors, channels, onClose, on
           </div>
           <div className="tp2-foot">
             <span className={"tp2-foot-hint" + (canCreate ? " ok" : "")}>{canCreate ? TB_ICON.check : TB_ICON.info}<span>{createHint}</span></span>
-            <button type="button" className="tp2-btn" onClick={onClose}>Cancel</button>
+            <button type="button" className="tp2-btn" onClick={close}>Cancel</button>
             <button type="button" className="tp2-btn pri" disabled={busy || !canCreate} onClick={create}>{TB_ICON.plus} {busy ? "Creating…" : "Create task"}</button>
           </div>
         </div>
@@ -2273,8 +2282,8 @@ export function TaskPanel({ mode, task, canWrite, editors, channels, onClose, on
 
   const t = task!;
   return (
-    <div className="task-panel-scrim tp2-scrim" onClick={onClose}>
-      <aside className="task-panel tp2 tp2-drawer" aria-label={t.title} onClick={(e) => e.stopPropagation()}>
+    <div className={"task-panel-scrim tp2-scrim" + (leaving ? " leaving" : "")} onClick={close}>
+      <aside className={"task-panel tp2 tp2-drawer" + (leaving ? " leaving" : "")} aria-label={t.title} onClick={(e) => e.stopPropagation()}>
         <div className="tp2-dhead">
           {/* Shrinks (and clips) before the buttons on the right ever do. */}
           <span className="tp2-crumbs">
@@ -2285,7 +2294,7 @@ export function TaskPanel({ mode, task, canWrite, editors, channels, onClose, on
             {t.self_created && <span className="self-chip" title="The assignee created this task for themselves">🙋 Self-created</span>}
           </span>
           {!ro && onDelete && <button type="button" className="tp2-hbtn" onClick={() => onDelete(t)}>🗑 Delete</button>}
-          <button type="button" className="tp2-x" onClick={onClose} aria-label="Close">{TB_ICON.close}</button>
+          <button type="button" className="tp2-x" onClick={close} aria-label="Close">{TB_ICON.close}</button>
         </div>
         <div className="tp-body tp2-body">
           {/* In review, the output is the first thing a reviewer needs. */}

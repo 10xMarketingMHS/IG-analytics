@@ -308,7 +308,15 @@ html[data-theme="dark"] .task-panel-scrim.tp2-scrim{background:rgba(0,0,0,.55)}
 .task-panel.centered.tp2-sheet{width:720px;max-width:100vw;height:calc(100% - 56px);max-height:none;border:1px solid var(--tb-line);border-bottom:0;border-radius:24px 24px 0 0;
   box-shadow:0 -20px 60px rgba(16,16,24,.22);animation:tp2-up .38s cubic-bezier(.2,.9,.25,1)}
 @keyframes tp2-up{from{transform:translateY(102%)}to{transform:none}}
-@media (prefers-reduced-motion:reduce){.task-panel.centered.tp2-sheet{animation:none}}
+@keyframes tp2-down{from{transform:none}to{transform:translateY(102%)}}
+@keyframes tp2-fade-in{from{background-color:transparent;backdrop-filter:blur(0);-webkit-backdrop-filter:blur(0)}}
+@keyframes tp2-fade-out{to{background-color:transparent;backdrop-filter:blur(0);-webkit-backdrop-filter:blur(0)}}
+@keyframes tp2-out{from{transform:none;opacity:1}to{transform:translateX(40px);opacity:0}}
+.task-panel-scrim.tp2-scrim{animation:tp2-fade-in .3s ease}
+.task-panel-scrim.tp2-scrim.leaving{animation:tp2-fade-out .32s ease forwards;pointer-events:none}
+.task-panel.centered.tp2-sheet.leaving{animation:tp2-down .32s cubic-bezier(.4,0,.8,.4) forwards}
+.task-panel.tp2-drawer.leaving{animation:tp2-out .22s ease forwards}
+@media (prefers-reduced-motion:reduce){.task-panel.centered.tp2-sheet,.task-panel-scrim.tp2-scrim{animation:none}}
 .tp2-grab{flex:none;display:flex;justify-content:center;padding-top:8px}
 .tp2-grab span{width:44px;height:5px;border-radius:3px;background:var(--tb-line)}
 .tp2-head{flex:none;display:flex;align-items:center;gap:10px;padding:16px 18px 12px}
