@@ -26,6 +26,19 @@ html[data-theme="dark"] .app>aside.sb2{
 @media (max-width:768px){.app>aside.sb2{--sb-bg:var(--panel)}}
 /* the redesign is a little wider than before (232px), on desktop only */
 @media (min-width:993px){.app:not(.sb-rail):has(>aside.sb2){grid-template-columns:232px minmax(0,1fr)}}
+/* Collapse / expand: the column glides between sizes. Both sizes are written
+   as "<width> minmax(0,1fr)" so the browser can animate between them; the
+   shell adds sb-fade for the glide, fading the contents out and back in. */
+@media (min-width:769px) and (max-width:992px){.app:not(.sb-rail):has(>aside.sb2){grid-template-columns:200px minmax(0,1fr)}}
+@media (min-width:769px){
+  .app:has(>aside.sb2){transition:grid-template-columns .26s cubic-bezier(.2,.8,.2,1)}
+  .app>aside.sb2{overflow:hidden;transition:width .26s cubic-bezier(.2,.8,.2,1)}
+  .app>aside.sb2>*{transition:opacity .11s ease}
+  .app.sb-fade>aside.sb2>*{opacity:0}
+}
+@media (prefers-reduced-motion:reduce){
+  .app:has(>aside.sb2),.app>aside.sb2,.app>aside.sb2>*{transition:none}
+}
 
 .sb2-iconbtn{flex:none;width:30px;height:30px;display:grid;place-items:center;padding:0;border:0;border-radius:8px;background:transparent;color:var(--sb-text3);cursor:pointer;text-decoration:none}
 .sb2-iconbtn:hover,.sb2-iconbtn.active{background:var(--sb-hover);color:var(--sb-text)}

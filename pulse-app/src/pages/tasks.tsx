@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, type FormEvent, type ReactNode } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, type FormEvent, type ReactNode } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 import {
   DndContext, DragOverlay, MouseSensor, TouchSensor, KeyboardSensor,
@@ -564,11 +564,25 @@ export function TasksPage() {
     return { total: all.length, social, ad, pendingOverdue, open, openSocial, openAd };
   }, [tasks, nowMs, scope, user?.editorId]);
 
-  // What's on screen right now, for the line beside New task.
-  const shownPending = useMemo(
-    () => filtered.filter((t) => (t.status !== "done" && !!t.due_date && t.due_date < today()) || isOverBudget(t, nowMs)).length,
-    [filtered, nowMs],
-  );
+  // The board fills the window below the toolbar: the toolbar and column
+  // titles stay where they are and each column's cards scroll inside it, so a
+  // long column doesn't stretch the page (tasks-board.css, --tb-board-h).
+  const boardRef = useRef<HTMLDivElement>(null);
+  const boardShown = view === "board" && !!tasks && tasks.length > 0;
+  useLayoutEffect(() => {
+    const el = boardRef.current;
+    if (!el) return;
+    const fit = () => {
+      const top = el.getBoundingClientRect().top + window.scrollY;
+      el.style.setProperty("--tb-board-h", `${Math.max(window.innerHeight - top - 16, 380)}px`);
+    };
+    fit();
+    const ro = new ResizeObserver(fit);
+    const bar = el.closest(".tb")?.querySelector(".tb-bar");
+    if (bar) ro.observe(bar);
+    window.addEventListener("resize", fit);
+    return () => { ro.disconnect(); window.removeEventListener("resize", fit); };
+  }, [boardShown]);
   // The number on each due chip: open work in that window, under every other filter.
   const dueCounts = useMemo(() => {
     const f: BoardFilters = { mine: scope === "mine", editorId: user?.editorId ?? null, editor: filterEditor, type: filterType, format: filterFormat, q: search.trim().toLowerCase() };
@@ -784,18 +798,9 @@ export function TasksPage() {
 
   return (
     <section className="screen tb">
-      {/* The open totals, above the toolbar as in the redesign's header. */}
-      <div className="tb-head">
-        <div className="tb-stats" aria-label="Open work">
-          <span className="tb-stat"><b>{taskCounts.open}</b> open</span>
-          <span className="tb-stat"><b>{taskCounts.openSocial}</b> social</span>
-          <span className="tb-stat"><b>{taskCounts.openAd}</b> ads</span>
-          {taskCounts.pendingOverdue > 0 && <span className="tb-stat bad"><b>{taskCounts.pendingOverdue}</b> pending/overdue</span>}
-        </div>
-      </div>
       {/* The redesign's toolbar card. First row: how to look at the board
           (view, whose tasks, when they're due). Second row: search, type and
-          format, then what's shown and a new task. */}
+          format, then the counts in one strip and a new task. */}
       <div className="tb-bar">
         <div className="tb-row">
         <div className="seg tb-views" role="group" aria-label="View">
@@ -888,10 +893,14 @@ export function TasksPage() {
         )}
         {filtersOn && <button type="button" className="tb-clear" onClick={clearFilters}>Clear filters</button>}
         <span className="tb-grow" />
-        <span className="tb-count" title={`${taskCounts.total} in all · ${taskCounts.social} social · ${taskCounts.ad} ad`}>
-          <b>{filtered.length}</b> {filtered.length === 1 ? "task" : "tasks"}
-          {shownPending > 0 && <> · <span className="tb-count-alert"><b>{shownPending}</b> pending/overdue</span></>}
-        </span>
+        {/* What's shown, then the open totals (whose tasks still applies). */}
+        <div className="tb-strip" aria-label="Task counts" title={`${taskCounts.total} in all · ${taskCounts.social} social · ${taskCounts.ad} ad`}>
+          <span><b>{filtered.length}</b> {filtered.length === 1 ? "task" : "tasks"}</span>
+          <span><b>{taskCounts.open}</b> open</span>
+          <span><b>{taskCounts.openSocial}</b> social</span>
+          <span><b>{taskCounts.openAd}</b> ads</span>
+          {taskCounts.pendingOverdue > 0 && <span className="bad"><b>{taskCounts.pendingOverdue}</b> pending/overdue</span>}
+        </div>
         {canWrite && (
           <button className="tb-new" onClick={() => startNewTask()}>
             {TB_ICON.plus} New task
@@ -927,7 +936,7 @@ export function TasksPage() {
           onDragEnd={onDragEnd}
           onDragCancel={() => setActiveId(null)}
         >
-        <div className="task-board">
+        <div className="task-board" ref={boardRef}>
           {COLUMNS.map((col, ci) => {
             const allItems = byStatus(col.key);
             // Done resets daily on the board — only today's completions show
@@ -948,6 +957,8 @@ export function TasksPage() {
                       onClick={() => startNewTask()}>＋</button>
                   )}
                 </div>
+                {/* The cards scroll here, under the column's title. */}
+                <div className="tb-col-body">
                 {items.map((t) => {
                   const overdue =
                     t.status !== "done" && t.due_date && t.due_date < today();
@@ -1117,6 +1128,7 @@ export function TasksPage() {
                     {olderDoneCount} completed on earlier days — view Calendar →
                   </button>
                 )}
+                </div>
               </DroppableColumn>
             );
           })}

@@ -176,11 +176,24 @@ function AppShellInner() {
   // Sidebar: collapsed to an icon rail (remembered on this device), and the
   // Search or jump to… palette (also Ctrl/⌘ K).
   const [rail, setRail] = useState(() => { try { return window.localStorage.getItem(RAIL_KEY) === "1"; } catch { return false; } });
+  // Collapsing or expanding is one smooth motion: the sidebar's contents fade
+  // out, its width glides to the new size, then the contents fade back in —
+  // so the rearranged layout never jumps on screen (sidebar.css, sb-fade).
+  const [railFade, setRailFade] = useState(false);
+  const railTimers = useRef<number[]>([]);
+  useEffect(() => () => railTimers.current.forEach((t) => window.clearTimeout(t)), []);
   function toggleRail() {
-    setRail((r) => {
+    const flip = () => setRail((r) => {
       try { window.localStorage.setItem(RAIL_KEY, r ? "0" : "1"); } catch { /* fine, just not remembered */ }
       return !r;
     });
+    if (window.matchMedia?.("(prefers-reduced-motion: reduce)").matches) { flip(); return; }
+    railTimers.current.forEach((t) => window.clearTimeout(t));
+    setRailFade(true);
+    railTimers.current = [
+      window.setTimeout(flip, 110),
+      window.setTimeout(() => setRailFade(false), 110 + 260),
+    ];
   }
   const [jumpOpen, setJumpOpen] = useState(false);
   const canWrite = active?.role !== "viewer";
@@ -280,7 +293,7 @@ function AppShellInner() {
 
   return (
     <BreakProvider>
-    <div className={"app" + (menuOpen ? " menu-open" : "") + (eodLocked ? " eod-lock" : "") + (rail ? " sb-rail" : "")}>
+    <div className={"app" + (menuOpen ? " menu-open" : "") + (eodLocked ? " eod-lock" : "") + (rail ? " sb-rail" : "") + (railFade ? " sb-fade" : "")}>
       <div className="app-backdrop" onClick={() => setMenuOpen(false)} />
       {/* sb2: the redesign's sidebar (components/sidebar.css) — brand and
           collapse, search and new task, the Workspace / Operations groups,
