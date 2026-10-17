@@ -341,3 +341,6 @@ html:not([data-theme="dark"]) .gl-stars button{color:rgba(30,20,80,.18)}
   .gs-acts{width:100%}
   .gs-acts .gl-btn{flex:1;justify-content:center}
 }
+
+/* My goals (anyone who doesn't oversee the team): just their own card */
+.gl-row.self>.gl-detail{flex:1 1 100%;max-width:none}

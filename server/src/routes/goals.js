@@ -88,7 +88,26 @@ async function scopedEditorId(req, requestedEditorId) {
 // The Goal Setting VIEW (Set Goals + Performance tabs) opens to any of these
 // grants; edit/discipline writes have their own, narrower gates below.
 const GOAL_VIEW_KEYS = ["goal_setting_access", "edit_goals", "discipline"];
-const GOAL_VIEW = { message: "You don't have access to Goal Setting." };
+
+// Reading goals: admins and the grants above as before; everyone else may read
+// their OWN goals and progress (Goals › My goals) — treated exactly like a
+// goal_setting_access grantee, so scopedEditorId locks them to themselves.
+async function goalView(req, res, next) {
+  try {
+    if (req.role !== "admin") {
+      const { rows } = await pool.query(
+        "select permission_key from user_permission_grant where org_id=$1 and user_id=$2 and permission_key = any($3) and revoked_at is null",
+        [req.orgId, req.user.sub, GOAL_VIEW_KEYS],
+      );
+      req.viaGrant ??= {};
+      for (const r of rows) req.viaGrant[r.permission_key] = true;
+      if (!rows.length) req.viaGrant.goal_setting_access = true;
+    }
+    next();
+  } catch (err) {
+    next(err);
+  }
+}
 
 // GET /goals/totals?month=YYYY-MM — each editor's Goal Points total for the
 // month: Σ(jc × the content type's points), the same figure Goal Setting's
@@ -119,7 +138,7 @@ goalsRouter.get("/goals/totals", async (req, res, next) => {
 // every active content type with its JC (blank = no goal) and JPH (stored goal
 // jph, else pre-filled from the content type's time budget), plus the editor's
 // effective capacity.
-goalsRouter.get("/goals", requirePermission(GOAL_VIEW_KEYS, GOAL_VIEW), async (req, res, next) => {
+goalsRouter.get("/goals", goalView, async (req, res, next) => {
   const editorId = await scopedEditorId(req, req.query.editorId);
   const monthIn = req.query.month;
   if (!editorId || !monthIn) return res.status(400).json({ error: "editorId and month are required." });
@@ -251,7 +270,7 @@ goalsRouter.put("/goals", requirePermission("edit_goals"), async (req, res, next
 // GET /goals/performance?editorId=&month= — read-only monthly performance:
 // Goal JC vs Actual JC (completed tasks of that content type in the month),
 // with Goal/Actual hours from the SAME stored jph, balance and achievement %.
-goalsRouter.get("/goals/performance", requirePermission(GOAL_VIEW_KEYS, GOAL_VIEW), async (req, res, next) => {
+goalsRouter.get("/goals/performance", goalView, async (req, res, next) => {
   const editorId = await scopedEditorId(req, req.query.editorId);
   const monthIn = req.query.month;
   if (!editorId || !monthIn) return res.status(400).json({ error: "editorId and month are required." });
@@ -303,7 +322,7 @@ goalsRouter.get("/goals/performance", requirePermission(GOAL_VIEW_KEYS, GOAL_VIE
 
 // GET /goals/months — the period_months that actually have goal data, newest
 // first, so the export/performance picker only offers real periods.
-goalsRouter.get("/goals/months", requirePermission(GOAL_VIEW_KEYS, GOAL_VIEW), async (req, res, next) => {
+goalsRouter.get("/goals/months", goalView, async (req, res, next) => {
   try {
     // Self-scoped for a goal_setting_access-only grantee: only the months THEY
     // have goals in — never a hint of which other editors have data. Admins and

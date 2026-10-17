@@ -3,6 +3,7 @@ import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import { toast } from "sonner";
 import { api, API_BASE, getActiveWorkspaceId, ApiError } from "@/lib/api";
 import { useWorkspaces } from "@/lib/workspaces-context";
+import { useAuth } from "@/lib/auth-context";
 import { useEditors } from "@/lib/use-editors";
 import { useTasks } from "@/lib/use-tasks";
 import { useResource } from "@/lib/use-resource";
@@ -19,7 +20,8 @@ import { SetGoals } from "@/pages/goals-set";
 import "./goals.css";
 
 // Goals (Pulse Redesign v5): Team goals — each person's monthly goals by
-// content type against what they finished, for a review period or the month;
+// content type against what they finished, for a review period or the month
+// (anyone else sees only their own: My goals, read-only);
 // Org goals — the admin-entered goals; Set goals — each person's job counts for
 // the month, checked against their hours; and Discipline — the five ratings
 // that make up 20% of each person's score.
@@ -55,6 +57,8 @@ export function GoalsPage() {
   const [params, setParams] = useSearchParams();
   const canDisc = isAdmin || hasPermission("discipline");
   const canSet = hasPermission("edit_goals") || hasPermission("goal_setting_access");
+  // Everyone but admins and the goal grants sees only their own goals.
+  const selfOnly = !isAdmin && !hasPermission("edit_goals") && !hasPermission("discipline");
   const raw = params.get("tab");
   const tab: Tab = raw === "org" ? "org" : raw === "set" && canSet ? "set" : raw === "disc" && canDisc ? "disc" : "team";
   const setTab = (t: Tab) => setParams(t === "team" ? {} : { tab: t }, { replace: true });
@@ -64,7 +68,7 @@ export function GoalsPage() {
   const months = useMemo(() => [...new Set([thisMonth, ...(monthsData?.months ?? [])])].sort().reverse(), [monthsData, thisMonth]);
 
   const TABS: { k: Tab; l: string; icon: ReactNode; admin?: boolean; show: boolean }[] = [
-    { k: "team", l: "Team goals", icon: IC.team, show: true },
+    { k: "team", l: selfOnly ? "My goals" : "Team goals", icon: IC.team, show: true },
     { k: "org", l: "Org goals", icon: IC.flag, show: isAdmin },
     { k: "set", l: "Set goals", icon: IC.tune, admin: true, show: canSet },
     { k: "disc", l: "Discipline", icon: IC.verified, admin: true, show: canDisc },
@@ -84,7 +88,7 @@ export function GoalsPage() {
           </select>
         )}
       </div>
-      {tab === "team" && <TeamGoals month={month} isCurrent={month === thisMonth} focusId={params.get("editor")} />}
+      {tab === "team" && <TeamGoals month={month} isCurrent={month === thisMonth} focusId={params.get("editor")} selfOnly={selfOnly} />}
       {tab === "org" && <OrgGoals />}
       {tab === "set" && <SetGoals />}
       {tab === "disc" && <Discipline month={month} />}
@@ -94,8 +98,9 @@ export function GoalsPage() {
 
 type Person = { editor: Editor; rows: PerfRow[]; lines: GoalLine[]; target: number; done: number; x: number; missed: number };
 
-function TeamGoals({ month, isCurrent, focusId }: { month: string; isCurrent: boolean; focusId: string | null }) {
-  const { isAdmin } = useWorkspaces();
+function TeamGoals({ month, isCurrent, focusId, selfOnly }: { month: string; isCurrent: boolean; focusId: string | null; selfOnly: boolean }) {
+  const { isAdmin, hasPermission } = useWorkspaces();
+  const { user } = useAuth();
   const { editors } = useEditors();
   const { tasks } = useTasks();
   const navigate = useNavigate();
@@ -106,10 +111,14 @@ function TeamGoals({ month, isCurrent, focusId }: { month: string; isCurrent: bo
   const [perf, setPerf] = useState<Record<string, PerfRow[]> | null>(null);
   const [exporting, setExporting] = useState(false);
 
-  // Each person's goals and the month's done counts (one request per person).
-  const active = useMemo(() => (editors ?? []).filter((e) => e.active), [editors]);
+  // Each person's goals and the month's done counts (one request per person) —
+  // only your own unless you oversee the team.
+  const active = useMemo(
+    () => (editors ?? []).filter((e) => e.active && (!selfOnly || e.id === user?.editorId)),
+    [editors, selfOnly, user?.editorId],
+  );
   useEffect(() => {
-    if (!active.length) return;
+    if (!active.length) { if (editors) setPerf({}); return; }
     let live = true;
     setPerf(null);
     Promise.all(active.map((e) =>
@@ -117,7 +126,7 @@ function TeamGoals({ month, isCurrent, focusId }: { month: string; isCurrent: bo
         .then((r) => [e.id, r.rows] as const).catch(() => [e.id, [] as PerfRow[]] as const),
     )).then((all) => { if (live) setPerf(Object.fromEntries(all)); });
     return () => { live = false; };
-  }, [active, month]);
+  }, [active, month, editors]);
 
   const [from, to] = periodBounds(month, per);
   const people = useMemo((): Person[] => {
@@ -140,10 +149,10 @@ function TeamGoals({ month, isCurrent, focusId }: { month: string; isCurrent: bo
   const allLines = people.reduce((s, p) => s + p.lines.length, 0), missed = people.reduce((s, p) => s + p.missed, 0);
   const label = periodLabel(month, per);
   const kpis = [
-    { l: "Team achievement", v: TT ? pctText(TD / TT) : "–", s: label, tone: TT ? bandOf(TD / TT).tone : "" },
+    { l: selfOnly ? "Your achievement" : "Team achievement", v: TT ? pctText(TD / TT) : "–", s: label, tone: TT ? bandOf(TD / TT).tone : "" },
     { l: "Jobs done", v: String(TD), s: `of ${TT} targeted`, tone: "" },
     { l: "Goals not achieved", v: String(missed), s: `of ${allLines} goals`, tone: missed ? "bad" : "good" },
-    { l: "People at target", v: String(people.filter((p) => p.x >= 1).length), s: `of ${people.length} people`, tone: "" },
+    ...(selfOnly ? [] : [{ l: "People at target", v: String(people.filter((p) => p.x >= 1).length), s: `of ${people.length} people`, tone: "" }]),
   ];
 
   // Where the gaps are: each goal type across everyone, weakest first.
@@ -183,13 +192,15 @@ function TeamGoals({ month, isCurrent, focusId }: { month: string; isCurrent: bo
         <div className="gl-seg" role="group" aria-label="Period">
           {PERIODS.map(([k, l]) => <button key={k} type="button" className={per === k ? "on" : ""} onClick={() => setPer(k)}>{l}</button>)}
         </div>
-        <div className="gl-seg" role="group" aria-label="View">
-          <button type="button" className={view === "people" ? "on" : ""} onClick={() => setView("people")}>People</button>
-          <button type="button" className={view === "types" ? "on" : ""} onClick={() => setView("types")}>Goal types</button>
-        </div>
-        <span className="gl-hint">Counts come from approved tasks, by content type</span>
+        {!selfOnly && (
+          <div className="gl-seg" role="group" aria-label="View">
+            <button type="button" className={view === "people" ? "on" : ""} onClick={() => setView("people")}>People</button>
+            <button type="button" className={view === "types" ? "on" : ""} onClick={() => setView("types")}>Goal types</button>
+          </div>
+        )}
+        <span className="gl-hint">{selfOnly ? "Set by your admin · counts come from your approved tasks" : "Counts come from approved tasks, by content type"}</span>
         <span className="gl-grow" />
-        <Link to="/goals-board?tab=set" className="gl-btn">{IC.edit}Set goals</Link>
+        {hasPermission("edit_goals") && <Link to="/goals-board?tab=set" className="gl-btn">{IC.edit}Set goals</Link>}
         {isAdmin && (
           <button type="button" className="gl-btn pri" onClick={onExport} disabled={exporting} title={`Download ${monthName(month)}'s goals and performance as an Excel file`}>
             {IC.download}{exporting ? "Preparing…" : "Excel report"}
@@ -199,8 +210,12 @@ function TeamGoals({ month, isCurrent, focusId }: { month: string; isCurrent: bo
 
       {perf === null ? (
         <div className="gl-card gl-empty">Loading goals…</div>
+      ) : selfOnly && !user?.editorId ? (
+        <div className="gl-card gl-empty">Your login isn't linked to a team member yet, so there are no goals to show. Ask an admin to link you on Team · Roster.</div>
       ) : people.length === 0 ? (
-        <div className="gl-card gl-empty">No goals set for {per === "m" ? monthName(month) : label} yet. <Link to="/goals-board?tab=set">Set them in Set goals</Link>.</div>
+        <div className="gl-card gl-empty">
+          {selfOnly ? `No goals set for you for ${per === "m" ? monthName(month) : label} yet.` : <>No goals set for {per === "m" ? monthName(month) : label} yet. <Link to="/goals-board?tab=set">Set them in Set goals</Link>.</>}
+        </div>
       ) : (
         <>
           <div className="gl-kpis">
@@ -210,7 +225,8 @@ function TeamGoals({ month, isCurrent, focusId }: { month: string; isCurrent: bo
           </div>
 
           {view === "people" ? (
-            <div className="gl-row">
+            <div className={"gl-row" + (selfOnly ? " self" : "")}>
+              {!selfOnly && (
               <section className="gl-card gl-people">
                 <div className="gl-sechd">
                   <b>By person</b><span className="gl-grow" />
@@ -233,6 +249,7 @@ function TeamGoals({ month, isCurrent, focusId }: { month: string; isCurrent: bo
                   <p className="gl-nogoal">{noGoals.length === 1 ? `${noGoals[0].name} has` : `${noGoals.length} people have`} no goals for {monthName(month, "short")}. <Link to="/goals-board?tab=set">Set them</Link>.</p>
                 )}
               </section>
+              )}
 
               {sel && (() => {
                 const b = bandOf(sel.x);
@@ -243,7 +260,7 @@ function TeamGoals({ month, isCurrent, focusId }: { month: string; isCurrent: bo
                       <Face editor={sel.editor} size="lg" />
                       <span className="gl-dwho"><b>{sel.editor.name}</b><span>{sel.editor.designation || "Team member"} · {label}</span></span>
                       <span className="gl-grow" />
-                      <button type="button" className="gl-btn sm" onClick={() => navigate("/my-team", { state: { editorId: sel.editor.id } })}>{IC.group}View in Team</button>
+                      {isAdmin && <button type="button" className="gl-btn sm" onClick={() => navigate("/my-team", { state: { editorId: sel.editor.id } })}>{IC.group}View in Team</button>}
                       <span className="gl-dpct"><b className={b.tone}>{pctText(sel.x)}</b><em>{sel.done} of {sel.target} jobs done</em></span>
                       <span className={"gl-tag " + b.tone}>{b.label}</span>
                     </div>

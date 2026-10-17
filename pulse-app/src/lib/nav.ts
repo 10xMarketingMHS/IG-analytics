@@ -47,7 +47,7 @@ export const NAV_ITEMS: NavItem[] = [
   { title: "Add Post", href: "/posts/new", icon: "➕", section: "Manage", adminOnly: true, permission: "create_post" },
   // Goals — admin-only manual goal-tracking dashboard (its own page, not a
   // Settings tab). Any admin can see and manage any goal.
-  { title: "Goals", href: "/goals-board", icon: "🎯", section: "Manage", adminOnly: true },
+  { title: "Goals", href: "/goals-board", icon: "🎯", section: "Manage" },
   { title: "Posts", href: "/posts", icon: "🗂️", section: "Manage", showBadge: true },
   // Task Settings, Channels, and Teams are tabs inside Settings now, not
   // separate sidebar links — one place for all admin configuration.
@@ -67,7 +67,7 @@ export const PAGE_META: Record<string, [string, string]> = {
   "/reports": ["Reports", "Export and share performance summaries"],
   "/posts/new": ["Add Post", "Create the post record now — log its metrics after you publish"],
   "/posts": ["Posts", "Your content database — replaces the Manual Entry sheet"],
-  "/goals-board": ["Goals", "Each person's goals by content type, setting them, the org's goals, and discipline"],
+  "/goals-board": ["Goals", "This month's goals by content type, and how far along they are"],
   "/channels": ["Channels & Platforms", "Manage channels, platforms, and Instagram sync — all in one place"],
   "/tasks": ["Task Management", "Assign and track your team's daily tasks"],
   "/my-team": ["My Team", "Who is working right now, everyone ranked for the dates you pick, and the roster"],
