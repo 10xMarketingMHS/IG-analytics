@@ -17,6 +17,7 @@ import { api, ApiError } from "@/lib/api";
 import { Modal } from "@/components/modal";
 import { toast } from "sonner";
 import type { Task, TaskStatus, TaskPriority, TaskType, TaskMeta, TaskAttachment, TaskReviewLogEntry, ContentFormatDef, Editor, Subtask, TaskComment } from "@/lib/types";
+import "./tasks-board.css";
 
 function relTime(iso: string) {
   const mins = Math.round((Date.now() - new Date(iso).getTime()) / 60000);
@@ -236,7 +237,85 @@ function Assignee({ name, image }: { name: string | null; image: string | null }
 // A status column that accepts dropped cards; highlights while hovered.
 function DroppableColumn({ id, children }: { id: TaskStatus; children: ReactNode }) {
   const { setNodeRef, isOver } = useDroppable({ id });
-  return <div ref={setNodeRef} className={"task-col" + (isOver ? " dnd-over" : "")}>{children}</div>;
+  return <div ref={setNodeRef} data-col={id} className={"task-col" + (isOver ? " dnd-over" : "")}>{children}</div>;
+}
+
+// ---- Board card pieces (the redesign's layout: number, title, brand and
+// format chips, then who / when / the clock). Display only — every action and
+// rule on the card is unchanged.
+
+const tbSvg = (d: ReactNode, size = 15) => (
+  <svg className="tb-ic" width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">{d}</svg>
+);
+const TB_ICON = {
+  board: tbSvg(<><rect x="3" y="4" width="18" height="16" rx="2" /><path d="M9 4v16M15 4v16" /></>),
+  list: tbSvg(<path d="M8 6h13M8 12h13M8 18h13M3 6h.01M3 12h.01M3 18h.01" />),
+  calendar: tbSvg(<><rect x="3" y="5" width="18" height="16" rx="2" /><path d="M16 3v4M8 3v4M3 10h18" /></>),
+  me: tbSvg(<><circle cx="12" cy="8" r="4" /><path d="M4 21a8 8 0 0 1 16 0" /></>),
+  team: tbSvg(<><circle cx="9" cy="8" r="3.5" /><path d="M2.5 20a6.5 6.5 0 0 1 13 0M16 4.5a3.5 3.5 0 0 1 0 7M18 14.5a6.5 6.5 0 0 1 3.5 5.5" /></>),
+  overdue: tbSvg(<><circle cx="12" cy="12" r="9" /><path d="M12 7v5M12 16h.01" /></>),
+  due: tbSvg(<><rect x="3" y="5" width="18" height="16" rx="2" /><path d="M16 3v4M8 3v4M3 10h18" /></>, 14),
+  search: tbSvg(<><circle cx="11" cy="11" r="7" /><path d="m20 20-3.5-3.5" /></>),
+  plus: tbSvg(<path d="M12 5v14M5 12h14" />, 16),
+  hold: tbSvg(<path d="M9 5v14M15 5v14" />, 12),
+};
+
+// One colour per brand, by name, for the brand chip's dot.
+const BRAND_DOTS = ["#7c3aed", "#16a34a", "#2563eb", "#d97706", "#db2777", "#0891b2", "#9333ea", "#ea580c"];
+function brandDot(name: string) {
+  let h = 0;
+  for (const c of name) h = (h * 31 + c.charCodeAt(0)) >>> 0;
+  return BRAND_DOTS[h % BRAND_DOTS.length];
+}
+
+// "Today", "Tomorrow", "Overdue · 2d", or "Fri 23 Oct".
+function dueText(due: string) {
+  const late = daysOverdue(due);
+  if (late > 0) return `Overdue · ${late}d`;
+  if (late === 0) return "Today";
+  if (late === -1) return "Tomorrow";
+  return new Date(due + "T00:00:00").toLocaleDateString("en-GB", { weekday: "short", day: "numeric", month: "short" });
+}
+
+// How much of a running task's time budget is used, 0–1 (break time doesn't count).
+function budgetFrac(t: Task, nowMs: number) {
+  if (t.budget_hours == null || !t.budget_started_at) return 0;
+  const used = nowMs - new Date(t.budget_started_at).getTime() - breakOffsetMs(t, nowMs);
+  return Math.max(0, Math.min(1, used / (Number(t.budget_hours) * 3_600_000)));
+}
+
+// The card's clock: a small ring for the share of the budget used, and the
+// same countdown text as before (time left, over, paused, or when it starts).
+function TaskClock({ t, nowMs }: { t: Task; nowMs: number }) {
+  const ring = (frac: number, tone: string) => (
+    <svg className={"tb-ring " + tone} viewBox="0 0 20 20" aria-hidden="true">
+      <circle cx="10" cy="10" r="7.5" className="tb-ring-track" />
+      {frac > 0 && <circle cx="10" cy="10" r="7.5" className="tb-ring-fill" strokeDasharray={`${(frac * 47.1).toFixed(1)} 47.1`} />}
+    </svg>
+  );
+  if (t.status === "done") {
+    return <span className="task-timer done" title="Done">{ring(1, "done")}</span>;
+  }
+  // Accepted but not started: its timer waits for ▶ Start.
+  if (t.status === "todo" && t.accepted && t.budget_hours != null && !t.budget_started_at) {
+    return <span className="task-timer" title="The timer starts when the task is started">{ring(0, "")}{fmtHours(Number(t.budget_hours))}h</span>;
+  }
+  const b = budgetInfo(t, nowMs);
+  if (!b) return null;
+  const cls = b.over ? " over" : b.paused ? " paused" : b.scheduled ? "" : " running";
+  const title = b.scheduled
+    ? "Timer hasn't started yet"
+    : b.over
+      ? "Ran past its allotted time — needs follow-up"
+      : b.paused
+        ? "Paused — the assignee is on a break"
+        : "Time remaining";
+  return (
+    <span className={"task-timer" + cls} title={title}>
+      {ring(b.scheduled ? 0 : b.over ? 1 : budgetFrac(t, nowMs), cls.trim())}
+      {b.scheduled ? b.label : b.over ? `${b.label} over` : `${b.label} left`}
+    </span>
+  );
 }
 
 // Wraps a card so it can be dragged. The drag listeners live on this wrapper;
@@ -650,42 +729,22 @@ export function TasksPage() {
   }
 
   return (
-    <section className="screen">
-      {/* Always visible, never competes for space with the filters below —
-          search and creating a task are the two things you reach for most. */}
-      <div className="toolbar-primary">
-        <div className="search" style={{ maxWidth: 420 }}>
-          🔎
-          <input
-            placeholder="Search by TID / SID / AID / SVID / title…"
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-          />
+    <section className="screen tb">
+      {/* One toolbar, as in the redesign: how to look at the board (view,
+          whose tasks, when they're due, type and format) on the left; search,
+          the counts and a new task on the right. Wraps rather than scrolling. */}
+      <div className="tb-bar">
+        <div className="seg tb-views" role="group" aria-label="View">
+          <button className={view === "board" ? "on" : ""} onClick={() => setView("board")}>{TB_ICON.board} Board</button>
+          <button className={view === "list" ? "on" : ""} onClick={() => setView("list")}>{TB_ICON.list} List</button>
+          <button className={view === "calendar" ? "on" : ""} onClick={() => setView("calendar")}>{TB_ICON.calendar} Calendar</button>
         </div>
-        <div className="toolbar-summary">
-          <span><b>{taskCounts.total}</b> total</span>
-          <span className="dot-sep">·</span>
-          <span><b>{taskCounts.social}</b> social</span>
-          <span className="dot-sep">·</span>
-          <span><b>{taskCounts.ad}</b> ad</span>
-          <span className="dot-sep">·</span>
-          <span className={taskCounts.pendingOverdue > 0 ? "toolbar-summary-alert" : undefined}><b>{taskCounts.pendingOverdue}</b> pending/overdue</span>
-        </div>
-        {canWrite && (
-          <button className="btn btn-primary" style={{ marginLeft: "auto" }} onClick={() => startNewTask()}>
-            ＋ Add Task
-          </button>
-        )}
-      </div>
-
-      {/* Filters — each group is its own pill/tab cluster and wraps onto a
-          new line if it doesn't fit, instead of forcing a horizontal scrollbar. */}
-      <div className="toolbar-filters">
-        <div className="seg">
-          <button className={scope === "mine" ? "on" : ""} onClick={() => setScopeAndPersist("mine")}>🙋 My Tasks</button>
+        <span className="tb-sep" aria-hidden="true" />
+        <div className="seg tb-scope">
+          <button className={scope === "mine" ? "on" : ""} onClick={() => setScopeAndPersist("mine")}>{TB_ICON.me} My tasks</button>
           <div className="team-btn-wrap" ref={teamMenuRef}>
             <button className={"team-btn" + (scope === "team" ? " on" : "")} onClick={onTeamClick}>
-              👥 {filteredEditorName ?? "Team"}
+              {TB_ICON.team} {filteredEditorName ?? "Team"}
               {scope === "team" && <span className="team-btn-caret">▾</span>}
             </button>
             {teamMenuOpen && (
@@ -711,18 +770,18 @@ export function TasksPage() {
             )}
           </div>
         </div>
-        <div className="seg tabseg">
+        <div className="tb-chips" role="group" aria-label="Due">
           {DUE_TABS.map((d) => (
-            <button key={d.key} className={dueTab === d.key ? "on" : ""} onClick={() => setDueTab(d.key)}>
-              {d.label}
+            <button key={d.key} type="button" aria-pressed={dueTab === d.key} className={"tb-chip" + (dueTab === d.key ? " on" : "")} onClick={() => setDueTab(d.key)}>
+              {d.key === "overdue" ? TB_ICON.overdue : d.key === "all" ? null : TB_ICON.due} {d.label}
             </button>
           ))}
         </div>
         <select
-          className="t"
-          style={{ maxWidth: 145 }}
+          className={"t tb-select" + (filterType ? " on" : "")}
           value={filterType}
           onChange={(e) => setFilterType(e.target.value as TaskType | "")}
+          aria-label="Task type"
         >
           <option value="">All task types</option>
           {(Object.keys(TYPE_LABEL) as TaskType[]).map((tt) => (
@@ -730,10 +789,10 @@ export function TasksPage() {
           ))}
         </select>
         <select
-          className="t"
-          style={{ maxWidth: 135 }}
+          className={"t tb-select" + (filterFormat ? " on" : "")}
           value={filterFormat}
           onChange={(e) => setFilterFormat(e.target.value)}
+          aria-label="Format"
         >
           <option value="">All formats</option>
           {(contentFormats ?? []).map((f) => (
@@ -741,19 +800,29 @@ export function TasksPage() {
           ))}
         </select>
         {view === "list" && (
-          <select className="t" style={{ maxWidth: 150 }} value={sortBy} onChange={(e) => setSortBy(e.target.value)} title="Sort tasks">
+          <select className="t tb-select" value={sortBy} onChange={(e) => setSortBy(e.target.value)} title="Sort tasks" aria-label="Sort tasks">
             {SORTS.map((s) => (<option key={s.value} value={s.value}>↕ {s.label}</option>))}
           </select>
         )}
-        {/* No marginLeft:auto here on purpose — List view adds the Sort select
-            above, which can push this row past one line; auto-margin would
-            then strand this toggle alone on its own wrapped line instead of
-            flowing naturally with whatever else wrapped. */}
-        <div className="seg">
-          <button className={view === "board" ? "on" : ""} onClick={() => setView("board")}>🗂️ Board</button>
-          <button className={view === "list" ? "on" : ""} onClick={() => setView("list")}>☰ List</button>
-          <button className={view === "calendar" ? "on" : ""} onClick={() => setView("calendar")}>📅 Calendar</button>
+        <span className="tb-grow" />
+        <div className="search tb-search">
+          {TB_ICON.search}
+          <input
+            placeholder="Search TID / SID / AID / SVID / title…"
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            aria-label="Search tasks"
+          />
         </div>
+        <span className="tb-count" title={`${taskCounts.social} social · ${taskCounts.ad} ad`}>
+          <b>{taskCounts.total}</b> tasks
+          {taskCounts.pendingOverdue > 0 && <> · <span className="tb-count-alert"><b>{taskCounts.pendingOverdue}</b> pending/overdue</span></>}
+        </span>
+        {canWrite && (
+          <button className="tb-new" onClick={() => startNewTask()}>
+            {TB_ICON.plus} New task
+          </button>
+        )}
       </div>
 
       {scope === "mine" && !user?.editorId && (
@@ -769,7 +838,7 @@ export function TasksPage() {
         <div className="hint">Loading…</div>
       ) : tasks.length === 0 ? (
         <div className="card pad" style={{ color: "var(--muted)", fontSize: 13.5 }}>
-          No tasks yet. Click <b>＋ Add Task</b> to assign your first daily task to a team member.
+          No tasks yet. Click <b>＋ New task</b> to assign your first daily task to a team member.
         </div>
       ) : view === "list" ? (
         <TaskList tasks={filtered} onOpen={openTask} />
@@ -807,23 +876,97 @@ export function TasksPage() {
                 {items.map((t) => {
                   const overdue =
                     t.status !== "done" && t.due_date && t.due_date < today();
+                  // The number people know it by: its brand's SID/AID/SVID/PID,
+                  // else the TID (which is always there, in the tooltip).
+                  const ref = t.sid ? showId(t.sid) : t.ad_id ? showId(t.ad_id) : t.svid ?? t.pid ?? t.tid;
+                  const mineOnly = scope === "mine" && t.editor_id === user?.editorId;
+                  // Waiting on the assignee to accept: their Accept button, or a
+                  // note for everyone else. Otherwise the card shows its clock.
+                  const acceptSlot = t.editor_id && !t.accepted ? (
+                    user?.editorId === t.editor_id ? (
+                      <button
+                        type="button"
+                        className="btn btn-primary btn-sm"
+                        onClick={(e) => { e.stopPropagation(); handleAccept(t); }}
+                      >
+                        ✓ Accept
+                      </button>
+                    ) : (
+                      <span className="task-check" title="Waiting for the assignee to accept">⏳ Pending accept</span>
+                    )
+                  ) : null;
+                  const subtaskSlot = t.subtask_total > 0 && (
+                    <span className={"task-check" + (t.subtask_done === t.subtask_total ? " full" : "")} title="Checklist">
+                      ☑ {t.subtask_done}/{t.subtask_total}
+                    </span>
+                  );
+                  const actions = (() => {
+                    const canPrev = ci > 0 && canTransition(t, COLUMNS[ci - 1].key);
+                    const canNext = ci < COLUMNS.length - 1 && canTransition(t, COLUMNS[ci + 1].key);
+                    // An admin, or the task's own assignee, can park (Hold)
+                    // or resume an in-progress task — it stays In Progress;
+                    // Hold pauses its timer. Same "is this mine" check the
+                    // forward-move buttons use (isOwner).
+                    // A hold someone else applied (an admin) is theirs to lift,
+                    // not the assignee's — mirrors the server.
+                    const heldByOther = !canHoldAny && t.on_hold && !!t.held_by && t.held_by !== user?.id;
+                    const holdCtrl = (isAdmin || isOwner(t) || canHoldAny) && t.status === "in_progress" ? (
+                      t.on_hold ? (
+                        heldByOther ? (
+                          <span className="hint" style={{ margin: 0 }} title="Only an admin can resume it">
+                            ⏸ Held by {t.held_by_name ?? "an admin"}
+                          </span>
+                        ) : (
+                          <button className="linkbtn" onClick={() => toggleHold(t, false)}>▶ Resume</button>
+                        )
+                      ) : (
+                        <button className="linkbtn" onClick={() => toggleHold(t, true)}>⏸ Hold</button>
+                      )
+                    ) : null;
+                    if (!canPrev && !canNext && !holdCtrl) {
+                      // In review but this isn't an admin's view — nothing
+                      // to do here but wait.
+                      return t.status === "review" ? <span className="hint" style={{ margin: 0 }}>⏳ Waiting for review</span> : null;
+                    }
+                    return (
+                      <>
+                        {canPrev && (
+                          <button className="linkbtn" onClick={() => move(t, COLUMNS[ci - 1].key)}>
+                            ← {COLUMNS[ci - 1].label}
+                          </button>
+                        )}
+                        {holdCtrl}
+                        {canNext && (
+                          <button className="linkbtn next" onClick={() => move(t, COLUMNS[ci + 1].key)}>
+                            {t.status === "todo" ? "▶ Start" : `${COLUMNS[ci + 1].label} →`}
+                          </button>
+                        )}
+                      </>
+                    );
+                  })();
                   const cardInner = (
-                    <div className={"task-card pri-" + t.priority + (selectedId === t.id ? " selected" : "")} key={t.id} onClick={() => openTask(t)}>
+                    <div
+                      className={"task-card pri-" + t.priority + " st-" + t.status + (overdue ? " is-over" : "") + (selectedId === t.id ? " selected" : "")}
+                      key={t.id}
+                      onClick={() => openTask(t)}
+                    >
                       <div className="task-top">
-                        <span className="task-pri-group">
-                          <span className={"task-pri-dot " + t.priority} />
-                          <span className={"task-pri-label" + (t.priority === "high" ? " high" : "")}>{PRI_LABEL[t.priority]}</span>
-                        </span>
-                        <span className="task-kind">
-                          {TYPE_ICON[t.task_type]} {TYPE_LABEL[t.task_type]}
-                          {t.content_format_name && <> · {t.content_format_icon} {t.content_format_name}</>}
-                          {t.content_type && <> · {CONTENT_LABEL(t.content_type)}</>}
-                        </span>
+                        <span className="tb-ref" title={t.tid && t.tid !== ref ? `${t.tid}` : undefined}>{ref}</span>
+                        {t.revision > 1 && <span className="tb-rev" title="Sent back for rework">Rev {t.revision}</span>}
                         <span className="task-flags">
                           {t.post_id && <span title="Auto-created from a post">📄</span>}
                           {t.recurrence !== "none" && <span title={`Repeats ${t.recurrence}`}>🔁</span>}
                           {t.self_created && <span title="Created by the assignee for themselves">🙋</span>}
                         </span>
+                        <span className="tb-grow" />
+                        {t.priority !== "medium" && (
+                          <span className={"tb-pri " + t.priority} title={`${PRI_LABEL[t.priority]} priority`}>{PRI_LABEL[t.priority]}</span>
+                        )}
+                        {t.on_hold && (
+                          <span className="task-hold-badge" title={t.held_by_name ? `Held by ${t.held_by_name} — its timer is paused` : "This task is on hold — its timer is paused"}>
+                            {TB_ICON.hold} On hold
+                          </span>
+                        )}
                         {canDeleteTask(t) && (
                           <button
                             className="task-x"
@@ -835,11 +978,18 @@ export function TasksPage() {
                         )}
                       </div>
                       <div className="task-title">{t.title}</div>
-                      {t.on_hold && (
-                        <div className="task-hold-badge" title={t.held_by_name ? `Held by ${t.held_by_name} — its timer is paused` : "This task is on hold — its timer is paused"}>
-                          ⏸ On hold
-                        </div>
-                      )}
+                      <div className="tb-chips-row">
+                        {t.channel_name && (
+                          <span className="tb-tag"><span className="tb-dot" style={{ background: brandDot(t.channel_name) }} />{t.channel_name}</span>
+                        )}
+                        <span className="tb-tag" title={TYPE_LABEL[t.task_type]}>
+                          {t.content_format_name ? <>{t.content_format_icon} {t.content_format_name}</> : <>{TYPE_ICON[t.task_type]} {TYPE_LABEL[t.task_type]}</>}
+                        </span>
+                        {t.content_type && <span className="tb-tag">{CONTENT_LABEL(t.content_type)}</span>}
+                        {t.platforms?.length > 0 && (
+                          <span className="tb-tag task-plats">{t.platforms.map((p) => PLATFORM_META[p]?.icon ?? "").join(" ")}</span>
+                        )}
+                      </div>
                       {t.pending_note && (
                         <div className="task-rework-note" title={t.pending_note}>
                           📝 Rework: {t.pending_note}
@@ -856,129 +1006,31 @@ export function TasksPage() {
                           </div>
                         );
                       })()}
-                      {(t.tid || t.sid || t.ad_id || t.revision > 1) && (
-                        <div className="task-ids">
-                          {t.tid && <span>{t.tid}</span>}
-                          {t.sid && <><span className="dot-sep">·</span><span>{showId(t.sid)}</span></>}
-                          {t.ad_id && <><span className="dot-sep">·</span><span>{showId(t.ad_id)}</span></>}
-                          {t.svid && <><span className="dot-sep">·</span><span>{t.svid}</span></>}
-                          {t.revision > 1 && <><span className="dot-sep">·</span><span title="Sent back for rework" style={{ color: "var(--amber)" }}>Rev {t.revision}</span></>}
-                        </div>
-                      )}
                       <div className="task-meta">
                         {/* Every card in "My Tasks" is already yours — showing your own name on each one is noise */}
-                        {!(scope === "mine" && t.editor_id === user?.editorId) && (
-                          <Assignee name={t.editor_name} image={t.editor_image} />
-                        )}
-                        {t.due_date && (
-                          <span className={"task-due" + (overdue ? " over" : "")}>
-                            📅 {t.due_date}
-                            {overdue && ` · ${daysOverdue(t.due_date!)}d overdue`}
+                        {!mineOnly && (
+                          <span className="tb-who" title={t.editor_name ?? "Unassigned"}>
+                            {t.editor_image ? <img className="task-ava" src={t.editor_image} alt="" />
+                              : <span className="task-ava init" style={{ background: t.editor_name ? brandDot(t.editor_name) : undefined }}>{t.editor_name ? t.editor_name.charAt(0).toUpperCase() : "?"}</span>}
                           </span>
                         )}
-                        {t.platforms?.length > 0 && (
-                          <span className="task-plats">{t.platforms.map((p) => PLATFORM_META[p]?.icon ?? "").join(" ")}</span>
-                        )}
+                        {t.status === "done" ? (
+                          <span className="task-due done" title={t.completed_at ? `Done ${new Date(t.completed_at).toLocaleString()}` : "Done"}>{TB_ICON.due} Done</span>
+                        ) : t.due_date ? (
+                          <span className={"task-due" + (overdue ? " over" : t.due_date === today() ? " today" : "")} title={t.due_date}>
+                            {TB_ICON.due} {dueText(t.due_date)}
+                          </span>
+                        ) : null}
+                        <span className="tb-grow" />
+                        {subtaskSlot}
+                        {!acceptSlot && <TaskClock t={t} nowMs={nowMs} />}
                       </div>
-                      {(() => {
-                        const acceptSlot = t.editor_id && !t.accepted ? (
-                          user?.editorId === t.editor_id ? (
-                            <button
-                              type="button"
-                              className="btn btn-primary btn-sm"
-                              onClick={(e) => { e.stopPropagation(); handleAccept(t); }}
-                            >
-                              ✓ Accept
-                            </button>
-                          ) : (
-                            <span className="task-check" title="Waiting for the assignee to accept">⏳ Pending accept</span>
-                          )
-                        ) : (() => {
-                          // Accepted but not started: its timer waits for ▶ Start.
-                          if (t.status === "todo" && t.accepted && t.budget_hours != null && !t.budget_started_at) {
-                            return (
-                              <span className="task-timer" title="The timer starts when the task is started">
-                                ⏱ {fmtHours(Number(t.budget_hours))}h · starts on ▶ Start
-                              </span>
-                            );
-                          }
-                          const b = budgetInfo(t, nowMs);
-                          if (!b) return null;
-                          const cls = b.over ? " over" : b.paused ? " paused" : b.scheduled ? "" : " running";
-                          const title = b.scheduled
-                            ? "Timer hasn't started yet"
-                            : b.over
-                              ? "Ran past its allotted time — needs follow-up"
-                              : b.paused
-                                ? "Paused — the assignee is on a break"
-                                : "Time remaining";
-                          return (
-                            <span className={"task-timer" + cls} title={title}>
-                              {b.scheduled ? `⏱ ${b.label}` : b.over ? `⚠ Pending — ${b.label} over` : b.paused ? `⏸ ${b.label} left` : `⏱ ${b.label} left`}
-                            </span>
-                          );
-                        })();
-                        const subtaskSlot = t.subtask_total > 0 && (
-                          <span className={"task-check" + (t.subtask_done === t.subtask_total ? " full" : "")}>
-                            ☑ {t.subtask_done}/{t.subtask_total}
-                          </span>
-                        );
-                        if (!acceptSlot && !subtaskSlot) return null;
-                        return (
-                          <div className="task-status-row">
-                            {acceptSlot}
-                            {subtaskSlot}
-                          </div>
-                        );
-                      })()}
-                      {(() => {
-                        const canPrev = ci > 0 && canTransition(t, COLUMNS[ci - 1].key);
-                        const canNext = ci < COLUMNS.length - 1 && canTransition(t, COLUMNS[ci + 1].key);
-                        // An admin, or the task's own assignee, can park (Hold)
-                        // or resume an in-progress task — it stays In Progress;
-                        // Hold pauses its timer. Same "is this mine" check the
-                        // forward-move buttons use (isOwner).
-                        // A hold someone else applied (an admin) is theirs to lift,
-                        // not the assignee's — mirrors the server.
-                        const heldByOther = !canHoldAny && t.on_hold && !!t.held_by && t.held_by !== user?.id;
-                        const holdCtrl = (isAdmin || isOwner(t) || canHoldAny) && t.status === "in_progress" ? (
-                          t.on_hold ? (
-                            heldByOther ? (
-                              <span className="hint" style={{ margin: 0 }} title="Only an admin can resume it">
-                                ⏸ Held by {t.held_by_name ?? "an admin"}
-                              </span>
-                            ) : (
-                              <button className="linkbtn" onClick={() => toggleHold(t, false)}>▶ Resume</button>
-                            )
-                          ) : (
-                            <button className="linkbtn" onClick={() => toggleHold(t, true)}>⏸ Hold</button>
-                          )
-                        ) : null;
-                        if (!canPrev && !canNext && !holdCtrl) {
-                          // In review but this isn't an admin's view — nothing
-                          // to do here but wait.
-                          return t.status === "review" ? (
-                            <div className="task-actions">
-                              <span className="hint" style={{ margin: 0 }}>⏳ Waiting for review</span>
-                            </div>
-                          ) : null;
-                        }
-                        return (
-                          <div className="task-actions" onClick={(e) => e.stopPropagation()}>
-                            {canPrev && (
-                              <button className="linkbtn" onClick={() => move(t, COLUMNS[ci - 1].key)}>
-                                ← {COLUMNS[ci - 1].label}
-                              </button>
-                            )}
-                            {holdCtrl}
-                            {canNext && (
-                              <button className="linkbtn" onClick={() => move(t, COLUMNS[ci + 1].key)}>
-                                {t.status === "todo" ? "▶ Start" : `${COLUMNS[ci + 1].label} →`}
-                              </button>
-                            )}
-                          </div>
-                        );
-                      })()}
+                      {(acceptSlot || actions) && (
+                        <div className="task-actions" onClick={(e) => e.stopPropagation()}>
+                          {acceptSlot}
+                          {actions}
+                        </div>
+                      )}
                     </div>
                   );
                   return canMoveStatus(t) ? (
