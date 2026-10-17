@@ -23,6 +23,8 @@ import "./chat.css";
 // URL (?c=…&t=…), so a notice's "Open" and the browser's Back both work.
 
 const QUICK_REACTIONS = ["👍", "❤️", "😂", "🎉", "🙏", "👀", "✅", "🔥"];
+// One click from the hover bar, as in the redesign.
+const HOVER_REACTIONS = ["✅", "👀", "🔥"];
 const COMPOSER_EMOJI = ["😀", "😂", "😊", "😍", "🤔", "😅", "😮", "😢", "🙏", "👍", "👏", "🙌", "💪", "🔥", "🎉", "✅", "👀", "💯", "❤️", "🚀"];
 const GROUP_GAP_MS = 5 * 60 * 1000;
 const STATUS_LABEL: Record<string, string> = { todo: "To Do", in_progress: "In progress", review: "In review", done: "Done" };
@@ -205,7 +207,7 @@ function TaskCard({ task, canResolve, onOpen, onChanged }: {
       </div>
       <button type="button" className="tc-title" onClick={onOpen}>{task.title}</button>
       <div className="tc-meta">
-        <PersonAvatar name={task.editor_name ?? "Unassigned"} size={22} />
+        <PersonAvatar name={task.editor_name ?? "Unassigned"} size={20} />
         <span>{[task.editor_name ?? "Unassigned", task.content_format_name, task.channel_name].filter(Boolean).join(" · ")}</span>
         {inReview && task.review_started_at && (
           <span className="tc-wait" title="How long it has waited for a reviewer">waiting {fmtWait(Date.now() - new Date(task.review_started_at).getTime())}</span>
@@ -569,7 +571,7 @@ function MessageItem({ m, compact, ctx, onReply, inThread }: {
   return (
     <div className={"msg" + (compact ? " compact" : "") + (m.mentions.includes(me) ? " mentions-me" : "")}>
       <div className="msg-gutter">
-        {compact ? <span className="msg-time-hover">{timeOf(m.createdAt)}</span> : <PersonAvatar person={author} name="Former member" size={40} />}
+        {compact ? <span className="msg-time-hover">{timeOf(m.createdAt).replace(/\s?[AP]M$/i, "")}</span> : <PersonAvatar person={author} name="Former member" size={36} />}
       </div>
       <div className="msg-main">
         {!compact && (
@@ -621,7 +623,7 @@ function MessageItem({ m, compact, ctx, onReply, inThread }: {
         {!inThread && m.replyCount > 0 && onReply && (
           <button type="button" className="msg-thread" onClick={onReply}>
             <span className="msg-thread-avas">
-              {m.replyUserIds.map((id) => <PersonAvatar key={id} person={people.get(id)} size={22} />)}
+              {m.replyUserIds.map((id) => <PersonAvatar key={id} person={people.get(id)} size={20} />)}
             </span>
             <b>{m.replyCount} {m.replyCount === 1 ? "reply" : "replies"}</b>
             {m.lastReplyAt && <span>Last reply {dayLabel(m.lastReplyAt) === "Today" ? timeOf(m.lastReplyAt) : dayLabel(m.lastReplyAt)}</span>}
@@ -637,6 +639,8 @@ function MessageItem({ m, compact, ctx, onReply, inThread }: {
             </>
           ) : (
             <>
+              {HOVER_REACTIONS.map((e) => <button key={e} type="button" className="emo" title={`React ${e}`} aria-label={`React ${e}`} onClick={() => react(e)}>{e}</button>)}
+              <span className="msg-tools-sep" aria-hidden="true" />
               <button type="button" title="React" aria-label="React" onClick={() => setPicker(true)}>{I.smile}</button>
               {onReply && !inThread && <button type="button" title="Reply in thread" aria-label="Reply in thread" onClick={onReply}>{I.reply}</button>}
               {mine && <button type="button" title="Edit" aria-label="Edit" onClick={() => setEditing(true)}>{I.edit}</button>}
@@ -860,7 +864,7 @@ function Conversation({ channel, ctx, threadId, onOpenThread, onInfo, onBack }: 
       <header className="cv-head">
         <button type="button" className="iconbtn cv-back" onClick={onBack} aria-label="Back to conversations">{I.back}</button>
         {channel.kind === "dm" ? (
-          <PersonAvatar person={dmPerson ?? people.get(others[0])} size={30} online={dmPerson ? chat.online.has(dmPerson.id) : undefined} />
+          <PersonAvatar person={dmPerson ?? people.get(others[0])} size={24} online={dmPerson ? chat.online.has(dmPerson.id) : undefined} />
         ) : (
           <span className="cv-hash">{channel.is_private ? I.lock : "#"}</span>
         )}
@@ -871,7 +875,7 @@ function Conversation({ channel, ctx, threadId, onOpenThread, onInfo, onBack }: 
         <span className="spacer" />
         {channel.kind === "channel" && (
           <button type="button" className="cv-members" onClick={onInfo} title="Members">
-            <Faces ids={channel.member_ids} people={people} />
+            <Faces ids={channel.member_ids} people={people} size={20} />
             <b>{channel.member_ids.length}</b>
           </button>
         )}
@@ -890,10 +894,18 @@ function Conversation({ channel, ctx, threadId, onOpenThread, onInfo, onBack }: 
             {hasMore ? (
               <div className="cv-older">{loadingOlder ? "Loading older messages…" : <button type="button" className="tc-btn" onClick={loadOlder}>Load older messages</button>}</div>
             ) : (
-              <div className="cv-start">
-                <div className="cv-start-ic">{channel.kind === "dm" ? I.reply : channel.is_private ? I.lock : "#"}</div>
-                <b>{channel.kind === "dm" ? `This is the start of your conversation with ${title}.` : `This is the very beginning of #${channel.name}.`}</b>
-                {channel.kind === "channel" && channel.topic && <span className="chat-faint">{channel.topic}</span>}
+              <div className="cv-start cv-intro">
+                {channel.kind === "dm" && dmPerson ? (
+                  <PersonAvatar person={dmPerson} size={44} />
+                ) : (
+                  <div className="cv-start-ic">{channel.kind === "dm" ? I.reply : channel.is_private ? I.lock : "#"}</div>
+                )}
+                <b>{channel.kind === "dm" ? `This is your conversation with ${title}` : `Welcome to #${channel.name}`}</b>
+                <span>
+                  {channel.kind === "dm"
+                    ? `${dmPerson?.designation ? dmPerson.designation + ". " : ""}Tasks you link here show their live status.`
+                    : channel.topic || `This is the very beginning of #${channel.name}.`}
+                </span>
               </div>
             )}
             <MessageRun messages={messages} ctx={convCtx} newAfter={newAfter.current} onReply={onOpenThread} />
@@ -998,7 +1010,7 @@ function ThreadPanel({ channel, parentId, ctx, onClose }: {
         ) : (
           <>
             <MessageItem m={parent} compact={false} ctx={threadCtx} inThread />
-            <div className="day"><span>{replies.length} {replies.length === 1 ? "reply" : "replies"}</span></div>
+            <div className="th-count"><span>{replies.length} {replies.length === 1 ? "reply" : "replies"}</span></div>
             <MessageRun messages={replies} ctx={threadCtx} inThread />
           </>
         )}
@@ -1070,7 +1082,7 @@ function ConvList({ activeId, onOpen, onNewChannel, onBrowse, onNewDm, onDmWith 
         <h2>Messages</h2>
         {onlineIds.length > 0 && (
           <span className="cl-online" title={onlineIds.map((id) => people.get(id)?.name).join(", ") + " online"}>
-            <Faces ids={onlineIds} people={people} size={20} /> {onlineIds.length} online
+            <Faces ids={onlineIds} people={people} size={18} /> {onlineIds.length} online
           </span>
         )}
         <button type="button" className="iconbtn" title="New message" aria-label="New message" onClick={onNewDm}>{I.compose}</button>
@@ -1080,65 +1092,67 @@ function ConvList({ activeId, onOpen, onNewChannel, onBrowse, onNewDm, onDmWith 
         <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Find a channel or person" aria-label="Find a channel or person" />
       </label>
 
-      {sectionHead("channels", "Channels", state.canCreateChannel
-        ? <button type="button" className="iconbtn sm" title="New channel" aria-label="New channel" onClick={onNewChannel}>{I.plus}</button>
-        : undefined)}
-      {open("channels") && (
-        <>
-          {channels.map((c) => (
-            <button key={c.id} type="button" className={"cl-row" + (c.id === activeId ? " active" : "") + (c.unread ? " unread" : "")} onClick={() => onOpen(c.id)}>
-              <span className="cl-ic">{c.is_private ? I.lock : "#"}</span>
-              <span className="cl-name">{c.name}</span>
-              {(c.mentions > 0 || c.unread > 0) && <span className={"cl-count" + (c.mentions > 0 ? "" : " quiet")}>{c.mentions > 0 ? c.mentions : c.unread}</span>}
-            </button>
-          ))}
-          {!query && (
-            <button type="button" className="cl-row quiet" onClick={onBrowse}>
-              <span className="cl-ic">{I.plus}</span>
-              <span className="cl-name">Browse channels{browsable ? ` (${browsable})` : ""}</span>
-            </button>
-          )}
-        </>
-      )}
-
-      {sectionHead("dms", "Direct messages", <button type="button" className="iconbtn sm" title="New message" aria-label="New message" onClick={onNewDm}>{I.plus}</button>)}
-      {open("dms") && (
-        <>
-          {dms.map((c) => {
-            const others = c.member_ids.filter((id) => id !== me);
-            const solo = others.length === 1 ? people.get(others[0]) : undefined;
-            return (
+      <div className="cl-scroll">
+        {sectionHead("channels", "Channels", state.canCreateChannel
+          ? <button type="button" className="iconbtn sm" title="New channel" aria-label="New channel" onClick={onNewChannel}>{I.plus}</button>
+          : undefined)}
+        {open("channels") && (
+          <>
+            {channels.map((c) => (
               <button key={c.id} type="button" className={"cl-row" + (c.id === activeId ? " active" : "") + (c.unread ? " unread" : "")} onClick={() => onOpen(c.id)}>
-                {solo ? <PersonAvatar person={solo} size={24} online={online.has(solo.id)} /> : <span className="cl-group">{others.length}</span>}
-                <span className="cl-name">{channelTitle(c, people, me)}</span>
-                {c.unread > 0 && <span className="cl-count">{c.unread}</span>}
+                <span className="cl-ic">{c.is_private ? I.lock : "#"}</span>
+                <span className="cl-name">{c.name}</span>
+                {(c.mentions > 0 || c.unread > 0) && <span className={"cl-count" + (c.mentions > 0 ? "" : " quiet")}>{c.mentions > 0 ? c.mentions : c.unread}</span>}
               </button>
-            );
-          })}
-          {!query && dms.length === 0 && (
-            <button type="button" className="cl-row quiet" onClick={onNewDm}>
-              <span className="cl-ic">{I.compose}</span>
-              <span className="cl-name">Message someone</span>
-            </button>
-          )}
-        </>
-      )}
+            ))}
+            {!query && (
+              <button type="button" className="cl-row quiet" onClick={onBrowse}>
+                <span className="cl-ic">{I.plus}</span>
+                <span className="cl-name">Browse channels{browsable ? ` (${browsable})` : ""}</span>
+              </button>
+            )}
+          </>
+        )}
 
-      {newPeople.length > 0 && (
-        <>
-          <div className="cl-sec"><span className="cl-sec-label">People</span></div>
-          {newPeople.map((p) => (
-            <button key={p.id} type="button" className="cl-row" onClick={() => onDmWith(p.id)}>
-              <PersonAvatar person={p} size={24} online={online.has(p.id)} />
-              <span className="cl-name">{p.name}</span>
-              <span className="cl-hint">Message</span>
-            </button>
-          ))}
-        </>
-      )}
-      {query && channels.length === 0 && dms.length === 0 && newPeople.length === 0 && (
-        <div className="cl-empty">Nothing matches “{q.trim()}”.</div>
-      )}
+        {sectionHead("dms", "Direct messages", <button type="button" className="iconbtn sm" title="New message" aria-label="New message" onClick={onNewDm}>{I.plus}</button>)}
+        {open("dms") && (
+          <>
+            {dms.map((c) => {
+              const others = c.member_ids.filter((id) => id !== me);
+              const solo = others.length === 1 ? people.get(others[0]) : undefined;
+              return (
+                <button key={c.id} type="button" className={"cl-row" + (c.id === activeId ? " active" : "") + (c.unread ? " unread" : "")} onClick={() => onOpen(c.id)}>
+                  {solo ? <PersonAvatar person={solo} size={20} online={online.has(solo.id)} /> : <span className="cl-group">{others.length}</span>}
+                  <span className="cl-name">{channelTitle(c, people, me)}</span>
+                  {c.unread > 0 && <span className="cl-count">{c.unread}</span>}
+                </button>
+              );
+            })}
+            {!query && dms.length === 0 && (
+              <button type="button" className="cl-row quiet" onClick={onNewDm}>
+                <span className="cl-ic">{I.compose}</span>
+                <span className="cl-name">Message someone</span>
+              </button>
+            )}
+          </>
+        )}
+
+        {newPeople.length > 0 && (
+          <>
+            <div className="cl-sec"><span className="cl-sec-label">People</span></div>
+            {newPeople.map((p) => (
+              <button key={p.id} type="button" className="cl-row" onClick={() => onDmWith(p.id)}>
+                <PersonAvatar person={p} size={20} online={online.has(p.id)} />
+                <span className="cl-name">{p.name}</span>
+                <span className="cl-hint">Message</span>
+              </button>
+            ))}
+          </>
+        )}
+        {query && channels.length === 0 && dms.length === 0 && newPeople.length === 0 && (
+          <div className="cl-empty">Nothing matches “{q.trim()}”.</div>
+        )}
+      </div>
     </nav>
   );
 }
