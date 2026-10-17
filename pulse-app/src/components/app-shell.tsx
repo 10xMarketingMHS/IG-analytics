@@ -20,6 +20,8 @@ import { Modal } from "@/components/modal";
 import { notifyTasksChanged } from "@/lib/task-events";
 import { SodModal } from "@/components/sod-modal";
 import { useTheme } from "@/components/theme-provider";
+import { navIcon, SIGN_OUT_ICON } from "@/components/nav-icons";
+import "./sidebar.css";
 import type { Activity } from "@/lib/types";
 
 // Unread = activity newer than the last timestamp the user saw on /activity.
@@ -167,7 +169,8 @@ export function AppShell() {
     <BreakProvider>
     <div className={"app" + (menuOpen ? " menu-open" : "") + (eodLocked ? " eod-lock" : "")}>
       <div className="app-backdrop" onClick={() => setMenuOpen(false)} />
-      <aside>
+      {/* sb2: the redesign's sidebar look (components/sidebar.css). */}
+      <aside className="sb2">
         <div className="brand">
           <div className="logo">◐</div>
           <div>
@@ -195,7 +198,7 @@ export function AppShell() {
                     "navitem" + (isActive ? " active" : "")
                   }
                 >
-                  <span className="ic">{item.icon}</span> {item.title}
+                  <span className="ic">{navIcon(item.href) ?? item.icon}</span> {item.title}
                   {item.showBadge && postCount !== null && (
                     <span className="badge">{postCount}</span>
                   )}
@@ -224,8 +227,8 @@ export function AppShell() {
               {subtitle && <div className="rl">{subtitle}</div>}
             </div>
           </button>
-          <button className="logout" title="Sign out" onClick={handleSignOut}>
-            ⎋
+          <button className="logout" title="Sign out" aria-label="Sign out" onClick={handleSignOut}>
+            {SIGN_OUT_ICON}
           </button>
         </div>
         {profileOpen && <MyProfileModal onClose={() => setProfileOpen(false)} />}
