@@ -24,12 +24,12 @@ html[data-theme="dark"] .app>aside.sb2{
   --sb-ac:oklch(0.72 0.16 290);--sb-acText:oklch(0.82 0.11 290);--sb-warn:oklch(0.8 0.13 75)
 }
 @media (max-width:768px){.app>aside.sb2{--sb-bg:var(--panel)}}
-/* the redesign is a little wider than before (232px), on desktop only */
-@media (min-width:993px){.app:not(.sb-rail):has(>aside.sb2){grid-template-columns:232px minmax(0,1fr)}}
+/* 200px on desktop — about 15% narrower than the first redesign pass (232px) */
+@media (min-width:993px){.app:not(.sb-rail):has(>aside.sb2){grid-template-columns:200px minmax(0,1fr)}}
 /* Collapse / expand: the column glides between sizes. Both sizes are written
    as "<width> minmax(0,1fr)" so the browser can animate between them; the
    shell adds sb-fade for the glide, fading the contents out and back in. */
-@media (min-width:769px) and (max-width:992px){.app:not(.sb-rail):has(>aside.sb2){grid-template-columns:200px minmax(0,1fr)}}
+@media (min-width:769px) and (max-width:992px){.app:not(.sb-rail):has(>aside.sb2){grid-template-columns:184px minmax(0,1fr)}.app:not(.sb-rail)>aside.sb2{width:184px}.sb2-search kbd{display:none}}
 @media (min-width:769px){
   .app:has(>aside.sb2){transition:grid-template-columns .26s cubic-bezier(.2,.8,.2,1)}
   .app>aside.sb2{overflow:hidden;transition:width .26s cubic-bezier(.2,.8,.2,1)}
@@ -53,10 +53,10 @@ html[data-theme="dark"] .app>aside.sb2{
 
 /* search + new task */
 .sb2-tools{display:flex;align-items:center;gap:6px;padding:2px 12px 8px}
-.sb2-search{flex:1;min-width:0;display:flex;align-items:center;gap:8px;height:34px;padding:0 10px;border:1px solid var(--sb-line);border-radius:10px;background:var(--sb-panel);
+.sb2-search{flex:1;min-width:0;display:flex;align-items:center;gap:6px;height:34px;padding:0 8px;border:1px solid var(--sb-line);border-radius:10px;background:var(--sb-panel);
   color:var(--sb-text3);font:500 13px 'Plus Jakarta Sans',sans-serif;cursor:pointer;box-shadow:0 1px 2px rgba(30,20,80,.04);white-space:nowrap;overflow:hidden}
 .sb2-search:hover{border-color:var(--sb-text3)}
-.sb2-search kbd{margin-left:auto;padding:1px 5px;border:1px solid var(--sb-line);border-radius:4px;background:transparent;font:500 10.5px 'Geist Mono',ui-monospace,monospace;color:var(--sb-text3)}
+.sb2-search kbd{margin-left:auto;padding:1px 4px;border:1px solid var(--sb-line);border-radius:4px;background:transparent;font:500 10.5px 'Geist Mono',ui-monospace,monospace;color:var(--sb-text3)}
 .sb2-compose{flex:none;width:34px;height:34px;display:grid;place-items:center;padding:0;border:0;border-radius:10px;background:var(--sb-acGrad);color:#fff;cursor:pointer;
   box-shadow:0 8px 18px -8px oklch(0.55 0.22 290 / .7)}
 .sb2-compose:hover{filter:brightness(1.07)}

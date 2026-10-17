@@ -267,6 +267,7 @@ const TB_ICON = {
   plus: tbSvg(<path d="M12 5v14M5 12h14" />, 16),
   hold: tbSvg(<path d="M9 5v14M15 5v14" />, 12),
   close: tbSvg(<path d="M18 6 6 18M6 6l12 12" />, 14),
+  filter: tbSvg(<path d="M3 5h18l-7 8.5V19l-4 2v-7.5Z" />, 15),
   chevron: tbSvg(<path d="m6 9 6 6 6-6" />, 16),
   hourglass: tbSvg(<path d="M6 3h12M6 21h12M7 3c0 5 10 5 10 9s-10 4-10 9M17 3c0 5-10 5-10 9s10 4 10 9" />, 13),
   note: tbSvg(<><path d="M4 20h4l10-10-4-4L4 16z" /><path d="M13 7l4 4" /></>, 15),
@@ -580,8 +581,10 @@ export function TasksPage() {
     const ro = new ResizeObserver(fit);
     const bar = el.closest(".tb")?.querySelector(".tb-bar");
     if (bar) ro.observe(bar);
+    // …and once the toolbar's fold finishes opening or closing.
+    bar?.addEventListener("transitionend", fit);
     window.addEventListener("resize", fit);
-    return () => { ro.disconnect(); window.removeEventListener("resize", fit); };
+    return () => { ro.disconnect(); bar?.removeEventListener("transitionend", fit); window.removeEventListener("resize", fit); };
   }, [boardShown]);
   // The number on each due chip: open work in that window, under every other filter.
   const dueCounts = useMemo(() => {
@@ -592,6 +595,15 @@ export function TasksPage() {
     return out;
   }, [effective, scope, user?.editorId, filterEditor, filterType, filterFormat, now, search]);
   const filtersOn = !!search.trim() || dueTab !== "all" || !!filterType || !!filterFormat;
+  // The toolbar's second row (search, type, format, counts) folds away so the
+  // toolbar is one row; Filters opens it, remembered on this device. The
+  // number on Filters is how many of those are set while it's folded.
+  const [barOpen, setBarOpen] = useState(() => { try { return window.localStorage.getItem("pulse-tasks-toolbar-open") === "1"; } catch { return false; } });
+  const toggleBar = () => setBarOpen((o) => {
+    try { window.localStorage.setItem("pulse-tasks-toolbar-open", o ? "0" : "1"); } catch { /* fine, just not remembered */ }
+    return !o;
+  });
+  const moreActive = (search.trim() ? 1 : 0) + (filterType ? 1 : 0) + (filterFormat ? 1 : 0);
   const clearFilters = () => { setSearch(""); setDueTab("all"); setFilterType(""); setFilterFormat(""); };
 
   // Both the ←/→ links and drag-and-drop call this — one PATCH path, so the
@@ -850,7 +862,21 @@ export function TasksPage() {
             );
           })}
         </div>
+        <span className="tb-grow" />
+        <button type="button" className={"tb-fold" + (barOpen ? " open" : "")} onClick={toggleBar}
+          aria-expanded={barOpen} aria-controls="tb-more" title={barOpen ? "Hide search, filters and counts" : "Show search, filters and counts"}>
+          {TB_ICON.filter} Filters
+          {moreActive > 0 && <span className="tb-fold-n">{moreActive}</span>}
+          <span className="tb-fold-chev">{TB_ICON.chevron}</span>
+        </button>
+        {canWrite && (
+          <button className="tb-new" onClick={() => startNewTask()}>
+            {TB_ICON.plus} New task
+          </button>
+        )}
         </div>
+        {/* Folds away to keep the toolbar to one row; Filters opens it. */}
+        <div id="tb-more" className={"tb-more" + (barOpen ? " open" : "")} inert={!barOpen}>
         <div className="tb-row">
         <label className="search tb-search">
           {TB_ICON.search}
@@ -901,11 +927,7 @@ export function TasksPage() {
           <span><b>{taskCounts.openAd}</b> ads</span>
           {taskCounts.pendingOverdue > 0 && <span className="bad"><b>{taskCounts.pendingOverdue}</b> pending/overdue</span>}
         </div>
-        {canWrite && (
-          <button className="tb-new" onClick={() => startNewTask()}>
-            {TB_ICON.plus} New task
-          </button>
-        )}
+        </div>
         </div>
       </div>
 

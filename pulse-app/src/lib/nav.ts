@@ -27,10 +27,10 @@ export type NavItem = {
 };
 
 export const NAV_ITEMS: NavItem[] = [
-  // "My Day" — a personalized daily brief (what needs *your* attention),
+  // "Home" — a personalized daily brief (what needs *your* attention),
   // distinct from Dashboard, which shows the same org-wide analytics to
-  // everyone. Route stays /home; only the display name changed.
-  { title: "My Day", href: "/home", icon: "🏠", section: "Home" },
+  // everyone. Shown as "My Day" until 2026-10-17; the route was always /home.
+  { title: "Home", href: "/home", icon: "🏠", section: "Home" },
   { title: "Team Chat", href: "/chat", icon: "💬", section: "Home", chatBadge: true },
   { title: "Dashboard", href: "/dashboard", icon: "📊", section: "Analytics" },
   // Insights, Trends, Reports — hidden from the sidebar per request; routes/
@@ -55,7 +55,7 @@ export const NAV_ITEMS: NavItem[] = [
 
 // Page title + subtitle shown in the topbar, keyed by pathname.
 export const PAGE_META: Record<string, [string, string]> = {
-  "/home": ["My Day", "What needs your attention today"],
+  "/home": ["Home", "What needs your attention today"],
   "/chat": ["Team Chat", "Channels for the team, direct messages for one-to-one"],
   "/dashboard": ["Dashboard", "Live analytics from your content data"],
   "/metrics": ["Social & Ads Pipeline", "Who's working on which Social post or Ad, and where it stands"],
