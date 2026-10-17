@@ -7,10 +7,13 @@ import {
   PersonAvatar, channelTitle, dmVisible, taskLabel, toPlain, useChat,
   type ChatChannel, type ChatMessage, type ChatPerson, type ChatTask,
 } from "@/lib/chat";
+import { useAuth } from "@/lib/auth-context";
 import { Loader } from "@/components/loader";
 import { Modal } from "@/components/modal";
 import { useEditors } from "@/lib/use-editors";
+import { useReviewAccess, scopeAllowsTask } from "@/lib/use-review-access";
 import { useWorkspaces } from "@/lib/workspaces-context";
+import { fmtWait } from "@/lib/task-timing";
 import { TaskPanel } from "@/pages/tasks";
 import type { Task } from "@/lib/types";
 import "./chat.css";
@@ -20,8 +23,10 @@ import "./chat.css";
 // URL (?c=…&t=…), so a notice's "Open" and the browser's Back both work.
 
 const QUICK_REACTIONS = ["👍", "❤️", "😂", "🎉", "🙏", "👀", "✅", "🔥"];
+const COMPOSER_EMOJI = ["😀", "😂", "😊", "😍", "🤔", "😅", "😮", "😢", "🙏", "👍", "👏", "🙌", "💪", "🔥", "🎉", "✅", "👀", "💯", "❤️", "🚀"];
 const GROUP_GAP_MS = 5 * 60 * 1000;
-const STATUS_LABEL: Record<string, string> = { todo: "To Do", in_progress: "In progress", review: "Review", done: "Done" };
+const STATUS_LABEL: Record<string, string> = { todo: "To Do", in_progress: "In progress", review: "In review", done: "Done" };
+const SECTIONS_KEY = "pulse-chat-closed-sections";
 
 const errText = (err: unknown) => (err instanceof ApiError ? err.message : "Something went wrong — try again.");
 
@@ -36,16 +41,20 @@ function dayLabel(iso: string) {
   yesterday.setDate(today.getDate() - 1);
   if (d.toDateString() === today.toDateString()) return "Today";
   if (d.toDateString() === yesterday.toDateString()) return "Yesterday";
-  return d.toLocaleDateString([], { weekday: "short", day: "numeric", month: "short", year: d.getFullYear() === today.getFullYear() ? undefined : "numeric" });
+  return d.toLocaleDateString("en-GB", { weekday: "short", day: "numeric", month: "short", year: d.getFullYear() === today.getFullYear() ? undefined : "numeric" });
 }
 
-function ago(iso: string) {
-  const mins = Math.round((Date.now() - new Date(iso).getTime()) / 60000);
-  if (mins < 1) return "just now";
-  if (mins < 60) return `${mins}m ago`;
-  const hrs = Math.round(mins / 60);
-  if (hrs < 24) return `${hrs}h ago`;
-  return dayLabel(iso);
+// "Today", "Tomorrow", "2 days late", "Thu 22 Oct" — for a task's due date.
+function dueLabel(due: string | null) {
+  if (!due) return "No due date";
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  const d = new Date(due + "T00:00:00");
+  const days = Math.round((d.getTime() - today.getTime()) / 86_400_000);
+  if (days < 0) return `${-days} day${days === -1 ? "" : "s"} late`;
+  if (days === 0) return "Today";
+  if (days === 1) return "Tomorrow";
+  return d.toLocaleDateString("en-GB", { weekday: "short", day: "numeric", month: "short" });
 }
 
 // Keep a list sorted oldest → newest with one copy of each message.
@@ -79,22 +88,53 @@ function encodeBody(text: string, people: ChatPerson[], picked: Map<string, stri
   return out.trim();
 }
 
+// Line icons, drawn by stroke so they take the text colour.
+const svg = (children: ReactNode, size = 18) => (
+  <svg className="ic" width={size} height={size} viewBox="0 0 24 24" aria-hidden="true">{children}</svg>
+);
+const I = {
+  search: svg(<><circle cx="11" cy="11" r="7" /><path d="m20 20-3.5-3.5" /></>, 16),
+  compose: svg(<><path d="M12 20h9" /><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z" /></>),
+  chevron: svg(<path d="m6 9 6 6 6-6" />, 14),
+  plus: svg(<path d="M12 5v14M5 12h14" />, 15),
+  info: svg(<><circle cx="12" cy="12" r="9" /><path d="M12 16v-4M12 8h.01" /></>),
+  smile: svg(<><circle cx="12" cy="12" r="9" /><path d="M8 14s1.5 2 4 2 4-2 4-2M9 9h.01M15 9h.01" /></>),
+  reply: svg(<path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />),
+  edit: svg(<path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z" />),
+  trash: svg(<><path d="M3 6h18" /><path d="M8 6V4h8v2M19 6l-1 14H6L5 6" /></>),
+  link: svg(<><path d="M10 13a5 5 0 0 0 7.5.5l3-3a5 5 0 0 0-7-7l-1.7 1.7" /><path d="M14 11a5 5 0 0 0-7.5-.5l-3 3a5 5 0 0 0 7 7l1.7-1.7" /></>, 16),
+  list: svg(<><path d="M9 6h11M9 12h11M9 18h11" /><path d="M4 6h.01M4 12h.01M4 18h.01" /></>, 16),
+  code: svg(<path d="m16 18 6-6-6-6M8 6l-6 6 6 6" />, 16),
+  at: svg(<><circle cx="12" cy="12" r="4" /><path d="M16 8v5a3 3 0 0 0 6 0v-1a10 10 0 1 0-4 8" /></>),
+  hash: svg(<path d="M4 9h16M4 15h16M10 3 8 21M16 3l-2 18" />),
+  send: svg(<path d="m22 2-7 20-4-9-9-4Z" />),
+  check: svg(<path d="M20 6 9 17l-5-5" />, 15),
+  undo: svg(<><path d="M9 14 4 9l5-5" /><path d="M4 9h10.5a5.5 5.5 0 0 1 0 11H11" /></>, 15),
+  open: svg(<><path d="M15 3h6v6M10 14 21 3" /><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6" /></>, 15),
+  task: svg(<><circle cx="12" cy="12" r="9" /><path d="m8.5 12 2.5 2.5 4.5-5" /></>, 16),
+  lock: svg(<><rect x="5" y="11" width="14" height="10" rx="2" /><path d="M8 11V7a4 4 0 0 1 8 0v4" /></>, 15),
+  back: svg(<path d="M15 18 9 12l6-6" />),
+  close: svg(<path d="M18 6 6 18M6 6l12 12" />),
+};
+
 // ---------------------------------------------------------------------------
 // Message text
 // ---------------------------------------------------------------------------
 
-const TOKEN_RE = /(<@[0-9a-f-]{36}>|<task:[0-9a-f-]{36}>|https?:\/\/[^\s<]+|`[^`\n]+`|(?<![\w*])\*[^*\n]+\*(?![\w*])|(?<![\w])_[^_\n]+_(?![\w]))/g;
+const TOKEN_RE = /(<@[0-9a-f-]{36}>|<task:[0-9a-f-]{36}>|https?:\/\/[^\s<]+|`[^`\n]+`|(?<![\w*])\*[^*\n]+\*(?![\w*])|(?<![\w])_[^_\n]+_(?![\w])|(?<![\w~])~[^~\n]+~(?![\w~]))/g;
 
 function MessageText({ body, people, tasks, me, onOpenTask }: {
   body: string; people: Map<string, ChatPerson>; tasks: Record<string, ChatTask>; me: string; onOpenTask: (id: string) => void;
 }) {
+  // A line starting "- " reads as a bullet.
+  const text = body.replace(/^(\s*)- /gm, "$1• ");
   const parts: ReactNode[] = [];
   let last = 0;
   let k = 0;
-  for (const m of body.matchAll(TOKEN_RE)) {
+  for (const m of text.matchAll(TOKEN_RE)) {
     const tok = m[0];
     const at = m.index ?? 0;
-    if (at > last) parts.push(body.slice(last, at));
+    if (at > last) parts.push(text.slice(last, at));
     last = at + tok.length;
     if (tok.startsWith("<@")) {
       const id = tok.slice(2, -1);
@@ -104,7 +144,7 @@ function MessageText({ body, people, tasks, me, onOpenTask }: {
       const t = tasks[id];
       parts.push(
         <button key={k++} type="button" className="chat-taskchip" onClick={() => t && onOpenTask(id)} disabled={!t}>
-          #{t ? taskLabel(t) : "task"}
+          {t ? taskLabel(t) : "task"}
         </button>,
       );
     } else if (tok.startsWith("http")) {
@@ -113,40 +153,96 @@ function MessageText({ body, people, tasks, me, onOpenTask }: {
       parts.push(<code key={k++}>{tok.slice(1, -1)}</code>);
     } else if (tok.startsWith("*")) {
       parts.push(<b key={k++}>{tok.slice(1, -1)}</b>);
+    } else if (tok.startsWith("~")) {
+      parts.push(<s key={k++}>{tok.slice(1, -1)}</s>);
     } else {
       parts.push(<i key={k++}>{tok.slice(1, -1)}</i>);
     }
   }
-  if (last < body.length) parts.push(body.slice(last));
+  if (last < text.length) parts.push(text.slice(last));
   return <>{parts}</>;
 }
 
-function TaskCard({ task, onOpen }: { task: ChatTask; onOpen: () => void }) {
+// A linked task: number, status and due date, then who's on it — and, for a
+// task waiting in review that this viewer may resolve, Approve / Request
+// changes right here (the same rules and calls as the Task Board).
+function TaskCard({ task, canResolve, onOpen, onChanged }: {
+  task: ChatTask; canResolve: boolean; onOpen: () => void; onChanged: (t: ChatTask) => void;
+}) {
+  const [noteOpen, setNoteOpen] = useState(false);
+  const [note, setNote] = useState("");
+  const [busy, setBusy] = useState(false);
+  const inReview = task.status === "review";
+  const due = dueLabel(task.due_date);
+  const late = task.status !== "done" && /late$/.test(due);
+
+  async function resolve(status: "done" | "in_progress", reviewNote?: string) {
+    const noWork = status === "done" && task.link_required && !task.delivery_link;
+    if (noWork && !window.confirm(`No work is attached to "${task.title}". Approve it anyway?`)) return;
+    setBusy(true);
+    try {
+      await api(`/tasks/${task.id}`, { method: "PATCH", body: JSON.stringify({
+        status, ...(reviewNote ? { reviewNote } : {}), ...(noWork ? { approveWithoutWork: true } : {}),
+      }) });
+      toast.success(status === "done" ? `Approved “${task.title}”.` : `Sent “${task.title}” back for changes.`);
+      onChanged({ ...task, status, pending_note: reviewNote ?? task.pending_note, review_started_at: null });
+      setNoteOpen(false);
+      setNote("");
+    } catch (err) {
+      toast.error(errText(err));
+    } finally {
+      setBusy(false);
+    }
+  }
+
   return (
-    <button type="button" className="chat-taskcard" onClick={onOpen}>
-      <span className="chat-taskcard-top">
-        <span className="chat-taskcard-id">{taskLabel(task)}</span>
-        <span className={"chat-status st-" + task.status}>{STATUS_LABEL[task.status] ?? task.status}</span>
-      </span>
-      <span className="chat-taskcard-title">{task.title}</span>
-      <span className="chat-taskcard-meta">
-        {task.editor_name ? `👤 ${task.editor_name}` : "Unassigned"}
-        {task.channel_name && <> · {task.channel_name}</>}
-        {task.due_date && <> · Due {task.due_date}</>}
-      </span>
-    </button>
+    <div className="tc">
+      <div className="tc-top">
+        <span className="tc-ic">{I.task}</span>
+        <span className="tc-id">{taskLabel(task)}</span>
+        <span className={"tc-status st-" + task.status}><span className="tc-dot" />{task.pending_note && task.status !== "done" && task.status !== "review" ? "Sent back" : STATUS_LABEL[task.status] ?? task.status}</span>
+        <span className={"tc-due" + (late ? " late" : "")}>{task.status === "done" ? "Done" : due}</span>
+      </div>
+      <button type="button" className="tc-title" onClick={onOpen}>{task.title}</button>
+      <div className="tc-meta">
+        <PersonAvatar name={task.editor_name ?? "Unassigned"} size={22} />
+        <span>{[task.editor_name ?? "Unassigned", task.content_format_name, task.channel_name].filter(Boolean).join(" · ")}</span>
+        {inReview && task.review_started_at && (
+          <span className="tc-wait" title="How long it has waited for a reviewer">waiting {fmtWait(Date.now() - new Date(task.review_started_at).getTime())}</span>
+        )}
+      </div>
+      {noteOpen ? (
+        <form className="tc-note" onSubmit={(e) => { e.preventDefault(); if (note.trim()) resolve("in_progress", note.trim()); }}>
+          <input className="t" autoFocus value={note} onChange={(e) => setNote(e.target.value)}
+            placeholder={`What does ${task.editor_name ?? "the assignee"} need to change?`} aria-label="What needs changing" />
+          <button type="submit" className="tc-btn primary" disabled={busy || !note.trim()}>{busy ? "Sending…" : "Send back"}</button>
+          <button type="button" className="tc-btn" disabled={busy} onClick={() => { setNoteOpen(false); setNote(""); }}>Cancel</button>
+        </form>
+      ) : (
+        <div className="tc-actions">
+          {inReview && canResolve && (
+            <>
+              <button type="button" className="tc-btn" disabled={busy} onClick={() => setNoteOpen(true)}>{I.undo} Request changes</button>
+              <button type="button" className="tc-btn primary" disabled={busy} onClick={() => resolve("done")}>{I.check} {busy ? "Approving…" : "Approve"}</button>
+            </>
+          )}
+          <button type="button" className="tc-btn" onClick={onOpen}>{I.open} Open</button>
+          {task.delivery_link && <a className="tc-btn" href={task.delivery_link} target="_blank" rel="noreferrer">See the work</a>}
+        </div>
+      )}
+    </div>
   );
 }
 
 // ---------------------------------------------------------------------------
-// Composer — @ picks a person, # picks a task
+// Composer — formatting bar, @ picks a person, # picks a task
 // ---------------------------------------------------------------------------
 
 type Suggest =
   | { kind: "@"; start: number; query: string; items: ChatPerson[]; active: number }
   | { kind: "#"; start: number; query: string; items: ChatTask[]; active: number };
 
-function Composer({ people, me, placeholder, initialText = "", initialPicked, autoFocus, onSubmit, onCancel, submitLabel = "Send" }: {
+function Composer({ people, me, placeholder, initialText = "", initialPicked, autoFocus, onSubmit, onCancel, compact }: {
   people: ChatPerson[];
   me: string;
   placeholder: string;
@@ -155,11 +251,13 @@ function Composer({ people, me, placeholder, initialText = "", initialPicked, au
   autoFocus?: boolean;
   onSubmit: (body: string) => Promise<void>;
   onCancel?: () => void;
-  submitLabel?: string;
+  // The edit box inside a message: no formatting bar or footer extras.
+  compact?: boolean;
 }) {
   const [text, setText] = useState(initialText);
   const [busy, setBusy] = useState(false);
   const [suggest, setSuggest] = useState<Suggest | null>(null);
+  const [emojiOpen, setEmojiOpen] = useState(false);
   const picked = useRef(new Map(initialPicked ?? []));
   const ref = useRef<HTMLTextAreaElement>(null);
   const taskSearch = useRef(0);
@@ -202,7 +300,7 @@ function Composer({ people, me, placeholder, initialText = "", initialPicked, au
         try {
           const { tasks } = await api<{ tasks: Task[] }>(`/tasks?q=${encodeURIComponent(query)}`);
           if (ticket !== taskSearch.current) return;
-          setSuggest({ kind: "#", start, query, items: tasks.slice(0, 7), active: 0 });
+          setSuggest({ kind: "#", start, query, items: tasks.slice(0, 7) as unknown as ChatTask[], active: 0 });
         } catch { /* leave the list as it was */ }
       }, 200);
       return;
@@ -211,23 +309,65 @@ function Composer({ people, me, placeholder, initialText = "", initialPicked, au
     setSuggest(null);
   }
 
+  // Replace the selection (or insert at the caret) and put the caret after it.
+  function edit(next: string, caret: number) {
+    setText(next);
+    requestAnimationFrame(() => {
+      const el = ref.current;
+      if (!el) return;
+      el.focus();
+      el.setSelectionRange(caret, caret);
+      lookFor(next, caret);
+    });
+  }
+
+  function wrap(mark: string) {
+    const el = ref.current;
+    if (!el) return;
+    const { selectionStart: s, selectionEnd: e } = el;
+    const sel = text.slice(s, e);
+    const next = text.slice(0, s) + mark + sel + mark + text.slice(e);
+    edit(next, sel ? e + mark.length * 2 : s + mark.length);
+  }
+
+  function insert(str: string) {
+    const el = ref.current;
+    const s = el?.selectionStart ?? text.length;
+    const e = el?.selectionEnd ?? text.length;
+    // @ and # only open their pickers after a space or at the start.
+    const pad = /^[@#]$/.test(str) && s > 0 && !/\s/.test(text[s - 1]) ? " " : "";
+    const next = text.slice(0, s) + pad + str + text.slice(e);
+    edit(next, s + pad.length + str.length);
+  }
+
+  function bulletLines() {
+    const el = ref.current;
+    if (!el) return;
+    const s = text.lastIndexOf("\n", el.selectionStart - 1) + 1;
+    const e = el.selectionEnd;
+    const block = text.slice(s, e) || "";
+    const lines = (block || "").split("\n").map((l) => (l.startsWith("- ") ? l : "- " + l));
+    const out = lines.join("\n");
+    edit(text.slice(0, s) + out + text.slice(Math.max(e, s)), s + out.length);
+  }
+
   function pick(i: number) {
     if (!suggest) return;
     const el = ref.current;
     const caret = el?.selectionStart ?? text.length;
-    let insert: string;
+    let ins: string;
     if (suggest.kind === "@") {
-      insert = `@${suggest.items[i].name} `;
+      ins = `@${suggest.items[i].name} `;
     } else {
       const t = suggest.items[i];
       const label = taskLabel(t);
       picked.current.set(label, t.id);
-      insert = `#${label} `;
+      ins = `#${label} `;
     }
-    const next = text.slice(0, suggest.start) + insert + text.slice(caret);
+    const next = text.slice(0, suggest.start) + ins + text.slice(caret);
     setText(next);
     setSuggest(null);
-    const pos = suggest.start + insert.length;
+    const pos = suggest.start + ins.length;
     requestAnimationFrame(() => { el?.focus(); el?.setSelectionRange(pos, pos); });
   }
 
@@ -240,6 +380,7 @@ function Composer({ people, me, placeholder, initialText = "", initialPicked, au
       setText("");
       picked.current.clear();
       setSuggest(null);
+      setEmojiOpen(false);
     } catch (err) {
       toast.error(errText(err));
     } finally {
@@ -263,8 +404,13 @@ function Composer({ people, me, placeholder, initialText = "", initialPicked, au
         return;
       }
     }
+    if ((e.ctrlKey || e.metaKey) && (e.key === "b" || e.key === "i")) {
+      e.preventDefault();
+      wrap(e.key === "b" ? "*" : "_");
+      return;
+    }
     if (e.key === "Escape") {
-      if (suggest) { e.preventDefault(); e.stopPropagation(); setSuggest(null); return; }
+      if (suggest || emojiOpen) { e.preventDefault(); e.stopPropagation(); setSuggest(null); setEmojiOpen(false); return; }
       if (onCancel) { e.preventDefault(); onCancel(); }
       return;
     }
@@ -274,36 +420,49 @@ function Composer({ people, me, placeholder, initialText = "", initialPicked, au
     }
   }
 
+  const keep = (e: React.MouseEvent) => e.preventDefault(); // toolbar clicks keep the caret
+
   return (
-    <div className="chat-composer">
+    <div className={"cp" + (compact ? " compact" : "")}>
       {suggest && (
-        <div className="chat-suggest">
+        <div className="cp-suggest">
           {suggest.kind === "@" ? (
             suggest.items.map((p, i) => (
-              <button key={p.id} type="button" className={"chat-suggest-row" + (i === suggest.active ? " on" : "")}
+              <button key={p.id} type="button" className={"cp-suggest-row" + (i === suggest.active ? " on" : "")}
                 onMouseDown={(e) => { e.preventDefault(); pick(i); }}>
-                <PersonAvatar person={p} size={22} />
+                <PersonAvatar person={p} size={24} />
                 <b>{p.name}</b>
                 {p.designation && <span className="chat-faint">{p.designation}</span>}
               </button>
             ))
           ) : suggest.items.length === 0 ? (
-            <div className="chat-suggest-empty">
+            <div className="cp-suggest-empty">
               {suggest.query.length < 2 ? "Type a task's title or number…" : "No tasks match."}
             </div>
           ) : (
             suggest.items.map((t, i) => (
-              <button key={t.id} type="button" className={"chat-suggest-row" + (i === suggest.active ? " on" : "")}
+              <button key={t.id} type="button" className={"cp-suggest-row" + (i === suggest.active ? " on" : "")}
                 onMouseDown={(e) => { e.preventDefault(); pick(i); }}>
-                <span className="chat-taskcard-id">{taskLabel(t)}</span>
-                <span className="chat-suggest-title">{t.title}</span>
-                <span className={"chat-status st-" + t.status}>{STATUS_LABEL[t.status] ?? t.status}</span>
+                <span className="tc-id">{taskLabel(t)}</span>
+                <span className="cp-suggest-title">{t.title}</span>
+                <span className={"tc-status st-" + t.status}><span className="tc-dot" />{STATUS_LABEL[t.status] ?? t.status}</span>
               </button>
             ))
           )}
         </div>
       )}
-      <div className="chat-composer-box">
+      <div className="cp-box">
+        {!compact && (
+          <div className="cp-tools" role="toolbar" aria-label="Formatting">
+            <button type="button" title="Bold (Ctrl+B)" aria-label="Bold" onMouseDown={keep} onClick={() => wrap("*")}><b>B</b></button>
+            <button type="button" title="Italic (Ctrl+I)" aria-label="Italic" onMouseDown={keep} onClick={() => wrap("_")}><i>I</i></button>
+            <button type="button" title="Strikethrough" aria-label="Strikethrough" onMouseDown={keep} onClick={() => wrap("~")}><s>S</s></button>
+            <span className="cp-sep" />
+            <button type="button" title="Add a link" aria-label="Add a link" onMouseDown={keep} onClick={() => insert("https://")}>{I.link}</button>
+            <button type="button" title="Bulleted list" aria-label="Bulleted list" onMouseDown={keep} onClick={bulletLines}>{I.list}</button>
+            <button type="button" title="Code" aria-label="Code" onMouseDown={keep} onClick={() => wrap("`")}>{I.code}</button>
+          </div>
+        )}
         <textarea
           ref={ref}
           rows={1}
@@ -313,16 +472,29 @@ function Composer({ people, me, placeholder, initialText = "", initialPicked, au
           onKeyDown={onKeyDown}
           onBlur={() => setTimeout(() => setSuggest(null), 150)}
           maxLength={4000}
+          aria-label={placeholder}
         />
-        <div className="chat-composer-actions">
-          {onCancel && <button type="button" className="btn btn-sm" onClick={onCancel}>Cancel</button>}
-          <button type="button" className="btn btn-primary btn-sm" disabled={busy || !text.trim()} onClick={submit}>
-            {busy ? "…" : submitLabel}
+        <div className="cp-foot">
+          {!compact && (
+            <div className="cp-left">
+              <button type="button" title="Emoji" aria-label="Emoji" aria-expanded={emojiOpen} onMouseDown={keep} onClick={() => setEmojiOpen((o) => !o)}>{I.smile}</button>
+              <button type="button" title="Mention someone" aria-label="Mention someone" onMouseDown={keep} onClick={() => insert("@")}>{I.at}</button>
+              <button type="button" title="Link a task" aria-label="Link a task" onMouseDown={keep} onClick={() => insert("#")}>{I.hash}</button>
+            </div>
+          )}
+          <span className="cp-hint">{compact ? "Enter to save · Esc to cancel" : "@ mention · # link a task · Shift+Enter new line"}</span>
+          {onCancel && <button type="button" className="tc-btn" onClick={onCancel}>Cancel</button>}
+          <button type="button" className={"cp-send" + (text.trim() ? " ready" : "")} disabled={busy || !text.trim()} onClick={submit} aria-label={compact ? "Save" : "Send"} title={compact ? "Save" : "Send"}>
+            {compact ? "Save" : I.send}
           </button>
         </div>
-      </div>
-      <div className="chat-composer-hint">
-        <b>Enter</b> to send · <b>Shift+Enter</b> new line · <b>@</b> mention · <b>#</b> link a task · <b>*bold*</b> <b>_italic_</b>
+        {emojiOpen && (
+          <div className="cp-emoji" role="group" aria-label="Pick an emoji">
+            {COMPOSER_EMOJI.map((e) => (
+              <button key={e} type="button" onMouseDown={keep} onClick={() => insert(e)}>{e}</button>
+            ))}
+          </div>
+        )}
       </div>
     </div>
   );
@@ -331,6 +503,17 @@ function Composer({ people, me, placeholder, initialText = "", initialPicked, au
 // ---------------------------------------------------------------------------
 // One message
 // ---------------------------------------------------------------------------
+
+type ConvCtx = {
+  me: string;
+  people: Map<string, ChatPerson>;
+  tasks: Record<string, ChatTask>;
+  mergeTasks: (t: Record<string, ChatTask>) => void;
+  onOpenTask: (id: string) => void;
+  onUpdated: (m: ChatMessage) => void;
+  canModerate: boolean;
+  canResolve: (t: ChatTask) => boolean;
+};
 
 function MessageItem({ m, compact, ctx, onReply, inThread }: {
   m: ChatMessage;
@@ -384,77 +567,82 @@ function MessageItem({ m, compact, ctx, onReply, inThread }: {
   }, [linked, tasks]);
 
   return (
-    <div className={"chat-msg" + (compact ? " compact" : "") + (m.mentions.includes(me) ? " mentions-me" : "")}>
-      <div className="chat-msg-gutter">
-        {compact ? <span className="chat-msg-time-hover">{timeOf(m.createdAt)}</span> : <PersonAvatar person={author} size={34} />}
+    <div className={"msg" + (compact ? " compact" : "") + (m.mentions.includes(me) ? " mentions-me" : "")}>
+      <div className="msg-gutter">
+        {compact ? <span className="msg-time-hover">{timeOf(m.createdAt)}</span> : <PersonAvatar person={author} name="Former member" size={40} />}
       </div>
-      <div className="chat-msg-main">
+      <div className="msg-main">
         {!compact && (
-          <div className="chat-msg-head">
-            <b>{author?.name ?? "Former member"}</b>
-            {author?.designation && <span className="chat-faint">{author.designation}</span>}
-            <span className="chat-faint" title={new Date(m.createdAt).toLocaleString()}>{timeOf(m.createdAt)}</span>
+          <div className="msg-head">
+            <b title={author?.designation || undefined}>{author?.name ?? "Former member"}</b>
+            <span className="msg-time" title={new Date(m.createdAt).toLocaleString()}>{timeOf(m.createdAt)}</span>
           </div>
         )}
         {m.deleted ? (
-          <div className="chat-msg-body deleted">This message was deleted.</div>
+          <div className="msg-body deleted">This message was deleted.</div>
         ) : editing ? (
           <Composer
+            compact
             people={[...people.values()]}
             me={me}
             placeholder="Edit message"
             initialText={toPlain(m.body, people, tasks)}
             initialPicked={editPicked}
             autoFocus
-            submitLabel="Save"
             onSubmit={saveEdit}
             onCancel={() => setEditing(false)}
           />
         ) : (
-          <div className="chat-msg-body">
+          <div className="msg-body">
             <MessageText body={m.body} people={people} tasks={tasks} me={me} onOpenTask={onOpenTask} />
-            {m.editedAt && <span className="chat-faint chat-edited"> (edited)</span>}
+            {m.editedAt && <span className="msg-edited"> (edited)</span>}
           </div>
         )}
         {!m.deleted && !editing && linked.length > 0 && (
-          <div className="chat-taskcards">
-            {linked.map((id) => <TaskCard key={id} task={tasks[id]} onOpen={() => onOpenTask(id)} />)}
+          <div className="msg-cards">
+            {linked.map((id) => (
+              <TaskCard key={id} task={tasks[id]} canResolve={ctx.canResolve(tasks[id])}
+                onOpen={() => onOpenTask(id)} onChanged={(t) => ctx.mergeTasks({ [t.id]: t })} />
+            ))}
           </div>
         )}
         {m.reactions.length > 0 && (
-          <div className="chat-reactions">
+          <div className="msg-reactions">
             {m.reactions.map((r) => (
-              <button key={r.emoji} type="button" className={"chat-react" + (r.userIds.includes(me) ? " on" : "")}
+              <button key={r.emoji} type="button" className={"msg-react" + (r.userIds.includes(me) ? " on" : "")}
                 title={r.userIds.map((id) => people.get(id)?.name ?? "Someone").join(", ")}
                 onClick={() => react(r.emoji)}>
                 {r.emoji} <span>{r.userIds.length}</span>
               </button>
             ))}
+            <button type="button" className="msg-react add" title="Add a reaction" aria-label="Add a reaction" onClick={() => setPicker(true)}>{I.smile}</button>
           </div>
         )}
         {!inThread && m.replyCount > 0 && onReply && (
-          <button type="button" className="chat-threadsum" onClick={onReply}>
-            <span className="chat-threadsum-avas">
-              {m.replyUserIds.map((id) => <PersonAvatar key={id} person={people.get(id)} size={20} />)}
+          <button type="button" className="msg-thread" onClick={onReply}>
+            <span className="msg-thread-avas">
+              {m.replyUserIds.map((id) => <PersonAvatar key={id} person={people.get(id)} size={22} />)}
             </span>
             <b>{m.replyCount} {m.replyCount === 1 ? "reply" : "replies"}</b>
-            {m.lastReplyAt && <span className="chat-faint">Last reply {ago(m.lastReplyAt)}</span>}
+            {m.lastReplyAt && <span>Last reply {dayLabel(m.lastReplyAt) === "Today" ? timeOf(m.lastReplyAt) : dayLabel(m.lastReplyAt)}</span>}
           </button>
         )}
       </div>
       {!m.deleted && !editing && (
-        <div className={"chat-msg-tools" + (picker ? " open" : "")}>
+        <div className={"msg-tools" + (picker ? " open" : "")}>
           {picker ? (
-            QUICK_REACTIONS.map((e) => <button key={e} type="button" onClick={() => react(e)}>{e}</button>)
+            <>
+              {QUICK_REACTIONS.map((e) => <button key={e} type="button" className="emo" onClick={() => react(e)}>{e}</button>)}
+              <button type="button" title="Close" aria-label="Close" onClick={() => setPicker(false)}>{I.close}</button>
+            </>
           ) : (
             <>
-              <button type="button" title="React" onClick={() => setPicker(true)}>😊</button>
-              {onReply && !inThread && <button type="button" title="Reply in thread" onClick={onReply}>💬</button>}
-              {mine && <button type="button" title="Edit" onClick={() => setEditing(true)}>✏️</button>}
-              {(mine || canModerate) && <button type="button" title="Delete" onClick={() => setConfirmDelete(true)}>🗑️</button>}
+              <button type="button" title="React" aria-label="React" onClick={() => setPicker(true)}>{I.smile}</button>
+              {onReply && !inThread && <button type="button" title="Reply in thread" aria-label="Reply in thread" onClick={onReply}>{I.reply}</button>}
+              {mine && <button type="button" title="Edit" aria-label="Edit" onClick={() => setEditing(true)}>{I.edit}</button>}
+              {(mine || canModerate) && <button type="button" title="Delete" aria-label="Delete" className="danger" onClick={() => setConfirmDelete(true)}>{I.trash}</button>}
             </>
           )}
-          {picker && <button type="button" title="Close" onClick={() => setPicker(false)}>✕</button>}
         </div>
       )}
       {confirmDelete && (
@@ -471,16 +659,6 @@ function MessageItem({ m, compact, ctx, onReply, inThread }: {
     </div>
   );
 }
-
-type ConvCtx = {
-  me: string;
-  people: Map<string, ChatPerson>;
-  tasks: Record<string, ChatTask>;
-  mergeTasks: (t: Record<string, ChatTask>) => void;
-  onOpenTask: (id: string) => void;
-  onUpdated: (m: ChatMessage) => void;
-  canModerate: boolean;
-};
 
 // Messages with day dividers, an author shown once per run of messages, and a
 // "New" line where you'd stopped reading.
@@ -505,8 +683,8 @@ function MessageRun({ messages, ctx, newAfter, onReply, inThread }: {
           && new Date(m.createdAt).getTime() - new Date(prev.createdAt).getTime() < GROUP_GAP_MS;
         return (
           <Fragment key={m.id}>
-            {newDay && <div className="chat-day"><span>{dayLabel(m.createdAt)}</span></div>}
-            {m.id === firstNew && <div className="chat-newline"><span>New</span></div>}
+            {newDay && <div className="day"><span>{dayLabel(m.createdAt)}</span></div>}
+            {m.id === firstNew && <div className="newline"><span>New</span></div>}
             <MessageItem m={m} compact={compact} ctx={ctx} inThread={inThread} onReply={onReply ? () => onReply(m.id) : undefined} />
           </Fragment>
         );
@@ -539,6 +717,15 @@ function useStickyScroll(deps: unknown[]) {
     setAwayWithNew(false);
   }, []);
   return { ref, atBottom, onScroll, awayWithNew, toBottom };
+}
+
+// A few faces and the rest as a number.
+function Faces({ ids, people, max = 3, size = 24 }: { ids: string[]; people: Map<string, ChatPerson>; max?: number; size?: number }) {
+  return (
+    <span className="faces">
+      {ids.slice(0, max).map((id) => <PersonAvatar key={id} person={people.get(id)} size={size} />)}
+    </span>
+  );
 }
 
 // ---------------------------------------------------------------------------
@@ -664,31 +851,34 @@ function Conversation({ channel, ctx, threadId, onOpenThread, onInfo, onBack }: 
   const title = channelTitle(channel, people, me);
   const others = channel.member_ids.filter((id) => id !== me);
   const dmPerson = channel.kind === "dm" && others.length === 1 ? people.get(others[0]) : undefined;
+  const sub = channel.kind === "dm"
+    ? dmPerson ? (chat.online.has(dmPerson.id) ? "Online" : dmPerson.designation || "Direct message") : `${channel.member_ids.length} people`
+    : channel.topic;
 
   return (
-    <section className="chat-main">
-      <header className="chat-head">
-        <button type="button" className="btn icon chat-back" onClick={onBack} aria-label="Back to conversations">←</button>
+    <section className="cv">
+      <header className="cv-head">
+        <button type="button" className="iconbtn cv-back" onClick={onBack} aria-label="Back to conversations">{I.back}</button>
         {channel.kind === "dm" ? (
           <PersonAvatar person={dmPerson ?? people.get(others[0])} size={30} online={dmPerson ? chat.online.has(dmPerson.id) : undefined} />
         ) : (
-          <span className="chat-head-hash">{channel.is_private ? "🔒" : "#"}</span>
+          <span className="cv-hash">{channel.is_private ? I.lock : "#"}</span>
         )}
-        <div className="chat-head-title">
-          <b>{channel.kind === "dm" ? title : channel.name}</b>
-          <span className="chat-faint">
-            {channel.kind === "dm"
-              ? dmPerson ? (chat.online.has(dmPerson.id) ? "Online" : dmPerson.designation || "Direct message") : `${channel.member_ids.length} people`
-              : channel.topic || `${channel.member_ids.length} member${channel.member_ids.length === 1 ? "" : "s"}`}
-          </span>
-        </div>
-        <div className="spacer" />
-        <button type="button" className="btn btn-sm" onClick={onInfo}>
-          {channel.kind === "dm" ? "Details" : `👥 ${channel.member_ids.length}`}
+        <button type="button" className="cv-title" onClick={onInfo} title="Conversation details">
+          {channel.kind === "dm" ? title : channel.name}{I.chevron}
         </button>
+        {sub && <span className="cv-sub">{sub}</span>}
+        <span className="spacer" />
+        {channel.kind === "channel" && (
+          <button type="button" className="cv-members" onClick={onInfo} title="Members">
+            <Faces ids={channel.member_ids} people={people} />
+            <b>{channel.member_ids.length}</b>
+          </button>
+        )}
+        <button type="button" className="iconbtn" onClick={onInfo} title="Details" aria-label="Details">{I.info}</button>
       </header>
 
-      <div className="chat-scroll" ref={scroll.ref} onScroll={(e) => {
+      <div className="cv-scroll" ref={scroll.ref} onScroll={(e) => {
         scroll.onScroll();
         if (e.currentTarget.scrollTop < 80) loadOlder();
         if (scroll.atBottom.current) markIfSeen();
@@ -698,10 +888,10 @@ function Conversation({ channel, ctx, threadId, onOpenThread, onInfo, onBack }: 
         ) : (
           <>
             {hasMore ? (
-              <div className="chat-older">{loadingOlder ? "Loading older messages…" : <button type="button" className="btn btn-sm" onClick={loadOlder}>Load older messages</button>}</div>
+              <div className="cv-older">{loadingOlder ? "Loading older messages…" : <button type="button" className="tc-btn" onClick={loadOlder}>Load older messages</button>}</div>
             ) : (
-              <div className="chat-start">
-                <div className="chat-start-ic">{channel.kind === "dm" ? "💬" : channel.is_private ? "🔒" : "#"}</div>
+              <div className="cv-start">
+                <div className="cv-start-ic">{channel.kind === "dm" ? I.reply : channel.is_private ? I.lock : "#"}</div>
                 <b>{channel.kind === "dm" ? `This is the start of your conversation with ${title}.` : `This is the very beginning of #${channel.name}.`}</b>
                 {channel.kind === "channel" && channel.topic && <span className="chat-faint">{channel.topic}</span>}
               </div>
@@ -711,7 +901,7 @@ function Conversation({ channel, ctx, threadId, onOpenThread, onInfo, onBack }: 
         )}
       </div>
       {scroll.awayWithNew && (
-        <button type="button" className="chat-jump" onClick={scroll.toBottom}>↓ New messages</button>
+        <button type="button" className="cv-jump" onClick={scroll.toBottom}>New messages below</button>
       )}
 
       {channel.joined ? (
@@ -724,9 +914,9 @@ function Conversation({ channel, ctx, threadId, onOpenThread, onInfo, onBack }: 
           onSubmit={send}
         />
       ) : (
-        <div className="chat-joinbar">
+        <div className="cv-joinbar">
           <span>You're looking at <b>#{channel.name}</b>. Join to post and get its notifications.</span>
-          <button type="button" className="btn btn-primary btn-sm" disabled={joining} onClick={join}>{joining ? "Joining…" : "Join channel"}</button>
+          <button type="button" className="tc-btn primary" disabled={joining} onClick={join}>{joining ? "Joining…" : "Join channel"}</button>
         </div>
       )}
     </section>
@@ -791,24 +981,24 @@ function ThreadPanel({ channel, parentId, ctx, onClose }: {
   const threadCtx = useMemo(() => ({ ...ctx, onUpdated }), [ctx, onUpdated]);
 
   return (
-    <aside className="chat-thread">
-      <header className="chat-head">
-        <div className="chat-head-title">
+    <aside className="th">
+      <header className="cv-head">
+        <div className="th-title">
           <b>Thread</b>
-          <span className="chat-faint">{channelTitle(channel, ctx.people, ctx.me)}</span>
+          <span className="cv-sub">{channelTitle(channel, ctx.people, ctx.me)}</span>
         </div>
-        <div className="spacer" />
-        <button type="button" className="btn icon" onClick={onClose} aria-label="Close thread">✕</button>
+        <span className="spacer" />
+        <button type="button" className="iconbtn" onClick={onClose} aria-label="Close thread" title="Close thread">{I.close}</button>
       </header>
-      <div className="chat-scroll" ref={scroll.ref} onScroll={scroll.onScroll}>
+      <div className="cv-scroll" ref={scroll.ref} onScroll={scroll.onScroll}>
         {missing ? (
-          <div className="chat-start"><b>This thread isn't available.</b></div>
+          <div className="cv-start"><b>This thread isn't available.</b></div>
         ) : !parent || !replies ? (
           <Loader />
         ) : (
           <>
             <MessageItem m={parent} compact={false} ctx={threadCtx} inThread />
-            <div className="chat-day"><span>{replies.length} {replies.length === 1 ? "reply" : "replies"}</span></div>
+            <div className="day"><span>{replies.length} {replies.length === 1 ? "reply" : "replies"}</span></div>
             <MessageRun messages={replies} ctx={threadCtx} inThread />
           </>
         )}
@@ -824,67 +1014,130 @@ function ThreadPanel({ channel, parentId, ctx, onClose }: {
 // Conversation list
 // ---------------------------------------------------------------------------
 
-function ConvList({ activeId, onOpen, onNewChannel, onBrowse, onNewDm }: {
+function readClosed(): Record<string, boolean> {
+  try { return JSON.parse(window.localStorage.getItem(SECTIONS_KEY) ?? "{}"); } catch { return {}; }
+}
+
+function ConvList({ activeId, onOpen, onNewChannel, onBrowse, onNewDm, onDmWith }: {
   activeId: string | null;
   onOpen: (id: string) => void;
   onNewChannel: () => void;
   onBrowse: () => void;
   onNewDm: () => void;
+  onDmWith: (personId: string) => void;
 }) {
   const { state, people, online } = useChat();
+  const [q, setQ] = useState("");
+  const [closed, setClosed] = useState<Record<string, boolean>>(readClosed);
   if (!state) return null;
   const me = state.me;
+  const query = q.trim().toLowerCase();
+  const match = (s: string) => !query || s.toLowerCase().includes(query);
+
   const channels = state.channels
-    .filter((c) => c.kind === "channel" && c.joined)
+    .filter((c) => c.kind === "channel" && c.joined && match(c.name ?? ""))
     .sort((a, b) => (a.name === "general" ? -1 : b.name === "general" ? 1 : (a.name ?? "").localeCompare(b.name ?? "")));
   const dms = state.channels
-    .filter((c) => dmVisible(c, me))
+    .filter((c) => dmVisible(c, me) && match(channelTitle(c, people, me)))
     .sort((a, b) => (b.last_message_at ?? b.created_at).localeCompare(a.last_message_at ?? a.created_at));
   const browsable = state.channels.filter((c) => c.kind === "channel" && !c.joined).length;
+  // While searching, people you don't have a one-to-one with yet.
+  const withDm = new Set(state.channels.filter((c) => c.kind === "dm" && c.member_ids.length === 2).flatMap((c) => c.member_ids));
+  const newPeople = query ? state.people.filter((p) => p.id !== me && !withDm.has(p.id) && match(p.name)) : [];
+  const onlineIds = [...online].filter((id) => id !== me && people.has(id));
+
+  function toggle(key: string) {
+    setClosed((prev) => {
+      const next = { ...prev, [key]: !prev[key] };
+      try { window.localStorage.setItem(SECTIONS_KEY, JSON.stringify(next)); } catch { /* fine, just not remembered */ }
+      return next;
+    });
+  }
+  const open = (key: string) => !!query || !closed[key];
+
+  const sectionHead = (key: string, label: string, action?: ReactNode) => (
+    <div className="cl-sec">
+      <button type="button" className={"cl-sec-toggle" + (open(key) ? " open" : "")} onClick={() => toggle(key)} aria-expanded={open(key)}>
+        {I.chevron}<span>{label}</span>
+      </button>
+      {action}
+    </div>
+  );
 
   return (
-    <nav className="chat-list">
-      <div className="chat-list-sec">
-        <span>Channels</span>
-        {state.canCreateChannel && <button type="button" title="New channel" onClick={onNewChannel}>＋</button>}
+    <nav className="cl" aria-label="Conversations">
+      <div className="cl-head">
+        <h2>Messages</h2>
+        {onlineIds.length > 0 && (
+          <span className="cl-online" title={onlineIds.map((id) => people.get(id)?.name).join(", ") + " online"}>
+            <Faces ids={onlineIds} people={people} size={20} /> {onlineIds.length} online
+          </span>
+        )}
+        <button type="button" className="iconbtn" title="New message" aria-label="New message" onClick={onNewDm}>{I.compose}</button>
       </div>
-      {channels.map((c) => (
-        <button key={c.id} type="button" className={"chat-row" + (c.id === activeId ? " active" : "") + (c.unread ? " unread" : "")} onClick={() => onOpen(c.id)}>
-          <span className="chat-row-ic">{c.is_private ? "🔒" : "#"}</span>
-          <span className="chat-row-name">{c.name}</span>
-          {c.mentions > 0 && <span className="chat-count">{c.mentions}</span>}
-        </button>
-      ))}
-      <button type="button" className="chat-row chat-row-quiet" onClick={onBrowse}>
-        <span className="chat-row-ic">🔎</span>
-        <span className="chat-row-name">Browse channels{browsable ? ` (${browsable})` : ""}</span>
-      </button>
+      <label className="cl-search">
+        {I.search}
+        <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Find a channel or person" aria-label="Find a channel or person" />
+      </label>
 
-      <div className="chat-list-sec">
-        <span>Direct messages</span>
-        <button type="button" title="New message" onClick={onNewDm}>＋</button>
-      </div>
-      {dms.map((c) => {
-        const others = c.member_ids.filter((id) => id !== me);
-        const solo = others.length === 1 ? people.get(others[0]) : undefined;
-        const n = c.unread;
-        return (
-          <button key={c.id} type="button" className={"chat-row" + (c.id === activeId ? " active" : "") + (n ? " unread" : "")} onClick={() => onOpen(c.id)}>
-            {solo ? (
-              <PersonAvatar person={solo} size={20} online={online.has(solo.id)} />
-            ) : (
-              <span className="chat-row-group">{others.length}</span>
-            )}
-            <span className="chat-row-name">{channelTitle(c, people, me)}</span>
-            {n > 0 && <span className="chat-count">{n}</span>}
-          </button>
-        );
-      })}
-      {dms.length === 0 && (
-        <button type="button" className="chat-row chat-row-quiet" onClick={onNewDm}>
-          <span className="chat-row-ic">✉️</span>
-          <span className="chat-row-name">Message someone</span>
-        </button>
+      {sectionHead("channels", "Channels", state.canCreateChannel
+        ? <button type="button" className="iconbtn sm" title="New channel" aria-label="New channel" onClick={onNewChannel}>{I.plus}</button>
+        : undefined)}
+      {open("channels") && (
+        <>
+          {channels.map((c) => (
+            <button key={c.id} type="button" className={"cl-row" + (c.id === activeId ? " active" : "") + (c.unread ? " unread" : "")} onClick={() => onOpen(c.id)}>
+              <span className="cl-ic">{c.is_private ? I.lock : "#"}</span>
+              <span className="cl-name">{c.name}</span>
+              {(c.mentions > 0 || c.unread > 0) && <span className={"cl-count" + (c.mentions > 0 ? "" : " quiet")}>{c.mentions > 0 ? c.mentions : c.unread}</span>}
+            </button>
+          ))}
+          {!query && (
+            <button type="button" className="cl-row quiet" onClick={onBrowse}>
+              <span className="cl-ic">{I.plus}</span>
+              <span className="cl-name">Browse channels{browsable ? ` (${browsable})` : ""}</span>
+            </button>
+          )}
+        </>
+      )}
+
+      {sectionHead("dms", "Direct messages", <button type="button" className="iconbtn sm" title="New message" aria-label="New message" onClick={onNewDm}>{I.plus}</button>)}
+      {open("dms") && (
+        <>
+          {dms.map((c) => {
+            const others = c.member_ids.filter((id) => id !== me);
+            const solo = others.length === 1 ? people.get(others[0]) : undefined;
+            return (
+              <button key={c.id} type="button" className={"cl-row" + (c.id === activeId ? " active" : "") + (c.unread ? " unread" : "")} onClick={() => onOpen(c.id)}>
+                {solo ? <PersonAvatar person={solo} size={24} online={online.has(solo.id)} /> : <span className="cl-group">{others.length}</span>}
+                <span className="cl-name">{channelTitle(c, people, me)}</span>
+                {c.unread > 0 && <span className="cl-count">{c.unread}</span>}
+              </button>
+            );
+          })}
+          {!query && dms.length === 0 && (
+            <button type="button" className="cl-row quiet" onClick={onNewDm}>
+              <span className="cl-ic">{I.compose}</span>
+              <span className="cl-name">Message someone</span>
+            </button>
+          )}
+        </>
+      )}
+
+      {newPeople.length > 0 && (
+        <>
+          <div className="cl-sec"><span className="cl-sec-label">People</span></div>
+          {newPeople.map((p) => (
+            <button key={p.id} type="button" className="cl-row" onClick={() => onDmWith(p.id)}>
+              <PersonAvatar person={p} size={24} online={online.has(p.id)} />
+              <span className="cl-name">{p.name}</span>
+              <span className="cl-hint">Message</span>
+            </button>
+          ))}
+        </>
+      )}
+      {query && channels.length === 0 && dms.length === 0 && newPeople.length === 0 && (
+        <div className="cl-empty">Nothing matches “{q.trim()}”.</div>
       )}
     </nav>
   );
@@ -908,14 +1161,14 @@ function PeoplePicker({ people, selected, onToggle, exclude, max }: {
     <div className="chat-picker">
       <input className="t" placeholder="Search people" value={q} onChange={(e) => setQ(e.target.value)} autoFocus />
       <div className="chat-picker-list">
-        {list.length === 0 && <div className="chat-suggest-empty">Nobody matches.</div>}
+        {list.length === 0 && <div className="cp-suggest-empty">Nobody matches.</div>}
         {list.map((p) => {
           const on = selected.has(p.id);
           const full = !on && max !== undefined && selected.size >= max;
           return (
             <label key={p.id} className={"chat-picker-row" + (on ? " on" : "") + (full ? " full" : "")}>
               <input type="checkbox" checked={on} disabled={full} onChange={() => onToggle(p.id)} />
-              <PersonAvatar person={p} size={26} online={online.has(p.id)} />
+              <PersonAvatar person={p} size={28} online={online.has(p.id)} />
               <span><b>{p.name}</b>{p.designation && <span className="chat-faint"> · {p.designation}</span>}</span>
             </label>
           );
@@ -931,6 +1184,9 @@ const toggleIn = (set: Set<string>, id: string) => {
   return next;
 };
 
+// Matches the server's tidy: "Carousel - DF" → "carousel-df".
+const tidyName = (s: string) => s.trim().toLowerCase().replace(/^#/, "").replace(/[^a-z0-9_]+/g, "-").replace(/^-+|-+$/g, "");
+
 function NewChannelModal({ onClose, onCreated }: { onClose: () => void; onCreated: (id: string) => void }) {
   const { state, refresh } = useChat();
   const [name, setName] = useState("");
@@ -940,7 +1196,7 @@ function NewChannelModal({ onClose, onCreated }: { onClose: () => void; onCreate
   const [members, setMembers] = useState<Set<string>>(new Set());
   const [busy, setBusy] = useState(false);
   const me = state?.me ?? "";
-  const tidy = name.trim().toLowerCase().replace(/^#/, "").replace(/\s+/g, "-");
+  const tidy = tidyName(name);
 
   async function create() {
     setBusy(true);
@@ -962,15 +1218,15 @@ function NewChannelModal({ onClose, onCreated }: { onClose: () => void; onCreate
     <Modal title="New channel" onClose={onClose}>
       <div className="field">
         <label className="f">Name</label>
-        <div className="chat-hashinput"><span>#</span><input className="t" placeholder="e.g. design-team" value={name} maxLength={41} onChange={(e) => setName(e.target.value)} autoFocus /></div>
-        <div className="hint">Lowercase letters, numbers and dashes — spaces become dashes.</div>
+        <div className="chat-hashinput"><span>#</span><input className="t" placeholder="e.g. design-team" value={name} maxLength={60} onChange={(e) => setName(e.target.value)} autoFocus /></div>
+        <div className="hint">{tidy && tidy !== name.trim() ? <>It'll be <b>#{tidy}</b></> : "Lowercase letters, numbers and dashes."}</div>
       </div>
       <div className="field">
         <label className="f">What's it for? <span className="chat-faint">(optional)</span></label>
         <input className="t" placeholder="e.g. Thumbnails, edits and feedback" value={topic} maxLength={200} onChange={(e) => setTopic(e.target.value)} />
       </div>
       <div className="field">
-        <label className="chat-check"><input type="checkbox" checked={isPrivate} onChange={(e) => setIsPrivate(e.target.checked)} /> Private — only people you add can see it</label>
+        <label className="chat-check"><input type="checkbox" checked={isPrivate} onChange={(e) => setIsPrivate(e.target.checked)} /> Private: only people you add can see it</label>
         {!isPrivate && (
           <label className="chat-check"><input type="checkbox" checked={everyone} onChange={(e) => setEveryone(e.target.checked)} /> Add everyone on the team</label>
         )}
@@ -1041,7 +1297,7 @@ function BrowseModal({ onClose, onOpen }: { onClose: () => void; onOpen: (id: st
         {all.map((c) => (
           <div key={c.id} className="chat-browse-row">
             <div>
-              <b>{c.is_private ? "🔒 " : "# "}{c.name}</b>
+              <b>{c.is_private ? "Private · " : "# "}{c.name}</b>
               <div className="chat-faint">{c.topic || "No description"} · {c.member_ids.length} member{c.member_ids.length === 1 ? "" : "s"}</div>
             </div>
             {c.joined ? (
@@ -1083,7 +1339,7 @@ function InfoModal({ channel, onClose, onLeft }: { channel: ChatChannel; onClose
       setBusy(false);
     }
   }
-  const save = () => run(() => api(`/chat/channels/${channel.id}`, { method: "PATCH", body: JSON.stringify({ name: isGeneral ? undefined : name, topic }) }), () => toast.success("Saved"));
+  const save = () => run(() => api(`/chat/channels/${channel.id}`, { method: "PATCH", body: JSON.stringify({ name: isGeneral ? undefined : tidyName(name), topic }) }), () => toast.success("Saved"));
   const add = () => run(() => api(`/chat/channels/${channel.id}/members`, { method: "POST", body: JSON.stringify({ userIds: [...toAdd] }) }), () => { setAdding(false); setToAdd(new Set()); });
   const leave = () => run(() => api(`/chat/channels/${channel.id}/leave`, { method: "POST" }), onLeft);
   const archive = () => run(() => api(`/chat/channels/${channel.id}`, { method: "PATCH", body: JSON.stringify({ archived: true }) }), onLeft);
@@ -1095,7 +1351,7 @@ function InfoModal({ channel, onClose, onLeft }: { channel: ChatChannel; onClose
           {!isGeneral && (
             <div className="field">
               <label className="f">Name</label>
-              <div className="chat-hashinput"><span>#</span><input className="t" value={name} maxLength={41} onChange={(e) => setName(e.target.value)} /></div>
+              <div className="chat-hashinput"><span>#</span><input className="t" value={name} maxLength={60} onChange={(e) => setName(e.target.value)} /></div>
             </div>
           )}
           <div className="field">
@@ -1111,7 +1367,7 @@ function InfoModal({ channel, onClose, onLeft }: { channel: ChatChannel; onClose
 
       <div className="chat-info-sec">
         <b>{members.length} {members.length === 1 ? "member" : "members"}</b>
-        {channel.kind === "channel" && channel.joined && !adding && <button className="btn btn-sm" onClick={() => setAdding(true)}>＋ Add people</button>}
+        {channel.kind === "channel" && channel.joined && !adding && <button className="btn btn-sm" onClick={() => setAdding(true)}>Add people</button>}
       </div>
       {adding && state ? (
         <>
@@ -1125,7 +1381,7 @@ function InfoModal({ channel, onClose, onLeft }: { channel: ChatChannel; onClose
         <div className="chat-members">
           {members.map((p) => (
             <div key={p.id} className="chat-member">
-              <PersonAvatar person={p} size={28} online={online.has(p.id)} />
+              <PersonAvatar person={p} size={30} online={online.has(p.id)} />
               <span><b>{p.name}</b>{p.id === me && <span className="chat-faint"> (you)</span>}{p.designation && <span className="chat-faint"> · {p.designation}</span>}</span>
             </div>
           ))}
@@ -1191,6 +1447,9 @@ function useFitHeight(ready: boolean) {
 export function ChatPage() {
   const chat = useChat();
   const { state, people, available } = chat;
+  const { user } = useAuth();
+  const { isAdmin, hasPermission } = useWorkspaces();
+  const review = useReviewAccess();
   const [params, setParams] = useSearchParams();
   const channelId = params.get("c");
   const threadId = params.get("t");
@@ -1225,6 +1484,27 @@ export function ChatPage() {
   const openThread = useCallback((id: string) => { if (channelId) setParams({ c: channelId, t: id }); }, [channelId, setParams]);
   const closeThread = useCallback(() => { if (channelId) setParams({ c: channelId }); }, [channelId, setParams]);
   const closeTask = useCallback(() => setOpenTaskId(null), []);
+  const dmWith = useCallback(async (personId: string) => {
+    try {
+      const out = await api<{ channelId: string }>("/chat/dm", { method: "POST", body: JSON.stringify({ userIds: [personId] }) });
+      await refresh();
+      open(out.channelId);
+    } catch (err) {
+      toast.error(errText(err));
+    }
+  }, [refresh, open]);
+
+  // The same review rules as My Day and the Task Board: admins; resolve_tasks
+  // grantees within their scope; whoever assigned it with Assign tasks access.
+  // Never your own task. The server checks again either way.
+  const canAssign = isAdmin || hasPermission("assign_tasks");
+  const canResolve = useCallback((t: ChatTask) => {
+    if (t.status !== "review") return false;
+    if (isAdmin) return true;
+    if (user?.editorId && t.editor_id === user.editorId) return false;
+    return (review.granted && scopeAllowsTask(review.scope, { id: t.id, editor_id: t.editor_id }))
+      || (canAssign && !!user && t.assigned_by === user.id);
+  }, [isAdmin, user, review, canAssign]);
 
   const ctx = useMemo<ConvCtx>(() => ({
     me,
@@ -1234,7 +1514,8 @@ export function ChatPage() {
     onOpenTask: setOpenTaskId,
     onUpdated: () => {},
     canModerate: channel?.kind === "channel" && !!state?.isAdmin,
-  }), [me, people, tasks, mergeTasks, channel?.kind, state?.isAdmin]);
+    canResolve,
+  }), [me, people, tasks, mergeTasks, channel?.kind, state?.isAdmin, canResolve]);
 
   if (!available) {
     return <div className="card pad" style={{ maxWidth: 520 }}>Team chat is for admins and editors. Ask an admin if you need access.</div>;
@@ -1249,6 +1530,7 @@ export function ChatPage() {
         onNewChannel={() => setDialog("channel")}
         onBrowse={() => setDialog("browse")}
         onNewDm={() => setDialog("dm")}
+        onDmWith={dmWith}
       />
       {channel ? (
         <Conversation
@@ -1261,9 +1543,9 @@ export function ChatPage() {
           onBack={() => setParams({})}
         />
       ) : (
-        <section className="chat-main chat-none">
-          <div className="chat-start">
-            <div className="chat-start-ic">💬</div>
+        <section className="cv cv-none">
+          <div className="cv-start">
+            <div className="cv-start-ic">{I.reply}</div>
             <b>{channelId ? "This conversation isn't available." : "Pick a conversation"}</b>
             <span className="chat-faint">Channels for the team, direct messages for one-to-one.</span>
           </div>
@@ -1277,8 +1559,7 @@ export function ChatPage() {
       {dialog === "info" && channel && (
         <InfoModal channel={channel} onClose={() => setDialog(null)} onLeft={() => { setDialog(null); if (general) open(general.id); }} />
       )}
-      {/* Outside the chat card: its glass blur would otherwise pin the task
-          drawer inside the card instead of the window's right edge. */}
+      {/* Outside the chat card, so the task drawer sits at the window's edge. */}
       {openTaskId && createPortal(<TaskOpener taskId={openTaskId} summary={tasks[openTaskId]} onClose={closeTask} />, document.body)}
     </div>
   );

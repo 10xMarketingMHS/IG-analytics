@@ -234,9 +234,11 @@ chatRouter.get("/chat/state", async (req, res, next) => {
   }
 });
 
+// "Carousel - DF" → "carousel-df": anything that isn't a letter, digit or _
+// becomes one dash, never a run of them, and none at either end.
 const ChannelName = z
   .string()
-  .transform((s) => s.trim().toLowerCase().replace(/^#/, "").replace(/\s+/g, "-"))
+  .transform((s) => s.trim().toLowerCase().replace(/^#/, "").replace(/[^a-z0-9_]+/g, "-").replace(/^-+|-+$/g, ""))
   .pipe(z.string().regex(/^[a-z0-9][a-z0-9_-]{0,39}$/, "Use up to 40 lowercase letters, numbers and dashes."));
 
 const NewChannel = z.object({
@@ -431,15 +433,21 @@ async function refsIn(orgId, body) {
 }
 
 // What a task link shows: enough for a card (title, number, status, who's on it,
-// brand, due date). Tasks are visible to the whole team, so no extra gate.
+// brand, format, due date), plus what the page needs to decide whether this
+// viewer may approve it right there (assignee, assigner, the link rule). Tasks
+// are visible to the whole team, so no extra gate.
 async function taskSummaries(orgId, ids) {
   if (!ids.length) return {};
   const { rows } = await pool.query(
     `select t.id, t.title, t.status, t.task_type, t.tid, t.sid, t.ad_id, t.svid, t.pid, t.due_date,
-            e.name as editor_name, w.name as channel_name
+            t.editor_id, t.assigned_by, t.delivery_link, t.review_started_at, t.pending_note,
+            coalesce(t.review_link_required, cf.review_link_required, false) as link_required,
+            e.name as editor_name, e.image_url as editor_image, w.name as channel_name,
+            cf.name as content_format_name
        from task t
        left join editor e on e.id = t.editor_id
        left join workspace w on w.id = t.channel_id
+       left join task_content_format cf on cf.id = t.content_format_id
       where t.org_id = $1 and t.id = any($2::uuid[])`,
     [orgId, ids],
   );

@@ -63,8 +63,17 @@ export type ChatTask = {
   svid: string | null;
   pid: string | null;
   due_date: string | null;
+  editor_id: string | null;
   editor_name: string | null;
+  editor_image: string | null;
   channel_name: string | null;
+  content_format_name: string | null;
+  // For approving from the card: who handed it over, the work, the link rule.
+  assigned_by: string | null;
+  delivery_link: string | null;
+  link_required: boolean;
+  review_started_at: string | null;
+  pending_note: string | null;
 };
 
 export type ChatEvent =
@@ -137,14 +146,27 @@ export function toPlain(body: string, people: Map<string, ChatPerson>, tasks: Re
     .replace(/<task:([0-9a-f-]{36})>/g, (_m, id) => (tasks[id] ? `#${taskLabel(tasks[id])}` : "#task"));
 }
 
-export function PersonAvatar({ person, size = 32, online }: { person: ChatPerson | undefined; size?: number; online?: boolean }) {
-  const name = person?.name ?? "?";
+// Solid colours dark enough for white initials (≥4.5:1), one per person by name.
+const AVATAR_COLORS = ["#7c3aed", "#2563eb", "#0e7490", "#047857", "#b45309", "#be185d", "#4f46e5", "#0f766e", "#a21caf", "#c2410c"];
+export function avatarColor(name: string) {
+  let h = 0;
+  for (const c of name) h = (h * 31 + c.charCodeAt(0)) >>> 0;
+  return AVATAR_COLORS[h % AVATAR_COLORS.length];
+}
+// "Priya Sharma" → "PS", "Priya" → "P".
+export function initials(name: string) {
+  const words = name.trim().split(/\s+/).filter(Boolean);
+  return (words.length > 1 ? words[0][0] + words[1][0] : (words[0]?.[0] ?? "?")).toUpperCase();
+}
+
+export function PersonAvatar({ person, name, size = 32, online }: { person?: ChatPerson; name?: string; size?: number; online?: boolean }) {
+  const label = person?.name ?? name ?? "?";
   return (
-    <span className="chat-ava" style={{ width: size, height: size, fontSize: Math.round(size * 0.42) }}>
+    <span className="chat-ava" style={{ width: size, height: size, fontSize: Math.round(size * (initials(label).length > 1 ? 0.36 : 0.42)) }}>
       {person?.image_url ? (
         <img src={person.image_url} alt="" />
       ) : (
-        <span className="chat-ava-in" style={{ background: person?.color || gradFor(name) }}>{name.charAt(0).toUpperCase()}</span>
+        <span className="chat-ava-in" style={{ background: person?.color || (person || name ? avatarColor(label) : gradFor(label)) }}>{initials(label)}</span>
       )}
       {online !== undefined && <span className={"chat-ava-dot" + (online ? " on" : "")} />}
     </span>
