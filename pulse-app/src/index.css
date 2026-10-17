@@ -1172,14 +1172,16 @@ select.mini{font-family:inherit;font-size:12.5px;font-weight:700;color:var(--tex
    stays the same size whether the team has 4 people or 40 — same "keep
    room" pattern as the Task Settings format table. The header row rides
    along, pinned to the top of the scroll area. */
-.lb-table-wrap{max-height:600px;overflow-y:auto;padding:2px 2px 0}
+.lb-table-wrap{max-height:600px;overflow-y:auto;padding:6px 10px 10px;margin:0 -10px;scrollbar-width:none}
+/* room on every side for a row lifting on hover, and no scrollbar showing beside the points */
+.lb-table-wrap::-webkit-scrollbar{display:none}
 .lb-table-wrap .lb-head{position:sticky;top:0;z-index:2;background:var(--bg);padding-top:2px}
 .lb-row{position:relative;background:var(--panel);border:1px solid var(--border);border-radius:12px;height:74px;overflow:hidden;
   transition:transform .3s cubic-bezier(.22,.61,.36,1),box-shadow .3s ease,border-color .2s ease;will-change:transform}
 /* soft top-halo that fades in on hover — the premium "glow" */
 .lb-row::after{content:'';position:absolute;inset:0;border-radius:inherit;pointer-events:none;opacity:0;
   transition:opacity .3s ease;background:radial-gradient(130% 90% at 50% -25%,rgba(255,255,255,.16),transparent 58%)}
-.lb-row:hover{transform:translateY(-5px) scale(1.015);border-color:var(--accent);z-index:3;
+.lb-row:hover{transform:translateY(-4px) scale(1.008);border-color:var(--accent);z-index:3;
   box-shadow:0 20px 42px rgba(0,0,0,.42),0 6px 14px rgba(0,0,0,.28)}
 .lb-row:hover::after{opacity:1}
 .lb-row.gold{background:linear-gradient(90deg,rgba(245,196,81,.22),var(--panel) 42%);border-color:rgba(245,196,81,.45)}
