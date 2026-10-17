@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState, type FormEvent, type ReactNode } from "react";
+import { useLocation, useNavigate } from "react-router-dom";
 import {
   DndContext, DragOverlay, MouseSensor, TouchSensor, KeyboardSensor,
   useSensor, useSensors, useDraggable, useDroppable, closestCorners,
@@ -17,6 +18,7 @@ import { api, ApiError } from "@/lib/api";
 import { Modal } from "@/components/modal";
 import { toast } from "sonner";
 import type { Task, TaskStatus, TaskPriority, TaskType, TaskMeta, TaskAttachment, TaskReviewLogEntry, ContentFormatDef, Editor, Subtask, TaskComment } from "@/lib/types";
+import "./tasks-board.css";
 
 function relTime(iso: string) {
   const mins = Math.round((Date.now() - new Date(iso).getTime()) / 60000);
@@ -124,7 +126,7 @@ function addDays(base: Date, n: number) {
 type DueTab = "all" | "overdue" | "today" | "tomorrow" | "week";
 const DUE_TABS: { key: DueTab; label: string }[] = [
   { key: "all", label: "All" },
-  { key: "overdue", label: "⚠️ Overdue" },
+  { key: "overdue", label: "Overdue" },
   { key: "today", label: "Today" },
   { key: "tomorrow", label: "Tomorrow" },
   { key: "week", label: "This week" },
@@ -136,6 +138,27 @@ function weekRange(now: Date) {
   const start = addDays(now, -now.getDay());
   const end = addDays(start, 6);
   return { start: ymd(start), end: ymd(end) };
+}
+
+// Every board filter except the due window — shared by the board itself and
+// the counts on the due chips, so the two always agree.
+type BoardFilters = { mine: boolean; editorId: string | null; editor: string; type: TaskType | ""; format: string; q: string };
+function passesFilters(t: Task, f: BoardFilters) {
+  if (f.mine && (!f.editorId || t.editor_id !== f.editorId)) return false;
+  if (f.editor && t.editor_id !== f.editor) return false;
+  if (f.type && t.task_type !== f.type) return false;
+  if (f.format && t.content_format_id !== f.format) return false;
+  if (f.q) {
+    const hit =
+      t.title.toLowerCase().includes(f.q) ||
+      (t.description ?? "").toLowerCase().includes(f.q) ||
+      t.tid?.toLowerCase().includes(f.q) ||
+      t.sid?.toLowerCase().includes(f.q) ||
+      t.ad_id?.toLowerCase().includes(f.q) ||
+      t.svid?.toLowerCase().includes(f.q);
+    if (!hit) return false;
+  }
+  return true;
 }
 
 function matchesDueTab(t: Task, tab: DueTab, now: Date) {
@@ -219,24 +242,119 @@ function daysOverdue(due: string): number {
   return Math.round((Date.UTC(ty, tm - 1, td) - Date.UTC(dy, dm - 1, dd)) / 86400000);
 }
 
-function Assignee({ name, image }: { name: string | null; image: string | null }) {
-  if (!name) return <span className="task-unassigned">Unassigned</span>;
-  return (
-    <span className="task-assignee">
-      {image ? (
-        <img className="task-ava" src={image} alt={name} />
-      ) : (
-        <span className="task-ava init">{name.charAt(0).toUpperCase()}</span>
-      )}
-      {name}
-    </span>
-  );
-}
-
 // A status column that accepts dropped cards; highlights while hovered.
 function DroppableColumn({ id, children }: { id: TaskStatus; children: ReactNode }) {
   const { setNodeRef, isOver } = useDroppable({ id });
-  return <div ref={setNodeRef} className={"task-col" + (isOver ? " dnd-over" : "")}>{children}</div>;
+  return <div ref={setNodeRef} data-col={id} className={"task-col" + (isOver ? " dnd-over" : "")}>{children}</div>;
+}
+
+// ---- Board card pieces (the redesign's layout: number, title, brand and
+// format chips, then who / when / the clock). Display only — every action and
+// rule on the card is unchanged.
+
+const tbSvg = (d: ReactNode, size = 15) => (
+  <svg className="tb-ic" width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">{d}</svg>
+);
+const TB_ICON = {
+  board: tbSvg(<><rect x="3" y="4" width="18" height="16" rx="2" /><path d="M9 4v16M15 4v16" /></>),
+  list: tbSvg(<path d="M8 6h13M8 12h13M8 18h13M3 6h.01M3 12h.01M3 18h.01" />),
+  calendar: tbSvg(<><rect x="3" y="5" width="18" height="16" rx="2" /><path d="M16 3v4M8 3v4M3 10h18" /></>),
+  me: tbSvg(<><circle cx="12" cy="8" r="4" /><path d="M4 21a8 8 0 0 1 16 0" /></>),
+  team: tbSvg(<><circle cx="9" cy="8" r="3.5" /><path d="M2.5 20a6.5 6.5 0 0 1 13 0M16 4.5a3.5 3.5 0 0 1 0 7M18 14.5a6.5 6.5 0 0 1 3.5 5.5" /></>),
+  overdue: tbSvg(<><circle cx="12" cy="12" r="9" /><path d="M12 7v5M12 16h.01" /></>),
+  due: tbSvg(<><rect x="3" y="5" width="18" height="16" rx="2" /><path d="M16 3v4M8 3v4M3 10h18" /></>, 14),
+  search: tbSvg(<><circle cx="11" cy="11" r="7" /><path d="m20 20-3.5-3.5" /></>),
+  plus: tbSvg(<path d="M12 5v14M5 12h14" />, 16),
+  hold: tbSvg(<path d="M9 5v14M15 5v14" />, 12),
+  close: tbSvg(<path d="M18 6 6 18M6 6l12 12" />, 14),
+  chevron: tbSvg(<path d="m6 9 6 6 6-6" />, 16),
+  hourglass: tbSvg(<path d="M6 3h12M6 21h12M7 3c0 5 10 5 10 9s-10 4-10 9M17 3c0 5-10 5-10 9s10 4 10 9" />, 13),
+  note: tbSvg(<><path d="M4 20h4l10-10-4-4L4 16z" /><path d="M13 7l4 4" /></>, 15),
+  addTask: tbSvg(<><rect x="4" y="4" width="16" height="16" rx="3" /><path d="M12 8v8M8 12h8" /></>, 20),
+  status: tbSvg(<><circle cx="12" cy="12" r="8" /><circle cx="12" cy="12" r="3" /></>, 15),
+  person: tbSvg(<><circle cx="12" cy="8" r="4" /><path d="M4 21a8 8 0 0 1 16 0" /></>, 15),
+  event: tbSvg(<><rect x="3" y="5" width="18" height="16" rx="2" /><path d="M16 3v4M8 3v4M3 10h18" /></>, 15),
+  tag: tbSvg(<path d="M4 9h16M4 15h16M10 3 8 21M16 3l-2 18" />, 15),
+  category: tbSvg(<><rect x="3" y="3" width="7" height="7" rx="1.5" /><rect x="14" y="3" width="7" height="7" rx="1.5" /><rect x="3" y="14" width="7" height="7" rx="1.5" /><circle cx="17.5" cy="17.5" r="3.5" /></>, 15),
+  flag: tbSvg(<path d="M5 21V4h11l-2 4 2 4H5" />, 15),
+  link: tbSvg(<><path d="M10 13a5 5 0 0 0 7.5.5l3-3a5 5 0 0 0-7-7l-1.7 1.7" /><path d="M14 11a5 5 0 0 0-7.5-.5l-3 3a5 5 0 0 0 7 7l1.7-1.7" /></>, 15),
+  repeat: tbSvg(<><path d="m17 2 4 4-4 4" /><path d="M3 11v-1a4 4 0 0 1 4-4h14M7 22l-4-4 4-4" /><path d="M21 13v1a4 4 0 0 1-4 4H3" /></>, 15),
+  star: tbSvg(<path d="m12 3 2.7 5.6 6.1.9-4.4 4.3 1 6.1L12 17l-5.4 2.9 1-6.1-4.4-4.3 6.1-.9z" />, 15),
+  clock: tbSvg(<><circle cx="12" cy="12" r="9" /><path d="M12 7v5l3 2" /></>, 17),
+  check: tbSvg(<path d="M20 6 9 17l-5-5" />, 15),
+  info: tbSvg(<><circle cx="12" cy="12" r="9" /><path d="M12 16v-4M12 8h.01" /></>, 15),
+};
+
+// The number people know a task by: its brand's SID/AID/SVID/PID, else the TID.
+function taskRef(t: Task) {
+  return t.sid ? showId(t.sid) : t.ad_id ? showId(t.ad_id) : t.svid ?? t.pid ?? t.tid;
+}
+
+// Initials avatar (or photo) — the same look on cards, list rows and pickers.
+function Ava({ name, image, size = 26 }: { name: string | null; image?: string | null; size?: number }) {
+  if (image) return <img className="tb-ava" src={image} alt="" style={{ width: size, height: size }} />;
+  const ini = name ? name.split(/\s+/).map((w) => w[0]).join("").slice(0, 2).toUpperCase() : "?";
+  return (
+    <span className="tb-ava init" style={{ width: size, height: size, fontSize: Math.round(size * 0.36), background: name ? brandDot(name) : undefined }}>{ini}</span>
+  );
+}
+
+// One colour per brand, by name, for the brand chip's dot.
+const BRAND_DOTS = ["#7c3aed", "#16a34a", "#2563eb", "#d97706", "#db2777", "#0891b2", "#9333ea", "#ea580c"];
+function brandDot(name: string) {
+  let h = 0;
+  for (const c of name) h = (h * 31 + c.charCodeAt(0)) >>> 0;
+  return BRAND_DOTS[h % BRAND_DOTS.length];
+}
+
+// "Today", "Tomorrow", "Overdue · 2d", or "Fri 23 Oct".
+function dueText(due: string) {
+  const late = daysOverdue(due);
+  if (late > 0) return `Overdue · ${late}d`;
+  if (late === 0) return "Today";
+  if (late === -1) return "Tomorrow";
+  return new Date(due + "T00:00:00").toLocaleDateString("en-GB", { weekday: "short", day: "numeric", month: "short" });
+}
+
+// How much of a running task's time budget is used, 0–1 (break time doesn't count).
+function budgetFrac(t: Task, nowMs: number) {
+  if (t.budget_hours == null || !t.budget_started_at) return 0;
+  const used = nowMs - new Date(t.budget_started_at).getTime() - breakOffsetMs(t, nowMs);
+  return Math.max(0, Math.min(1, used / (Number(t.budget_hours) * 3_600_000)));
+}
+
+// The card's clock: a small ring for the share of the budget used, and the
+// same countdown text as before (time left, over, paused, or when it starts).
+function TaskClock({ t, nowMs }: { t: Task; nowMs: number }) {
+  const ring = (frac: number, tone: string) => (
+    <svg className={"tb-ring " + tone} viewBox="0 0 20 20" aria-hidden="true">
+      <circle cx="10" cy="10" r="7.5" className="tb-ring-track" />
+      {frac > 0 && <circle cx="10" cy="10" r="7.5" className="tb-ring-fill" strokeDasharray={`${(frac * 47.1).toFixed(1)} 47.1`} />}
+    </svg>
+  );
+  if (t.status === "done") {
+    return <span className="task-timer done" title="Done">{ring(1, "done")}</span>;
+  }
+  // Accepted but not started: its timer waits for ▶ Start.
+  if (t.status === "todo" && t.accepted && t.budget_hours != null && !t.budget_started_at) {
+    return <span className="task-timer" title="The timer starts when the task is started">{ring(0, "")}{fmtHours(Number(t.budget_hours))}h</span>;
+  }
+  const b = budgetInfo(t, nowMs);
+  if (!b) return null;
+  const cls = b.over ? " over" : b.paused ? " paused" : b.scheduled ? "" : " running";
+  const title = b.scheduled
+    ? "Timer hasn't started yet"
+    : b.over
+      ? "Ran past its allotted time — needs follow-up"
+      : b.paused
+        ? "Paused — the assignee is on a break"
+        : "Time remaining";
+  return (
+    <span className={"task-timer" + cls} title={title}>
+      {ring(b.scheduled ? 0 : b.over ? 1 : budgetFrac(t, nowMs), cls.trim())}
+      {b.scheduled ? b.label : b.over ? `${b.label} over` : `${b.label} left`}
+    </span>
+  );
 }
 
 // Wraps a card so it can be dragged. The drag listeners live on this wrapper;
@@ -334,6 +452,17 @@ export function TasksPage() {
   // "New Task" (and every per-column ＋) opens the full categorized creation
   // card — Social/Ads → Brand → Content Type. Every new task starts in To Do.
   const startNewTask = () => { setSelectedId(null); setCreating(true); };
+  // The sidebar's New task button lands here with { newTask: true }: open the
+  // sheet once, then clear the flag so Back or a refresh doesn't reopen it.
+  const location = useLocation();
+  const navigate = useNavigate();
+  const wantsNewTask = !!(location.state as { newTask?: boolean } | null)?.newTask;
+  useEffect(() => {
+    if (!wantsNewTask) return;
+    if (canWrite) startNewTask();
+    navigate(location.pathname + location.search, { replace: true, state: null });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [wantsNewTask]);
   const selectedTask = (tasks ?? []).find((t) => t.id === selectedId) ?? null;
   // Dual-confirmation prompt when accepting would run the budget past office
   // close — null when no prompt is showing.
@@ -395,25 +524,8 @@ export function TasksPage() {
   );
   const filtered = useMemo(
     () => {
-      const q = search.trim().toLowerCase();
-      const list = effective.filter((t) => {
-        if (scope === "mine" && (!user?.editorId || t.editor_id !== user.editorId)) return false;
-        if (filterEditor && t.editor_id !== filterEditor) return false;
-        if (filterType && t.task_type !== filterType) return false;
-        if (filterFormat && t.content_format_id !== filterFormat) return false;
-        if (!matchesDueTab(t, dueTab, now)) return false;
-        if (q) {
-          const hit =
-            t.title.toLowerCase().includes(q) ||
-            (t.description ?? "").toLowerCase().includes(q) ||
-            t.tid?.toLowerCase().includes(q) ||
-            t.sid?.toLowerCase().includes(q) ||
-            t.ad_id?.toLowerCase().includes(q) ||
-            t.svid?.toLowerCase().includes(q);
-          if (!hit) return false;
-        }
-        return true;
-      });
+      const f: BoardFilters = { mine: scope === "mine", editorId: user?.editorId ?? null, editor: filterEditor, type: filterType, format: filterFormat, q: search.trim().toLowerCase() };
+      const list = effective.filter((t) => passesFilters(t, f) && matchesDueTab(t, dueTab, now));
       // Sort only matters for List view — Board/Calendar group by column/day
       // instead, so this is a no-op there but harmless to always apply.
       const cmp: Record<string, (a: Task, b: Task) => number> = {
@@ -437,15 +549,36 @@ export function TasksPage() {
     const all = scope === "mine"
       ? (tasks ?? []).filter((t) => !!user?.editorId && t.editor_id === user.editorId)
       : (tasks ?? []);
-    let social = 0, ad = 0, pendingOverdue = 0;
+    let social = 0, ad = 0, pendingOverdue = 0, open = 0, openSocial = 0, openAd = 0;
     for (const t of all) {
       if (t.task_type === "social") social++;
       if (t.task_type === "ad") ad++;
+      if (t.status !== "done") {
+        open++;
+        if (t.task_type === "social") openSocial++;
+        if (t.task_type === "ad") openAd++;
+      }
       const overdue = t.status !== "done" && !!t.due_date && t.due_date < today();
       if (overdue || isOverBudget(t, nowMs)) pendingOverdue++;
     }
-    return { total: all.length, social, ad, pendingOverdue };
+    return { total: all.length, social, ad, pendingOverdue, open, openSocial, openAd };
   }, [tasks, nowMs, scope, user?.editorId]);
+
+  // What's on screen right now, for the line beside New task.
+  const shownPending = useMemo(
+    () => filtered.filter((t) => (t.status !== "done" && !!t.due_date && t.due_date < today()) || isOverBudget(t, nowMs)).length,
+    [filtered, nowMs],
+  );
+  // The number on each due chip: open work in that window, under every other filter.
+  const dueCounts = useMemo(() => {
+    const f: BoardFilters = { mine: scope === "mine", editorId: user?.editorId ?? null, editor: filterEditor, type: filterType, format: filterFormat, q: search.trim().toLowerCase() };
+    const base = effective.filter((t) => t.status !== "done" && passesFilters(t, f));
+    const out: Partial<Record<DueTab, number>> = {};
+    for (const d of DUE_TABS) out[d.key] = base.filter((t) => matchesDueTab(t, d.key, now)).length;
+    return out;
+  }, [effective, scope, user?.editorId, filterEditor, filterType, filterFormat, now, search]);
+  const filtersOn = !!search.trim() || dueTab !== "all" || !!filterType || !!filterFormat;
+  const clearFilters = () => { setSearch(""); setDueTab("all"); setFilterType(""); setFilterFormat(""); };
 
   // Both the ←/→ links and drag-and-drop call this — one PATCH path, so the
   // backend side effects (completion timestamp, recurring spawn, activity log)
@@ -650,42 +783,31 @@ export function TasksPage() {
   }
 
   return (
-    <section className="screen">
-      {/* Always visible, never competes for space with the filters below —
-          search and creating a task are the two things you reach for most. */}
-      <div className="toolbar-primary">
-        <div className="search" style={{ maxWidth: 420 }}>
-          🔎
-          <input
-            placeholder="Search by TID / SID / AID / SVID / title…"
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-          />
+    <section className="screen tb">
+      {/* The open totals, above the toolbar as in the redesign's header. */}
+      <div className="tb-head">
+        <div className="tb-stats" aria-label="Open work">
+          <span className="tb-stat"><b>{taskCounts.open}</b> open</span>
+          <span className="tb-stat"><b>{taskCounts.openSocial}</b> social</span>
+          <span className="tb-stat"><b>{taskCounts.openAd}</b> ads</span>
+          {taskCounts.pendingOverdue > 0 && <span className="tb-stat bad"><b>{taskCounts.pendingOverdue}</b> pending/overdue</span>}
         </div>
-        <div className="toolbar-summary">
-          <span><b>{taskCounts.total}</b> total</span>
-          <span className="dot-sep">·</span>
-          <span><b>{taskCounts.social}</b> social</span>
-          <span className="dot-sep">·</span>
-          <span><b>{taskCounts.ad}</b> ad</span>
-          <span className="dot-sep">·</span>
-          <span className={taskCounts.pendingOverdue > 0 ? "toolbar-summary-alert" : undefined}><b>{taskCounts.pendingOverdue}</b> pending/overdue</span>
-        </div>
-        {canWrite && (
-          <button className="btn btn-primary" style={{ marginLeft: "auto" }} onClick={() => startNewTask()}>
-            ＋ Add Task
-          </button>
-        )}
       </div>
-
-      {/* Filters — each group is its own pill/tab cluster and wraps onto a
-          new line if it doesn't fit, instead of forcing a horizontal scrollbar. */}
-      <div className="toolbar-filters">
-        <div className="seg">
-          <button className={scope === "mine" ? "on" : ""} onClick={() => setScopeAndPersist("mine")}>🙋 My Tasks</button>
+      {/* The redesign's toolbar card. First row: how to look at the board
+          (view, whose tasks, when they're due). Second row: search, type and
+          format, then what's shown and a new task. */}
+      <div className="tb-bar">
+        <div className="tb-row">
+        <div className="seg tb-views" role="group" aria-label="View">
+          <button className={view === "board" ? "on" : ""} onClick={() => setView("board")}>{TB_ICON.board} Board</button>
+          <button className={view === "list" ? "on" : ""} onClick={() => setView("list")}>{TB_ICON.list} List</button>
+          <button className={view === "calendar" ? "on" : ""} onClick={() => setView("calendar")}>{TB_ICON.calendar} Calendar</button>
+        </div>
+        <div className="seg tb-scope">
+          <button className={scope === "mine" ? "on" : ""} onClick={() => setScopeAndPersist("mine")}>{TB_ICON.me} My tasks</button>
           <div className="team-btn-wrap" ref={teamMenuRef}>
             <button className={"team-btn" + (scope === "team" ? " on" : "")} onClick={onTeamClick}>
-              👥 {filteredEditorName ?? "Team"}
+              {TB_ICON.team} {filteredEditorName ?? "Team"}
               {scope === "team" && <span className="team-btn-caret">▾</span>}
             </button>
             {teamMenuOpen && (
@@ -711,18 +833,37 @@ export function TasksPage() {
             )}
           </div>
         </div>
-        <div className="seg tabseg">
-          {DUE_TABS.map((d) => (
-            <button key={d.key} className={dueTab === d.key ? "on" : ""} onClick={() => setDueTab(d.key)}>
-              {d.label}
-            </button>
-          ))}
+        <div className="tb-chips" role="group" aria-label="Due">
+          {DUE_TABS.map((d) => {
+            const n = dueCounts[d.key] ?? 0;
+            return (
+              <button key={d.key} type="button" aria-pressed={dueTab === d.key}
+                className={"tb-chip" + (dueTab === d.key ? " on" : "") + (d.key === "overdue" ? " over" : "")} onClick={() => setDueTab(d.key)}>
+                {d.key === "overdue" ? TB_ICON.overdue : d.key === "all" ? null : TB_ICON.due} {d.label}
+                {d.key !== "all" && n > 0 && <span className="tb-chip-n">{n}</span>}
+              </button>
+            );
+          })}
         </div>
+        </div>
+        <div className="tb-row">
+        <label className="search tb-search">
+          {TB_ICON.search}
+          <input
+            placeholder="Search TID / SID / AID / SVID / title…"
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            aria-label="Search tasks"
+          />
+          {search && (
+            <button type="button" className="tb-search-x" onClick={() => setSearch("")} aria-label="Clear the search" title="Clear the search">{TB_ICON.close}</button>
+          )}
+        </label>
         <select
-          className="t"
-          style={{ maxWidth: 145 }}
+          className={"t tb-select" + (filterType ? " on" : "")}
           value={filterType}
           onChange={(e) => setFilterType(e.target.value as TaskType | "")}
+          aria-label="Task type"
         >
           <option value="">All task types</option>
           {(Object.keys(TYPE_LABEL) as TaskType[]).map((tt) => (
@@ -730,10 +871,10 @@ export function TasksPage() {
           ))}
         </select>
         <select
-          className="t"
-          style={{ maxWidth: 135 }}
+          className={"t tb-select" + (filterFormat ? " on" : "")}
           value={filterFormat}
           onChange={(e) => setFilterFormat(e.target.value)}
+          aria-label="Format"
         >
           <option value="">All formats</option>
           {(contentFormats ?? []).map((f) => (
@@ -741,18 +882,21 @@ export function TasksPage() {
           ))}
         </select>
         {view === "list" && (
-          <select className="t" style={{ maxWidth: 150 }} value={sortBy} onChange={(e) => setSortBy(e.target.value)} title="Sort tasks">
+          <select className="t tb-select" value={sortBy} onChange={(e) => setSortBy(e.target.value)} title="Sort tasks" aria-label="Sort tasks">
             {SORTS.map((s) => (<option key={s.value} value={s.value}>↕ {s.label}</option>))}
           </select>
         )}
-        {/* No marginLeft:auto here on purpose — List view adds the Sort select
-            above, which can push this row past one line; auto-margin would
-            then strand this toggle alone on its own wrapped line instead of
-            flowing naturally with whatever else wrapped. */}
-        <div className="seg">
-          <button className={view === "board" ? "on" : ""} onClick={() => setView("board")}>🗂️ Board</button>
-          <button className={view === "list" ? "on" : ""} onClick={() => setView("list")}>☰ List</button>
-          <button className={view === "calendar" ? "on" : ""} onClick={() => setView("calendar")}>📅 Calendar</button>
+        {filtersOn && <button type="button" className="tb-clear" onClick={clearFilters}>Clear filters</button>}
+        <span className="tb-grow" />
+        <span className="tb-count" title={`${taskCounts.total} in all · ${taskCounts.social} social · ${taskCounts.ad} ad`}>
+          <b>{filtered.length}</b> {filtered.length === 1 ? "task" : "tasks"}
+          {shownPending > 0 && <> · <span className="tb-count-alert"><b>{shownPending}</b> pending/overdue</span></>}
+        </span>
+        {canWrite && (
+          <button className="tb-new" onClick={() => startNewTask()}>
+            {TB_ICON.plus} New task
+          </button>
+        )}
         </div>
       </div>
 
@@ -769,10 +913,10 @@ export function TasksPage() {
         <div className="hint">Loading…</div>
       ) : tasks.length === 0 ? (
         <div className="card pad" style={{ color: "var(--muted)", fontSize: 13.5 }}>
-          No tasks yet. Click <b>＋ Add Task</b> to assign your first daily task to a team member.
+          No tasks yet. Click <b>＋ New task</b> to assign your first daily task to a team member.
         </div>
       ) : view === "list" ? (
-        <TaskList tasks={filtered} onOpen={openTask} />
+        <TaskList tasks={filtered} onOpen={openTask} nowMs={nowMs} />
       ) : view === "calendar" ? (
         <TaskCalendar tasks={filtered} onOpen={openTask} />
       ) : (
@@ -807,23 +951,97 @@ export function TasksPage() {
                 {items.map((t) => {
                   const overdue =
                     t.status !== "done" && t.due_date && t.due_date < today();
+                  // The number people know it by (the TID is in the tooltip).
+                  const ref = taskRef(t);
+                  const mineOnly = scope === "mine" && t.editor_id === user?.editorId;
+                  // Waiting on the assignee to accept: their Accept button, or a
+                  // note for everyone else. Otherwise the card shows its clock.
+                  const acceptSlot = t.editor_id && !t.accepted ? (
+                    user?.editorId === t.editor_id ? (
+                      <button
+                        type="button"
+                        className="tb-act pri"
+                        onClick={(e) => { e.stopPropagation(); handleAccept(t); }}
+                      >
+                        {TB_ICON.check} Accept
+                      </button>
+                    ) : (
+                      <span className="tb-act pill" title="Waiting for the assignee to accept">{TB_ICON.hourglass} Pending accept</span>
+                    )
+                  ) : null;
+                  const subtaskSlot = t.subtask_total > 0 && (
+                    <span className={"task-check" + (t.subtask_done === t.subtask_total ? " full" : "")} title="Checklist">
+                      ☑ {t.subtask_done}/{t.subtask_total}
+                    </span>
+                  );
+                  const actions = (() => {
+                    const canPrev = ci > 0 && canTransition(t, COLUMNS[ci - 1].key);
+                    const canNext = ci < COLUMNS.length - 1 && canTransition(t, COLUMNS[ci + 1].key);
+                    // An admin, or the task's own assignee, can park (Hold)
+                    // or resume an in-progress task — it stays In Progress;
+                    // Hold pauses its timer. Same "is this mine" check the
+                    // forward-move buttons use (isOwner).
+                    // A hold someone else applied (an admin) is theirs to lift,
+                    // not the assignee's — mirrors the server.
+                    const heldByOther = !canHoldAny && t.on_hold && !!t.held_by && t.held_by !== user?.id;
+                    const holdCtrl = (isAdmin || isOwner(t) || canHoldAny) && t.status === "in_progress" ? (
+                      t.on_hold ? (
+                        heldByOther ? (
+                          <span className="tb-act mute" title="Only an admin can resume it">
+                            ⏸ Held by {t.held_by_name ?? "an admin"}
+                          </span>
+                        ) : (
+                          <button className="tb-act ghost" onClick={() => toggleHold(t, false)}>▶ Resume</button>
+                        )
+                      ) : (
+                        <button className="tb-act ghost" onClick={() => toggleHold(t, true)}>⏸ Hold</button>
+                      )
+                    ) : null;
+                    if (!canPrev && !canNext && !holdCtrl) {
+                      // In review but this isn't an admin's view — nothing
+                      // to do here but wait.
+                      return t.status === "review" ? <span className="tb-act mute">{TB_ICON.hourglass} Waiting for review</span> : null;
+                    }
+                    // Start is the main action; moving on to review is a link;
+                    // approving is green; going back is quiet.
+                    const nextKind = t.status === "todo" ? "pri" : t.status === "review" ? "good" : "link";
+                    return (
+                      <>
+                        {canPrev && (
+                          <button className="tb-act ghost" onClick={() => move(t, COLUMNS[ci - 1].key)}>
+                            ← {COLUMNS[ci - 1].label}
+                          </button>
+                        )}
+                        {holdCtrl}
+                        {canNext && (
+                          <button className={"tb-act next " + nextKind} onClick={() => move(t, COLUMNS[ci + 1].key)}>
+                            {t.status === "todo" ? "▶ Start" : t.status === "review" ? <>{TB_ICON.check} {COLUMNS[ci + 1].label}</> : `${COLUMNS[ci + 1].label} →`}
+                          </button>
+                        )}
+                      </>
+                    );
+                  })();
                   const cardInner = (
-                    <div className={"task-card pri-" + t.priority + (selectedId === t.id ? " selected" : "")} key={t.id} onClick={() => openTask(t)}>
+                    <div
+                      className={"task-card pri-" + t.priority + " st-" + t.status + (overdue ? " is-over" : "") + (selectedId === t.id ? " selected" : "")}
+                      key={t.id}
+                      onClick={() => openTask(t)}
+                    >
                       <div className="task-top">
-                        <span className="task-pri-group">
-                          <span className={"task-pri-dot " + t.priority} />
-                          <span className={"task-pri-label" + (t.priority === "high" ? " high" : "")}>{PRI_LABEL[t.priority]}</span>
-                        </span>
-                        <span className="task-kind">
-                          {TYPE_ICON[t.task_type]} {TYPE_LABEL[t.task_type]}
-                          {t.content_format_name && <> · {t.content_format_icon} {t.content_format_name}</>}
-                          {t.content_type && <> · {CONTENT_LABEL(t.content_type)}</>}
-                        </span>
+                        <span className="tb-ref" title={t.tid && t.tid !== ref ? `${t.tid}` : undefined}>{ref}</span>
+                        {t.revision > 1 && <span className="tb-rev" title="Sent back for rework">Rev {t.revision}</span>}
+                        {t.on_hold && (
+                          <span className="task-hold-badge" title={t.held_by_name ? `Held by ${t.held_by_name} — its timer is paused` : "This task is on hold — its timer is paused"}>
+                            {TB_ICON.hold} On hold
+                          </span>
+                        )}
                         <span className="task-flags">
                           {t.post_id && <span title="Auto-created from a post">📄</span>}
                           {t.recurrence !== "none" && <span title={`Repeats ${t.recurrence}`}>🔁</span>}
                           {t.self_created && <span title="Created by the assignee for themselves">🙋</span>}
                         </span>
+                        <span className="tb-grow" />
+                        <span className={"tb-pri " + t.priority} title={`${PRI_LABEL[t.priority]} priority`}><span className="tb-pri-dot" />{PRI_LABEL[t.priority]}</span>
                         {canDeleteTask(t) && (
                           <button
                             className="task-x"
@@ -835,14 +1053,21 @@ export function TasksPage() {
                         )}
                       </div>
                       <div className="task-title">{t.title}</div>
-                      {t.on_hold && (
-                        <div className="task-hold-badge" title={t.held_by_name ? `Held by ${t.held_by_name} — its timer is paused` : "This task is on hold — its timer is paused"}>
-                          ⏸ On hold
-                        </div>
-                      )}
+                      <div className="tb-chips-row">
+                        {t.channel_name && (
+                          <span className="tb-tag"><span className="tb-dot" style={{ background: brandDot(t.channel_name) }} />{t.channel_name}</span>
+                        )}
+                        <span className="tb-tag" title={TYPE_LABEL[t.task_type]}>
+                          {t.content_format_name ? <>{t.content_format_icon} {t.content_format_name}</> : <>{TYPE_ICON[t.task_type]} {TYPE_LABEL[t.task_type]}</>}
+                        </span>
+                        {t.content_type && <span className="tb-tag">{CONTENT_LABEL(t.content_type)}</span>}
+                        {t.platforms?.length > 0 && (
+                          <span className="tb-tag task-plats">{t.platforms.map((p) => PLATFORM_META[p]?.icon ?? "").join(" ")}</span>
+                        )}
+                      </div>
                       {t.pending_note && (
                         <div className="task-rework-note" title={t.pending_note}>
-                          📝 Rework: {t.pending_note}
+                          {TB_ICON.note}<span>Rework: {t.pending_note}</span>
                         </div>
                       )}
                       {t.status === "review" && t.review_started_at && (() => {
@@ -852,133 +1077,34 @@ export function TasksPage() {
                             className={"task-review-wait" + (wait >= SLOW_REVIEW_MS ? " slow" : "")}
                             title="How long this has been waiting for a reviewer. This time doesn't count against the assignee."
                           >
-                            ⏳ Waiting for review {fmtWait(wait)}
+                            {TB_ICON.hourglass} Waiting for review {fmtWait(wait)}
                           </div>
                         );
                       })()}
-                      {(t.tid || t.sid || t.ad_id || t.revision > 1) && (
-                        <div className="task-ids">
-                          {t.tid && <span>{t.tid}</span>}
-                          {t.sid && <><span className="dot-sep">·</span><span>{showId(t.sid)}</span></>}
-                          {t.ad_id && <><span className="dot-sep">·</span><span>{showId(t.ad_id)}</span></>}
-                          {t.svid && <><span className="dot-sep">·</span><span>{t.svid}</span></>}
-                          {t.revision > 1 && <><span className="dot-sep">·</span><span title="Sent back for rework" style={{ color: "var(--amber)" }}>Rev {t.revision}</span></>}
-                        </div>
-                      )}
                       <div className="task-meta">
                         {/* Every card in "My Tasks" is already yours — showing your own name on each one is noise */}
-                        {!(scope === "mine" && t.editor_id === user?.editorId) && (
-                          <Assignee name={t.editor_name} image={t.editor_image} />
-                        )}
-                        {t.due_date && (
-                          <span className={"task-due" + (overdue ? " over" : "")}>
-                            📅 {t.due_date}
-                            {overdue && ` · ${daysOverdue(t.due_date!)}d overdue`}
+                        {!mineOnly && (
+                          <span className="tb-who" title={t.editor_name ?? "Unassigned"}>
+                            <Ava name={t.editor_name} image={t.editor_image} />
                           </span>
                         )}
-                        {t.platforms?.length > 0 && (
-                          <span className="task-plats">{t.platforms.map((p) => PLATFORM_META[p]?.icon ?? "").join(" ")}</span>
-                        )}
+                        {t.status === "done" ? (
+                          <span className="task-due done" title={t.completed_at ? `Done ${new Date(t.completed_at).toLocaleString()}` : "Done"}>{TB_ICON.due} Done</span>
+                        ) : t.due_date ? (
+                          <span className={"task-due" + (overdue ? " over" : t.due_date === today() ? " today" : "")} title={t.due_date}>
+                            {TB_ICON.due} {dueText(t.due_date)}
+                          </span>
+                        ) : null}
+                        <span className="tb-grow" />
+                        {subtaskSlot}
+                        {!acceptSlot && <TaskClock t={t} nowMs={nowMs} />}
                       </div>
-                      {(() => {
-                        const acceptSlot = t.editor_id && !t.accepted ? (
-                          user?.editorId === t.editor_id ? (
-                            <button
-                              type="button"
-                              className="btn btn-primary btn-sm"
-                              onClick={(e) => { e.stopPropagation(); handleAccept(t); }}
-                            >
-                              ✓ Accept
-                            </button>
-                          ) : (
-                            <span className="task-check" title="Waiting for the assignee to accept">⏳ Pending accept</span>
-                          )
-                        ) : (() => {
-                          // Accepted but not started: its timer waits for ▶ Start.
-                          if (t.status === "todo" && t.accepted && t.budget_hours != null && !t.budget_started_at) {
-                            return (
-                              <span className="task-timer" title="The timer starts when the task is started">
-                                ⏱ {fmtHours(Number(t.budget_hours))}h · starts on ▶ Start
-                              </span>
-                            );
-                          }
-                          const b = budgetInfo(t, nowMs);
-                          if (!b) return null;
-                          const cls = b.over ? " over" : b.paused ? " paused" : b.scheduled ? "" : " running";
-                          const title = b.scheduled
-                            ? "Timer hasn't started yet"
-                            : b.over
-                              ? "Ran past its allotted time — needs follow-up"
-                              : b.paused
-                                ? "Paused — the assignee is on a break"
-                                : "Time remaining";
-                          return (
-                            <span className={"task-timer" + cls} title={title}>
-                              {b.scheduled ? `⏱ ${b.label}` : b.over ? `⚠ Pending — ${b.label} over` : b.paused ? `⏸ ${b.label} left` : `⏱ ${b.label} left`}
-                            </span>
-                          );
-                        })();
-                        const subtaskSlot = t.subtask_total > 0 && (
-                          <span className={"task-check" + (t.subtask_done === t.subtask_total ? " full" : "")}>
-                            ☑ {t.subtask_done}/{t.subtask_total}
-                          </span>
-                        );
-                        if (!acceptSlot && !subtaskSlot) return null;
-                        return (
-                          <div className="task-status-row">
-                            {acceptSlot}
-                            {subtaskSlot}
-                          </div>
-                        );
-                      })()}
-                      {(() => {
-                        const canPrev = ci > 0 && canTransition(t, COLUMNS[ci - 1].key);
-                        const canNext = ci < COLUMNS.length - 1 && canTransition(t, COLUMNS[ci + 1].key);
-                        // An admin, or the task's own assignee, can park (Hold)
-                        // or resume an in-progress task — it stays In Progress;
-                        // Hold pauses its timer. Same "is this mine" check the
-                        // forward-move buttons use (isOwner).
-                        // A hold someone else applied (an admin) is theirs to lift,
-                        // not the assignee's — mirrors the server.
-                        const heldByOther = !canHoldAny && t.on_hold && !!t.held_by && t.held_by !== user?.id;
-                        const holdCtrl = (isAdmin || isOwner(t) || canHoldAny) && t.status === "in_progress" ? (
-                          t.on_hold ? (
-                            heldByOther ? (
-                              <span className="hint" style={{ margin: 0 }} title="Only an admin can resume it">
-                                ⏸ Held by {t.held_by_name ?? "an admin"}
-                              </span>
-                            ) : (
-                              <button className="linkbtn" onClick={() => toggleHold(t, false)}>▶ Resume</button>
-                            )
-                          ) : (
-                            <button className="linkbtn" onClick={() => toggleHold(t, true)}>⏸ Hold</button>
-                          )
-                        ) : null;
-                        if (!canPrev && !canNext && !holdCtrl) {
-                          // In review but this isn't an admin's view — nothing
-                          // to do here but wait.
-                          return t.status === "review" ? (
-                            <div className="task-actions">
-                              <span className="hint" style={{ margin: 0 }}>⏳ Waiting for review</span>
-                            </div>
-                          ) : null;
-                        }
-                        return (
-                          <div className="task-actions" onClick={(e) => e.stopPropagation()}>
-                            {canPrev && (
-                              <button className="linkbtn" onClick={() => move(t, COLUMNS[ci - 1].key)}>
-                                ← {COLUMNS[ci - 1].label}
-                              </button>
-                            )}
-                            {holdCtrl}
-                            {canNext && (
-                              <button className="linkbtn" onClick={() => move(t, COLUMNS[ci + 1].key)}>
-                                {t.status === "todo" ? "▶ Start" : `${COLUMNS[ci + 1].label} →`}
-                              </button>
-                            )}
-                          </div>
-                        );
-                      })()}
+                      {(acceptSlot || actions) && (
+                        <div className="task-actions" onClick={(e) => e.stopPropagation()}>
+                          {acceptSlot}
+                          {actions}
+                        </div>
+                      )}
                     </div>
                   );
                   return canMoveStatus(t) ? (
@@ -1687,8 +1813,67 @@ function dueLabel(date: string): string {
   return `Overdue by ${-days} day${-days === 1 ? "" : "s"}`;
 }
 
-function Row({ label, children }: { label: string; children: ReactNode }) {
-  return <div className="tp-row"><span className="tp-label">{label}</span><div className="tp-val">{children}</div></div>;
+function Row({ label, icon, note, children }: { label: string; icon?: ReactNode; note?: string; children: ReactNode }) {
+  return (
+    <div className="tp-row">
+      <span className="tp-label">{icon}<span>{label}{note && <small className="tp2-req">{note}</small>}</span></span>
+      <div className="tp-val">{children}</div>
+    </div>
+  );
+}
+
+// The number a new task will be given, by category.
+const CATEGORY_PREFIX: Record<TaskCategory, string> = { social: "SID", ad: "AID", service: "SVID", project: "PID", admin: "TID" };
+
+// One-tap due dates for a new task: today, tomorrow, and the coming Friday
+// and Monday.
+function quickDues() {
+  const now = new Date();
+  const out = [{ label: "Today", value: ymd(now) }, { label: "Tomorrow", value: ymd(addDays(now, 1)) }];
+  for (const dow of [5, 1]) {
+    let d = addDays(now, 2);
+    while (d.getDay() !== dow) d = addDays(d, 1);
+    out.push({ label: d.toLocaleDateString("en-GB", { weekday: "short", day: "numeric" }), value: ymd(d) });
+  }
+  return out.sort((a, b) => a.value.localeCompare(b.value));
+}
+
+// The time budget as a card: where its clock is, time used so far, and how
+// much of the budget that is. The same numbers the board's ring shows.
+function TimerCard({ t }: { t: Task }) {
+  const [nowMs, setNowMs] = useState(() => Date.now());
+  useEffect(() => {
+    const id = window.setInterval(() => setNowMs(Date.now()), 1000);
+    return () => window.clearInterval(id);
+  }, []);
+  const budgetMs = Number(t.budget_hours) * 3_600_000;
+  const startMs = t.budget_started_at ? new Date(t.budget_started_at).getTime() : null;
+  const b = budgetInfo(t, nowMs);
+  const running = startMs != null && startMs <= nowMs && t.status !== "done";
+  const usedMs = running ? Math.max(0, nowMs - startMs - breakOffsetMs(t, nowMs)) : 0;
+  const frac = t.status === "done" ? 1 : running ? Math.min(1, usedMs / budgetMs) : 0;
+  const tone = t.status === "done" ? "done" : t.on_hold || b?.paused ? "paused" : b?.over ? "over" : running ? "running" : "";
+  const state = t.status === "done" ? "Done"
+    : t.on_hold ? "Paused — on hold"
+    : b?.scheduled ? b.label
+    : !running ? (t.status === "todo" ? "Not started — starts with ▶ Start" : "Not started")
+    : b?.paused ? "Paused — on a break"
+    : t.status === "review" ? "In review"
+    : b?.over ? `Running · ${b.label} over budget`
+    : `Running · ${b?.label ?? ""} left`;
+  const h = Math.floor(usedMs / 3_600_000);
+  const m = Math.floor((usedMs % 3_600_000) / 60_000);
+  const s = Math.floor((usedMs % 60_000) / 1000);
+  return (
+    <div className={"tp2-timer " + tone}>
+      <div className="tp2-timer-top">{TB_ICON.clock}<span>{state}</span><span className="tp2-grow" /><span className="tp2-faint">{fmtHours(Number(t.budget_hours))}h budget</span></div>
+      <div className="tp2-timer-mid">
+        <span className="tp2-timer-n">{t.status === "done" ? "—" : `${h}:${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}`}</span>
+        {t.status !== "done" && <span className="tp2-faint">{Math.round((budgetMs ? usedMs / budgetMs : 0) * 100)}% used</span>}
+      </div>
+      <div className="tp2-bar"><span style={{ width: `${(frac * 100).toFixed(1)}%` }} /></div>
+    </div>
+  );
 }
 
 // A second, richer detail view — the right-side slide-in / centered-create
@@ -1754,6 +1939,15 @@ export function TaskPanel({ mode, task, canWrite, editors, channels, onClose, on
   const [title, setTitle] = useState(task?.title ?? "");
   const [description, setDescription] = useState(task?.description ?? "");
   const [busy, setBusy] = useState(false);
+  // Closing plays the sheet back down (the drawer back out) before the panel
+  // goes, the way it came in. Skipped when the viewer asks for less motion.
+  const [leaving, setLeaving] = useState(false);
+  function close() {
+    if (leaving) return;
+    if (window.matchMedia?.("(prefers-reduced-motion: reduce)").matches) { onClose(); return; }
+    setLeaving(true);
+    window.setTimeout(onClose, creating ? 320 : 220);
+  }
   // New task: whether it needs a delivery link for review. null = follow the
   // chosen content type; set once the assigner ticks/unticks it themselves.
   const [linkOverride, setLinkOverride] = useState<boolean | null>(null);
@@ -1886,236 +2080,289 @@ export function TaskPanel({ mode, task, canWrite, editors, channels, onClose, on
     return c.key !== "done" && !!user?.editorId && task.editor_id === user.editorId && task.accepted;
   });
 
-  const inner = (
-    <div className="tp-body">
-      <div className="tp-head">
-        {creating ? <b style={{ fontSize: 17 }}>New Task</b> : (
-          <div className="tp-due">
-            {task!.due_date ? <><span>📅 {dueLabel(task!.due_date)}</span><small>{task!.due_date}</small></> : <span className="hint" style={{ margin: 0 }}>No due date</span>}
-          </div>
-        )}
-        <div style={{ display: "flex", gap: 8 }}>
-          {!creating && !ro && onDelete && <button className="btn btn-sm" onClick={() => onDelete(task!)}>🗑 Delete</button>}
-          <button className="task-x" onClick={onClose}>✕</button>
-        </div>
-      </div>
-      {!creating && (
-        <div className="tp-idrow">
-          {editCategory && <span className="task-ctype">{CATEGORY_LABEL[editCategory]}</span>}
-          {(task!.content_format_name || task!.content_type) && (
-            <span className="task-ctype">{task!.content_format_name ? `${task!.content_format_icon ?? ""} ${task!.content_format_name}` : CONTENT_LABEL(task!.content_type)}</span>
-          )}
-          {task!.tid && <span className="task-code">{task!.tid}</span>}
-          {task!.sid && <span className="task-code">{showId(task!.sid)}</span>}
-          {task!.ad_id && <span className="task-code">{showId(task!.ad_id)}</span>}
-          {task!.svid && <span className="task-code">{task!.svid}</span>}
-          {task!.pid && <span className="task-code">{task!.pid}</span>}
-          {task!.self_created && <span className="self-chip" title="The assignee created this task for themselves">🙋 Self-created</span>}
-        </div>
-      )}
-      {/* In review, the output is the first thing a reviewer needs. */}
-      {!creating && task!.status === "review" && (
-        task!.delivery_link ? (
-          <a className="btn btn-primary tp-work" href={task!.delivery_link} target="_blank" rel="noopener noreferrer">
-            🔗 Open the work
-          </a>
-        ) : (
-          <div className="hint tp-nowork">
-            {task!.link_required ? "⚠️ No work is attached to this task." : "No link is needed for this task."}
-          </div>
-        )
-      )}
-      {!creating && task!.pending_note && (
-        <div className="task-rework-note" title={task!.pending_note}>
-          📝 Rework: {task!.pending_note}
-        </div>
-      )}
-      {!creating && !ro && briefRo && (
-        <div className="hint tp-locked">
-          🔒 {isDoneTask ? "This task is completed — only an admin can change it."
-            : isOwnerTask ? "This task was assigned to you. You can add your work link, checklist and comments; only an admin can change its details."
-            : "Only an admin can change this task. You can still comment on it."}
-        </div>
-      )}
-      <input className="tp-title" autoFocus={creating} placeholder="Task title…" value={title} disabled={briefRo}
-        onChange={(e) => setTitle(e.target.value)}
-        onBlur={() => { if (!creating && title.trim() && title !== task!.title) patch({ title: title.trim() }); }} />
-      <textarea className="tp-desc" placeholder="Add a description…" value={description} disabled={briefRo}
-        onChange={(e) => setDescription(e.target.value)}
-        onBlur={() => { if (!creating && description !== (task!.description ?? "")) patch({ description }); }} />
+  // The redesign's look: a sheet that rises from the bottom to create a task,
+  // a drawer on the right to view and edit one. Same fields, same rules, same
+  // saves as before — only the arrangement and the controls' look changed.
+  const ic = (x: ReactNode) => (creating ? undefined : x);
+  const pfx = activeCategory ? CATEGORY_PREFIX[activeCategory] : null;
+  const ref = task ? taskRef(task) : null;
+  const otherIds = task ? [task.tid, showId(task.sid), showId(task.ad_id), task.svid, task.pid].filter((x): x is string => !!x && x !== ref) : [];
+  const createHint = !category ? `Choose a category — Social, Ads, Service or Project${isAdmin ? " or Admin" : ""} — to begin.`
+    : adminNeedsRoster ? "You're not on the team roster yet, so an Admin task would have no owner. Add yourself under Settings → Team (Edit on your row) first."
+    : adminTask ? (!title.trim() ? "Add a title — Admin tasks need nothing else." : "Admin task — just for you.")
+    : !draft.channel_id ? "Pick a Brand — Social, Ads, Service and Project tasks are numbered per brand."
+    : !title.trim() ? "Add a task title."
+    : category === "project" && contentTypeChoices.length === 0 ? "No project types exist yet. Add one under Settings → Task Settings → Project first."
+    : category === "project" && !draft.content_format_id ? "Pick a project type."
+    : "Checklist & comments become available after you create the task.";
+  const rule = creating || !task ? ""
+    : task.status === "review" ? (canResolve
+      ? "To approve, set Status to Completed. Sending back for rework needs a note — use the Send back / ← button."
+      : "⏳ Waiting on review.")
+    : task.status === "in_progress" ? "Use Hold on the board to park it — a started task can't go back to To Do."
+    : "";
+  const meEditor = editors.find((ed) => ed.id === user?.editorId);
+  const selfChip = (
+    <span className="tp2-person on static"><Ava name={meEditor?.name ?? "Myself"} image={meEditor?.image_url} size={24} />{meEditor?.name ?? "Myself"}<small>you</small></span>
+  );
+  const overdueEdit = !creating && task!.status !== "done" && !!task!.due_date && task!.due_date < today();
 
-      <div className="tp-fields">
-        {creating && (
-          <Row label="Category">
-            <div className="seg assign-mode-seg">
-              <button type="button" className={category === "social" ? "on" : ""} onClick={() => pickCategory("social")}>📣 Social</button>
-              <button type="button" className={category === "ad" ? "on" : ""} onClick={() => pickCategory("ad")}>💰 Ads</button>
-              <button type="button" className={category === "service" ? "on" : ""} onClick={() => pickCategory("service")}>🧰 Service</button>
-              <button type="button" className={category === "project" ? "on" : ""} onClick={() => pickCategory("project")}>📁 Project</button>
-              {isAdmin && <button type="button" className={category === "admin" ? "on" : ""} onClick={() => pickCategory("admin")}>🛠️ Admin</button>}
-            </div>
-          </Row>
-        )}
-        <Row label="Brand">
-          <select className="t" disabled={briefRo} value={cur.channel_id ?? ""} onChange={(e) => set("channel_id", "channelId", e.target.value || null)}>
-            <option value="">—</option>
-            {channels.map((c) => (<option key={c.id} value={c.id}>{c.name}</option>))}
-          </select>
-        </Row>
-        <Row label="Assignee">
-          {adminTask || adminEdit ? (
-            /* Admin tasks are always self-assigned — no Assign option. */
-            <div className="t autofield">{editors.find((ed) => ed.id === user?.editorId)?.name ?? "Myself"}</div>
-          ) : (
-            <>
-              {/* Admins — and assign_tasks grantees — can assign work to someone
-                  else. Everyone else creates tasks for themselves only. */}
-              {creating && canSelfAssign && canAssign && (
-                <div className="seg assign-mode-seg">
-                  <button type="button" className={assignMode === "self" ? "on" : ""} onClick={() => setMode("self")}>🙋 Myself</button>
-                  <button type="button" className={assignMode === "assign" ? "on" : ""} onClick={() => setMode("assign")}>👥 Assign</button>
-                </div>
-              )}
-              {creating ? (
-                canAssign && assignMode === "assign" ? (
-                  <select className="t" disabled={ro} value={cur.editor_id ?? ""} onChange={(e) => set("editor_id", "editorId", e.target.value || null)}>
-                    <option value="">Unassigned</option>
-                    {editors.map((ed) => (<option key={ed.id} value={ed.id}>{ed.name}</option>))}
-                  </select>
-                ) : (
-                  <div className="t autofield">{editors.find((ed) => ed.id === user?.editorId)?.name ?? "Myself"}</div>
-                )
-              ) : canTake ? (
-                /* Nobody has this task yet — anyone on the team can take it. */
-                <button type="button" className="btn btn-sm" onClick={() => patch({ editorId: user!.editorId })}>🙋 Take this task</button>
-              ) : (
-                <select className="t" disabled={!canReassign} value={cur.editor_id ?? ""} onChange={(e) => set("editor_id", "editorId", e.target.value || null)}>
-                  <option value="">Unassigned</option>
-                  {editors.map((ed) => (<option key={ed.id} value={ed.id}>{ed.name}</option>))}
-                </select>
-              )}
-            </>
-          )}
-        </Row>
-        {isProject && (
-          <Row label="Start Date">
-            <input className="t" type="date" disabled={briefRo} value={cur.start_date ?? ""} onChange={(e) => set("start_date", "startDate", e.target.value || null)} />
-          </Row>
-        )}
-        <Row label="Due Date">
-          <input className="t" type="date" disabled={briefRo} value={cur.due_date ?? ""}
-            min={isProject ? (cur.start_date ?? undefined) : undefined} max={dueMax}
-            onChange={(e) => set("due_date", "dueDate", e.target.value || null)} />
-          {isProject && projectDuration != null && (
-            <span className="hint" style={{ display: "block", marginTop: 4 }}>Within {projectDuration} day{projectDuration === 1 ? "" : "s"} of the Start Date{dueMax ? ` (by ${dueMax})` : ""}.</span>
-          )}
-        </Row>
-        <Row label="Priority">
-          <select className="t" disabled={briefRo} value={cur.priority} onChange={(e) => set("priority", "priority", e.target.value)}>
-            <option value="low">Low</option><option value="medium">Medium</option><option value="high">High</option>
-          </select>
-        </Row>
-        {/* New tasks always start in To Do — the Status control only appears
-            once the task exists (edit mode). */}
-        {!creating && (
-          <Row label="Status">
-            <select className="t" disabled={ro || statusOptions.length <= 1} value={cur.status} onChange={(e) => set("status", "status", e.target.value)}>
-              {statusOptions.map((c) => (<option key={c.key} value={c.key}>{c.label}</option>))}
-            </select>
-          </Row>
-        )}
-        {!creating && task!.status === "review" && (
-          <div className="hint" style={{ margin: "-2px 0 4px" }}>
-            {canResolve
-              ? "To approve, set Status to Completed. Sending back for rework needs a note — use the Send back / ← button."
-              : "⏳ Waiting on review."}
-          </div>
-        )}
-        {!creating && task!.budget_hours != null && (
-          <Row label="Time budget">
-            <div className="autofield">
-              ⏱ {fmtHours(Number(task!.budget_hours))}h{task!.budget_started_at ? `, started ${new Date(task!.budget_started_at).toLocaleString()}` : " — not started"}
-            </div>
-          </Row>
-        )}
-        {!(adminTask || adminEdit) && (
-          <Row label={isProject ? "Project type" : "Content Type"}>
-            {/* Always a dropdown; its options are the content/project types
-                configured in Task Settings for the active category. Disabled
-                until a category is picked (create mode). */}
-            <select className="t" disabled={briefRo} value={cur.content_format_id ?? ""} onChange={(e) => onPickContentType(e.target.value || null)}>
-              <option value="">—</option>
-              {contentTypeChoices.map((f) => (<option key={f.id} value={f.id}>{f.icon} {f.name}{!activeCategory ? ` · ${CATEGORY_LABEL[f.category ?? "social"]}` : ""}</option>))}
-            </select>
-          </Row>
-        )}
-        {/* Whoever assigns work decides if this task needs its output linked
-            before review; everyone else just sees the answer. */}
-        {!(adminTask || adminEdit) && (canAssign || !creating) && (
-          <Row label="Review link">
-            <label className="tp-linkreq">
-              <input
-                type="checkbox"
-                checked={linkRequired}
-                disabled={ro || !canAssign || (isDoneTask && !isAdmin)}
-                onChange={(e) => (creating ? setLinkOverride(e.target.checked) : patch({ reviewLinkRequired: e.target.checked }))}
-              />
-              <span>Required to submit for review</span>
-            </label>
-          </Row>
-        )}
-        {isProject && (
-          <Row label="Points">
-            <div className="t autofield">{projectPoints != null ? projectPoints : "— pick a project type first"}</div>
-          </Row>
-        )}
-        {!creating && !adminEdit && (
-          <Row label="Repeat">
-            <select className="t" disabled={briefRo} value={task!.recurrence} onChange={(e) => patch({ recurrence: e.target.value })}>
-              <option value="none">Doesn't repeat</option><option value="daily">🔁 Daily</option><option value="weekly">🔁 Weekly</option>
-            </select>
-          </Row>
-        )}
-      </div>
-
-      {!(adminTask || adminEdit) && (
-        <Attachments links={cur.attachments} readOnly={!canEditWork} onChange={(next) => set("attachments", "attachments", next)} />
-      )}
-
-      {creating ? (
-        <div className="formfoot" style={{ marginTop: 14 }}>
-          <div className="hint" style={{ margin: 0, flex: 1 }}>
-            {!category ? `Choose a category — Social, Ads, Service or Project${isAdmin ? " or Admin" : ""} — to begin.`
-              : adminNeedsRoster ? "You're not on the team roster yet, so an Admin task would have no owner. Add yourself under Settings → Team (Edit on your row) first."
-              : adminTask ? (!title.trim() ? "Add a title — Admin tasks need nothing else." : "Admin task — just for you.")
-              : !draft.channel_id ? "Pick a Brand — Social, Ads, Service and Project tasks are numbered per brand."
-              : !title.trim() ? "Add a task title."
-              : category === "project" && contentTypeChoices.length === 0 ? "No project types exist yet. Add one under Settings → Task Settings → Project first."
-              : category === "project" && !draft.content_format_id ? "Pick a project type."
-              : "Checklist & comments become available after you create the task."}
-          </div>
-          <button type="button" className="btn" onClick={onClose}>Cancel</button>
-          <button type="button" className="btn btn-primary" disabled={busy || !canCreate} onClick={create}>{busy ? "Creating…" : "Create task"}</button>
-        </div>
+  const statusRow = !creating && (
+    <Row label="Status" icon={TB_ICON.status}>
+      <span className={"tp2-sel-dot st-" + cur.status} />
+      <select className="t" disabled={ro || statusOptions.length <= 1} value={cur.status} onChange={(e) => set("status", "status", e.target.value)}>
+        {statusOptions.map((c) => (<option key={c.key} value={c.key}>{c.label}</option>))}
+      </select>
+    </Row>
+  );
+  const assigneeRow = (
+    <Row label="Assignee" icon={ic(TB_ICON.person)}>
+      {adminTask || adminEdit ? (
+        /* Admin tasks are always self-assigned — no Assign option. */
+        creating ? selfChip : <div className="t autofield">{meEditor?.name ?? "Myself"}</div>
       ) : (
         <>
-          {!task!.post_id && canEditWork && <LinkPostControl taskId={task!.id} onLinked={onChanged} />}
-          <Checklist taskId={task!.id} readOnly={!canEditWork} onChanged={onChanged} />
-          {!adminEdit && <DeliveryLink task={task!} canEdit={canEditDelivery} onChanged={onChanged} />}
-          <ReviewHistory taskId={task!.id} />
-          <Comments taskId={task!.id} readOnly={ro} />
+          {/* Admins — and assign_tasks grantees — can assign work to someone
+              else. Everyone else creates tasks for themselves only. */}
+          {creating && canSelfAssign && canAssign && (
+            <div className="seg assign-mode-seg tp2-seg">
+              <button type="button" className={assignMode === "self" ? "on" : ""} onClick={() => setMode("self")}>🙋 Myself</button>
+              <button type="button" className={assignMode === "assign" ? "on" : ""} onClick={() => setMode("assign")}>👥 Assign</button>
+            </div>
+          )}
+          {creating ? (
+            canAssign && assignMode === "assign" ? (
+              <div className="tp2-people" role="group" aria-label="Assign to">
+                <button type="button" disabled={ro} className={"tp2-person" + (!cur.editor_id ? " on" : "")} onClick={() => set("editor_id", "editorId", null)}>
+                  <span className="tb-ava init none">–</span>Unassigned
+                </button>
+                {editors.map((ed) => (
+                  <button key={ed.id} type="button" disabled={ro} className={"tp2-person" + (cur.editor_id === ed.id ? " on" : "")} onClick={() => set("editor_id", "editorId", ed.id)}>
+                    <Ava name={ed.name} image={ed.image_url} size={24} />{ed.name}
+                  </button>
+                ))}
+              </div>
+            ) : selfChip
+          ) : canTake ? (
+            /* Nobody has this task yet — anyone on the team can take it. */
+            <button type="button" className="btn btn-sm" onClick={() => patch({ editorId: user!.editorId })}>🙋 Take this task</button>
+          ) : (
+            <select className="t" disabled={!canReassign} value={cur.editor_id ?? ""} onChange={(e) => set("editor_id", "editorId", e.target.value || null)}>
+              <option value="">Unassigned</option>
+              {editors.map((ed) => (<option key={ed.id} value={ed.id}>{ed.name}</option>))}
+            </select>
+          )}
         </>
       )}
-    </div>
+    </Row>
+  );
+  const startRow = isProject && (
+    <Row label="Start Date" icon={ic(TB_ICON.event)}>
+      <input className="t tp2-date" type="date" disabled={briefRo} value={cur.start_date ?? ""} onChange={(e) => set("start_date", "startDate", e.target.value || null)} />
+    </Row>
+  );
+  const dueRow = (
+    <Row label="Due Date" icon={ic(TB_ICON.event)}>
+      <div className="tp2-inline">
+        <input className="t tp2-date" type="date" disabled={briefRo} value={cur.due_date ?? ""}
+          min={isProject ? (cur.start_date ?? undefined) : undefined} max={dueMax}
+          onChange={(e) => set("due_date", "dueDate", e.target.value || null)} />
+        {creating && !isProject && !briefRo && quickDues().map((q) => (
+          <button key={q.value} type="button" className={"tp2-pill" + (cur.due_date === q.value ? " on" : "")} onClick={() => set("due_date", "dueDate", q.value)}>{q.label}</button>
+        ))}
+        {!creating && task!.due_date && <span className={"tp2-faint" + (overdueEdit ? " bad" : "")}>{dueLabel(task!.due_date)}</span>}
+      </div>
+      {isProject && projectDuration != null && (
+        <span className="hint" style={{ display: "block", marginTop: 4 }}>Within {projectDuration} day{projectDuration === 1 ? "" : "s"} of the Start Date{dueMax ? ` (by ${dueMax})` : ""}.</span>
+      )}
+    </Row>
+  );
+  const brandRow = (
+    <Row label="Brand" icon={ic(TB_ICON.tag)}>
+      <select className="t tp2-narrow" disabled={briefRo} value={cur.channel_id ?? ""} onChange={(e) => set("channel_id", "channelId", e.target.value || null)}>
+        <option value="">—</option>
+        {channels.map((c) => (<option key={c.id} value={c.id}>{c.name}</option>))}
+      </select>
+    </Row>
+  );
+  const priorityRow = (
+    <Row label="Priority" icon={ic(TB_ICON.flag)}>
+      {creating ? (
+        <div className="tp2-chips" role="group" aria-label="Priority">
+          {(["low", "medium", "high"] as const).map((p) => (
+            <button key={p} type="button" disabled={briefRo} className={"tp2-chip pri-" + p + (cur.priority === p ? " on" : "")} onClick={() => set("priority", "priority", p)}>
+              <span className="tp2-chip-ic">{p === "high" ? "!" : p === "low" ? "↓" : "="}</span>{PRI_LABEL[p]}
+            </button>
+          ))}
+        </div>
+      ) : (
+        <select className="t tp2-narrow" disabled={briefRo} value={cur.priority} onChange={(e) => set("priority", "priority", e.target.value)}>
+          <option value="low">Low</option><option value="medium">Medium</option><option value="high">High</option>
+        </select>
+      )}
+    </Row>
+  );
+  const typeRow = !(adminTask || adminEdit) && (
+    <Row label={isProject ? "Project type" : "Content Type"} icon={ic(TB_ICON.category)}>
+      {/* Always a dropdown; its options are the content/project types
+          configured in Task Settings for the active category. */}
+      <select className="t tp2-narrow" disabled={briefRo} value={cur.content_format_id ?? ""} onChange={(e) => onPickContentType(e.target.value || null)}>
+        <option value="">—</option>
+        {contentTypeChoices.map((f) => (<option key={f.id} value={f.id}>{f.icon} {f.name}{!activeCategory ? ` · ${CATEGORY_LABEL[f.category ?? "social"]}` : ""}</option>))}
+      </select>
+    </Row>
+  );
+  /* Whoever assigns work decides if this task needs its output linked before
+     review; everyone else just sees the answer. */
+  const linkRow = !(adminTask || adminEdit) && (canAssign || !creating) && (
+    <Row label="Review link" icon={ic(TB_ICON.link)}>
+      <label className={"tp-linkreq tp2-switch" + (linkRequired ? " on" : "")}>
+        <input
+          type="checkbox"
+          checked={linkRequired}
+          disabled={ro || !canAssign || (isDoneTask && !isAdmin)}
+          onChange={(e) => (creating ? setLinkOverride(e.target.checked) : patch({ reviewLinkRequired: e.target.checked }))}
+        />
+        <span className="tp2-track" aria-hidden="true"><span /></span>
+        <span>Required to submit for review</span>
+      </label>
+    </Row>
+  );
+  const pointsRow = isProject && (
+    <Row label="Points" icon={ic(TB_ICON.star)}>
+      <div className="t autofield">{projectPoints != null ? projectPoints : "— pick a project type first"}</div>
+    </Row>
+  );
+  const repeatRow = !creating && !adminEdit && (
+    <Row label="Repeat" icon={TB_ICON.repeat}>
+      <select className="t tp2-narrow" disabled={briefRo} value={task!.recurrence} onChange={(e) => patch({ recurrence: e.target.value })}>
+        <option value="none">Doesn't repeat</option><option value="daily">🔁 Daily</option><option value="weekly">🔁 Weekly</option>
+      </select>
+    </Row>
   );
 
-  return creating ? (
-    <div className="task-panel-scrim center" onClick={onClose}>
-      <div className="task-panel centered" onClick={(e) => e.stopPropagation()}>{inner}</div>
-    </div>
-  ) : (
-    <div className="task-panel-scrim" onClick={onClose}>
-      <aside className="task-panel" onClick={(e) => e.stopPropagation()}>{inner}</aside>
+  if (creating) {
+    return (
+      <div className={"task-panel-scrim center tp2-scrim" + (leaving ? " leaving" : "")} onClick={close}>
+        <div className={"task-panel centered tp2 tp2-sheet" + (leaving ? " leaving" : "")} role="dialog" aria-label="New task" onClick={(e) => e.stopPropagation()}>
+          <div className="tp2-grab" aria-hidden="true"><span /></div>
+          <div className="tp2-head">
+            <span className="tp2-headic">{TB_ICON.addTask}</span>
+            <span className="tp2-headtx">
+              <b>New task</b>
+              <span>{pfx ? `${CATEGORY_LABEL[category!]} · gets its ${pfx} number when you create it · starts in To Do` : "Fill in the details below"}</span>
+            </span>
+            <span className="tp2-grow" />
+            <button type="button" className="tp2-x" onClick={close} aria-label="Close">{TB_ICON.close}</button>
+          </div>
+          <div className="tp-body tp2-body">
+            <input className={"tp-title tp2-title" + (title.trim() ? " filled" : "")} autoFocus placeholder="Task title…" value={title}
+              onChange={(e) => setTitle(e.target.value)} />
+            <textarea className="tp-desc tp2-desc" placeholder="Add a description…" value={description} onChange={(e) => setDescription(e.target.value)} />
+            <div className="tp-fields tp2-card">
+              <Row label="Category" note={category ? undefined : "Required"}>
+                <div className="tp2-chips" role="group" aria-label="Category">
+                  <button type="button" className={"tp2-chip" + (category === "social" ? " on" : "")} onClick={() => pickCategory("social")}>📣 Social</button>
+                  <button type="button" className={"tp2-chip" + (category === "ad" ? " on" : "")} onClick={() => pickCategory("ad")}>💰 Ads</button>
+                  <button type="button" className={"tp2-chip" + (category === "service" ? " on" : "")} onClick={() => pickCategory("service")}>🧰 Service</button>
+                  <button type="button" className={"tp2-chip" + (category === "project" ? " on" : "")} onClick={() => pickCategory("project")}>📁 Project</button>
+                  {isAdmin && <button type="button" className={"tp2-chip" + (category === "admin" ? " on" : "")} onClick={() => pickCategory("admin")}>🛠️ Admin</button>}
+                </div>
+              </Row>
+              {brandRow}
+              {assigneeRow}
+              {startRow}
+              {dueRow}
+              {priorityRow}
+              {typeRow}
+              {linkRow}
+              {pointsRow}
+            </div>
+            {!(adminTask || adminEdit) && (
+              <Attachments links={cur.attachments} readOnly={!canEditWork} onChange={(next) => set("attachments", "attachments", next)} />
+            )}
+          </div>
+          <div className="tp2-foot">
+            <span className={"tp2-foot-hint" + (canCreate ? " ok" : "")}>{canCreate ? TB_ICON.check : TB_ICON.info}<span>{createHint}</span></span>
+            <button type="button" className="tp2-btn" onClick={close}>Cancel</button>
+            <button type="button" className="tp2-btn pri" disabled={busy || !canCreate} onClick={create}>{TB_ICON.plus} {busy ? "Creating…" : "Create task"}</button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  const t = task!;
+  return (
+    <div className={"task-panel-scrim tp2-scrim" + (leaving ? " leaving" : "")} onClick={close}>
+      <aside className={"task-panel tp2 tp2-drawer" + (leaving ? " leaving" : "")} aria-label={t.title} onClick={(e) => e.stopPropagation()}>
+        <div className="tp2-dhead">
+          {/* Shrinks (and clips) before the buttons on the right ever do. */}
+          <span className="tp2-crumbs">
+            {t.channel_name && <><span>{t.channel_name}</span><span>/</span></>}
+            <span className="tp2-mono strong">{ref}</span>
+            {otherIds.map((id) => <span key={id} className="tp2-mono">· {id}</span>)}
+            {editCategory && <span className="tp2-tag">{CATEGORY_LABEL[editCategory]}</span>}
+            {t.self_created && <span className="self-chip" title="The assignee created this task for themselves">🙋 Self-created</span>}
+          </span>
+          {!ro && onDelete && <button type="button" className="tp2-hbtn" onClick={() => onDelete(t)}>🗑 Delete</button>}
+          <button type="button" className="tp2-x" onClick={close} aria-label="Close">{TB_ICON.close}</button>
+        </div>
+        <div className="tp-body tp2-body">
+          {/* In review, the output is the first thing a reviewer needs. */}
+          {t.status === "review" && (
+            t.delivery_link ? (
+              <a className="btn btn-primary tp-work" href={t.delivery_link} target="_blank" rel="noopener noreferrer">
+                🔗 Open the work
+              </a>
+            ) : (
+              <div className="hint tp-nowork">
+                {t.link_required ? "⚠️ No work is attached to this task." : "No link is needed for this task."}
+              </div>
+            )
+          )}
+          {t.pending_note && (
+            <div className="task-rework-note" title={t.pending_note}>
+              {TB_ICON.note}<span>Rework: {t.pending_note}</span>
+            </div>
+          )}
+          {!ro && briefRo && (
+            <div className="hint tp-locked">
+              🔒 {isDoneTask ? "This task is completed — only an admin can change it."
+                : isOwnerTask ? "This task was assigned to you. You can add your work link, checklist and comments; only an admin can change its details."
+                : "Only an admin can change this task. You can still comment on it."}
+            </div>
+          )}
+          <input className="tp-title tp2-dtitle" placeholder="Task title…" value={title} disabled={briefRo}
+            onChange={(e) => setTitle(e.target.value)}
+            onBlur={() => { if (title.trim() && title !== t.title) patch({ title: title.trim() }); }} />
+          <textarea className="tp-desc tp2-desc" placeholder="Add a description…" value={description} disabled={briefRo}
+            onChange={(e) => setDescription(e.target.value)}
+            onBlur={() => { if (description !== (t.description ?? "")) patch({ description }); }} />
+          <div className="tp-fields tp2-props">
+            {statusRow}
+            {assigneeRow}
+            {startRow}
+            {dueRow}
+            {brandRow}
+            {priorityRow}
+            {typeRow}
+            {linkRow}
+            {repeatRow}
+            {pointsRow}
+          </div>
+          {t.budget_hours != null && <TimerCard t={t} />}
+          {!adminEdit && (
+            <Attachments links={cur.attachments} readOnly={!canEditWork} onChange={(next) => set("attachments", "attachments", next)} />
+          )}
+          {!t.post_id && canEditWork && <LinkPostControl taskId={t.id} onLinked={onChanged} />}
+          <Checklist taskId={t.id} readOnly={!canEditWork} onChanged={onChanged} />
+          {!adminEdit && <DeliveryLink task={t} canEdit={canEditDelivery} onChanged={onChanged} />}
+          <ReviewHistory taskId={t.id} />
+          <Comments taskId={t.id} readOnly={ro} />
+        </div>
+        {rule && <div className="tp2-dfoot">{TB_ICON.info}<span>{rule}</span></div>}
+      </aside>
     </div>
   );
 }
@@ -2420,47 +2667,59 @@ function bucketTasksByDay(tasks: Task[]) {
   return byDay;
 }
 
-// Phase 2 — dense List view (reuses the .tbl pattern). Search / sort / team
-// filter already apply upstream; clicking a row opens the detail panel.
-function TaskList({ tasks, onOpen }: { tasks: Task[]; onOpen: (t: Task) => void }) {
+// List view, as in the redesign: one group per status (click a group to fold
+// it), the task's number first, then who, brand, priority, due and its clock.
+// Search / sort / team filter already apply upstream, so each group keeps the
+// chosen sort; clicking a row opens the detail panel.
+function TaskList({ tasks, onOpen, nowMs }: { tasks: Task[]; onOpen: (t: Task) => void; nowMs: number }) {
+  const [shut, setShut] = useState<Partial<Record<TaskStatus, boolean>>>({});
+  const groups = COLUMNS.map((c) => ({ ...c, rows: tasks.filter((t) => t.status === c.key) })).filter((g) => g.rows.length > 0);
   return (
-    <div className="card pad" style={{ overflowX: "auto" }}>
-      <table className="tbl task-tbl">
-        <thead>
-          <tr>
-            <th>Task</th><th>Type</th><th>Assignee</th><th>Brand</th>
-            <th>Priority</th><th>Due</th><th>Checklist</th><th>Platforms</th><th>Status</th>
-          </tr>
-        </thead>
-        <tbody>
-          {tasks.length === 0 ? (
-            <tr><td colSpan={9} style={{ textAlign: "center", padding: 26, color: "var(--muted)" }}>No tasks match your search or filters.</td></tr>
-          ) : (
-            tasks.map((t) => {
-              const overdue = t.status !== "done" && t.due_date && t.due_date < today();
-              return (
-                <tr key={t.id} className="clickrow" onClick={() => onOpen(t)}>
-                  <td>
-                    <b>{t.title}</b>{" "}
-                    {t.tid && <span className="task-code">{t.tid}</span>}
-                    {t.sid && <span className="task-code">{showId(t.sid)}</span>}
-                    {t.ad_id && <span className="task-code">{showId(t.ad_id)}</span>}
-                    {t.svid && <span className="task-code">{t.svid}</span>}
-                  </td>
-                  <td>{t.content_format_name ? <span className="task-ctype">{t.content_format_icon} {t.content_format_name}</span> : t.content_type ? <span className="task-ctype">{CONTENT_LABEL(t.content_type)}</span> : <span className="st dim">—</span>}</td>
-                  <td>{t.editor_name ? <Assignee name={t.editor_name} image={t.editor_image} /> : <span className="st dim">—</span>}</td>
-                  <td>{t.channel_name ?? <span className="st dim">—</span>}</td>
-                  <td><span className={"task-pri " + t.priority}>{PRI_LABEL[t.priority]}</span></td>
-                  <td className={overdue ? "num-over" : undefined}>{t.due_date ?? <span className="st dim">—</span>}</td>
-                  <td>{t.subtask_total > 0 ? `${t.subtask_done}/${t.subtask_total}` : <span className="st dim">—</span>}</td>
-                  <td className="task-plats">{t.platforms?.length ? t.platforms.map((p) => PLATFORM_META[p]?.icon ?? "").join(" ") : <span className="st dim">—</span>}</td>
-                  <td><span className={"task-statuschip " + t.status}>{COLUMNS.find((c) => c.key === t.status)?.label}</span></td>
-                </tr>
-              );
-            })
-          )}
-        </tbody>
-      </table>
+    <div className="tb-list">
+      <div className="tb-list-scroll">
+        <div className="tb-list-inner">
+          <div className="tb-lrow tb-lhead" aria-hidden="true">
+            <span>ID</span><span>Title</span><span>Assignee</span><span>Brand</span><span>Priority</span><span>Due</span><span>Checklist</span><span className="r">Time</span>
+          </div>
+          {groups.map((g) => (
+            <div key={g.key} className="tb-lgroup">
+              <button type="button" className={"tb-lgroup-head" + (shut[g.key] ? " shut" : "")} aria-expanded={!shut[g.key]}
+                onClick={() => setShut((s) => ({ ...s, [g.key]: !s[g.key] }))}>
+                {TB_ICON.chevron}<span className={"tdot " + g.key} />{g.label}<span className="tb-lcount">{g.rows.length}</span>
+              </button>
+              {!shut[g.key] && g.rows.map((t) => {
+                const overdue = t.status !== "done" && !!t.due_date && t.due_date < today();
+                const wait = t.status === "review" && t.review_started_at ? reviewWaitMs(t, nowMs) : null;
+                return (
+                  <div key={t.id} className="tb-lrow" role="button" tabIndex={0} onClick={() => onOpen(t)}
+                    onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); onOpen(t); } }}>
+                    <span className="tb-ref" title={t.tid ?? undefined}>{taskRef(t)}</span>
+                    <span className="tb-ltitle">
+                      <b>{t.title}</b>
+                      {t.revision > 1 && <span className="tb-rev">Rev {t.revision}</span>}
+                      {t.on_hold && <span className="task-hold-badge">{TB_ICON.hold} On hold</span>}
+                      {wait != null && <span className={"tb-lwait" + (wait >= SLOW_REVIEW_MS ? " slow" : "")}>{TB_ICON.hourglass} {fmtWait(wait)}</span>}
+                      {(t.content_format_name || t.content_type) && (
+                        <span className="tb-tag">{t.content_format_name ? `${t.content_format_icon ?? ""} ${t.content_format_name}` : CONTENT_LABEL(t.content_type)}</span>
+                      )}
+                      {t.platforms?.length > 0 && <span className="task-plats">{t.platforms.map((p) => PLATFORM_META[p]?.icon ?? "").join(" ")}</span>}
+                    </span>
+                    <span className="tb-lwho">{t.editor_name ? <><Ava name={t.editor_name} image={t.editor_image} size={22} />{t.editor_name}</> : <span className="tb-dim">Unassigned</span>}</span>
+                    <span className="tb-lbrand">{t.channel_name ? <><span className="tb-dot" style={{ background: brandDot(t.channel_name) }} />{t.channel_name}</> : <span className="tb-dim">—</span>}</span>
+                    <span className={"tb-pri " + t.priority}><span className="tb-pri-dot" />{PRI_LABEL[t.priority]}</span>
+                    <span className={"tb-ldue" + (overdue ? " over" : t.due_date === today() ? " today" : "")}>
+                      {t.status === "done" ? "Done" : t.due_date ? dueText(t.due_date) : <span className="tb-dim">—</span>}
+                    </span>
+                    <span className="tb-lcheck">{t.subtask_total > 0 ? `${t.subtask_done}/${t.subtask_total}` : <span className="tb-dim">—</span>}</span>
+                    <span className="r"><TaskClock t={t} nowMs={nowMs} /></span>
+                  </div>
+                );
+              })}
+            </div>
+          ))}
+          {tasks.length === 0 && <div className="tb-lempty">No tasks match your search or filters.</div>}
+        </div>
+      </div>
     </div>
   );
 }
