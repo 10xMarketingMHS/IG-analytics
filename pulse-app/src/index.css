@@ -1697,17 +1697,20 @@ img.lb-ava{object-fit:cover}
    deliberately left OUT of the grayed set. Excluded controls (bell, theme,
    userchip) sit outside these selectors, so they stay in colour + interactive.
    Both the filter (visual) and pointer-events:none (the real disabling) apply. */
-.eod-lock nav.side,
+.eod-lock nav.side .navsec,
+.eod-lock nav.side .navitem:not(.eod-live),
 .eod-lock .topbar-title,
 .eod-lock .content > .screen:not(.myday):not(.eod-open),
 .eod-lock .myday > *:not(.myday-hero){filter:grayscale(100%);opacity:.92}
-.eod-lock nav.side,
+.eod-lock nav.side .navitem:not(.eod-live),
 .eod-lock .content{pointer-events:none}
 /* Re-enable the few live controls even under the disabled content. */
 .eod-lock .eod-live{pointer-events:auto !important}
-/* Read-only pages a locked editor may still open (Activity): full colour and
+/* Pages a locked editor may still open (Activity, Team Chat): full colour and
    usable, even though the rest of the content area stays disabled. */
 .eod-lock .content > .screen.eod-open{pointer-events:auto}
+/* Team Chat too — the team can talk before the day starts. */
+.eod-lock .content > .chat{pointer-events:auto}
 /* My Day header button row (unlocked: New Task + End EOD + status) */
 .mh-cta-row{display:flex;align-items:center;gap:12px;flex-wrap:wrap}
 .mh-endeod{background:rgba(255,255,255,.14);border-color:rgba(255,255,255,.28);color:#fff;font-weight:700;

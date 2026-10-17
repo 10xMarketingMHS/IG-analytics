@@ -57,6 +57,7 @@
   .tab-fab:focus-visible{outline:2px solid oklch(0.55 0.2 var(--acH));outline-offset:3px}
   /* End of Day lock: the places wait like the sidebar does; More still opens the menu */
   .eod-lock .tabbar a.tab,.eod-lock .tab-fab{pointer-events:none;filter:grayscale(100%);opacity:.6}
+  .eod-lock .tabbar a.tab.eod-live{pointer-events:auto;filter:none;opacity:1}
 
   /* the full menu (More) */
   .app>aside.sb2{--sb-w:min(300px,86vw);width:min(300px,86vw);padding-top:env(safe-area-inset-top);padding-bottom:env(safe-area-inset-bottom);box-sizing:border-box}

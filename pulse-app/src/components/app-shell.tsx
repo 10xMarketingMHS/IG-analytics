@@ -42,6 +42,10 @@ const SIDEBAR_GROUPS: { label: string; hrefs: string[] }[] = [
   { label: "Operations", hrefs: ["/metrics", "/posts", "/leaderboard", "/goals-board", "/my-team"] },
 ];
 const OFF_SIDEBAR = new Set(["/settings", "/posts/new"]);
+// Before Start Work an editor can still open these (the rest wait for it), and
+// the links to Home and Team Chat stay live in the sidebar and tab bar.
+const OPEN_WHEN_LOCKED = new Set(["/home", "/activity", "/chat"]);
+const LIVE_WHEN_LOCKED = new Set(["/home", "/chat"]);
 const RAIL_KEY = "pulse-sidebar-rail";
 // The phone tab bar has ~54px a tab: two names go short there (the sidebar and
 // page titles keep them in full).
@@ -318,12 +322,13 @@ function AppShellInner() {
 
   // A locked editor can only act on My Day (it holds the live Start EOD button)
   // and the lock disables the nav, so landing anywhere else — sign-in, refresh,
-  // an old link — would strand them on a dead page. Send them to My Day. The
-  // one exception is Activity: notifications are read-only, so the bell keeps
-  // working before clock-in (the topbar offers the way back, see below).
-  const lockedOnActivity = eodLocked && location.pathname === "/activity";
+  // an old link — would strand them on a dead page. Send them to My Day. Two
+  // exceptions: Activity (the bell keeps working before clock-in) and Team Chat
+  // (the team can talk before the day starts). Both get a way back in the top
+  // bar, see below, and Chat and Home stay live in the sidebar.
+  const lockedOnOpenPage = eodLocked && OPEN_WHEN_LOCKED.has(location.pathname) && location.pathname !== "/home";
   useEffect(() => {
-    if (eodLocked && location.pathname !== "/home" && location.pathname !== "/activity") {
+    if (eodLocked && !OPEN_WHEN_LOCKED.has(location.pathname)) {
       navigate("/home", { replace: true });
     }
   }, [eodLocked, location.pathname, navigate]);
@@ -416,7 +421,7 @@ function AppShellInner() {
                   title={rail ? item.title : undefined}
                   onClick={() => setMenuOpen(false)}
                   className={({ isActive }) =>
-                    "navitem" + (isActive ? " active" : "")
+                    "navitem" + (isActive ? " active" : "") + (eodLocked && LIVE_WHEN_LOCKED.has(item.href) ? " eod-live" : "")
                   }
                 >
                   <span className="ic">{navIcon(item.href) ?? item.icon}</span> <span className="sb2-label">{item.title}</span>
@@ -517,7 +522,7 @@ function AppShellInner() {
             <div className="sub">{sub}</div>
           </div>
           <div className="spacer" />
-          {lockedOnActivity && (
+          {lockedOnOpenPage && (
             <button className="btn" onClick={() => navigate("/home")}>← My Day</button>
           )}
           {/* The bell is a toggle: it opens Activity, and pressed again there it
@@ -555,7 +560,7 @@ function AppShellInner() {
           New task as a round button beside it. */}
       <nav className={"tabbar" + (canWrite ? " has-fab" : "")} aria-label="Main">
         {tabItems.map((item) => (
-          <NavLink key={item.href} to={item.href} aria-label={item.title} className={({ isActive }) => "tab" + (isActive && !menuOpen ? " on" : "")} onClick={() => setMenuOpen(false)}>
+          <NavLink key={item.href} to={item.href} aria-label={item.title} className={({ isActive }) => "tab" + (isActive && !menuOpen ? " on" : "") + (eodLocked && LIVE_WHEN_LOCKED.has(item.href) ? " eod-live" : "")} onClick={() => setMenuOpen(false)}>
             <span className="tab-ic">{navIcon(item.href) ?? item.icon}{item.chatBadge && <ChatBadge />}</span>
             <span className="tab-l" aria-hidden="true">{TAB_SHORT[item.href] ?? item.title}</span>
           </NavLink>
