@@ -63,7 +63,7 @@ html[data-theme="dark"] .app>aside.sb2{
 .sb2 .brand small{margin-top:1px;font-size:11px;font-weight:500;color:var(--sb-text3);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 
 /* search + new task */
-.sb2-tools{display:flex;align-items:center;gap:6px;padding:2px 12px 8px;transition:padding var(--sb-t) var(--sb-ease),gap var(--sb-t) var(--sb-ease)}
+.sb2-tools{position:relative;display:flex;align-items:center;justify-content:flex-end;gap:6px;padding:2px 12px 8px;transition:padding var(--sb-t) var(--sb-ease),gap var(--sb-t) var(--sb-ease)}
 .sb2-search{flex:1;min-width:0;display:flex;align-items:center;gap:6px;height:34px;padding:0 8px;border:1px solid var(--sb-line);border-radius:10px;background:var(--sb-panel);
   color:var(--sb-text3);font:500 13px 'Plus Jakarta Sans',sans-serif;cursor:pointer;box-shadow:0 1px 2px rgba(30,20,80,.04);white-space:nowrap;overflow:hidden;
   transition:padding var(--sb-t) var(--sb-ease),border-width var(--sb-t) var(--sb-ease),opacity .22s ease .1s}
@@ -72,6 +72,7 @@ html[data-theme="dark"] .app>aside.sb2{
 .sb2-compose{flex:none;width:34px;height:34px;display:grid;place-items:center;padding:0;border:0;border-radius:10px;background:var(--sb-acGrad);color:#fff;cursor:pointer;
   box-shadow:0 8px 18px -8px oklch(0.55 0.22 290 / .7)}
 .sb2-compose:hover{filter:brightness(1.07)}
+.sb2-railsearch{display:none}
 
 /* the menu: it still scrolls on short screens, without showing a scrollbar */
 .sb2 nav.side{padding:2px 10px 10px;gap:1px;overflow-x:hidden;scrollbar-width:none;transition:padding var(--sb-t) var(--sb-ease)}
@@ -137,10 +138,17 @@ html[data-theme="dark"] .app>aside.sb2{
   /* brand: the logo centres; the collapse button fades in under it */
   .sb-rail .sb2 .brand{padding:14px 12px 46px 19px}
   .sb-rail .sb2 .sb2-railbtn{position:absolute;left:19px;top:52px;animation:sb2-in .22s ease .26s both}
-  /* search folds away; New task centres */
-  .sb-rail .sb2-tools{gap:0;padding:2px 17px 8px}
+  /* the search box folds away and a search tile fades in above New task;
+     the room for it opens by padding, so the menu below slides rather than jumps */
+  .sb-rail .sb2-tools{gap:0;padding:2px 16px 14px 17px}
+  .sb-rail .sb2-tools:has(.sb2-compose){padding-top:44px}
   .sb-rail .sb2-search{padding:0;border-width:0}
-  .sb-rail .sb2 nav.side{padding:2px 12px 10px}
+  .sb-rail .sb2-railsearch{position:absolute;left:17px;top:2px;width:34px;height:34px;display:grid;place-items:center;padding:0;border:0;border-radius:10px;
+    background:var(--sb-on);color:var(--sb-text2);box-shadow:var(--sb-onSh);cursor:pointer;animation:sb2-in .22s ease .26s both}
+  .sb-rail .sb2-railsearch:hover{color:var(--sb-text)}
+  .sb-rail .sb2-railsearch:focus-visible{outline:2px solid var(--sb-ac);outline-offset:2px}
+  .sb-rail .sb2-tools::after{content:"";position:absolute;left:21px;right:21px;bottom:0;height:1px;background:var(--sb-line);animation:sb2-in .22s ease .26s both}
+  .sb-rail .sb2 nav.side{padding:9px 12px 10px}
   /* section titles fold away: nothing above Home, a small gap between groups */
   .sb-rail .sb2 .navsec{height:6px;padding-top:0;padding-bottom:0}
   .sb-rail .sb2 nav.side>.sb2-group:first-child>.navsec{height:0}

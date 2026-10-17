@@ -299,6 +299,10 @@ function AppShellInner() {
           </button>
         </div>
         <div className="sb2-tools">
+          {/* folded rail only: the search box becomes a tile above New task */}
+          <button type="button" className="sb2-railsearch" onClick={() => setJumpOpen(true)} title="Search or jump to… (Ctrl K)" aria-label="Search or jump to">
+            {SEARCH_ICON}
+          </button>
           <button type="button" className="sb2-search" onClick={() => setJumpOpen(true)} title="Search or jump to… (Ctrl K)" aria-label="Search or jump to">
             {SEARCH_ICON}<span className="sb2-label">Search</span><kbd className="sb2-label">Ctrl K</kbd>
           </button>
