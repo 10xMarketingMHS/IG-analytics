@@ -44,6 +44,12 @@ html[data-theme="dark"] .myday{
 .myday .mh-scrim.c{opacity:0;background:linear-gradient(90deg,rgba(10,8,25,.88) 0%,rgba(10,8,25,.55) 40%,rgba(10,8,25,.45) 60%,rgba(10,8,25,.85) 100%)}
 .myday-hero.compact .mh-scrim.c{opacity:1}
 .myday-hero.compact .mh-scrim:not(.c){opacity:0}
+/* folded, the strip takes a 45% wash of the accent colour over the video;
+   open, none — it fades as the banner folds and unfolds */
+.myday-hero::after{content:"";position:absolute;inset:0;z-index:1;pointer-events:none;opacity:0;transition:opacity .45s ease;
+  background:linear-gradient(90deg,oklch(0.5 0.22 var(--acH)),oklch(0.56 0.2 var(--acH2)))}
+.myday-hero.compact::after{opacity:.45}
+@media (prefers-reduced-motion:reduce){.myday-hero::after{transition:none}}
 /* glassy secondary buttons on the video */
 .myday .mh-glass{display:inline-flex;align-items:center;gap:6px;height:42px;padding:0 14px;border:1px solid rgba(255,255,255,.25);border-radius:12px;
   background:rgba(255,255,255,.1);backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px);color:#fff;font:600 13px 'Plus Jakarta Sans',sans-serif;cursor:pointer;white-space:nowrap}
