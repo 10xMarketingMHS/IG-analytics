@@ -224,7 +224,7 @@ em.bad{color:var(--gl-bad)}
 .gl-table.disc .gl-th>span{white-space:normal;line-height:1.3}
 .gl-tr.dirty{background:color-mix(in srgb,var(--gl-acSoft) 55%,transparent)}
 .gl-who{display:flex;align-items:center;gap:10px;min-width:0}
-.gl-who>span{display:flex;flex-direction:column;line-height:1.25;min-width:0}
+.gl-who>span:not(.gl-ava){display:flex;flex-direction:column;line-height:1.25;min-width:0}
 .gl-who b{font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .gl-who em{font-size:11.5px;color:var(--gl-text3);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .gl-stars{display:flex}

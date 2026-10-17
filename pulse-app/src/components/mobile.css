@@ -81,6 +81,11 @@
   .seg::-webkit-scrollbar{display:none}
   .seg>button{flex:none;white-space:nowrap}
 }
+/* the narrowest phones: the tab bar keeps its icons and drops the words */
+@media (max-width:340px){
+  .tab-l{display:none}
+  .tab-ic{height:30px}
+}
 @keyframes m-sheet{from{transform:translateY(100%)}to{transform:none}}
 
 /* touch screens: no hover lifts, and text fields large enough that iOS
