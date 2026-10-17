@@ -114,6 +114,7 @@ html[data-theme="dark"] .app>aside.sb2{
 .sb2-bar span{display:block;height:100%;border-radius:2px;background:var(--sb-warn)}
 .sb2-break.on{color:var(--sb-warn)}
 .sb2-break-n{font:500 11.5px 'Geist Mono',ui-monospace,monospace;color:var(--sb-text2)}
+.sb2-break-off{margin-left:auto;font-size:11.5px;color:var(--sb-text3)}
 .sb2 .userchip{margin:0;padding:10px 10px 14px 14px;gap:6px;border:0;border-top:1px solid var(--sb-line);border-radius:0;background:transparent;overflow:hidden;
   transition:padding var(--sb-t) var(--sb-ease)}
 .sb2 .avatar-ring{flex:none;border-radius:50%}

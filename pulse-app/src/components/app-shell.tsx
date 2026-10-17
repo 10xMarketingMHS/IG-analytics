@@ -53,17 +53,28 @@ const initialsOf = (name: string) => name.split(/\s+/).map((w) => w[0]).join("")
 // Break time used today, for anyone whose breaks are tracked (an employee
 // who's clocked in, or anyone on a break right now) — the same people the
 // Task Board's break button is for. Display only; that button starts/ends it.
+// Break time used today, always in view above you (as in the design): the
+// bar fills as the day's 75 minutes go; on a break it turns amber. A login
+// not linked to a team member has no breaks to track, and says so.
 function SidebarBreak() {
   const { status, displayRemaining } = useBreakState();
-  const { active } = useWorkspaces();
-  const { session } = useEodState();
-  if (!status || status.unlinked) return null;
-  if (!status.onBreak && (active?.role !== "editor" || !session)) return null;
+  if (!status) return null;
+  if (status.unlinked) {
+    return (
+      <div className="sb2-break off" title="Breaks are tracked for logins linked to a team member (Settings › Team).">
+        {BREAK_ICON}
+        <span className="sb2-label">Break</span>
+        <span className="sb2-break-off sb2-label">Not tracked</span>
+      </div>
+    );
+  }
   const cap = Math.max(60, status.dailyCapSeconds);
   const remaining = Math.min(cap, Math.max(0, displayRemaining ?? status.remainingSeconds));
   const used = cap - remaining;
+  const usedMin = Math.round(used / 60), leftMin = Math.round(remaining / 60);
   return (
-    <div className={"sb2-break" + (status.onBreak ? " on" : "")} title={status.onBreak ? "On a break — your task timers are paused" : "Break time used today"}>
+    <div className={"sb2-break" + (status.onBreak ? " on" : "")}
+      title={status.onBreak ? `On a break: ${leftMin} min left today. Your task timers are paused.` : `${usedMin} of ${Math.round(cap / 60)} min of break used today, ${leftMin} min left`}>
       {BREAK_ICON}
       <span className="sb2-label">{status.onBreak ? "On break" : "Break"}</span>
       <span className="sb2-bar sb2-label"><span style={{ width: `${((100 * used) / cap).toFixed(1)}%` }} /></span>
