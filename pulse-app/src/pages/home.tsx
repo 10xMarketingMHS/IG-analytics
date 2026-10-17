@@ -1,22 +1,20 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Loader } from "@/components/loader";
-import { Link, useNavigate } from "react-router-dom";
+import { useNavigate } from "react-router-dom";
 import { useTasks } from "@/lib/use-tasks";
 import { useAuth } from "@/lib/auth-context";
 import { useWorkspaces } from "@/lib/workspaces-context";
 import { useEditors } from "@/lib/use-editors";
 import { useEodState } from "@/lib/eod-context";
 import { useResource } from "@/lib/use-resource";
-import { rangeFor, inRange, compactNum } from "@/lib/date-range";
-import { performanceScore, formatScore } from "@/lib/score";
-import { ymd, myRankInRange, topEditorsInRange } from "@/lib/task-points";
-import { breakOffsetMs, DAILY_BREAK_CAP_SEC, fmtWait, reviewWaitMs, SLOW_REVIEW_MS } from "@/lib/task-timing";
+import { rangeFor, inRange } from "@/lib/date-range";
+import { performanceScore } from "@/lib/score";
+import { ymd, daysBetween, myRankInRange, topEditorsInRange } from "@/lib/task-points";
+import { breakOffsetMs, DAILY_BREAK_CAP_SEC, fmtWait, reviewWaitMs } from "@/lib/task-timing";
 import { Avatar } from "@/lib/editor-visuals";
-import { api, ApiError } from "@/lib/api";
-import { toast } from "sonner";
 import { useReviewAccess, scopeAllowsTask } from "@/lib/use-review-access";
 import { TaskPanel } from "@/pages/tasks";
-import type { Editor, Post, Task, TaskStatus, TaskType } from "@/lib/types";
+import { MyDayBody, type MyDayData } from "@/pages/my-day-layouts";
+import type { Editor, Post, Task } from "@/lib/types";
 
 // DF Foods runs a 6-day week (Mon–Sat) — used to spread the monthly Goal Points
 // target across the month for the (provisional) Daily Goal pace. Change this one
@@ -61,43 +59,15 @@ function workingDaysInMonth(d: Date): number {
   }
   return n;
 }
-function hoursMins(sec: number): string {
-  const h = Math.floor(sec / 3600);
-  const m = Math.round((sec % 3600) / 60);
-  return h ? `${h}h ${m}m` : `${m}m`;
+// The 7 dates (YYYY-MM-DD) of the current Monday-start week.
+function weekDates(): string[] {
+  const start = new Date(weekStartStr() + "T00:00:00");
+  return Array.from({ length: 7 }, (_, i) => {
+    const d = new Date(start);
+    d.setDate(start.getDate() + i);
+    return ymd(d);
+  });
 }
-
-// A little extra flair once someone's actually on top of a board.
-const RANK_BADGE: Record<number, string> = { 1: "🥇", 2: "🥈", 3: "🥉" };
-
-// Today's Tasks — status filter pills (the active statuses; "done" is excluded
-// from this list entirely, it's the working queue).
-const STATUS_PILLS: { key: "all" | TaskStatus; label: string }[] = [
-  { key: "all", label: "All" },
-  { key: "todo", label: "Not Started" },
-  { key: "in_progress", label: "In Progress" },
-  { key: "review", label: "In Review" },
-];
-// Tag chip colour by task type (the visible label prefers the content-format
-// name — Reels/Poster/etc. — falling back to this generic type label).
-const TAG_META: Record<TaskType, { label: string; cls: string }> = {
-  content: { label: "Content", cls: "t-content" },
-  short_task: { label: "Quick", cls: "t-quick" },
-  general: { label: "General", cls: "t-general" },
-  social: { label: "Social", cls: "t-social" },
-  ad: { label: "Ad", cls: "t-ad" },
-  admin: { label: "Admin", cls: "t-admin" },
-  service: { label: "Service", cls: "t-service" },
-  project: { label: "Project", cls: "t-project" },
-};
-
-const STAGE_META: Record<string, { label: string; cls: string }> = {
-  not_started: { label: "Not Started", cls: "ns" },
-  in_progress: { label: "In Progress", cls: "ip" },
-  in_review: { label: "In Review", cls: "ir" },
-  pending: { label: "Pending", cls: "pd" },
-  completed: { label: "Completed", cls: "cp" },
-};
 
 export function HomePage() {
   const navigate = useNavigate();
@@ -165,17 +135,22 @@ export function HomePage() {
     // team; everyone else's cover their own tasks.
     const counted = isAdmin ? (tasks ?? []) : scoped;
     const countedOpen = counted.filter((t) => t.status !== "done");
+    const overdueList = countedOpen.filter((t) => t.due_date != null && t.due_date < today);
+    const dueTodayList = countedOpen.filter((t) => t.due_date === today);
     return {
-      overdue: countedOpen.filter((t) => t.due_date != null && t.due_date < today).length,
-      dueToday: countedOpen.filter((t) => t.due_date === today).length,
+      overdue: overdueList.length,
+      dueToday: dueTodayList.length,
       inReview: counted.filter((t) => t.status === "review").length,
+      // The line of detail under each count.
+      oldestLate: overdueList.reduce((m, t) => Math.max(m, daysBetween(t.due_date!, today)), 0),
+      dueTodayStarted: dueTodayList.filter((t) => t.status === "in_progress" || t.status === "review").length,
       active, completedToday,
     };
   }, [tasks, today, user?.editorId, isAdmin]);
 
   // ---- Personal Task Points (same formula the Media House Leaders board scores
-  // by — see lib/task-points). Today feeds Today's Progress; week/month feed the
-  // cards below and the rank character. Only meaningful when roster-linked.
+  // by — see lib/task-points). Today feeds Today's progress; week/month feed
+  // Your score. Only meaningful when roster-linked.
   const scoreWindows = useMemo(() => {
     if (!editors || !tasks || !user?.editorId) return null;
     const eid = user.editorId;
@@ -185,7 +160,6 @@ export function HomePage() {
       month: myRankInRange(editors, tasks, monthStartStr(), today, eid),
     };
   }, [editors, tasks, today, user?.editorId]);
-  const monthRank = scoreWindows?.month.rank ?? null;
 
   // The Media House top 3 this month (same org-scoped Task Points ranking as the
   // leaderboard) — shown as name/points cards over the hero video's podium.
@@ -262,14 +236,67 @@ export function HomePage() {
   }, [posts]);
 
   const loading = tasks === null || posts === null;
-  const pipelineTotal = Object.values(pipeline).reduce((a, b) => a + b, 0);
 
-  const STATS: { label: string; value: number; tone: string; to: string; icon: string }[] = [
-    { label: isAdmin ? "Team tasks overdue" : "Overdue tasks", value: ops.overdue, tone: "danger", to: "/tasks", icon: "⏰" },
-    { label: isAdmin ? "Team tasks due today" : "Due today", value: ops.dueToday, tone: "warn", to: "/tasks", icon: "📅" },
-    { label: "Posts awaiting metrics", value: awaitingMetrics, tone: "accent", to: "/posts", icon: "📊" },
-    { label: isAdmin ? "Tasks waiting for review" : "My tasks in review", value: ops.inReview, tone: "info", to: "/tasks", icon: "👁️" },
-  ];
+  // Points per day this week, for the Dashboard layout's bars.
+  const weekDays = useMemo(() => {
+    if (!editors || !tasks || !user?.editorId) return null;
+    const eid = user.editorId;
+    return weekDates().map((date) => ({
+      date,
+      label: new Date(date + "T00:00:00").toLocaleDateString(undefined, { weekday: "short" }),
+      isToday: date === today,
+      future: date > today,
+      points: date > today ? 0 : myRankInRange(editors, tasks, date, date, eid).points,
+    }));
+  }, [editors, tasks, today, user?.editorId]);
+
+  // Views on posts published each day this month, day 1 to today.
+  const viewsByDay = useMemo(() => {
+    const b = rangeFor("thismonth");
+    const byDay = new Map<number, number>();
+    for (const p of posts ?? []) {
+      if (p.status !== "published" || !inRange(p.date, b.from, b.to)) continue;
+      const day = Number(p.date.slice(8, 10));
+      byDay.set(day, (byDay.get(day) ?? 0) + p.views);
+    }
+    return Array.from({ length: now.getDate() }, (_, i) => ({ day: i + 1, views: byDay.get(i + 1) ?? 0 }));
+  }, [posts, now]);
+
+  const oldestReviewWait = reviewQueue.reduce((m, t) => Math.max(m, reviewWaitMs(t, now.getTime())), 0);
+  const myDay: MyDayData = {
+    loading,
+    today,
+    nowMs: now.getTime(),
+    isAdmin,
+    linked: !!user?.editorId,
+    hint: user?.editorId ? null
+      : active?.role === "viewer" ? "You have view-only access: you can look at tasks, posts and analytics, but not change them."
+      : isAdmin ? "You're not on the team roster yet, so nothing personal shows here. Add yourself in Settings → Team (Edit on your own row)."
+      : "You're not on the team roster yet, so nothing personal shows here. Ask an admin to link you under Settings → Team.",
+    counts: { overdue: ops.overdue, dueToday: ops.dueToday, inReview: ops.inReview, awaitingMetrics },
+    countNotes: {
+      overdue: ops.overdue ? `Oldest is ${ops.oldestLate} day${ops.oldestLate === 1 ? "" : "s"} late` : "Everything is on time",
+      dueToday: ops.dueToday ? `${ops.dueTodayStarted} started, ${ops.dueToday - ops.dueTodayStarted} not yet` : "Nothing due today",
+      inReview: canReview && reviewQueue.length
+        ? `Oldest has waited ${fmtWait(oldestReviewWait)}`
+        : ops.inReview ? "Waiting on a reviewer" : "Nothing waiting",
+      awaitingMetrics: awaitingMetrics ? "Published, no numbers yet" : "Every post has its numbers",
+    },
+    myTasks: ops.active,
+    completedToday: ops.completedToday,
+    pointsToday: scoreWindows?.today.points ?? 0,
+    focusSeconds,
+    dailyGoalPct: dailyGoal?.pct ?? null,
+    clockedInSince: isEditor && eodSession ? fmtClock(eodSession.startedAt) : null,
+    week: scoreWindows?.week ?? null,
+    month: scoreWindows?.month ?? null,
+    weekDays,
+    canReview,
+    reviewQueue,
+    pipeline,
+    analytics,
+    viewsByDay,
+  };
 
   // One podium name/points card (gold styling for #1). Null slot → nothing.
   const podCard = (entry: { row: { points: number }; editor: Editor } | null, gold = false) =>
@@ -347,37 +374,9 @@ export function HomePage() {
         )}
       </div>
 
-      {!user?.editorId && (
-        <div className="card pad" style={{ color: "var(--muted)", fontSize: 13, marginBottom: 16 }}>
-          {active?.role === "viewer" ? (
-            "You have view-only access: you can look at tasks, posts and analytics, but not change them."
-          ) : (
-            <>
-              Your account isn't on the team roster yet, so My Day and your score have nothing personal to show.{" "}
-              {isAdmin
-                ? "To add yourself, go to Settings → Team and press Edit on your own row."
-                : "Ask an admin to link you under Settings → Team."}
-            </>
-          )}
-        </div>
-      )}
-
-      {/* Attention strip — same four metrics, restyled (icon chip + left rail). */}
-      <div className="myday-stats">
-        {STATS.map((s) => (
-          <button key={s.label} className={"myday-stat " + s.tone} onClick={() => navigate(s.to)}>
-            <span className="ms-ic">{s.icon}</span>
-            <span className="ms-body">
-              <span className="ms-v">{loading ? "—" : s.value}</span>
-              <span className="ms-l">{s.label}</span>
-            </span>
-          </button>
-        ))}
-      </div>
-
-      {canReview && (
-        <ReviewQueue tasks={reviewQueue} loading={tasks === null} nowMs={now.getTime()} onChanged={refetchTasks} onOpen={(t) => setOpenTaskId(t.id)} />
-      )}
+      {/* Everything under the banner: three layouts of the same sections, picked
+          by the viewer (see my-day-layouts.tsx). */}
+      <MyDayBody data={myDay} onOpenTask={setOpenTaskId} onChanged={refetchTasks} />
       {openTask && (
         <TaskPanel
           mode="edit" task={openTask} canWrite={active?.role !== "viewer"} editors={editors ?? []} channels={workspaces ?? []}
@@ -386,96 +385,6 @@ export function HomePage() {
           onCreated={() => {}}
         />
       )}
-
-      {/* Today's Tasks + Today's Progress */}
-      <div className="myday-grid2">
-        <TodaysTasks tasks={ops.active} loading={loading} navigate={navigate} />
-        {scoreWindows && (
-          <TodaysProgress
-            completedToday={ops.completedToday}
-            openCount={ops.active.length}
-            pointsToday={scoreWindows.today.points}
-            focusSeconds={focusSeconds}
-            dailyGoalPct={dailyGoal?.pct ?? null}
-            monthRank={monthRank}
-          />
-        )}
-      </div>
-
-      {/* This Week · This Month · Achievements */}
-      {scoreWindows && (
-        <div className="myday-grid3">
-          <ScoreCard icon="🎯" title="This Week" window={scoreWindows.week} />
-          <ScoreCard icon="👑" title="This Month" window={scoreWindows.month} />
-          <GoalCard />
-        </div>
-      )}
-
-      {/* Existing operational + analytics detail — kept below the redesigned
-          personal panels (no mockup equivalent, still useful). */}
-      <div className="home-cols">
-        <div className="home-col">
-          <div className="home-colhead" style={{ marginTop: 6 }}>
-            <span className="hc-tag ops">Pipeline</span><h3>Editing progress</h3>
-            <Link to="/metrics" className="hc-link">Open →</Link>
-          </div>
-          <div className="card pad">
-            {pipelineTotal === 0 ? (
-              <div className="home-empty">No content in the pipeline yet.</div>
-            ) : (
-              <>
-                <div className="pipe-bar">
-                  {(["completed", "in_review", "pending", "in_progress", "not_started"] as const).map((k) =>
-                    pipeline[k] > 0 ? (
-                      <div key={k} className={"pipe-seg " + STAGE_META[k].cls}
-                        style={{ flex: pipeline[k] }} title={`${STAGE_META[k].label}: ${pipeline[k]}`} />
-                    ) : null,
-                  )}
-                </div>
-                <div className="pipe-legend">
-                  {(["not_started", "in_progress", "in_review", "pending", "completed"] as const).map((k) => (
-                    <span key={k} className="pipe-leg"><span className={"pipe-dot " + STAGE_META[k].cls} />{STAGE_META[k].label} <b>{pipeline[k]}</b></span>
-                  ))}
-                </div>
-              </>
-            )}
-          </div>
-        </div>
-
-        <div className="home-col">
-          <div className="home-colhead" style={{ marginTop: 6 }}><span className="hc-tag ana">Analytics</span><h3>This month</h3>
-            <Link to="/dashboard" className="hc-link">Dashboard →</Link>
-          </div>
-          <div className="grid g2" style={{ gap: 14 }}>
-            <div className="card kpi"><div className="ic">👁️</div><div className="l">Total Views</div><div className="v">{loading ? "—" : compactNum(analytics.views)}</div><div className="d flat">{analytics.posts} published</div></div>
-            <div className="card kpi"><div className="ic">⚡</div><div className="l">Engagement Rate</div><div className="v">{analytics.engRate == null ? "—" : analytics.engRate.toFixed(1) + "%"}</div><div className="d flat">of accounts reached</div></div>
-          </div>
-
-          <div className="home-colhead" style={{ marginTop: 22 }}>
-            <span className="hc-tag ana">Top mover</span><h3>Best post this month</h3>
-          </div>
-          <div className="card pad">
-            {loading ? (
-              <Loader label="Loading…" />
-            ) : analytics.top ? (
-              <div className="topmover">
-                <div className="tm-rank">🥇</div>
-                <div className="tm-main">
-                  <div className="tm-title">{analytics.top.title}</div>
-                  <div className="tm-meta">{(analytics.top as Post & { channel_name?: string }).channel_name ?? ""}</div>
-                  <div className="tm-stats">
-                    <span>Score <b>{formatScore(analytics.top)}</b></span>
-                    <span>Views <b>{compactNum(analytics.top.views)}</b></span>
-                    <span>Saves <b>{compactNum(analytics.top.saves)}</b></span>
-                  </div>
-                </div>
-              </div>
-            ) : (
-              <div className="home-empty">No published posts this month yet.</div>
-            )}
-          </div>
-        </div>
-      </div>
     </section>
   );
 }
@@ -566,289 +475,3 @@ function HeroVideo() {
     </>
   );
 }
-
-// ---- Waiting for your review: tasks this person can approve or send back,
-// resolved right here. Sending back needs a note (the assignee sees it when they
-// re-accept), so that button opens an inline note box instead of acting at once.
-function ReviewQueue({ tasks, loading, nowMs, onChanged, onOpen }: {
-  tasks: Task[]; loading: boolean; nowMs: number; onChanged: () => Promise<unknown>; onOpen: (t: Task) => void;
-}) {
-  const slow = tasks.filter((t) => reviewWaitMs(t, nowMs) >= SLOW_REVIEW_MS).length;
-  const [busyId, setBusyId] = useState<string | null>(null);
-  const [noteFor, setNoteFor] = useState<string | null>(null);
-  const [note, setNote] = useState("");
-
-  async function resolve(t: Task, status: "done" | "in_progress", reviewNote?: string) {
-    // Approving work that was never attached needs a deliberate yes.
-    const noWork = status === "done" && t.link_required && !t.delivery_link;
-    if (noWork && !window.confirm(`No work is attached to "${t.title}". Approve it anyway?`)) return;
-    setBusyId(t.id);
-    try {
-      await api(`/tasks/${t.id}`, { method: "PATCH", body: JSON.stringify({
-        status, ...(reviewNote ? { reviewNote } : {}), ...(noWork ? { approveWithoutWork: true } : {}),
-      }) });
-      toast.success(status === "done" ? `Approved “${t.title}”.` : `Sent “${t.title}” back for rework.`);
-      setNoteFor(null);
-      setNote("");
-      await onChanged();
-    } catch (e) {
-      toast.error(e instanceof ApiError ? e.message : "Couldn't update that task.");
-    } finally {
-      setBusyId(null);
-    }
-  }
-
-  return (
-    <div className="card myday-panel rvq">
-      <div className="mp-head">
-        <h3><span className="mp-ic">👀</span> Waiting for your review</h3>
-        {tasks.length > 0 && <span className="rvq-count">{tasks.length}</span>}
-        {slow > 0 && <span className="rvq-slow" title="These are holding up someone's work">⏳ {slow} waiting over a day</span>}
-        <Link to="/tasks" className="mp-link">Task Board →</Link>
-      </div>
-      {loading ? (
-        <Loader label="Loading…" />
-      ) : tasks.length === 0 ? (
-        <div className="home-empty">Nothing is waiting for your review.</div>
-      ) : (
-        <div className="rvq-list">
-          {tasks.map((t) => {
-            const meta = [t.editor_name ?? "Unassigned", t.content_format_name, t.tid].filter(Boolean).join(" · ");
-            const busy = busyId === t.id;
-            const wait = reviewWaitMs(t, nowMs);
-            return (
-              <div key={t.id} className="rvq-row">
-                <div className="rvq-main">
-                  <button type="button" className="rvq-open" onClick={() => onOpen(t)} title="Open the task's details">
-                    <span className="rvq-title">{t.title}</span>
-                    <span className="rvq-view">View details ›</span>
-                  </button>
-                  {t.self_created && <span className="self-chip" title="The assignee created this task for themselves">🙋 Self-created</span>}
-                  <span className="rvq-meta">
-                    {t.review_started_at && (
-                      <span className={"rvq-wait" + (wait >= SLOW_REVIEW_MS ? " slow" : "")} title="Time waiting for review doesn't count against the assignee">
-                        ⏳ Waiting {fmtWait(wait)}
-                      </span>
-                    )}
-                    {meta}
-                    {t.delivery_link ? (
-                      <> · <a href={t.delivery_link} target="_blank" rel="noreferrer">Open the work ↗</a></>
-                    ) : (
-                      <> · {t.link_required ? "No work attached" : "No link needed"}</>
-                    )}
-                  </span>
-                </div>
-                {noteFor === t.id ? (
-                  <form
-                    className="rvq-note"
-                    onSubmit={(e) => { e.preventDefault(); if (note.trim()) resolve(t, "in_progress", note.trim()); }}
-                  >
-                    <input
-                      className="t" autoFocus value={note} onChange={(e) => setNote(e.target.value)}
-                      placeholder={`What does ${t.editor_name ?? "the assignee"} need to fix?`}
-                      aria-label="What needs fixing"
-                    />
-                    <button type="submit" className="btn btn-sm btn-primary" disabled={busy || !note.trim()}>
-                      {busy ? "Sending…" : "Send back"}
-                    </button>
-                    <button type="button" className="btn btn-sm" disabled={busy} onClick={() => { setNoteFor(null); setNote(""); }}>
-                      Cancel
-                    </button>
-                  </form>
-                ) : (
-                  <div className="rvq-actions">
-                    <button className="btn btn-sm" disabled={busy} onClick={() => { setNoteFor(t.id); setNote(""); }}>
-                      Send back
-                    </button>
-                    <button className="btn btn-sm btn-primary" disabled={busy} onClick={() => resolve(t, "done")}>
-                      {busy ? "Approving…" : "Approve"}
-                    </button>
-                  </div>
-                )}
-              </div>
-            );
-          })}
-        </div>
-      )}
-    </div>
-  );
-}
-
-// ---- Today's Tasks: the viewer's working queue with status pills, format tag
-// chips and per-task point values (the base points the format is worth). ----
-function TodaysTasks({ tasks, loading, navigate }: { tasks: Task[]; loading: boolean; navigate: (to: string) => void }) {
-  const [filter, setFilter] = useState<"all" | TaskStatus>("all");
-  const counts = useMemo(() => {
-    const c: Record<string, number> = { all: tasks.length, todo: 0, in_progress: 0, review: 0 };
-    for (const t of tasks) c[t.status] = (c[t.status] ?? 0) + 1;
-    return c;
-  }, [tasks]);
-  const shown = filter === "all" ? tasks : tasks.filter((t) => t.status === filter);
-
-  return (
-    <div className="card myday-panel">
-      <div className="mp-head">
-        <h3><span className="mp-ic">🗂️</span> Today's Tasks</h3>
-        <Link to="/tasks" className="mp-link">View all →</Link>
-      </div>
-      <div className="tt-pills">
-        {STATUS_PILLS.map((p) => (
-          <button
-            key={p.key}
-            className={"tt-pill" + (filter === p.key ? " active" : "")}
-            onClick={() => setFilter(p.key)}
-          >
-            {p.label}<span className="tt-pill-n">{counts[p.key] ?? 0}</span>
-          </button>
-        ))}
-      </div>
-      {loading ? (
-        <Loader label="Loading…" />
-      ) : shown.length === 0 ? (
-        <div className="home-empty">🎉 Nothing here — you're all caught up.</div>
-      ) : (
-        <div className="tt-list">
-          {shown.slice(0, 8).map((t) => {
-            const tag = TAG_META[t.task_type] ?? TAG_META.general;
-            const tagLabel = t.content_format_name || tag.label;
-            const pts = t.content_format_points != null ? Number(t.content_format_points) : 1;
-            return (
-              <button key={t.id} className="tt-row" onClick={() => navigate("/tasks")}>
-                <span className="tt-check" aria-hidden />
-                <span className="tt-main">
-                  <span className="tt-title">{t.title}</span>
-                  <span className={"tt-tag " + tag.cls}>{tagLabel}</span>
-                </span>
-                <span className="tt-pts">+{pts} pts</span>
-                <span className="tt-go">›</span>
-              </button>
-            );
-          })}
-        </div>
-      )}
-    </div>
-  );
-}
-
-// ---- Today's Progress: completion ring + points/focus/daily-goal stats, with
-// the rank character shown only for the current month's top 3. ----
-function TodaysProgress({
-  completedToday, openCount, pointsToday, focusSeconds, dailyGoalPct, monthRank,
-}: {
-  completedToday: number; openCount: number; pointsToday: number;
-  focusSeconds: number; dailyGoalPct: number | null; monthRank: number | null;
-}) {
-  const total = completedToday + openCount;
-  const frac = total > 0 ? completedToday / total : 0;
-  const R = 52;
-  const C = 2 * Math.PI * R;
-
-  return (
-    <div className="card myday-panel prog-panel">
-      <div className="mp-head">
-        <h3><span className="mp-ic">🌱</span> Today's Progress</h3>
-        {monthRank && monthRank <= 3 && <span className="prog-rankbadge">#{monthRank}</span>}
-      </div>
-      <div className="prog-body">
-        <div className="prog-left">
-          <div className="prog-ring">
-            <svg viewBox="0 0 120 120" aria-hidden>
-              <circle cx="60" cy="60" r={R} className="prog-ring-bg" />
-              <circle
-                cx="60" cy="60" r={R} className="prog-ring-fg"
-                strokeDasharray={C} strokeDashoffset={C * (1 - frac)}
-                transform="rotate(-90 60 60)"
-              />
-            </svg>
-            <div className="prog-ring-c">
-              <b>{completedToday}<span>/{total}</span></b>
-              <small>tasks done</small>
-            </div>
-          </div>
-          <div className="prog-stats">
-            <div className="prog-stat"><span className="prog-si">⭐</span><span><b>{Math.round(pointsToday)}</b><small>Points today</small></span></div>
-            <div className="prog-stat"><span className="prog-si">⚡</span><span><b>{hoursMins(focusSeconds)}</b><small>Focus time <i title="Approximate — derived from task time budgets, not a tracked metric.">≈</i></small></span></div>
-            <div className="prog-stat"><span className="prog-si">🎯</span><span><b>{dailyGoalPct == null ? "—" : dailyGoalPct + "%"}</b><small>Daily goal{dailyGoalPct != null ? <i title="Provisional: today's points vs the month's goal spread across working days."> *</i> : ""}</small></span></div>
-          </div>
-        </div>
-        <RankCharacter rank={monthRank} />
-      </div>
-      {dailyGoalPct != null && (
-        <div className="prog-goalbar">
-          <div className="prog-goalbar-fill" style={{ width: `${Math.min(100, dailyGoalPct)}%` }} />
-        </div>
-      )}
-    </div>
-  );
-}
-
-// The rank illustration — only rendered for the current month's top 3, and only
-// if the matching asset actually exists. Anything else (unranked, or a missing
-// PNG) collapses to nothing so the stats fill the panel cleanly.
-function RankCharacter({ rank }: { rank: number | null }) {
-  const [broken, setBroken] = useState(false);
-  useEffect(() => setBroken(false), [rank]);
-  if (!rank || rank > 3 || broken) return null;
-  return (
-    <div className="prog-char">
-      <img src={`/media/rank-${rank}.png`} alt={`Rank ${rank} character`} width={600} height={800} decoding="async" onError={() => setBroken(true)} />
-    </div>
-  );
-}
-
-// ---- This Week / This Month score cards (same windows the score strip used). --
-function ScoreCard({ icon, title, window: w }: { icon: string; title: string; window: ReturnType<typeof myRankInRange> }) {
-  const pct = w.rank ? Math.max(6, Math.round((1 - (w.rank - 1) / Math.max(1, w.totalRanked)) * 100)) : 0;
-  return (
-    <div className="card myday-scorecard">
-      <div className="msc-head"><span className="msc-ic">{icon}</span>{title}<Link to="/leaderboard" className="msc-link">View →</Link></div>
-      <div className="msc-body">
-        <div>
-          <div className="msc-pts">{w.points.toFixed(1)} <span>pts</span></div>
-          <div className="msc-sub">{w.rank ? `of ${w.totalRanked} scoring` : "no points yet"}</div>
-        </div>
-        <div className="msc-rank">{w.rank ? (RANK_BADGE[w.rank] ?? `#${w.rank}`) : "—"}</div>
-      </div>
-      <div className="msc-bar"><div className="msc-bar-fill" style={{ width: `${pct}%` }} /></div>
-    </div>
-  );
-}
-
-// ---- Monthly Goal: the signed-in user's own current-month goal vs achieved
-// (real tracked hours + task counts), self-scoped so no admin role is needed.
-// Replaces the old placeholder Achievements card. ----
-type MyGoal = { linked: boolean; hasGoal?: boolean; goalTargetNumber: number; achievedNumber: number };
-function GoalCard() {
-  const [d, setD] = useState<MyGoal | null>(null);
-  const [failed, setFailed] = useState(false);
-  useEffect(() => {
-    api<MyGoal>("/management-performance/me").then(setD).catch(() => setFailed(true));
-  }, []);
-
-  const hasGoal = !!d?.linked && !!d.hasGoal && d.goalTargetNumber > 0;
-  const taskPct = d && d.goalTargetNumber > 0 ? Math.round((d.achievedNumber / d.goalTargetNumber) * 100) : 0;
-  const toGo = d ? Math.max(0, d.goalTargetNumber - d.achievedNumber) : 0;
-
-  return (
-    <div className="card myday-scorecard goalc">
-      <div className="msc-head"><span className="msc-ic">🎯</span>Monthly Goal</div>
-      {!d ? (
-        <div className="msc-body"><div className="msc-sub">{failed ? "Couldn't load your goal." : "Loading…"}</div></div>
-      ) : !hasGoal ? (
-        <div className="msc-body"><div className="msc-sub">No task goal set for this month yet.</div></div>
-      ) : (
-        <>
-          <div className="msc-body">
-            <div>
-              <div className="msc-pts">{d.achievedNumber} <span>/ {d.goalTargetNumber} tasks</span></div>
-              <div className="msc-sub">{toGo > 0 ? `${toGo} to go` : "goal reached 🎉"}</div>
-            </div>
-            <div className="msc-rank">{taskPct}%</div>
-          </div>
-          <div className="msc-bar"><div className="msc-bar-fill" style={{ width: `${Math.min(100, taskPct)}%` }} /></div>
-        </>
-      )}
-    </div>
-  );
-}
-
