@@ -133,8 +133,9 @@ html[data-theme="dark"] .app>aside.sb2{
 .sb2 .logout{flex:none;width:30px;height:30px;display:grid;place-items:center;padding:0;border-radius:8px;color:var(--sb-text3)}
 .sb2 .logout:hover{background:var(--sb-hover);color:var(--sb-text)}
 
-/* End of Day lock: search and new task wait too */
-.eod-lock .sb2-tools{pointer-events:none;filter:grayscale(100%);opacity:.6}
+/* Before Start Work, search waits too (it jumps to any page); New task works,
+   since the Task Board is open */
+.eod-lock .sb2-tools .sb2-search{pointer-events:none;filter:grayscale(100%);opacity:.6}
 
 /* collapsed: an icon rail, 68px (not on phones, where the sidebar is a drawer).
    Icons are centred on x=25–43 in both sizes; the paddings glide to get there. */

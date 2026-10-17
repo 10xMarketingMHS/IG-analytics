@@ -1700,17 +1700,17 @@ img.lb-ava{object-fit:cover}
 .eod-lock nav.side .navsec,
 .eod-lock nav.side .navitem:not(.eod-live),
 .eod-lock .topbar-title,
-.eod-lock .content > .screen:not(.myday):not(.eod-open),
+.eod-lock:not(.lock-page-open) .content > .screen:not(.myday):not(.eod-open),
 .eod-lock .myday > *:not(.myday-hero){filter:grayscale(100%);opacity:.92}
 .eod-lock nav.side .navitem:not(.eod-live),
-.eod-lock .content{pointer-events:none}
+.eod-lock:not(.lock-page-open) .content{pointer-events:none}
 /* Re-enable the few live controls even under the disabled content. */
 .eod-lock .eod-live{pointer-events:auto !important}
-/* Pages a locked editor may still open (Activity, Team Chat): full colour and
+/* Pages a locked editor may still open (Activity): full colour and
    usable, even though the rest of the content area stays disabled. */
 .eod-lock .content > .screen.eod-open{pointer-events:auto}
-/* Team Chat too — the team can talk before the day starts. */
-.eod-lock .content > .chat{pointer-events:auto}
+/* (The others a locked editor may open — Team Chat, the Task Board,
+   Analytics, Settings — lift the lock for the whole page: .lock-page-open.) */
 /* My Day header button row (unlocked: New Task + End EOD + status) */
 .mh-cta-row{display:flex;align-items:center;gap:12px;flex-wrap:wrap}
 .mh-endeod{background:rgba(255,255,255,.14);border-color:rgba(255,255,255,.28);color:#fff;font-weight:700;

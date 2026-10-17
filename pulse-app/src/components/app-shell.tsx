@@ -42,10 +42,12 @@ const SIDEBAR_GROUPS: { label: string; hrefs: string[] }[] = [
   { label: "Operations", hrefs: ["/metrics", "/posts", "/leaderboard", "/goals-board", "/my-team"] },
 ];
 const OFF_SIDEBAR = new Set(["/settings", "/posts/new"]);
-// Before Start Work an editor can still open these (the rest wait for it), and
-// the links to Home and Team Chat stay live in the sidebar and tab bar.
-const OPEN_WHEN_LOCKED = new Set(["/home", "/activity", "/chat"]);
-const LIVE_WHEN_LOCKED = new Set(["/home", "/chat"]);
+// Before Start Work an editor can still open these — Settings shows only what
+// their permissions allow — and the rest (Pipeline, Posts, Leaderboard, Goals)
+// wait for it. Their links stay live in the sidebar and tab bar.
+const OPEN_WHEN_LOCKED = new Set(["/home", "/activity", "/chat", "/tasks", "/analytics", "/settings", "/channels", "/task-rules"]);
+const LIVE_WHEN_LOCKED = new Set(["/home", "/chat", "/tasks", "/analytics"]);
+const openWhenLocked = (path: string) => OPEN_WHEN_LOCKED.has(path) || path.startsWith("/analytics/");
 const RAIL_KEY = "pulse-sidebar-rail";
 // The phone tab bar has ~54px a tab: two names go short there (the sidebar and
 // page titles keep them in full).
@@ -322,13 +324,12 @@ function AppShellInner() {
 
   // A locked editor can only act on My Day (it holds the live Start EOD button)
   // and the lock disables the nav, so landing anywhere else — sign-in, refresh,
-  // an old link — would strand them on a dead page. Send them to My Day. Two
-  // exceptions: Activity (the bell keeps working before clock-in) and Team Chat
-  // (the team can talk before the day starts). Both get a way back in the top
-  // bar, see below, and Chat and Home stay live in the sidebar.
-  const lockedOnOpenPage = eodLocked && OPEN_WHEN_LOCKED.has(location.pathname) && location.pathname !== "/home";
+  // an old link — would strand them on a dead page. Send them to My Day. The
+  // exceptions (OPEN_WHEN_LOCKED): Activity, Team Chat, the Task Board,
+  // Analytics and Settings. Each gets a way back in the top bar, see below.
+  const lockedOnOpenPage = eodLocked && openWhenLocked(location.pathname) && location.pathname !== "/home";
   useEffect(() => {
-    if (eodLocked && !OPEN_WHEN_LOCKED.has(location.pathname)) {
+    if (eodLocked && !openWhenLocked(location.pathname)) {
       navigate("/home", { replace: true });
     }
   }, [eodLocked, location.pathname, navigate]);
@@ -373,7 +374,7 @@ function AppShellInner() {
 
   return (
     <BreakProvider>
-    <div className={"app" + (menuOpen ? " menu-open" : "") + (eodLocked ? " eod-lock" : "") + (rail ? " sb-rail" : "")}>
+    <div className={"app" + (menuOpen ? " menu-open" : "") + (eodLocked ? " eod-lock" : "") + (lockedOnOpenPage ? " lock-page-open" : "") + (rail ? " sb-rail" : "")}>
       <div className="app-backdrop" onClick={() => setMenuOpen(false)} />
       {/* sb2: the redesign's sidebar (components/sidebar.css) — brand and
           collapse, search and new task, the Workspace / Operations groups,
