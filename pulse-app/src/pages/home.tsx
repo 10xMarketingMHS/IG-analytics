@@ -98,11 +98,12 @@ function weekDates(): string[] {
   });
 }
 
-// Where the top of each podium step is in the banner video, as a share of the
-// frame (measured on the 2520×1080 clips). The video fills the banner like
+// Where each podium chip goes in the banner video, as a share of the frame
+// (measured on the 2520×1080 clips): centred over the step's number, just
+// above the top of the step. The video fills the banner like
 // object-fit: cover, anchored 30% from the top (.mh-video), so the same maths
 // finds each step at any banner size.
-const PODIUM_STEPS: Record<1 | 2 | 3, [number, number]> = { 1: [0.51, 0.567], 2: [0.293, 0.635], 3: [0.738, 0.651] };
+const PODIUM_STEPS: Record<1 | 2 | 3, [number, number]> = { 1: [0.491, 0.537], 2: [0.281, 0.605], 3: [0.71, 0.621] };
 const VIDEO_ASPECT = 2520 / 1080;
 type Spot = { x: number; y: number };
 function usePodiumSpots(ref: React.RefObject<HTMLDivElement | null>, on: boolean): Record<1 | 2 | 3, Spot> | null {
