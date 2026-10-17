@@ -107,7 +107,13 @@ export function PostsPage() {
   const [query, setQuery] = useState("");
   const [statuses, setStatuses] = useState<Set<string>>(new Set());
   const [types, setTypes] = useState<Set<string>>(new Set());
-  const [channelIds, setChannelIds] = useState<Set<string>>(new Set());
+  // The sidebar's Channels list opens Posts filtered to that channel.
+  const [channelIds, setChannelIds] = useState<Set<string>>(() => {
+    const ch = (location.state as { channel?: string } | null)?.channel;
+    return new Set(ch ? [ch] : []);
+  });
+  const stateChannel = (location.state as { channel?: string } | null)?.channel;
+  useEffect(() => { if (stateChannel) setChannelIds(new Set([stateChannel])); }, [stateChannel, location.key]);
   const [platformIds, setPlatformIds] = useState<Set<string>>(new Set());
   const [collabsOnly, setCollabsOnly] = useState(false);
 

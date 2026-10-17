@@ -29,3 +29,9 @@ export function navIcon(href: string): ReactNode | undefined {
 }
 
 export const SIGN_OUT_ICON = svg(<><path d="M15 4h3a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2h-3" /><path d="M10 16l-4-4 4-4M6 12h9" /></>);
+export const RAIL_ICON = svg(<><rect x="3" y="4" width="18" height="16" rx="2.5" /><path d="M9 4v16" /></>);
+export const COMPOSE_ICON = svg(<><path d="M12 4H6a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-6" /><path d="M17.5 3.5a2.1 2.1 0 0 1 3 3L12 15l-4 1 1-4Z" /></>);
+export const SEARCH_ICON = svg(<><circle cx="11" cy="11" r="7" /><path d="m20 20-3.5-3.5" /></>);
+export const PLUS_ICON = svg(<path d="M12 5v14M5 12h14" />);
+export const BREAK_ICON = svg(<><path d="M4 9h13v5a5 5 0 0 1-5 5H9a5 5 0 0 1-5-5Z" /><path d="M17 10h1.5a2.5 2.5 0 0 1 0 5H17M8 3v3M12 3v3" /></>);
+export const GEAR_ICON = NAV_ICONS["/settings"];
