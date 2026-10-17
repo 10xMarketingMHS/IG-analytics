@@ -24,7 +24,7 @@
      button beside it (ClickUp-style) */
   .tabbar{
     --tab-bg:rgba(255,255,255,.86);--tab-line:rgba(30,20,80,.08);--tab-text:#6b6b75;
-    --tab-on:oklch(0.46 0.19 var(--acH));--tab-pill:linear-gradient(135deg,oklch(0.93 0.05 var(--acH)),oklch(0.94 0.04 calc(var(--acH) + 50)));--tab-alert:oklch(0.58 0.21 22);
+    --tab-on:oklch(0.46 0.19 var(--acH));--tab-pill:linear-gradient(135deg,oklch(0.93 0.05 var(--acH)),oklch(0.94 0.04 var(--acH2)));--tab-alert:oklch(0.58 0.21 22);
     --tab-sh:0 12px 32px -10px rgba(40,20,100,.32),0 2px 6px rgba(30,20,80,.08);
     position:fixed;left:12px;right:12px;bottom:calc(10px + env(safe-area-inset-bottom));z-index:150;
     display:grid;grid-auto-flow:column;grid-auto-columns:minmax(0,1fr);gap:2px;height:64px;padding:6px;box-sizing:border-box;
@@ -34,7 +34,7 @@
   }
   .tabbar.has-fab{right:86px}
   html[data-theme="dark"] .tabbar{--tab-bg:rgba(22,19,36,.88);--tab-line:rgba(255,255,255,.09);--tab-text:#8b8b96;--tab-on:oklch(0.86 0.09 var(--acH));
-    --tab-pill:linear-gradient(135deg,oklch(0.34 0.09 var(--acH)),oklch(0.32 0.08 calc(var(--acH) + 50)));--tab-sh:0 14px 34px -10px rgba(0,0,0,.7),0 0 0 1px rgba(255,255,255,.03)}
+    --tab-pill:linear-gradient(135deg,oklch(0.34 0.09 var(--acH)),oklch(0.32 0.08 var(--acH2)));--tab-sh:0 14px 34px -10px rgba(0,0,0,.7),0 0 0 1px rgba(255,255,255,.03)}
   .tab{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:2px;min-width:0;padding:0;border:0;border-radius:26px;background:transparent;
     color:var(--tab-text);font:600 10px/1.2 'Plus Jakarta Sans',sans-serif;text-decoration:none;cursor:pointer;-webkit-user-select:none;user-select:none;
     transition:background-color .2s,color .2s,transform .12s}
@@ -50,7 +50,7 @@
     font:700 10px/17px 'Plus Jakarta Sans',sans-serif;text-align:center;box-shadow:0 0 0 2px var(--tab-bg)}
   .tab-ic .badge.dot{top:0;right:0;width:8px;height:8px;padding:0;border-radius:50%;background:var(--tab-alert);box-shadow:0 0 0 2px var(--tab-bg)}
   .tab-fab{position:fixed;right:12px;bottom:calc(10px + env(safe-area-inset-bottom));z-index:150;width:64px;height:64px;display:grid;place-items:center;padding:0;border:0;
-    border-radius:50%;background:linear-gradient(135deg,oklch(0.56 0.22 var(--acH)),oklch(0.62 0.2 calc(var(--acH) + 40)));color:#fff;cursor:pointer;
+    border-radius:50%;background:linear-gradient(135deg,oklch(0.56 0.22 var(--acH)),oklch(0.62 0.2 var(--acH2)));color:#fff;cursor:pointer;
     box-shadow:0 14px 30px -10px oklch(0.5 0.22 var(--acH) / .75),0 2px 6px rgba(30,20,80,.12);transition:transform .12s}
   .tab-fab svg{width:26px;height:26px;stroke-width:2.2}
   .tab-fab:active{transform:scale(.92)}

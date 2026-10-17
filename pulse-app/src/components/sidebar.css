@@ -12,12 +12,12 @@
 .app>aside.sb2{
   --sb-w:210px;
   --sb-ease:cubic-bezier(.2,.8,.2,1);--sb-t:.3s;
-  --sb-bg:rgba(255,255,255,.55);--sb-panel:#fff;
+  --sb-bg:rgba(255,255,255,.42);--sb-panel:#fff;
   --sb-text:#18181b;--sb-text2:#52525b;--sb-text3:#6b6b75;
   --sb-line:rgba(30,20,80,.08);--sb-hover:rgba(30,20,80,.05);
   --sb-on:#fff;--sb-onSh:0 1px 2px rgba(30,20,80,.06),0 6px 16px -6px rgba(60,40,140,.22);
   --sb-ac:oklch(0.55 0.2 var(--acH));--sb-acText:oklch(0.48 0.19 var(--acH));
-  --sb-acGrad:linear-gradient(135deg,oklch(0.56 0.22 var(--acH)),oklch(0.62 0.2 calc(var(--acH) + 40)));
+  --sb-acGrad:linear-gradient(135deg,oklch(0.56 0.22 var(--acH)),oklch(0.62 0.2 var(--acH2)));
   --sb-warn:oklch(0.62 0.15 60);--sb-good:#22c55e;
   background:var(--sb-bg);border-right:1px solid var(--sb-line);color:var(--sb-text);
   backdrop-filter:blur(16px) saturate(160%);-webkit-backdrop-filter:blur(16px) saturate(160%);

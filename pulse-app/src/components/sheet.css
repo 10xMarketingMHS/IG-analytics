@@ -6,7 +6,8 @@
 :root{--sheet-panel:rgba(255,255,255,.86)}
 html[data-theme="dark"]{--sheet-panel:oklch(0.2 0.04 var(--acH) / .72)}
 
-.app .topbar{background:color-mix(in srgb,var(--bg) 72%,transparent)}
+/* the top bar lets the accent tint show through, as in the design */
+.app .topbar{background:color-mix(in srgb,var(--bg) 45%,transparent);backdrop-filter:blur(16px) saturate(160%);-webkit-backdrop-filter:blur(16px) saturate(160%)}
 .app .content{--content-x:26px;max-width:none}
 @media (max-width:768px){.app .content{--content-x:16px}}
 
@@ -38,21 +39,26 @@ html[data-theme="dark"]{--sheet-panel:oklch(0.2 0.04 var(--acH) / .72)}
 /* the accent colour picker in the top bar */
 .accent-pick{position:relative}
 .accent-dot{display:inline-block;flex:none;width:16px;height:16px;border-radius:50%;box-shadow:inset 0 0 0 2px rgba(255,255,255,.55),0 0 0 1px rgba(0,0,0,.08)}
-.accent-pop{position:absolute;top:calc(100% + 8px);right:0;z-index:60;display:flex;flex-direction:column;gap:2px;min-width:180px;padding:8px;
+.accent-pop{position:absolute;top:calc(100% + 8px);right:0;z-index:60;display:flex;flex-direction:column;gap:6px;width:268px;padding:12px;
   border:1px solid var(--border);border-radius:14px;background:var(--glass-solid);box-shadow:0 18px 44px -12px rgba(0,0,0,.35)}
 .accent-pop>b{padding:4px 8px 6px;font-size:11px;font-weight:800;letter-spacing:.06em;text-transform:uppercase;color:var(--muted)}
-.accent-pop>button{display:flex;align-items:center;gap:10px;height:36px;padding:0 10px;border:0;border-radius:9px;background:transparent;color:var(--text);
-  font:600 13px 'Plus Jakarta Sans',sans-serif;text-align:left;cursor:pointer}
-.accent-pop>button:hover{background:var(--accent-weak)}
-.accent-pop>button.on{color:var(--accent-ink)}
-.accent-tick{margin-left:auto}
+.accent-pop>b{padding:0 2px}
+.accent-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:8px 6px}
+.accent-grid button{display:flex;flex-direction:column;align-items:center;gap:5px;padding:4px 0;border:0;border-radius:10px;background:transparent;color:var(--muted);
+  font:600 11px 'Plus Jakarta Sans',sans-serif;cursor:pointer}
+.accent-grid button:hover{color:var(--text)}
+.accent-grid button.on{color:var(--accent-ink)}
+.accent-tile{width:40px;height:40px;border-radius:12px;display:grid;place-items:center;color:#fff;box-shadow:inset 0 0 0 1px rgba(255,255,255,.25)}
+.accent-grid button.on .accent-tile{box-shadow:0 0 0 2px var(--glass-solid),0 0 0 4px var(--accent)}
+.accent-grid button:focus-visible{outline:2px solid var(--accent);outline-offset:1px}
+.accent-note{padding:2px 2px 0;font-size:11px;line-height:1.4;color:var(--faint)}
 /* phones: the choice lives in the More menu instead of the top bar */
 .sb2-accent{display:none}
 @media (max-width:768px){
   .app .topbar .accent-pick{display:none}
-  .sb2-accent{display:flex;align-items:center;gap:6px;padding:10px 16px;border-top:1px solid var(--sb-line);font-size:12px;font-weight:500;color:var(--sb-text3)}
-  .sb2-accent>span{margin-right:auto}
-  .sb2-accent button{width:32px;height:32px;display:grid;place-items:center;padding:0;border:0;border-radius:50%;background:transparent;cursor:pointer}
-  .sb2-accent button.on{box-shadow:0 0 0 2px var(--sb-ac)}
-  .sb2-accent .accent-dot{width:20px;height:20px}
+  .sb2-accent{display:flex;flex-direction:column;gap:8px;padding:10px 16px;border-top:1px solid var(--sb-line);font-size:12px;font-weight:500;color:var(--sb-text3)}
+  .sb2-accent>div{display:grid;grid-template-columns:repeat(8,1fr);gap:4px}
+  .sb2-accent button{aspect-ratio:1;display:grid;place-items:center;padding:0;border:0;border-radius:9px;background:transparent;cursor:pointer}
+  .sb2-accent .accent-tile{width:100%;height:100%;max-width:28px;max-height:28px;border-radius:8px}
+  .sb2-accent button.on .accent-tile{box-shadow:0 0 0 2px var(--sb-panel),0 0 0 4px var(--sb-ac)}
 }

@@ -7,7 +7,7 @@
   --mt-sunk:rgba(30,20,80,.035);--mt-sunk2:rgba(30,20,80,.07);--mt-hover:rgba(30,20,80,.05);
   --mt-sh1:0 1px 2px rgba(30,20,80,.04),0 10px 28px -8px rgba(60,40,140,.14);
   --mt-ac:oklch(0.55 0.2 var(--acH));--mt-acSoft:oklch(0.96 0.025 var(--acH));--mt-acText:oklch(0.48 0.19 var(--acH));--mt-acGlow:oklch(0.55 0.2 var(--acH) / .16);
-  --mt-acGrad:linear-gradient(135deg,oklch(0.56 0.22 var(--acH)),oklch(0.62 0.2 calc(var(--acH) + 40)));
+  --mt-acGrad:linear-gradient(135deg,oklch(0.56 0.22 var(--acH)),oklch(0.62 0.2 var(--acH2)));
   --mt-good:oklch(0.52 0.14 155);--mt-goodSoft:oklch(0.96 0.03 155);--mt-bad:oklch(0.55 0.2 25);--mt-badSoft:oklch(0.96 0.03 25);
   --mt-warn:oklch(0.55 0.14 60);--mt-warnSoft:oklch(0.96 0.04 75);--mt-rev:oklch(0.55 0.15 250);--mt-revSoft:oklch(0.95 0.03 250);
   --mt-prog:oklch(0.62 0.15 65);--mt-gold:oklch(0.68 0.15 75);

@@ -165,15 +165,20 @@ function AccentPicker() {
       {open && (
         <div className="accent-pop" role="menu" aria-label="Accent colour">
           <b>Accent colour</b>
-          {ACCENTS.map((a) => (
-            <button key={a.key} type="button" role="menuitemradio" aria-checked={accent === a.key} className={accent === a.key ? "on" : ""}
-              onClick={() => { setAccent(a.key); setOpen(false); }}>
-              <span className="accent-dot" style={{ background: a.swatch }} />{a.label}
-              {accent === a.key && (
-                <svg className="accent-tick" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M20 6 9 17l-5-5" /></svg>
-              )}
-            </button>
-          ))}
+          <div className="accent-grid">
+            {ACCENTS.map((a) => (
+              <button key={a.key} type="button" role="menuitemradio" aria-checked={accent === a.key} aria-label={a.label} title={a.label}
+                className={accent === a.key ? "on" : ""} onClick={() => setAccent(a.key)}>
+                <span className="accent-tile" style={{ background: a.swatch }}>
+                  {accent === a.key && (
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M20 6 9 17l-5-5" /></svg>
+                  )}
+                </span>
+                <span className="accent-name">{a.label}</span>
+              </button>
+            ))}
+          </div>
+          <span className="accent-note">Tints the background and highlights. Only for you, on this browser.</span>
         </div>
       )}
     </div>
@@ -186,12 +191,14 @@ function AccentRow() {
   return (
     <div className="sb2-accent" role="radiogroup" aria-label="Accent colour">
       <span>Accent colour</span>
-      {ACCENTS.map((a) => (
-        <button key={a.key} type="button" role="radio" aria-checked={accent === a.key} aria-label={a.label} title={a.label}
-          className={accent === a.key ? "on" : ""} onClick={() => setAccent(a.key)}>
-          <span className="accent-dot" style={{ background: a.swatch }} />
-        </button>
-      ))}
+      <div>
+        {ACCENTS.map((a) => (
+          <button key={a.key} type="button" role="radio" aria-checked={accent === a.key} aria-label={a.label} title={a.label}
+            className={accent === a.key ? "on" : ""} onClick={() => setAccent(a.key)}>
+            <span className="accent-tile" style={{ background: a.swatch }} />
+          </button>
+        ))}
+      </div>
     </div>
   );
 }

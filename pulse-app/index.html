@@ -28,7 +28,8 @@
           var t = localStorage.getItem("pulse-theme") || "dark";
           document.documentElement.setAttribute("data-theme", t);
           var ac = localStorage.getItem("pulse-accent");
-          document.documentElement.setAttribute("data-accent", ac === "blue" || ac === "green" ? ac : "violet");
+          var known = ["violet", "indigo", "blue", "orchid", "pink", "green", "amber", "sunset"];
+          document.documentElement.setAttribute("data-accent", known.indexOf(ac) >= 0 ? ac : "violet");
           document.querySelector('meta[name="theme-color"]').setAttribute("content", t === "light" ? "#f3f0fb" : "#0a0713");
         } catch (e) {
           document.documentElement.setAttribute("data-theme", "dark");
