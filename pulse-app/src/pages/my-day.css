@@ -64,6 +64,10 @@ html[data-theme="dark"] .myday{
 .myday .mh-pod-pts,.myday .mh-pod-card.gold .mh-pod-pts{font-size:11.5px;font-weight:700;color:var(--ring)}
 .myday .mh-pod-rank{position:absolute;top:-5px;left:-5px;width:15px;height:15px;border-radius:50%;background:var(--ring);color:#1a1530;font-size:9px;font-weight:800;display:grid;place-items:center}
 
+/* podium chips stand on their steps in the video (placed by home.tsx) */
+.myday .mh-podium.on-steps{inset:0;padding:0;display:block}
+.myday .mh-pod-spot{position:absolute;transform:translate(-50%,-50%);pointer-events:auto}
+
 /* compact strip */
 .myday-hero.compact{min-height:84px;height:84px;border-radius:20px;container-type:inline-size}
 .myday-hero.compact .mh-video{object-position:center 34%}

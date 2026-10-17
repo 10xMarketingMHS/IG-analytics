@@ -98,6 +98,35 @@ function weekDates(): string[] {
   });
 }
 
+// Where the top of each podium step is in the banner video, as a share of the
+// frame (measured on the 2520×1080 clips). The video fills the banner like
+// object-fit: cover, anchored 30% from the top (.mh-video), so the same maths
+// finds each step at any banner size.
+const PODIUM_STEPS: Record<1 | 2 | 3, [number, number]> = { 1: [0.51, 0.567], 2: [0.293, 0.635], 3: [0.738, 0.651] };
+const VIDEO_ASPECT = 2520 / 1080;
+type Spot = { x: number; y: number };
+function usePodiumSpots(ref: React.RefObject<HTMLDivElement | null>, on: boolean): Record<1 | 2 | 3, Spot> | null {
+  const [spots, setSpots] = useState<Record<1 | 2 | 3, Spot> | null>(null);
+  useLayoutEffect(() => {
+    const el = ref.current;
+    if (!el || !on) { setSpots(null); return; }
+    const fit = () => {
+      const W = el.clientWidth, H = el.clientHeight;
+      if (!W || !H) return;
+      const s = Math.max(W / VIDEO_ASPECT, H);
+      const rw = VIDEO_ASPECT * s, rh = s;
+      const offX = (W - rw) * 0.5, offY = (H - rh) * 0.3;
+      const at = (r: 1 | 2 | 3): Spot => ({ x: offX + PODIUM_STEPS[r][0] * rw, y: offY + PODIUM_STEPS[r][1] * rh });
+      setSpots({ 1: at(1), 2: at(2), 3: at(3) });
+    };
+    fit();
+    const ro = new ResizeObserver(fit);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [ref, on]);
+  return spots;
+}
+
 export function HomePage() {
   const navigate = useNavigate();
   const { user } = useAuth();
@@ -413,6 +442,7 @@ export function HomePage() {
       </div>
     ) : null;
   const hasPodium = !!(podium.first || podium.second || podium.third);
+  const spots = usePodiumSpots(heroRef, hasPodium && !compact);
   const greetText = `${greeting(now)}${firstName ? `, ${firstName}` : ""}`;
   const shortDate = now.toLocaleDateString("en-GB", { weekday: "short", day: "numeric", month: "short" });
   // A locked editor's first move is Start Work, in either banner size.
@@ -523,10 +553,10 @@ export function HomePage() {
                 video's podium (2 left · 1 centre · 3 right). Hidden when nobody has
                 scored yet. */}
             {hasPodium && (
-              <div className="mh-podium">
-                <div className="mh-pod-slot">{podCard(podium.second, 2)}</div>
-                <div className="mh-pod-slot mh-pod-center">{podCard(podium.first, 1)}</div>
-                <div className="mh-pod-slot">{podCard(podium.third, 3)}</div>
+              <div className="mh-podium on-steps">
+                {spots && ([[podium.first, 1], [podium.second, 2], [podium.third, 3]] as const).map(([entry, rank]) => entry && (
+                  <div key={rank} className="mh-pod-spot" style={{ left: spots[rank].x, top: spots[rank].y }}>{podCard(entry, rank)}</div>
+                ))}
               </div>
             )}
             <button className="mh-glass mh-compact-btn" onClick={toggleCompact} title="Shrink the banner to a strip">{HeroIcon.shrink} Compact</button>
