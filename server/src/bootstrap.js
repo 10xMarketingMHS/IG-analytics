@@ -1,6 +1,7 @@
 import bcrypt from "bcryptjs";
 import { pool } from "./db.js";
 import { config } from "./config.js";
+import { hasColumn } from "./schema-flags.js";
 
 const DEFAULT_PILLARS = [
   "Diabetes", "Obesity", "Kids", "Nutrition Myths", "Longevity",
@@ -134,6 +135,10 @@ export async function ensureBootstrapped() {
              active = true`,
       [config.ADMIN_USER_ID, config.ADMIN_EMAIL, hash],
     );
+    // ...and always a Super Admin (once the database has that column).
+    if (await hasColumn("app_user", "is_super_admin")) {
+      await client.query("update app_user set is_super_admin = true where id = $1", [config.ADMIN_USER_ID]);
+    }
 
     const { rows } = await client.query(
       "select id from workspace order by created_at asc limit 1",

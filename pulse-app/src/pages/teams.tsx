@@ -25,15 +25,29 @@ export const ROLE_HINT: Record<Role, string> = {
   viewer: "Read-only — can view dashboards & posts.",
 };
 
+// The roster's role picker: Super Admin is an admin who can also manage other
+// admins; No login is someone on the team who can't sign in.
+export type RoleKey = "super" | Role | "none";
+export const ROLE_KEY_LABEL: Record<RoleKey, string> = { super: "Super Admin", admin: "Admin", editor: "Editor", viewer: "Viewer", none: "No login" };
+export const roleKeyOf = (u: AppUser | null): RoleKey => (!u ? "none" : u.role === "admin" && u.isSuperAdmin ? "super" : u.role);
+const LOGIN_HINT: Record<Exclude<RoleKey, "none">, string> = {
+  super: "Everything an admin can do, and managing other admins.",
+  ...ROLE_HINT,
+};
+
 // One row = one person, however they exist in the system: on the roster
 // (assignable to posts/tasks), with a login (can sign in), or both — the
 // common case. Merged by editor_id so "add a person" is one flow either way.
 export type TeamRow = { editor: Editor | null; user: AppUser | null };
 
-export function TeamMemberModal({ row, onClose, onSaved, existingEmails, startWithLogin, onRemoveEditor, onRemoveLogin }: {
+export function TeamMemberModal({ row, onClose, onSaved, existingEmails, startWithLogin, startRole, canManageAdmins = true, onRemoveEditor, onRemoveLogin }: {
   row: TeamRow; onClose: () => void; onSaved: () => void; existingEmails: string[];
-  // Open with "Give login access" already ticked (the roster's Give login).
+  // Open with "Give login access" already ticked (the roster's Give login),
+  // and the role picked on the row.
   startWithLogin?: boolean;
+  startRole?: RoleKey;
+  // Only a Super Admin can make someone an admin or Super Admin.
+  canManageAdmins?: boolean;
   onRemoveEditor?: (ed: Editor) => void;
   onRemoveLogin?: (u: AppUser) => void;
 }) {
@@ -43,12 +57,17 @@ export function TeamMemberModal({ row, onClose, onSaved, existingEmails, startWi
 
   const [name, setName] = useState(editor?.name ?? user?.name ?? "");
   const [designation, setDesignation] = useState(editor?.designation ?? "");
+  const [code, setCode] = useState(editor?.employee_code ?? "");
   const [imageUrl, setImageUrl] = useState<string | null>(editor?.image_url ?? null);
 
   const [giveLogin, setGiveLogin] = useState(Boolean(user) || Boolean(startWithLogin));
   const [email, setEmail] = useState(user?.email ?? "");
   const [password, setPassword] = useState("");
-  const [role, setRole] = useState<Role>(user?.role ?? "editor");
+  const [role, setRole] = useState<Exclude<RoleKey, "none">>(() => {
+    const k = user ? roleKeyOf(user) : startRole;
+    return k && k !== "none" ? k : "editor";
+  });
+  const wasRole = user ? roleKeyOf(user) : null;
 
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -80,11 +99,13 @@ export function TeamMemberModal({ row, onClose, onSaved, existingEmails, startWi
         const patch: Record<string, unknown> = {};
         if (name.trim() !== editor.name) patch.name = name.trim();
         if (designation !== (editor.designation ?? "")) patch.designation = designation;
+        if (code.trim().toUpperCase() !== (editor.employee_code ?? "")) patch.employeeCode = code.trim();
         if (imageUrl !== editor.image_url) patch.imageUrl = imageUrl ?? "";
         if (Object.keys(patch).length) await api(`/editors/${editor.id}`, { method: "PATCH", body: JSON.stringify(patch) });
       } else {
         const { editor: created } = await api<{ editor: Editor }>("/editors", {
-          method: "POST", body: JSON.stringify({ name: name.trim(), designation, imageUrl: imageUrl ?? "" }),
+          method: "POST",
+          body: JSON.stringify({ name: name.trim(), designation, imageUrl: imageUrl ?? "", ...(code.trim() ? { employeeCode: code.trim() } : {}) }),
         });
         editorId = created.id;
       }
@@ -93,13 +114,16 @@ export function TeamMemberModal({ row, onClose, onSaved, existingEmails, startWi
         // Brand-new login, linked to the editor record above in one step.
         await api("/users", {
           method: "POST",
-          body: JSON.stringify({ email: email.trim(), name: name.trim(), password, role, editorId }),
+          body: JSON.stringify({ email: email.trim(), name: name.trim(), password, role: role === "super" ? "admin" : role, superAdmin: role === "super", editorId }),
         });
-      } else if (giveLogin && user && (role !== user.role || user.editor_id !== editorId)) {
+      } else if (giveLogin && user && (role !== wasRole || user.editor_id !== editorId)) {
         // Link the login to its roster record whenever they differ — including a
         // login that was not on the roster yet, whose record was just created above.
         const patch: Record<string, unknown> = {};
-        if (role !== user.role) patch.role = role;
+        if (role !== wasRole) {
+          if (role === "super") patch.superAdmin = true;
+          else { patch.role = role; if (user.isSuperAdmin) patch.superAdmin = false; }
+        }
         if (user.editor_id !== editorId) patch.editorId = editorId;
         await api(`/users/${user.id}`, { method: "PATCH", body: JSON.stringify(patch) });
       }
@@ -158,6 +182,10 @@ export function TeamMemberModal({ row, onClose, onSaved, existingEmails, startWi
               </datalist>
               <div className="hint" style={{ marginTop: 5 }}>Pick a suggestion or type your own — combine a level and a specialty if needed, e.g. "Team Lead – Video Editor".</div>
             </div>
+            <div className="field">
+              <label className="f">Employee code</label>
+              <input className="t" placeholder="e.g. MHS001" maxLength={20} value={code} onChange={(e) => setCode(e.target.value.toUpperCase())} style={{ maxWidth: 200 }} />
+            </div>
 
             <label style={{ display: "flex", alignItems: "center", gap: 9, margin: "18px 0 4px", cursor: user ? "default" : "pointer", fontSize: 13.5, fontWeight: 700 }}>
               <input type="checkbox" checked={giveLogin} disabled={Boolean(user)} onChange={(e) => setGiveLogin(e.target.checked)} style={{ width: 16, height: 16, accentColor: "var(--accent)" }} />
@@ -180,12 +208,15 @@ export function TeamMemberModal({ row, onClose, onSaved, existingEmails, startWi
                 )}
                 <div className="field">
                   <label className="f">Role</label>
-                  <select className="t" value={role} onChange={(e) => setRole(e.target.value as Role)}>
-                    <option value="admin">Admin</option>
-                    <option value="editor">Editor</option>
-                    <option value="viewer">Viewer</option>
+                  <select className="t" value={role} onChange={(e) => setRole(e.target.value as Exclude<RoleKey, "none">)}
+                    disabled={!canManageAdmins && (wasRole === "admin" || wasRole === "super")}>
+                    {(["super", "admin", "editor", "viewer"] as const).map((k) => (
+                      <option key={k} value={k} disabled={(k === "super" || k === "admin") && !canManageAdmins && wasRole !== k}>{ROLE_KEY_LABEL[k]}</option>
+                    ))}
                   </select>
-                  <div className="hint" style={{ marginTop: 5 }}>{ROLE_HINT[role]}</div>
+                  <div className="hint" style={{ marginTop: 5 }}>
+                    {LOGIN_HINT[role]}{!canManageAdmins && " Only a Super Admin can make someone an admin."}
+                  </div>
                 </div>
               </div>
             )}

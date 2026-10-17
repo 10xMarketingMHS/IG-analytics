@@ -52,7 +52,7 @@ export function SettingsPage() {
       <div className="st-head">
         <span className="st-note">
           {SI.shield}
-          {isAdmin ? "Admins only · changes apply to everyone" : "Some sections can only be changed by an admin"}
+          {isAdmin ? "Super Admin & Admin · changes apply to everyone" : "Some sections can only be changed by an admin"}
         </span>
       </div>
       <div className="st-body">

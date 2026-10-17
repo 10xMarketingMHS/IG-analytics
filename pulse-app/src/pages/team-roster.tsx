@@ -4,12 +4,14 @@ import { api, ApiError } from "@/lib/api";
 import { useEditors } from "@/lib/use-editors";
 import { useWorkspaces } from "@/lib/workspaces-context";
 import { gradFor } from "@/lib/editor-visuals";
-import type { AppUser, Editor, Role } from "@/lib/types";
-import { DESIGNATIONS, ROLE_HINT, ROLE_LABEL, TeamMemberModal, type TeamRow } from "@/pages/teams";
+import type { AppUser, Editor } from "@/lib/types";
+import { DESIGNATIONS, ROLE_KEY_LABEL, TeamMemberModal, roleKeyOf, type RoleKey, type TeamRow } from "@/pages/teams";
 
 // Team › Roster (Pulse Redesign v5): everyone on the team in one table — their
-// position, login, role and whether they can sign in — changed right on the
-// row. Add member and Edit open the full window (photo, name, a new login,
+// position, employee code, login, role and whether they can sign in — changed
+// right on the row. Role runs Super Admin › Admin › Editor › Viewer › No login;
+// only a Super Admin can make or change an admin (the server holds to it too).
+// Add member and Edit open the full window (photo, name, a new login,
 // removing someone). Admin-only, like the rest of My Team.
 
 const initials = (n: string) => n.split(/\s+/).filter(Boolean).map((w) => w[0]).join("").slice(0, 2).toUpperCase();
@@ -24,12 +26,18 @@ const IC = {
   key: sv(<><circle cx="8" cy="15" r="4" /><path d="m11 12 9-9M17 6l3 3" /></>, 13),
   none: sv(<><circle cx="10" cy="8" r="4" /><path d="M3 21a7 7 0 0 1 11-5.7M17 15l5 5M22 15l-5 5" /></>, 13),
 };
+const LEGEND: [RoleKey, string][] = [
+  ["super", "everything, including managing admins"],
+  ["admin", "team, goals, settings"],
+  ["editor", "own tasks and posts"],
+  ["viewer", "read-only"],
+];
 
 export function TeamRoster() {
   const { active } = useWorkspaces();
   const { editors, refetch: refetchEditors } = useEditors();
   const [users, setUsers] = useState<AppUser[] | null>(null);
-  const [modal, setModal] = useState<{ row: TeamRow; login?: boolean } | null>(null);
+  const [modal, setModal] = useState<{ row: TeamRow; login?: boolean; role?: RoleKey } | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
 
   const loadUsers = useCallback(() => {
@@ -44,6 +52,9 @@ export function TeamRoster() {
     ...users.filter((u) => !u.editor_id).map((u) => ({ editor: null, user: u })),
   ];
   const withLogin = rows.filter((r) => r.user).length;
+  // Until someone is a Super Admin, every admin can manage admins.
+  const me = users?.find((u) => u.isSelf) ?? null;
+  const amSuper = !(users ?? []).some((u) => u.role === "admin" && u.isSuperAdmin) || !!me?.isSuperAdmin;
 
   async function run(key: string, fn: () => Promise<unknown>, ok: string, fail: string) {
     setBusy(key);
@@ -57,12 +68,27 @@ export function TeamRoster() {
       setBusy(null);
     }
   }
+  const patchEditor = (ed: Editor, body: object, ok: string, fail: string) =>
+    run(ed.id, () => api(`/editors/${ed.id}`, { method: "PATCH", body: JSON.stringify(body) }), ok, fail);
   const setPosition = (ed: Editor, designation: string) =>
-    run(ed.id, () => api(`/editors/${ed.id}`, { method: "PATCH", body: JSON.stringify({ designation }) }),
-      designation ? `${ed.name} is now ${designation}.` : `${ed.name}'s position cleared.`, "Couldn't change the position.");
-  const setRole = (u: AppUser, role: Role) =>
-    run(u.id, () => api(`/users/${u.id}`, { method: "PATCH", body: JSON.stringify({ role }) }),
-      `${u.name || u.email} is now ${ROLE_LABEL[role]}.`, "Couldn't change the role.");
+    patchEditor(ed, { designation }, designation ? `${ed.name} is now ${designation}.` : `${ed.name}'s position cleared.`, "Couldn't change the position.");
+  function setCode(ed: Editor, raw: string) {
+    const code = raw.trim().toUpperCase();
+    if (code === (ed.employee_code ?? "")) return;
+    patchEditor(ed, { employeeCode: code }, code ? `${ed.name}'s employee code is ${code}.` : `${ed.name}'s employee code cleared.`, "Couldn't save the employee code.");
+  }
+  function setRole(r: TeamRow, key: RoleKey) {
+    const u = r.user;
+    const name = r.editor?.name ?? u?.name ?? u?.email ?? "them";
+    if (!u) { if (key !== "none") setModal({ row: r, login: true, role: key }); return; }
+    if (key === roleKeyOf(u)) return;
+    if (key === "none") { removeLogin(u); return; }
+    const body = key === "super" ? { superAdmin: true }
+      : key === "admin" ? { role: "admin", ...(u.isSuperAdmin ? { superAdmin: false } : {}) }
+      : { role: key };
+    run(u.id, () => api(`/users/${u.id}`, { method: "PATCH", body: JSON.stringify(body) }),
+      `${name} is now ${ROLE_KEY_LABEL[key]}.`, "Couldn't change the role.");
+  }
   function resetPassword(u: AppUser) {
     const password = window.prompt(`Set a new password for ${u.email} (min 6 characters)`);
     if (!password) return;
@@ -94,9 +120,7 @@ export function TeamRoster() {
         <button type="button" className="mt-btn pri" onClick={() => setModal({ row: { editor: null, user: null } })}>{IC.add}Add member</button>
       </div>
       <div className="mt-roles">
-        {(["admin", "editor", "viewer"] as Role[]).map((r) => (
-          <span key={r}><b>{ROLE_LABEL[r]}</b> · {ROLE_HINT[r].replace(/\.$/, "").toLowerCase()}</span>
-        ))}
+        {LEGEND.map(([k, d]) => <span key={k}><b>{ROLE_KEY_LABEL[k]}</b> · {d}</span>)}
       </div>
       {loading ? (
         <div className="mt-empty">Loading the team…</div>
@@ -108,6 +132,7 @@ export function TeamRoster() {
             <div className="mt-rrow mt-rth" role="row">
               <span role="columnheader">Member</span>
               <span role="columnheader">Position</span>
+              <span role="columnheader">Emp. code</span>
               <span role="columnheader">Login</span>
               <span role="columnheader">Role</span>
               <span role="columnheader">Status</span>
@@ -117,6 +142,9 @@ export function TeamRoster() {
               const key = r.editor?.id ?? r.user!.id;
               const name = r.editor?.name ?? r.user?.name ?? r.user?.email.split("@")[0] ?? "?";
               const u = r.user, ed = r.editor;
+              const rk = roleKeyOf(u);
+              // An admin's role, password and sign-in are a Super Admin's to change.
+              const locked = !!u && u.role === "admin" && !amSuper && !u.isSelf;
               const st = !u ? ["No login", "", IC.none] as const
                 : !u.active ? ["Deactivated", "bad", IC.off] as const
                 : u.resetRequestedAt ? ["Asked for reset", "warn", IC.key] as const
@@ -142,16 +170,22 @@ export function TeamRoster() {
                       </select>
                     ) : <span className="mt-muted">—</span>}
                   </span>
+                  <span role="cell" className="mt-rcode">
+                    {ed ? (
+                      <input className="mt-rin mono" defaultValue={ed.employee_code ?? ""} key={ed.employee_code ?? ""} placeholder="MHS000" maxLength={20}
+                        aria-label={`${name}'s employee code`} disabled={busy === ed.id}
+                        onBlur={(e) => setCode(ed, e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") (e.target as HTMLInputElement).blur(); }} />
+                    ) : <span className="mt-muted">—</span>}
+                  </span>
                   <span role="cell" className={"mt-rmail" + (u ? "" : " none")} title={u?.email}>{u ? u.email : "No login access"}</span>
                   <span role="cell" className="mt-rrole">
-                    {u ? (
-                      <select className="mt-rin" value={u.role} title={ROLE_HINT[u.role]} disabled={busy === u.id || u.isSelf} aria-label={`${name}'s role`}
-                        onChange={(e) => setRole(u, e.target.value as Role)}>
-                        <option value="admin">Admin</option>
-                        <option value="editor">Editor</option>
-                        <option value="viewer">Viewer</option>
-                      </select>
-                    ) : <span className="mt-muted">—</span>}
+                    <select className="mt-rin" value={rk} disabled={(u ? busy === u.id : false) || !!u?.isSelf || locked} aria-label={`${name}'s role`}
+                      title={u?.isSelf ? "You can't change your own role" : locked ? "Only a Super Admin can change an admin" : undefined}
+                      onChange={(e) => setRole(r, e.target.value as RoleKey)}>
+                      {(["super", "admin", "editor", "viewer", "none"] as RoleKey[]).map((k) => (
+                        <option key={k} value={k} disabled={(k === "super" || k === "admin") && !amSuper && rk !== k}>{ROLE_KEY_LABEL[k]}</option>
+                      ))}
+                    </select>
                   </span>
                   <span role="cell" className="mt-rstc">
                     <span className={"mt-rst " + st[1]} title={u?.resetRequestedAt ? `Asked on ${new Date(u.resetRequestedAt).toLocaleString()}` : undefined}>{st[2]}{st[0]}</span>
@@ -159,9 +193,10 @@ export function TeamRoster() {
                   <span role="cell" className="mt-racts">
                     {u ? (
                       <>
-                        <button type="button" className="mt-rlink" disabled={busy === u.id} onClick={() => resetPassword(u)}>Reset password</button>
+                        <button type="button" className="mt-rlink" disabled={busy === u.id || locked} onClick={() => resetPassword(u)}
+                          title={locked ? "Only a Super Admin can reset an admin's password" : undefined}>Reset password</button>
                         {!u.isSelf && (
-                          <button type="button" className={"mt-rlink " + (u.active ? "bad" : "good")} disabled={busy === u.id} onClick={() => toggleActive(u)}>
+                          <button type="button" className={"mt-rlink " + (u.active ? "bad" : "good")} disabled={busy === u.id || locked} onClick={() => toggleActive(u)}>
                             {u.active ? "Deactivate" : "Reactivate"}
                           </button>
                         )}
@@ -178,12 +213,13 @@ export function TeamRoster() {
         </div>
       )}
       <p className="mt-rnote">
-        Roles apply to <b>{active?.name ?? "this workspace"}</b>. Deactivating a login blocks sign-in everywhere; removing it (in Edit) only takes
-        away access here — the person stays on the team.
+        Roles apply to <b>{active?.name ?? "this workspace"}</b>. Only a Super Admin can make or change an admin. Deactivating a login blocks sign-in
+        everywhere; removing it (No login, or in Edit) only takes away access here — the person stays on the team.
       </p>
       {modal && (
         <TeamMemberModal
-          row={modal.row} startWithLogin={modal.login} onClose={() => setModal(null)} onSaved={refetchAll}
+          row={modal.row} startWithLogin={modal.login} startRole={modal.role} canManageAdmins={amSuper}
+          onClose={() => setModal(null)} onSaved={refetchAll}
           existingEmails={(users ?? []).map((x) => x.email.toLowerCase())}
           onRemoveEditor={removeEditor} onRemoveLogin={removeLogin}
         />

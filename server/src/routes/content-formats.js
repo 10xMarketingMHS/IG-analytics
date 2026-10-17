@@ -10,7 +10,8 @@ const Schema = z.object({
   icon: z.string().trim().min(1).max(8).optional(),
   // Which category (Social vs Ads) this content type belongs to — a format
   // lives in exactly one, and the task-creation dropdown pulls the chosen
-  // category's list. Required on create; not editable afterward.
+  // category's list. Required on create; can be changed later — tasks already
+  // made keep the category they were made with.
   category: z.enum(["social", "ad", "service", "project"]).optional(),
   // Points Formula base_points for this format — how much a task in it is
   // worth before the on-time/late timing multiplier applies. Independent of
@@ -80,6 +81,7 @@ contentFormatsRouter.patch("/content-formats/:id", requirePermission("task_setti
   const vals = [];
   if (parsed.data.name !== undefined) { vals.push(parsed.data.name); sets.push(`name = $${vals.length}`); }
   if (parsed.data.icon !== undefined) { vals.push(parsed.data.icon); sets.push(`icon = $${vals.length}`); }
+  if (parsed.data.category !== undefined) { vals.push(parsed.data.category); sets.push(`category = $${vals.length}`); }
   if (parsed.data.points !== undefined) { vals.push(parsed.data.points); sets.push(`points = $${vals.length}`); }
   if (parsed.data.metric_tier !== undefined) { vals.push(parsed.data.metric_tier); sets.push(`metric_tier = $${vals.length}`); }
   if (parsed.data.duration_days !== undefined) { vals.push(parsed.data.duration_days); sets.push(`duration_days = $${vals.length}`); }

@@ -244,11 +244,11 @@ html:not([data-theme="dark"]) .gl-stars button{color:rgba(30,20,80,.18)}
    person's capacity and goals, and a bar with the totals and Save */
 .gs-who{display:inline-flex;align-items:center;gap:6px;font-size:12px;color:var(--gl-text3)}
 .gs-wrap{display:flex;gap:16px;align-items:flex-start}
-.gs-list{flex:0 0 240px;min-width:0;overflow:hidden;position:sticky;top:12px}
+.gs-list{flex:0 0 240px;min-width:0;overflow:hidden;position:sticky;top:84px}
 .gs-listhead{display:flex;align-items:center;gap:8px;padding:13px 14px 10px}
 .gs-listhead b{font-size:13.5px;font-weight:800}
 .gs-listhead span{font-size:11.5px;color:var(--gl-text3);white-space:nowrap}
-.gs-people{display:flex;flex-direction:column;gap:2px;padding:0 6px 8px;max-height:calc(100vh - 220px);overflow-y:auto}
+.gs-people{display:flex;flex-direction:column;gap:2px;padding:0 6px 8px;max-height:calc(100vh - 160px);overflow-y:auto}
 .gs-person{display:flex;align-items:center;gap:9px;padding:7px 8px;border:1px solid transparent;border-radius:10px;background:transparent;color:var(--gl-text);
   font:inherit;text-align:left;cursor:pointer}
 .gs-person:hover{background:var(--gl-hover)}

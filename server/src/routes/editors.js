@@ -3,6 +3,7 @@ import { z } from "zod";
 import { pool } from "../db.js";
 import { requireAdmin } from "../resolve-workspace.js";
 import { logActivity } from "../activity.js";
+import { hasColumn } from "../schema-flags.js";
 
 export const editorsRouter = Router();
 
@@ -11,9 +12,15 @@ const EditorSchema = z.object({
   designation: z.string().optional(),
   // Small resized data URL (or "" to clear); downscaled client-side.
   imageUrl: z.string().max(2_000_000).optional(),
+  // Company ID shown on the roster (e.g. MHS001); "" clears it.
+  employeeCode: z.string().trim().max(20).optional(),
 });
 
-const EDITOR_COLUMNS = "id, name, designation, image_url, active";
+const BASE_COLUMNS = "id, name, designation, image_url, active";
+// employee_code arrived with a later database change — read it once it's there.
+const editorColumns = async () =>
+  BASE_COLUMNS + ((await hasColumn("editor", "employee_code")) ? ", employee_code" : ", null::text as employee_code");
+const codeOf = (v) => (v ? v.toUpperCase() : null);
 
 // Editors are the shared Media House team — scoped to the org, so every channel
 // sees the same people.
@@ -23,7 +30,7 @@ editorsRouter.get("/editors", async (req, res, next) => {
     // somewhere in the org. Used to keep admins out of "assign an editor"
     // pickers (they oversee; they aren't assigned editing work).
     const { rows } = await pool.query(
-      `select ${EDITOR_COLUMNS},
+      `select ${await editorColumns()},
               exists(
                 select 1 from app_user u
                 join membership m on m.user_id = u.id
@@ -46,16 +53,18 @@ editorsRouter.post("/editors", requireAdmin, async (req, res, next) => {
   try {
     // workspace_id stays populated (NOT NULL) with the active channel for
     // history, but org_id is what scopes the shared team.
+    const withCode = parsed.data.employeeCode !== undefined && (await hasColumn("editor", "employee_code"));
     const { rows } = await pool.query(
-      `insert into editor (workspace_id, org_id, name, designation, image_url)
-       values ($1, $2, $3, $4, $5)
-       returning ${EDITOR_COLUMNS}`,
+      `insert into editor (workspace_id, org_id, name, designation, image_url${withCode ? ", employee_code" : ""})
+       values ($1, $2, $3, $4, $5${withCode ? ", $6" : ""})
+       returning ${await editorColumns()}`,
       [
         req.workspaceId,
         req.orgId,
         parsed.data.name,
         parsed.data.designation ?? "",
         parsed.data.imageUrl || null,
+        ...(withCode ? [codeOf(parsed.data.employeeCode)] : []),
       ],
     );
     await logActivity({
@@ -81,12 +90,19 @@ editorsRouter.patch("/editors/:id", requireAdmin, async (req, res, next) => {
     params.push(key === "imageUrl" ? parsed.data[key] || null : parsed.data[key]);
     sets.push(`${col} = $${params.length}`);
   }
-  if (!sets.length) return res.status(400).json({ error: "No fields to update" });
   try {
+    if (parsed.data.employeeCode !== undefined) {
+      if (!(await hasColumn("editor", "employee_code"))) {
+        return res.status(409).json({ error: "Employee codes need a database update first — ask whoever runs the database to apply 20261022120000_super_admin_employee_code." });
+      }
+      params.push(codeOf(parsed.data.employeeCode));
+      sets.push(`employee_code = $${params.length}`);
+    }
+    if (!sets.length) return res.status(400).json({ error: "No fields to update" });
     const { rows } = await pool.query(
       `update editor set ${sets.join(", ")}
        where id = $1 and org_id = $2
-       returning ${EDITOR_COLUMNS}`,
+       returning ${await editorColumns()}`,
       params,
     );
     if (!rows.length) return res.status(404).json({ error: "Editor not found" });

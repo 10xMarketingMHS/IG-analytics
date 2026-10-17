@@ -26,6 +26,8 @@ export type AppUser = {
   name: string | null;
   active: boolean;
   role: Role;
+  // An admin who can also manage other admins (Team › Roster).
+  isSuperAdmin?: boolean;
   isSelf: boolean;
   editor_id: string | null;
   // Set while a "Forgot password?" request is waiting for the admin.
@@ -38,6 +40,8 @@ export type Editor = {
   designation: string;
   image_url: string | null;
   active: boolean;
+  // Company ID shown on the roster, e.g. MHS001.
+  employee_code?: string | null;
   // True when this editor is linked to a user with an admin role. Admins are
   // hidden from "assign an editor" pickers (they don't get assigned editing).
   is_admin?: boolean;

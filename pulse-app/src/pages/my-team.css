@@ -159,8 +159,8 @@ html[data-theme="dark"] .mt{
   font-size:12px;color:var(--mt-text3)}
 .mt-roles b{color:var(--mt-text);font-weight:700}
 .mt-rscroll{overflow-x:auto}
-.mt-rtable{min-width:960px}
-.mt-rrow{display:grid;grid-template-columns:minmax(0,1.5fr) minmax(0,1.1fr) minmax(0,1.5fr) minmax(0,.9fr) minmax(0,1fr) 230px;gap:12px;align-items:center;padding:11px 20px;
+.mt-rtable{min-width:1100px}
+.mt-rrow{display:grid;grid-template-columns:minmax(0,1.4fr) minmax(0,1.1fr) minmax(0,.75fr) minmax(0,1.5fr) minmax(0,1fr) minmax(0,1fr) 210px;gap:12px;align-items:center;padding:11px 20px;
   border-top:1px solid var(--mt-line2)}
 .mt-rrow:first-child{border-top:0}
 .mt-rrow.mt-rth{padding-top:10px;padding-bottom:10px;font-size:11px;font-weight:800;letter-spacing:.06em;text-transform:uppercase;color:var(--mt-text3)}
@@ -176,6 +176,8 @@ html[data-theme="dark"] .mt{
 .mt-rin{width:100%;max-width:190px;height:30px;padding:0 8px;border:1px solid var(--mt-line);border-radius:8px;background:var(--mt-solid);color:var(--mt-text);
   font:500 12.5px 'Plus Jakarta Sans',sans-serif;outline:none;cursor:pointer}
 .mt-rin:focus{border-color:var(--mt-ac)}
+.mt-rin.mono{cursor:text;font-family:'Geist Mono',ui-monospace,monospace;text-transform:uppercase;max-width:120px}
+.mt-rin.mono::placeholder{text-transform:none;color:var(--mt-text3)}
 .mt-rin:disabled{opacity:.6;cursor:default}
 .mt-rmail{font-size:12.5px;color:var(--mt-text2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .mt-rmail.none{color:var(--mt-text3);font-style:italic}
@@ -196,13 +198,15 @@ html[data-theme="dark"] .mt{
   .mt-rhead,.mt-roles,.mt-rnote{padding-left:14px;padding-right:14px}
   .mt-rtable{min-width:0}
   .mt-rrow.mt-rth{display:none}
-  .mt-rrow{grid-template-columns:minmax(0,1fr) minmax(0,1fr);grid-template-areas:"who st" "pos role" "mail mail" "acts acts";gap:8px 10px;padding:12px 14px}
+  .mt-rrow{grid-template-columns:minmax(0,1fr) minmax(0,1fr);grid-template-areas:"who st" "pos role" "code mail" "acts acts";gap:8px 10px;padding:12px 14px}
   .mt-rrow:nth-child(2){border-top:0}
   .mt-rwho{grid-area:who}
   .mt-rstc{grid-area:st;justify-self:end}
   .mt-rpos{grid-area:pos}
   .mt-rrole{grid-area:role}
-  .mt-rmail{grid-area:mail}
+  .mt-rmail{grid-area:mail;align-self:center}
+  .mt-rcode{grid-area:code}
+  .mt-rin.mono{max-width:none}
   .mt-racts{grid-area:acts;justify-content:flex-start;gap:16px}
   .mt-racts .mt-ricon{margin-left:auto}
   .mt-rin{max-width:none}

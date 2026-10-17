@@ -2,17 +2,16 @@ import { Fragment, useCallback, useEffect, useRef, useState, type ReactNode } fr
 import { toast } from "sonner";
 import { api, ApiError } from "@/lib/api";
 import { useWorkspaces } from "@/lib/workspaces-context";
-import { useEditors } from "@/lib/use-editors";
 import { useContentFormats } from "@/lib/use-content-formats";
 import type { ContentFormatDef, TaskTimeRule } from "@/lib/types";
-import { SI, Seg, Stepper, Toggle, fmtHours } from "@/pages/settings-ui";
+import { SI, Stepper, Toggle, fmtHours } from "@/pages/settings-ui";
 
 // Settings › Tasks & time (Pulse Redesign v5): every task type in one list,
-// grouped Social / Ads / Service / Project — its icon, name, whether it needs a
-// delivery link for review, its Key/Critical metric tag, points and time budget
-// (a project type has a duration in days instead). Each change saves on its own
-// a moment after the last click. Below: time per person, and the break
-// allowance. Admins or the task_settings grant.
+// grouped Social / Ads / Service / Project — its icon, name, category, whether
+// it needs a delivery link for review, its Key/Critical metric tag, points and
+// time budget (a project type has a duration in days instead). Each change
+// saves on its own a moment after the last click. Below: breaks and the task
+// rules everyone works by. Admins or the task_settings grant.
 
 // A curated set — enough variety for common content work without turning the
 // picker into an unscrollable wall of emoji.
@@ -47,10 +46,8 @@ function useAutoSave<T>(value: T, saved: T, save: (v: T) => void, delay = 700) {
 export function TaskRulesSection() {
   const { hasPermission } = useWorkspaces();
   const canManage = hasPermission("task_settings");
-  const { editors } = useEditors();
   const { contentFormats, refetch: refetchFormats } = useContentFormats();
   const [rules, setRules] = useState<TaskTimeRule[] | null>(null);
-  const [perCat, setPerCat] = useState<Cat>("social");
   const [newName, setNewName] = useState("");
   const [newCat, setNewCat] = useState<Cat>("social");
   const [newIcon, setNewIcon] = useState("🔧");
@@ -117,6 +114,12 @@ export function TaskRulesSection() {
       setAdding(false);
     }
   }
+  async function moveFormat(f: ContentFormatDef, category: Cat) {
+    const to = CATS.find((c) => c.key === category)?.label ?? category;
+    const from = CATS.find((c) => c.key === f.category)?.label ?? f.category;
+    if (!window.confirm(`Move "${f.name}" from ${from} to ${to}? New tasks of this type are made as ${to}; tasks already made stay ${from}.`)) return;
+    await patchFormat(f.id, { category }, "Could not change the category.", `${f.name} moved to ${to}.`);
+  }
   async function removeFormat(f: ContentFormatDef) {
     if (!window.confirm(`Remove "${f.name}"? Tasks and rules already using it keep working — it just won't be offered for new ones.`)) return;
     try {
@@ -130,10 +133,6 @@ export function TaskRulesSection() {
 
   const formats = contentFormats ?? [];
   const globalFor = (f: ContentFormatDef) => rules?.find((r) => r.content_format_id === f.id && !r.editor_id) ?? null;
-  const overrideFor = (editorId: string, f: ContentFormatDef) => rules?.find((r) => r.content_format_id === f.id && r.editor_id === editorId) ?? null;
-  const ownCount = (f: ContentFormatDef) => (rules ?? []).filter((r) => r.content_format_id === f.id && r.editor_id).length;
-  const perFormats = formats.filter((f) => f.category === perCat);
-  const catsWithTypes = CATS.filter((c) => formats.some((f) => f.category === c.key));
 
   return (
     <>
@@ -171,7 +170,7 @@ export function TaskRulesSection() {
                   key={f.id}
                   format={f}
                   rule={globalFor(f)}
-                  own={ownCount(f)}
+                  onCategory={(category) => moveFormat(f, category)}
                   onIcon={(icon) => patchFormat(f.id, { icon }, "Could not change the icon.")}
                   onRename={(name) => patchFormat(f.id, { name }, "Could not rename that type.", "Renamed.")}
                   onPoints={(points) => patchFormat(f.id, { points }, "Could not save points.", `${f.name}: ${trim(points)} point${points === 1 ? "" : "s"}.`)}
@@ -204,64 +203,39 @@ export function TaskRulesSection() {
       </span>
 
       <section className="st-card">
-        <div className="st-cardhead">
-          <b>Time per person</b>
-          <span>Someone faster or slower than the time budget above gets their own. Blank uses the budget. Type hours and click away to save; clear a cell to go back.</span>
-        </div>
-        {catsWithTypes.length > 1 && (
-          <div className="st-row">
-            <Seg label="Kind of work" value={perCat} options={catsWithTypes.map((c) => [c.key, c.label] as [Cat, string])} onChange={setPerCat} />
-          </div>
-        )}
-        {rules === null || !editors || contentFormats === null ? (
-          <div className="st-empty">Loading…</div>
-        ) : editors.length === 0 ? (
-          <div className="st-empty">No team members yet — add people on Team · Roster first.</div>
-        ) : perFormats.length === 0 ? (
-          <div className="st-empty">No {CATS.find((c) => c.key === perCat)?.label} task types yet.</div>
-        ) : (
-          <div className="st-ovwrap">
-            <table className="st-ov">
-              <thead>
-                <tr>
-                  <th>Team member</th>
-                  {perFormats.map((f) => <th key={f.id}>{f.icon} {f.name}</th>)}
-                </tr>
-              </thead>
-              <tbody>
-                {editors.map((ed) => (
-                  <tr key={ed.id}>
-                    <td>{ed.name}</td>
-                    {perFormats.map((f) => (
-                      <td key={f.id}>
-                        <OverrideCell
-                          label={`${ed.name}'s hours for ${f.name}`}
-                          rule={overrideFor(ed.id, f)}
-                          globalHours={globalFor(f)?.hours ?? null}
-                          onSave={(hours) => setRule(f.id, ed.id, hours)}
-                          onClear={(id) => removeRule(id, true)}
-                        />
-                      </td>
-                    ))}
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        )}
-      </section>
-
-      <section className="st-card">
         <div className="st-cardhead"><b>Breaks</b></div>
         <div className="st-row">
           <span className="st-label">
             <b>Daily break allowance</b>
-            <small>Lunch and tea together, the same for everyone — shown in the sidebar</small>
+            <small>Lunch 45m and two tea breaks of 15m, the same for everyone · shown in the sidebar</small>
           </span>
           <span className="st-value st-mono">{fmtHours(BREAK_MINUTES / 60)} / day</span>
         </div>
+        <RuleRow l="Pause the running timer during a break" d="Break time is added back to the task's time budget" />
+      </section>
+
+      <section className="st-card">
+        <div className="st-cardhead">
+          <b>Task rules</b>
+          <span>How tasks work for everyone. These are always on for now.</span>
+        </div>
+        <RuleRow l="Create a task when an editor is assigned to a post" d="Title, channel and due date carry over and stay in sync" />
+        <RuleRow l="Assignee accepts before work starts" d="A task someone else gives you waits as “Pending accept” until you take it" />
+        <RuleRow l="Finished work goes to review first" d="An admin approves it before it counts as completed" />
+        <RuleRow l="Flag tasks that pass their time budget" d="The timer turns red once a task runs past its time" />
       </section>
     </>
+  );
+}
+
+// One always-on rule: shown switched on, and locked.
+function RuleRow({ l, d }: { l: string; d: string }) {
+  return (
+    <div className="st-row">
+      <span className="st-label"><b>{l}</b><small>{d}</small></span>
+      <span className="st-always">Always on</span>
+      <Toggle on onChange={() => {}} disabled label={`${l} — always on`} />
+    </div>
   );
 }
 
@@ -295,11 +269,11 @@ function IconPicker({ value, onPick }: { value: string; onPick: (icon: string) =
 // One task type: icon, name (click to rename), link toggle, metric tag, points
 // and time (or duration). Every field saves on its own.
 function TypeRow({
-  format, rule, own, onIcon, onRename, onPoints, onMetric, onLink, onHours, onClearHours, onDuration, onMetrics, onRemove,
+  format, rule, onCategory, onIcon, onRename, onPoints, onMetric, onLink, onHours, onClearHours, onDuration, onMetrics, onRemove,
 }: {
   format: ContentFormatDef;
   rule: TaskTimeRule | null;
-  own: number;
+  onCategory: (category: Cat) => void;
   onIcon: (icon: string) => void;
   onRename: (name: string) => void;
   onPoints: (points: number) => void;
@@ -346,12 +320,16 @@ function TypeRow({
         <IconPicker value={format.icon} onPick={onIcon} />
         <span>
           <input className="st-plain" value={name} aria-label="Name" onChange={(e) => setName(e.target.value)} onBlur={saveName} onKeyDown={blurOnEnter} />
-          {isProject ? (
-            <input className="st-metrics" value={metrics} placeholder="What this project delivers (a note, not scored)…" aria-label={`What ${format.name} delivers`}
-              onChange={(e) => setMetrics(e.target.value)} onBlur={saveMetrics} onKeyDown={blurOnEnter} />
-          ) : own > 0 ? (
-            <small>{own} {own === 1 ? "person has" : "people have"} their own time</small>
-          ) : null}
+          <span className="st-tt-sub">
+            <select className="st-kind" value={format.category ?? "social"} aria-label={`${format.name} category`} title="Change the category"
+              onChange={(e) => onCategory(e.target.value as Cat)}>
+              {CATS.map((c) => <option key={c.key} value={c.key}>{c.label}</option>)}
+            </select>
+            {isProject && (
+              <input className="st-metrics" value={metrics} placeholder="What this project delivers (a note, not scored)…" aria-label={`What ${format.name} delivers`}
+                onChange={(e) => setMetrics(e.target.value)} onBlur={saveMetrics} onKeyDown={blurOnEnter} />
+            )}
+          </span>
         </span>
       </span>
       <span className="st-c-link">
@@ -389,36 +367,5 @@ function TypeRow({
         <button type="button" className="st-icobtn" onClick={onRemove} title="Remove" aria-label={`Remove ${format.name}`}>{SI.trash}</button>
       </span>
     </div>
-  );
-}
-
-// One cell of the time-per-person table — blank shows the budget as a hint,
-// so it's clear what the person gets even without their own time.
-function OverrideCell({ label, rule, globalHours, onSave, onClear }: {
-  label: string;
-  rule: TaskTimeRule | null;
-  globalHours: number | null;
-  onSave: (hours: number) => void;
-  onClear: (ruleId: string) => void;
-}) {
-  const [value, setValue] = useState(rule?.hours?.toString() ?? "");
-  useEffect(() => { setValue(rule?.hours?.toString() ?? ""); }, [rule?.hours]);
-  function commit() {
-    const t = value.trim();
-    if (!t) { if (rule) onClear(rule.id); return; }
-    const n = Number(t);
-    if (!(n > 0)) { setValue(rule?.hours?.toString() ?? ""); return; }
-    if (rule && n === Number(rule.hours)) return;
-    onSave(n);
-  }
-  return (
-    <input
-      type="number" min="0.25" step="0.25" aria-label={label}
-      placeholder={globalHours != null ? trim(Number(globalHours)) : "—"}
-      value={value}
-      onChange={(e) => setValue(e.target.value)}
-      onBlur={commit}
-      onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); (e.target as HTMLInputElement).blur(); } }}
-    />
   );
 }
