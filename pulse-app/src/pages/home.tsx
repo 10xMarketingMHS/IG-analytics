@@ -1,5 +1,4 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import { useNavigate } from "react-router-dom";
 import { useTasks } from "@/lib/use-tasks";
 import { useAuth } from "@/lib/auth-context";
 import { useWorkspaces } from "@/lib/workspaces-context";
@@ -130,15 +129,17 @@ function usePodiumSpots(ref: React.RefObject<HTMLDivElement | null>, on: boolean
 }
 
 export function HomePage() {
-  const navigate = useNavigate();
   const { user } = useAuth();
   const { active, isAdmin, workspaces, hasPermission } = useWorkspaces();
-  const { session: eodSession, start: startEod, busy: eodBusy, openSod, openEod } = useEodState();
+  const { session: eodSession, loading: eodLoading, start: startEod, busy: eodBusy, openSod, openEod } = useEodState();
   const isEditor = active?.role === "editor";
   // My reports (your own SOD and EOD, today and past days) — for anyone on the
   // team roster, admins included.
   const [reportsOpen, setReportsOpen] = useState(false);
   const canReports = !!user?.editorId;
+  // Start Work / End Work: anyone on the roster (editors are locked until they
+  // start; admins aren't, but can clock in too). Nothing shows while loading.
+  const canClock = !!user?.editorId && !eodLoading;
   const reportsLink = canReports && (
     <button type="button" className="mh-reports" onClick={() => setReportsOpen(true)} title="Your Start of Day and End of Day, today and past days">
       {HeroIcon.reports}My reports
@@ -429,7 +430,7 @@ export function HomePage() {
     pointsToday: scoreWindows?.today.points ?? 0,
     focusSeconds,
     dailyGoalPct: dailyGoal?.pct ?? null,
-    clockedInSince: isEditor && eodSession ? fmtClock(eodSession.startedAt) : null,
+    clockedInSince: eodSession ? fmtClock(eodSession.startedAt) : null,
     week: scoreWindows?.week ?? null,
     month: scoreWindows?.month ?? null,
     weekDays,
@@ -495,21 +496,18 @@ export function HomePage() {
               </div>
             )}
             {scopeToggle}
-            {locked ? (
-              <button className="mhc-primary eod-live" onClick={() => startEod()} disabled={eodBusy} title="Start your work day: the menu and your tasks unlock">
+            {canClock && (eodSession ? (
+              <>
+                <button className="mhc-primary" onClick={() => openEod()} disabled={eodBusy} title="Write today's notes and end your work day">
+                  {HeroIcon.stop}<span>{eodBusy ? "Ending…" : "End Work"}</span>
+                </button>
+                <button className="mhc-ghost mhc-sod" onClick={openSod} title="Copy today's Start of Day report">Start of Day</button>
+              </>
+            ) : (
+              <button className="mhc-primary eod-live" onClick={() => startEod()} disabled={eodBusy} title={locked ? "Start your work day: the menu and your tasks unlock" : "Start your work day"}>
                 {HeroIcon.play}<span>{eodBusy ? "Starting…" : "Start Work"}</span>
               </button>
-            ) : (
-              <>
-                <button className="mhc-primary" onClick={() => navigate("/tasks")} title="Task Board">{HeroIcon.play}<span className="mhc-label">Task Board</span></button>
-                {isEditor && eodSession && (
-                  <>
-                    <button className="mhc-ghost" onClick={() => openEod()} disabled={eodBusy} title="Write today's notes and end your work day">{eodBusy ? "Ending…" : "End Work"}</button>
-                    <button className="mhc-ghost mhc-sod" onClick={openSod} title="Copy today's Start of Day report">Start of Day</button>
-                  </>
-                )}
-              </>
-            )}
+            ))}
             {canReports && (
               <button className="mhc-icon" onClick={() => setReportsOpen(true)} title="My reports — your Start of Day and End of Day" aria-label="My reports">{HeroIcon.reports}</button>
             )}
@@ -521,47 +519,35 @@ export function HomePage() {
               <div className="mh-left">
                 <h1 className="mh-headline">Small Tasks<br /><span className="mh-headline-g">Big Wins</span></h1>
                 <p className="mh-tag">Create. Collaborate. Grow.<br />Level up every day.</p>
-                {/* Locked editor → the primary slot IS Start Work (kept live in color
-                    by .eod-live even while the rest of the app is grayscaled). Once
-                    clocked in, Task Board returns as primary, with End Work secondary. */}
-                {locked ? (
+                {/* One main button: Start Work before the day starts (kept live in
+                    colour by .eod-live while a locked editor's app is grayscaled),
+                    End Work once it has, with Start of Day beside it. */}
+                {canClock && (eodSession ? (
+                  <>
+                    <div className="mh-cta-row">
+                      <button className="btn btn-primary mh-cta" onClick={() => openEod()} disabled={eodBusy} title="Write today's notes and end your work day">
+                        {eodBusy ? "Ending…" : "■ End Work"}
+                      </button>
+                      {/* Start of Day: today's tasks and the report to copy for WhatsApp. */}
+                      <button className="btn mh-endeod" onClick={openSod} title="Copy today's Start of Day report">
+                        Start of Day
+                      </button>
+                    </div>
+                    <div className="mh-subline">
+                      <span className="mh-clockedin"><i aria-hidden="true" />Clocked in since {fmtClock(eodSession.startedAt)}</span>
+                      {reportsLink}
+                    </div>
+                  </>
+                ) : (
                   <div className="mh-startwrap">
                     <button className="btn btn-primary mh-cta eod-live" onClick={() => startEod()} disabled={eodBusy}>
                       {eodBusy ? "Starting…" : "▶ Start Work"}
                     </button>
-                    {/* Before Start Work the rest of the app is greyed out — say why. */}
-                    <p className="mh-lockhint">Press Start Work to begin your day. Pipeline, Posts, Leaderboard and Goals open once you do.</p>
+                    {/* Before Start Work an editor's app is greyed out — say why. */}
+                    {locked && <p className="mh-lockhint">Press Start Work to begin your day. Pipeline, Posts, Leaderboard and Goals open once you do.</p>}
                     {reportsLink && <div className="mh-subline">{reportsLink}</div>}
                   </div>
-                ) : (
-                  <>
-                    <div className="mh-cta-row">
-                      <button className="btn btn-primary mh-cta" onClick={() => navigate("/tasks")}>▶ Task Board</button>
-                      {isEditor && eodSession && (
-                        <>
-                          <button
-                            className="btn mh-endeod"
-                            onClick={() => openEod()}
-                            title="Write today's notes and end your work day"
-                            disabled={eodBusy}
-                          >
-                            {eodBusy ? "Ending…" : "End Work"}
-                          </button>
-                          {/* Start of Day: today's tasks and the report to copy for WhatsApp. */}
-                          <button className="btn mh-endeod" onClick={openSod} title="Copy today's Start of Day report">
-                            Start of Day
-                          </button>
-                        </>
-                      )}
-                    </div>
-                    {((isEditor && eodSession) || reportsLink) && (
-                      <div className="mh-subline">
-                        {isEditor && eodSession && <span className="mh-clockedin"><i aria-hidden="true" />Clocked in since {fmtClock(eodSession.startedAt)}</span>}
-                        {reportsLink}
-                      </div>
-                    )}
-                  </>
-                )}
+                ))}
               </div>
               <div className="mh-right">
                 <div className="mh-date">{dateStr}</div>
@@ -614,6 +600,7 @@ const HeroIcon = {
   replay: heroSvg("M3 12a9 9 0 1 0 3-6.7M3 4v5h5"),
   shrink: heroSvg("m7 20 5-5 5 5M7 4l5 5 5-5"),
   expand: heroSvg("m7 15 5 5 5-5M7 9l5-5 5 5"),
+  stop: <svg width="16" height="16" viewBox="0 0 24 24" aria-hidden="true"><rect x="6" y="6" width="12" height="12" rx="2" fill="currentColor" /></svg>,
   reports: heroSvg("M9 3.5h6v3H9zM6.5 5H6a1.5 1.5 0 0 0-1.5 1.5v13A1.5 1.5 0 0 0 6 21h12a1.5 1.5 0 0 0 1.5-1.5v-13A1.5 1.5 0 0 0 18 5h-.5M9 12h6M9 16h4"),
 };
 
