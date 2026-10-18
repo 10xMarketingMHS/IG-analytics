@@ -1,0 +1,25 @@
+/* My reports — one row per work day: the day, its hours, and the two reports. */
+.myr-card{padding:0;overflow:hidden}
+.myr-head{display:flex;flex-direction:column;gap:3px;padding:16px var(--content-x,20px);border-bottom:1px solid var(--border)}
+.myr-head b{font-size:14px;font-weight:800}
+.myr-head span{font-size:12.5px;color:var(--muted)}
+.myr-row{display:grid;grid-template-columns:minmax(120px,170px) minmax(0,1fr) auto;align-items:center;gap:14px;padding:12px var(--content-x,20px);border-top:1px solid var(--border)}
+.myr-head+.myr-row{border-top:0}
+.myr-day{display:flex;flex-direction:column;line-height:1.3}
+.myr-day b{font-size:13.5px;font-weight:700}
+.myr-day small{font-size:12px;color:var(--muted)}
+.myr-hours{display:flex;align-items:center;flex-wrap:wrap;gap:8px;font-size:13px;color:var(--text)}
+.myr-warn{display:inline-flex;align-items:center;height:22px;padding:0 8px;border-radius:6px;font-style:normal;font-size:11.5px;font-weight:700;
+  background:color-mix(in srgb,#f59e0b 16%,transparent);color:#b45309}
+html[data-theme="dark"] .myr-warn{color:#fbbf24}
+.myr-acts{display:flex;gap:8px;justify-content:flex-end}
+.myr-empty{padding:28px var(--content-x,20px);font-size:13px;color:var(--muted)}
+.myr-more{margin-top:14px}
+@media (max-width:768px){
+  .myr-head{padding:14px 16px}
+  .myr-row{grid-template-columns:minmax(0,1fr);grid-template-areas:"day" "hours" "acts";gap:6px;padding:12px 16px}
+  .myr-day{grid-area:day;flex-direction:row;align-items:baseline;gap:8px}
+  .myr-hours{grid-area:hours;font-size:12.5px;color:var(--muted)}
+  .myr-acts{grid-area:acts;justify-content:flex-start;margin-top:4px}
+  .myr-acts .btn{flex:1;justify-content:center}
+}

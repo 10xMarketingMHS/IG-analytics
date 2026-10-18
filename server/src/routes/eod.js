@@ -289,6 +289,52 @@ eodRouter.get("/eod/summary", async (req, res, next) => {
   } catch (err) { next(err); }
 });
 
+// My reports — your own work days, newest first: each day you started work or
+// copied a Start of Day in the last ?days= (30 by default, at most 365), with
+// the same figures the admin's Work Day page shows. Always yourself.
+eodRouter.get("/eod/my-days", async (req, res, next) => {
+  try {
+    const eid = await callerEditorId(req);
+    if (!eid) return res.json({ days: [], unlinked: true });
+    const span = Math.min(Math.max(Number(req.query.days) || 30, 1), 365);
+    await closeStaleSessions();
+    const { rows } = await pool.query(
+      `with days as (
+         select date from eod_session where editor_id = $1 and date > current_date - $2::int
+         union
+         select date from sod_plan where editor_id = $1 and date > current_date - $2::int
+       )
+       select to_char(d.date, 'YYYY-MM-DD') as date,
+              coalesce(sum(extract(epoch from coalesce(s.ended_at, now()) - s.started_at)), 0)::int as "workedSeconds",
+              coalesce(bool_or(s.auto_closed), false) as "autoClosed",
+              (select p.submitted_at from sod_plan p where p.editor_id = $1 and p.date = d.date) as "planSubmittedAt",
+              (select count(*)::int from sod_plan p, jsonb_array_elements(p.tasks) x
+                 where p.editor_id = $1 and p.date = d.date and x->>'group' <> 'skipped') as "planCount",
+              min(s.started_at) as "startedAt",
+              max(s.ended_at)   as "endedAt",
+              bool_or(s.ended_at is null) as "anyOpen",
+              count(s.id)::int  as "sessions"
+         from days d
+         left join eod_session s on s.editor_id = $1 and s.date = d.date
+        group by d.date
+        order by d.date desc`,
+      [eid, span],
+    );
+    const days = rows.map((r) => ({
+      date: r.date,
+      status: r.sessions === 0 ? "not_started" : (r.anyOpen ? "active" : "completed"),
+      startedAt: r.startedAt,
+      endedAt: r.anyOpen ? null : r.endedAt,
+      sessions: r.sessions,
+      workedSeconds: r.workedSeconds,
+      autoClosed: r.autoClosed,
+      planSubmittedAt: r.planSubmittedAt,
+      planCount: r.planCount,
+    }));
+    res.json({ days });
+  } catch (err) { next(err); }
+});
+
 // Admin oversight — every (non-admin) editor's EOD status for a date.
 eodRouter.get("/eod/team", requireAdmin, async (req, res, next) => {
   try {
