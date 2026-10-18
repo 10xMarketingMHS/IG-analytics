@@ -1,19 +1,17 @@
 import { useEffect, useState } from "react";
-import { Link } from "react-router-dom";
 import { toast } from "sonner";
 import { api } from "@/lib/api";
 import { useAuth } from "@/lib/auth-context";
-import { useWorkspaces } from "@/lib/workspaces-context";
+import { Modal } from "@/components/modal";
 import { EodSummaryCard } from "@/components/eod-summary-card";
 import { SodReportModal } from "@/components/sod-report-card";
 import { fmtDuration, type EodSummary, type SodPlan } from "@/lib/use-eod";
 import "./my-reports.css";
 
 // My reports — a team member's own Start of Day and End of Day reports, today
-// and past days, to read again or copy for WhatsApp. The same windows the admin
-// opens from Settings › Work day, for yourself only (admins get a link there
-// for everyone's). Open before Start Work and after End Work too (app-shell),
-// since that's when people look for them.
+// and past days, to read again or copy for WhatsApp. A pop-up opened from the
+// Home banner (not a page of its own); one window at a time: the list, or the
+// report picked from it, whose Close comes back to the list.
 
 type Day = {
   date: string;
@@ -41,9 +39,8 @@ function dayLabel(date: string): [string, string] {
   return [d.toLocaleDateString(undefined, { weekday: "long" }), d.toLocaleDateString(undefined, { day: "numeric", month: "short", year: d.getFullYear() === today.getFullYear() ? undefined : "numeric" })];
 }
 
-export function MyReportsPage() {
+export function MyReportsModal({ onClose }: { onClose: () => void }) {
   const { user } = useAuth();
-  const { isAdmin } = useWorkspaces();
   const name = (user?.name || user?.email || "You").split(" ")[0].split("@")[0];
   const [span, setSpan] = useState(30);
   const [days, setDays] = useState<Day[] | null>(null);
@@ -90,55 +87,50 @@ export function MyReportsPage() {
     }
   }
 
+  if (openSod) return <SodReportModal name={name} plan={openSod} onClose={() => setOpenSod(null)} />;
+  if (openEod) return <EodSummaryCard name={name} summary={openEod} onClose={() => setOpenEod(null)} />;
+
   return (
-    <section className="screen myr">
-      <div className="card myr-card">
-        <div className="myr-head">
-          <b>Your work days</b>
-          <span>Open a day's Start of Day or End of Day to read it again, or copy it for WhatsApp.</span>
-          {isAdmin && (
-            <span>Everyone's reports, day by day: <Link to="/settings?s=workday" className="myr-link">Settings › Work day</Link></span>
+    <Modal title="My reports" onClose={onClose}>
+      <div className="myr">
+        <p className="myr-sub">Your Start of Day and End of Day, today and past days. Open one to read it again or copy it for WhatsApp.</p>
+        <div className="myr-list">
+          {days === null ? (
+            <div className="myr-empty">Loading…</div>
+          ) : unlinked ? (
+            <div className="myr-empty">Your login isn't linked to the team roster, so there are no work days to show. Ask an admin to link you on Team › Roster.</div>
+          ) : (
+            rows.map((d) => {
+              const [day, sub] = dayLabel(d.date);
+              const hours = d.status === "not_started" ? (d.date === today ? "Not started yet" : "No work day")
+                : d.status === "active" ? `Working now · since ${fmtTime(d.startedAt)}`
+                : `${fmtTime(d.startedAt)} – ${fmtTime(d.endedAt)} · ${fmtDuration(d.workedSeconds)} worked`;
+              return (
+                <div className="myr-row" key={d.date}>
+                  <span className="myr-day"><b>{day}</b><small>{sub}</small></span>
+                  <span className="myr-hours">
+                    {hours}
+                    {d.autoClosed && <em className="myr-warn" title="End Work wasn't pressed, so the day closed on its own at 6 PM">Ended automatically</em>}
+                  </span>
+                  <span className="myr-acts">
+                    <button type="button" className="btn btn-sm" disabled={!d.planSubmittedAt || busy === d.date + "sod"} onClick={() => showSod(d)}
+                      title={d.planSubmittedAt ? `Copied at ${fmtTime(d.planSubmittedAt)}` : "No Start of Day was copied this day"}>
+                      Start of Day{d.planSubmittedAt ? ` · ${d.planCount ?? 0} ${d.planCount === 1 ? "task" : "tasks"}` : ""}
+                    </button>
+                    <button type="button" className="btn btn-sm" disabled={d.status === "not_started" || busy === d.date + "eod"} onClick={() => showEod(d)}
+                      title={d.status === "not_started" ? "Work wasn't started this day" : d.status === "active" ? "Your End of Day so far" : "Your End of Day report"}>
+                      {d.status === "active" ? "End of Day so far" : "End of Day"}
+                    </button>
+                  </span>
+                </div>
+              );
+            })
           )}
         </div>
-        {days === null ? (
-          <div className="myr-empty">Loading…</div>
-        ) : unlinked ? (
-          <div className="myr-empty">Your login isn't linked to the team roster, so there are no work days to show. Ask an admin to link you on Team › Roster.</div>
-        ) : (
-          rows.map((d) => {
-            const [day, sub] = dayLabel(d.date);
-            const hours = d.status === "not_started" ? (d.date === today ? "Not started yet" : "No work day")
-              : d.status === "active" ? `Working now · since ${fmtTime(d.startedAt)}`
-              : `${fmtTime(d.startedAt)} – ${fmtTime(d.endedAt)} · ${fmtDuration(d.workedSeconds)} worked`;
-            return (
-              <div className="myr-row" key={d.date}>
-                <span className="myr-day"><b>{day}</b><small>{sub}</small></span>
-                <span className="myr-hours">
-                  {hours}
-                  {d.autoClosed && <em className="myr-warn" title="End Work wasn't pressed, so the day closed on its own at 6 PM">Ended automatically</em>}
-                </span>
-                <span className="myr-acts">
-                  <button type="button" className="btn btn-sm" disabled={!d.planSubmittedAt || busy === d.date + "sod"} onClick={() => showSod(d)}
-                    title={d.planSubmittedAt ? `Copied at ${fmtTime(d.planSubmittedAt)}` : "No Start of Day was copied this day"}>
-                    Start of Day{d.planSubmittedAt ? ` · ${d.planCount ?? 0} ${d.planCount === 1 ? "task" : "tasks"}` : ""}
-                  </button>
-                  <button type="button" className="btn btn-sm" disabled={d.status === "not_started" || busy === d.date + "eod"} onClick={() => showEod(d)}
-                    title={d.status === "not_started" ? "Work wasn't started this day" : d.status === "active" ? "Your End of Day so far" : "Your End of Day report"}>
-                    {d.status === "active" ? "End of Day so far" : "End of Day"}
-                  </button>
-                </span>
-              </div>
-            );
-          })
+        {days !== null && !unlinked && span < 365 && (
+          <button type="button" className="btn btn-sm myr-more" onClick={() => setSpan((s) => Math.min(365, s * 3))}>Show older days</button>
         )}
       </div>
-      {days !== null && !unlinked && span < 365 && (
-        <button type="button" className="btn myr-more" onClick={() => setSpan((s) => Math.min(365, s * 3))}>
-          Show older days
-        </button>
-      )}
-      {openSod && <SodReportModal name={name} plan={openSod} onClose={() => setOpenSod(null)} />}
-      {openEod && <EodSummaryCard name={name} summary={openEod} onClose={() => setOpenEod(null)} />}
-    </section>
+    </Modal>
   );
 }

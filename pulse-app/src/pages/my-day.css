@@ -61,7 +61,14 @@ html[data-theme="dark"] .myday{
    the clock-in time sits under it as a quiet line */
 .myday .mh-cta-row{gap:10px}
 .myday .mh-endeod{height:42px;padding:0 16px;border-radius:12px;font:600 13px 'Plus Jakarta Sans',sans-serif}
-.myday .mh-clockedin{display:flex;width:max-content;align-items:center;gap:7px;margin:12px 0 0;font-size:12.5px;font-weight:600}
+/* under the buttons: the clock-in time, and My reports */
+.myday .mh-subline{display:flex;flex-direction:column;align-items:flex-start;gap:8px;width:max-content;max-width:100%;margin-top:12px}
+.myday .mh-clockedin{display:flex;align-items:center;gap:7px;font-size:12.5px;font-weight:600}
+.myday .mh-reports{display:inline-flex;align-items:center;gap:6px;padding:0;border:0;background:transparent;color:#fff;font:700 12.5px 'Plus Jakarta Sans',sans-serif;
+  cursor:pointer;text-shadow:0 1px 6px rgba(0,0,0,.5);text-decoration:underline;text-decoration-color:rgba(255,255,255,.45);text-underline-offset:3px}
+.myday .mh-reports svg{width:15px;height:15px}
+.myday .mh-reports:hover{text-decoration-color:#fff}
+.myday .mh-startwrap .mh-subline{margin-top:8px}
 .myday .mh-clockedin i{width:8px;height:8px;border-radius:50%;background:#22c55e;box-shadow:0 0 0 3px rgba(34,197,94,.25)}
 /* Team / Just me */
 .myday .mh-scope{display:inline-flex;padding:2px;margin-top:10px;border:1px solid rgba(255,255,255,.2);border-radius:9px;background:rgba(0,0,0,.25);backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px)}
@@ -84,6 +91,10 @@ html[data-theme="dark"] .myday{
 /* stacked (small screens), the chips would land on the date and greeting —
    hide them, as index.css means to (this rule is stronger than its one) */
 @media (max-width:820px){.myday .mh-podium.on-steps{display:none}}
+/* a narrow banner has no room for both the buttons and the chips: the chips
+   step aside (the video's podium art still shows) */
+.myday-hero{container-type:inline-size}
+@container (max-width:900px){.myday-hero:not(.compact) .mh-podium.on-steps{display:none}}
 
 /* compact strip */
 .myday-hero.compact{min-height:84px;height:84px;border-radius:20px;container-type:inline-size}
@@ -126,11 +137,12 @@ html[data-theme="dark"] .myday{
    Team / Just me switch. The tagline, Replay intro and sub-greeting step aside. */
 @media (max-width:768px){
   .myday-hero:not(.compact){border-radius:20px;margin-bottom:14px}
-  .myday-hero:not(.compact) .mh-inner{display:grid;grid-template-columns:minmax(0,1fr) auto;grid-template-areas:'head head' 'date date' 'greet greet' 'cta scope';
+  .myday-hero:not(.compact) .mh-inner{display:grid;grid-template-columns:minmax(0,1fr) auto;grid-template-areas:'head head' 'date date' 'greet greet' 'cta scope' 'sub sub';
     align-items:center;gap:0 10px;padding:18px 18px 16px;min-height:0}
   .myday-hero:not(.compact) .mh-left,.myday-hero:not(.compact) .mh-right{display:contents}
   .myday-hero:not(.compact) .mh-headline{grid-area:head;font-size:26px;letter-spacing:-.8px;padding-right:44px}
   .myday-hero:not(.compact) .mh-tag,.myday-hero:not(.compact) .mh-greetsub,.myday-hero:not(.compact) .mh-clockedin,.myday .mh-replay-btn{display:none}
+  .myday-hero:not(.compact) .mh-inner>.mh-left>.mh-subline{grid-area:sub;margin-top:10px}
   .myday-hero:not(.compact) .mh-date{grid-area:date;margin-top:14px;text-align:left}
   .myday-hero:not(.compact) .mh-greet{grid-area:greet;margin:2px 0 12px;font-size:19px;text-align:left;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
   .myday-hero:not(.compact) .mh-cta-row,.myday-hero:not(.compact) .mh-startwrap{grid-area:cta;gap:8px}

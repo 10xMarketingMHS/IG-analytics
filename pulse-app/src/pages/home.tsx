@@ -15,6 +15,7 @@ import { useReviewAccess, scopeAllowsTask } from "@/lib/use-review-access";
 import { TaskPanel } from "@/pages/tasks";
 import { MyDayBody, type MyDayData } from "@/pages/my-day-layouts";
 import type { Editor, Post, Task } from "@/lib/types";
+import { MyReportsModal } from "@/components/my-reports";
 
 // DF Foods runs a 6-day week (Mon–Sat) — used to spread the monthly Goal Points
 // target across the month for the (provisional) Daily Goal pace. Change this one
@@ -134,6 +135,15 @@ export function HomePage() {
   const { active, isAdmin, workspaces, hasPermission } = useWorkspaces();
   const { session: eodSession, start: startEod, busy: eodBusy, openSod, openEod } = useEodState();
   const isEditor = active?.role === "editor";
+  // My reports (your own SOD and EOD, today and past days) — for team members
+  // on the roster; admins don't get it.
+  const [reportsOpen, setReportsOpen] = useState(false);
+  const canReports = !isAdmin && !!user?.editorId;
+  const reportsLink = canReports && (
+    <button type="button" className="mh-reports" onClick={() => setReportsOpen(true)} title="Your Start of Day and End of Day, today and past days">
+      {HeroIcon.reports}My reports
+    </button>
+  );
   const { tasks, refetch: refetchTasks } = useTasks();
   // Tasks in Review that THIS person may resolve: all of them for an admin; for
   // a resolve_tasks grantee, whatever their review scope covers; for an assigner,
@@ -500,6 +510,9 @@ export function HomePage() {
                 )}
               </>
             )}
+            {canReports && (
+              <button className="mhc-icon" onClick={() => setReportsOpen(true)} title="My reports — your Start of Day and End of Day" aria-label="My reports">{HeroIcon.reports}</button>
+            )}
             <button className="mhc-icon" onClick={toggleCompact} title="Expand banner" aria-label="Expand banner">{HeroIcon.expand}</button>
           </div>
         ) : (
@@ -518,6 +531,7 @@ export function HomePage() {
                     </button>
                     {/* Before Start Work the rest of the app is greyed out — say why. */}
                     <p className="mh-lockhint">Press Start Work to begin your day. Pipeline, Posts, Leaderboard and Goals open once you do.</p>
+                    {reportsLink && <div className="mh-subline">{reportsLink}</div>}
                   </div>
                 ) : (
                   <>
@@ -540,8 +554,11 @@ export function HomePage() {
                         </>
                       )}
                     </div>
-                    {isEditor && eodSession && (
-                      <p className="mh-clockedin"><i aria-hidden="true" />Clocked in since {fmtClock(eodSession.startedAt)}</p>
+                    {((isEditor && eodSession) || reportsLink) && (
+                      <div className="mh-subline">
+                        {isEditor && eodSession && <span className="mh-clockedin"><i aria-hidden="true" />Clocked in since {fmtClock(eodSession.startedAt)}</span>}
+                        {reportsLink}
+                      </div>
                     )}
                   </>
                 )}
@@ -575,6 +592,7 @@ export function HomePage() {
       {/* Everything under the banner: three layouts of the same sections, picked
           by the viewer (see my-day-layouts.tsx). */}
       <MyDayBody data={myDay} onOpenTask={setOpenTaskId} onChanged={refetchTasks} />
+      {reportsOpen && <MyReportsModal onClose={() => setReportsOpen(false)} />}
       {openTask && (
         <TaskPanel
           mode="edit" task={openTask} canWrite={active?.role !== "viewer"} editors={editors ?? []} channels={workspaces ?? []}
@@ -596,6 +614,7 @@ const HeroIcon = {
   replay: heroSvg("M3 12a9 9 0 1 0 3-6.7M3 4v5h5"),
   shrink: heroSvg("m7 20 5-5 5 5M7 4l5 5 5-5"),
   expand: heroSvg("m7 15 5 5 5-5M7 9l5-5 5 5"),
+  reports: heroSvg("M9 3.5h6v3H9zM6.5 5H6a1.5 1.5 0 0 0-1.5 1.5v13A1.5 1.5 0 0 0 6 21h12a1.5 1.5 0 0 0 1.5-1.5v-13A1.5 1.5 0 0 0 18 5h-.5M9 12h6M9 16h4"),
 };
 
 // Hero banner video — an intro clip that plays ONCE per page load, then hands
