@@ -327,8 +327,8 @@ export function LeaderboardPage() {
   // Ranked monthly, current calendar month only: no carryover, no persisted
   // running balance — a plain sum of this month's completed tasks' points,
   // recomputed fresh every render (so an admin correcting a task after the
-  // fact just updates the total, no manual reversal needed). People out of the
-  // task score (Managers and Team Leads by default) aren't on it.
+  // fact just updates the total, no manual reversal needed). People a Super
+  // Admin switched out of the task score aren't on it.
   const houseRows = useMemo<HouseRow[]>(() => {
     if (!editors || !tasks) return [];
     const thisMonth = ymd(new Date()).slice(0, 7);

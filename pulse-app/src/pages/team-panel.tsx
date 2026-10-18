@@ -71,7 +71,7 @@ export type RankedRow = { editor: Editor; tasks: Task[]; points: number; done: n
 
 // Everyone on the active roster with their tasks in the range, ranked: points,
 // then tasks completed, then name. (My Team's Ranking and Today's Day report.)
-// People out of the task score (Managers and Team Leads by default) still show,
+// People a Super Admin switched out of the task score still show,
 // with their work, after everyone ranked — but never with a rank.
 export function rankTeam(tasks: Task[], editors: Editor[], from: string, to: string, today: string): RankedRow[] {
   return editors

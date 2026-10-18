@@ -5,15 +5,12 @@ import type { Editor, Task } from "@/lib/types";
 // Excluded (not scored as zero) at every aggregation, here and in leaderboard.tsx.
 export const isScorableTask = (t: Task): boolean => t.task_type !== "admin";
 
-// Who takes part in the Task Points rankings. Managers and Team Leads oversee
-// the work, so by default they stay out; a Super Admin can switch anyone in or
-// out on Team › Roster (editor.in_task_score — null follows the position).
+// Who takes part in the Task Points rankings. Everyone does until a Super
+// Admin switches them out on Team › Roster (editor.in_task_score = false) —
+// say a Manager or Team Lead — and they can be switched back in any time.
 // People left out keep their tasks; they just aren't ranked. Applied at every
 // ranking: here, in leaderboard.tsx and in team-panel.tsx.
-const LEADS = /\b(manager|team lead|tl)\b/i;
-export const leadsByPosition = (designation: string | null | undefined): boolean => LEADS.test(designation ?? "");
-export const countsInTaskScore = (e: Pick<Editor, "designation" | "in_task_score">): boolean =>
-  e.in_task_score ?? !leadsByPosition(e.designation);
+export const countsInTaskScore = (e: Pick<Editor, "in_task_score">): boolean => e.in_task_score !== false;
 
 // ---- Points Formula (locked spec) ----
 // base_points is an admin-set value per content format (Reels/Poster/etc. —

@@ -15,8 +15,8 @@ const EditorSchema = z.object({
   imageUrl: z.string().max(2_000_000).optional(),
   // Company ID shown on the roster (e.g. MHS001); "" clears it.
   employeeCode: z.string().trim().max(20).optional(),
-  // Counts in the Task Points rankings: true/false set by a Super Admin, null
-  // follows the position (Managers and Team Leads stay out).
+  // Counts in the Task Points rankings: false when a Super Admin switched them
+  // out (say a Team Lead); null or true counts.
   inTaskScore: z.boolean().nullable().optional(),
 });
 

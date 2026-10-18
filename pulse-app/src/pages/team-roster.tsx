@@ -4,7 +4,7 @@ import { api, ApiError } from "@/lib/api";
 import { useEditors } from "@/lib/use-editors";
 import { useWorkspaces } from "@/lib/workspaces-context";
 import { gradFor } from "@/lib/editor-visuals";
-import { countsInTaskScore, leadsByPosition } from "@/lib/task-points";
+import { countsInTaskScore } from "@/lib/task-points";
 import type { AppUser, Editor } from "@/lib/types";
 import { DESIGNATIONS, ROLE_KEY_LABEL, TeamMemberModal, roleKeyOf, type RoleKey, type TeamRow } from "@/pages/teams";
 
@@ -78,12 +78,10 @@ export function TeamRoster() {
     if (code === (ed.employee_code ?? "")) return;
     patchEditor(ed, { employeeCode: code }, code ? `${ed.name}'s employee code is ${code}.` : `${ed.name}'s employee code cleared.`, "Couldn't save the employee code.");
   }
-  // Task score: Managers and Team Leads stay out by default; a Super Admin
-  // switches anyone in or out. Matching the position again goes back to
-  // following it (null), so a later position change still counts.
+  // Task score: everyone counts until a Super Admin switches them out (say a
+  // Team Lead), and back in whenever they like.
   function setTaskScore(ed: Editor, on: boolean) {
-    const byPosition = !leadsByPosition(ed.designation);
-    patchEditor(ed, { inTaskScore: on === byPosition ? null : on },
+    patchEditor(ed, { inTaskScore: on },
       on ? `${ed.name} now counts in the task score.` : `${ed.name} is out of the task score.`, "Couldn't change the task score.");
   }
   function setRole(r: TeamRow, key: RoleKey) {
@@ -190,9 +188,7 @@ export function TeamRoster() {
                   <span role="cell" className="mt-rscore">
                     {ed ? (() => {
                       const on = countsInTaskScore(ed);
-                      const why = ed.in_task_score == null
-                        ? (on ? "Counts by default" : `${pos} — out by default`)
-                        : "Set by a Super Admin";
+                      const why = on ? `${name}'s tasks count in the task score` : `${name} is out of the task score — their tasks aren't ranked`;
                       return (
                         <label className={"mt-score" + (on ? " on" : "")} title={amSuper ? why : `${why}. Only a Super Admin can change it.`}>
                           <button type="button" role="switch" aria-checked={on} aria-label={`${name} counts in the task score`}
@@ -238,8 +234,8 @@ export function TeamRoster() {
         </div>
       )}
       <p className="mt-rnote">
-        Roles apply to <b>{active?.name ?? "this workspace"}</b>. Only a Super Admin can make or change an admin. <b>Task score</b>: Managers and
-        Team Leads are left out of the points rankings unless a Super Admin switches them in, and anyone can be switched out. Deactivating a login blocks sign-in
+        Roles apply to <b>{active?.name ?? "this workspace"}</b>. Only a Super Admin can make or change an admin. <b>Task score</b>: everyone's
+        tasks count in the points rankings; a Super Admin can switch someone out (say a Team Lead) and back in any time. Deactivating a login blocks sign-in
         everywhere; removing it (No login, or in Edit) only takes away access here — the person stays on the team.
       </p>
       {modal && (
