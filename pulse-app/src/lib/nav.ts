@@ -21,8 +21,8 @@ export type NavItem = {
   // An adminOnly item may also be shown to holders of this permission grant
   // (Settings → Access) — e.g. Add Post for a create_post grantee.
   permission?: "create_post" | "goal_setting_access";
-  // Only for people who clock in (the editor role) — e.g. My reports.
-  editorOnly?: boolean;
+  // Hidden from viewers (read-only logins with no work day) — e.g. My reports.
+  hideForViewers?: boolean;
   // Team Chat: carries the unread/mention badge, and is hidden from anyone
   // chat isn't for (viewers).
   chatBadge?: boolean;
@@ -35,7 +35,7 @@ export const NAV_ITEMS: NavItem[] = [
   { title: "Home", href: "/home", icon: "🏠", section: "Home" },
   { title: "Team Chat", href: "/chat", icon: "💬", section: "Home", chatBadge: true },
   // My reports — your own Start of Day and End of Day, today and past days.
-  { title: "My reports", href: "/my-reports", icon: "📋", section: "Home", editorOnly: true },
+  { title: "My reports", href: "/my-reports", icon: "📋", section: "Home", hideForViewers: true },
   // Analytics — the Dashboard and Top Performers merged into one page with an
   // Overview tab and a Top performers tab (/dashboard and /top redirect here).
   // Insights, Trends, Reports — hidden from the sidebar per request; routes/

@@ -1,7 +1,9 @@
 import { useEffect, useState } from "react";
+import { Link } from "react-router-dom";
 import { toast } from "sonner";
 import { api } from "@/lib/api";
 import { useAuth } from "@/lib/auth-context";
+import { useWorkspaces } from "@/lib/workspaces-context";
 import { EodSummaryCard } from "@/components/eod-summary-card";
 import { SodReportModal } from "@/components/sod-report-card";
 import { fmtDuration, type EodSummary, type SodPlan } from "@/lib/use-eod";
@@ -9,8 +11,9 @@ import "./my-reports.css";
 
 // My reports — a team member's own Start of Day and End of Day reports, today
 // and past days, to read again or copy for WhatsApp. The same windows the admin
-// opens from Settings › Work day, for yourself only. Open before Start Work and
-// after End Work too (app-shell), since that's when people look for them.
+// opens from Settings › Work day, for yourself only (admins get a link there
+// for everyone's). Open before Start Work and after End Work too (app-shell),
+// since that's when people look for them.
 
 type Day = {
   date: string;
@@ -40,6 +43,7 @@ function dayLabel(date: string): [string, string] {
 
 export function MyReportsPage() {
   const { user } = useAuth();
+  const { isAdmin } = useWorkspaces();
   const name = (user?.name || user?.email || "You").split(" ")[0].split("@")[0];
   const [span, setSpan] = useState(30);
   const [days, setDays] = useState<Day[] | null>(null);
@@ -92,6 +96,9 @@ export function MyReportsPage() {
         <div className="myr-head">
           <b>Your work days</b>
           <span>Open a day's Start of Day or End of Day to read it again, or copy it for WhatsApp.</span>
+          {isAdmin && (
+            <span>Everyone's reports, day by day: <Link to="/settings?s=workday" className="myr-link">Settings › Work day</Link></span>
+          )}
         </div>
         {days === null ? (
           <div className="myr-empty">Loading…</div>
