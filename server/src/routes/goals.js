@@ -157,13 +157,15 @@ goalsRouter.get("/goals", goalView, async (req, res, next) => {
     const rows = [];
     for (const f of formats) {
       const g = goalBy.get(f.id);
-      // Pre-fill JPH from the content type's time budget when no goal exists yet.
-      const budget = g ? null : await resolveBudgetHours(req.orgId, editorId, f.id);
+      // The type's time (Settings › Tasks & time) for this editor — what Set
+      // goals shows as hours per job; it pre-fills JPH when no goal exists yet.
+      const budget = await resolveBudgetHours(req.orgId, editorId, f.id);
       rows.push({
         contentFormatId: f.id, name: f.name, icon: f.icon, category: f.category,
         points: Number(f.points),
         jc: g ? Number(g.jc) : null,
         jph: g ? Number(g.jph) : (budget != null ? Number(budget) : 0),
+        budget: budget != null ? Number(budget) : null,
       });
     }
     const cap = await effectiveCapacity(req.orgId, editorId, month);

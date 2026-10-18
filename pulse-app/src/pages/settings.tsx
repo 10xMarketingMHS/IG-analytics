@@ -24,8 +24,8 @@ import "./settings.css";
 
 // Settings (Pulse Redesign v5): one page, a menu of sections on the left —
 // General, Channels, Content, Tasks & time, Scoring, Access, Notifications and
-// Work day — each a stack of flat panels with one setting per row. Sections a
-// person can't use at all are left out of the menu. General keeps its changes
+// Work day — each a stack of flat panels with one setting per row. Everyone but
+// an admin sees only General, Content and Notifications. General keeps its changes
 // as a draft ("Unsaved changes") until Save; the others save as you go.
 // People, logins and roles live in Team › Roster; each person's goals in
 // Goals › Set goals. /channels and /task-rules still land here on their own
@@ -35,7 +35,7 @@ const SECTION_FOR_PATH: Record<string, Section> = { "/channels": "channels", "/t
 const LEAVE_UNSAVED = "You have changes that aren't saved. Leave them?";
 
 export function SettingsPage() {
-  const { isAdmin, hasPermission } = useWorkspaces();
+  const { isAdmin } = useWorkspaces();
   const location = useLocation();
   const navigate = useNavigate();
   const [params] = useSearchParams();
@@ -43,11 +43,11 @@ export function SettingsPage() {
 
   const SECTIONS: { k: Section; l: string; d: string; icon: ReactNode; show: boolean }[] = [
     { k: "general", l: "General", d: "Workspace, work calendar, look", icon: SI.tune, show: true },
-    { k: "channels", l: "Channels", d: "Brands and platform accounts", icon: SI.hub, show: true },
+    { k: "channels", l: "Channels", d: "Brands and platform accounts", icon: SI.hub, show: isAdmin },
     { k: "content", l: "Content", d: "Pillars, types, avatars, formats", icon: SI.category, show: true },
-    { k: "tasks", l: "Tasks & time", d: "Task types, budgets, breaks", icon: SI.timer, show: hasPermission("task_settings") },
-    { k: "scoring", l: "Scoring", d: "How rankings are calculated", icon: SI.chart, show: true },
-    { k: "access", l: "Access", d: "Extra permissions per person", icon: SI.admin, show: hasPermission("access_manage") },
+    { k: "tasks", l: "Tasks & time", d: "Task types, budgets, breaks", icon: SI.timer, show: isAdmin },
+    { k: "scoring", l: "Scoring", d: "How rankings are calculated", icon: SI.chart, show: isAdmin },
+    { k: "access", l: "Access", d: "Extra permissions per person", icon: SI.admin, show: isAdmin },
     { k: "alerts", l: "Notifications", d: "What pings you, and where", icon: SI.bell, show: true },
     { k: "workday", l: "Work day", d: "Who started and ended their day", icon: SI.clock, show: isAdmin },
   ];

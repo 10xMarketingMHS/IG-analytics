@@ -2,25 +2,23 @@ import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { Link } from "react-router-dom";
 import { toast } from "sonner";
 import { api, ApiError } from "@/lib/api";
-import { useAuth } from "@/lib/auth-context";
 import { useEditors } from "@/lib/use-editors";
-import { useWorkspaces } from "@/lib/workspaces-context";
 import { gradFor } from "@/lib/editor-visuals";
 import { goalPointsTotal } from "@/lib/goal-points";
 import { monthName } from "@/lib/goal-periods";
 import { fmtHours } from "@/pages/settings-ui";
 import type { Editor } from "@/lib/types";
 
-// Goals › Set goals (Pulse Redesign v5): each editor's monthly goals, one job
-// count per task type, checked against the hours they have that month. The
-// list on the left shows how much of everyone's time is planned; the open
-// person's capacity sits on top (the team's work calendar, or their own days
-// and hours), their goals below, and a bar at the bottom with the totals and
-// Save — which stays off while the plan is more than they have time for.
-// Admins and the edit_goals grant edit; goal_setting_access sees their own,
-// read-only.
+// Goals › Set goals (Pulse Redesign v5) — for admins and the edit_goals grant:
+// each editor's monthly goals, one job count per task type, checked against the
+// hours they have that month. Only the job counts are set here. Hours per job
+// is each type's time from Settings › Tasks & time, and working days and hours
+// come from the work calendar in Settings › General — shown here as numbers,
+// changed there. The list on the left shows how much of everyone's time is
+// planned; the bar at the bottom has the totals and Save, which stays off while
+// the plan is more than they have time for.
 
-type Row = { contentFormatId: string; name: string; icon: string; category: string | null; jc: number | null; jph: number; points: number };
+type Row = { contentFormatId: string; name: string; icon: string; category: string | null; jc: number | null; jph: number; points: number; budget?: number | null };
 type Cap = { workingDays: number; hoursPerDay: number };
 type GoalsResp = {
   month: string;
@@ -29,8 +27,8 @@ type GoalsResp = {
   editorOverride: Cap | null;
   rows: Row[];
 };
-// What's typed but not saved, per person.
-type Draft = { jc: Record<string, string>; jph: Record<string, string>; cap: Cap | null };
+// Job counts typed but not saved, per person.
+type Draft = Record<string, string>;
 
 const CAT: Record<string, string> = { social: "Social", ad: "Ads", service: "Service", project: "Project" };
 const ymOf = (d: Date) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
@@ -45,23 +43,18 @@ const IC = {
   ok: sv(<><circle cx="12" cy="12" r="9" /><path d="m8 12 3 3 5-5" /></>, 15),
   err: sv(<><circle cx="12" cy="12" r="9" /><path d="M12 7v6M12 16.5v.5" /></>, 15),
   info: sv(<><circle cx="12" cy="12" r="9" /><path d="M12 11v6M12 7.5v.5" /></>, 15),
-  minus: sv(<path d="M5 12h14" />, 14),
-  plus: sv(<path d="M12 5v14M5 12h14" />, 14),
 };
 
-function draftOf(d: GoalsResp): Draft {
-  return {
-    jc: Object.fromEntries(d.rows.map((r) => [r.contentFormatId, r.jc == null ? "" : String(r.jc)])),
-    jph: Object.fromEntries(d.rows.map((r) => [r.contentFormatId, String(r.jph)])),
-    cap: null,
-  };
-}
-const capOf = (d: GoalsResp, dr: Draft): Cap => dr.cap ?? d.editorOverride ?? { workingDays: d.capacity.workingDays, hoursPerDay: d.capacity.hoursPerDay };
+const draftOf = (d: GoalsResp): Draft => Object.fromEntries(d.rows.map((r) => [r.contentFormatId, r.jc == null ? "" : String(r.jc)]));
+// Hours per job: the type's current time (Settings › Tasks & time); a type
+// with no time keeps what the goal was saved with.
+const jphOf = (r: Row) => r.budget ?? r.jph;
+const capOf = (d: GoalsResp): Cap => d.editorOverride ?? { workingDays: d.capacity.workingDays, hoursPerDay: d.capacity.hoursPerDay };
 function calc(d: GoalsResp, dr: Draft) {
-  const cap = capOf(d, dr);
+  const cap = capOf(d);
   const capH = cap.workingDays * cap.hoursPerDay;
   const rows = d.rows.map((r) => {
-    const jobs = Number(dr.jc[r.contentFormatId] || 0), jph = Number(dr.jph[r.contentFormatId] || 0);
+    const jobs = Number(dr[r.contentFormatId] || 0), jph = jphOf(r);
     return { r, jobs, jph, hrs: jobs * jph };
   });
   const plan = rows.reduce((s, x) => s + x.hrs, 0);
@@ -71,13 +64,7 @@ const bandOf = (c: ReturnType<typeof calc>) =>
   c.over ? { cls: "bad", icon: IC.err, l: `Over capacity by ${fmtHours(c.plan - c.capH)} — remove some jobs to save` }
     : c.util >= 0.85 ? { cls: "good", icon: IC.ok, l: "Good fit" }
     : { cls: "warn", icon: IC.info, l: `Room for ${fmtHours(c.capH - c.plan)} more` };
-const sameDraft = (a: Draft, b: Draft) => JSON.stringify(a.jc) === JSON.stringify(b.jc) && JSON.stringify(a.jph) === JSON.stringify(b.jph);
-const savedCapOf = (d: GoalsResp): Cap => d.editorOverride ?? { workingDays: d.capacity.workingDays, hoursPerDay: d.capacity.hoursPerDay };
-function capChangedOf(d: GoalsResp, dr: Draft) {
-  const was = savedCapOf(d);
-  return !!dr.cap && (dr.cap.workingDays !== was.workingDays || dr.cap.hoursPerDay !== was.hoursPerDay);
-}
-const isDirty = (d: GoalsResp, dr: Draft) => !sameDraft(dr, draftOf(d)) || capChangedOf(d, dr);
+const isDirty = (d: GoalsResp, dr: Draft) => JSON.stringify(dr) !== JSON.stringify(draftOf(d));
 
 function Face({ editor, size = "md" }: { editor: Pick<Editor, "name" | "image_url">; size?: "sm" | "md" }) {
   return editor.image_url
@@ -86,20 +73,13 @@ function Face({ editor, size = "md" }: { editor: Pick<Editor, "name" | "image_ur
 }
 
 export function SetGoals() {
-  const { hasPermission } = useWorkspaces();
-  const { user } = useAuth();
   const { editors } = useEditors();
-  const canEdit = hasPermission("edit_goals");
-  const viewerOnly = !canEdit && hasPermission("goal_setting_access");
   const months = useMemo(() => {
     const d = new Date();
     return [-1, 0, 1].map((k) => ymOf(new Date(d.getFullYear(), d.getMonth() + k, 1)));
   }, []);
   const [month, setMonthRaw] = useState(months[1]);
-  const people = useMemo(
-    () => (editors ?? []).filter((e) => e.active && (!viewerOnly || e.id === user?.editorId)),
-    [editors, viewerOnly, user?.editorId],
-  );
+  const people = useMemo(() => (editors ?? []).filter((e) => e.active), [editors]);
   const ids = people.map((e) => e.id).join(",");
   const [data, setData] = useState<Record<string, GoalsResp> | null>(null);
   const [drafts, setDrafts] = useState<Record<string, Draft>>({});
@@ -136,9 +116,6 @@ export function SetGoals() {
   }, [data]);
 
   if (editors === null || data === null) return <div className="gl-card gl-empty">Loading goals…</div>;
-  if (viewerOnly && !user?.editorId) {
-    return <div className="gl-card gl-empty">Your login isn't linked to a team member yet, so there are no goals to show. Ask an admin to link you on Team · Roster.</div>;
-  }
   const loaded = people.filter((p) => data[p.id]);
   if (!loaded.length) return <div className="gl-card gl-empty">No team members to set goals for yet.</div>;
 
@@ -147,38 +124,26 @@ export function SetGoals() {
   const dr = drafts[sel.id] ?? draftOf(sd);
   const c = calc(sd, dr);
   const b = bandOf(c);
-  const capChanged = capChangedOf(sd, dr);
   const dirty = isDirty(sd, dr);
   const ownHours = c.cap.workingDays !== team.workingDays || c.cap.hoursPerDay !== team.hoursPerDay;
   const first = sel.name.split(" ")[0];
-  const [yy, mm] = month.split("-").map(Number);
-  const dim = new Date(yy, mm, 0).getDate();
   const goalPoints = goalPointsTotal(c.rows.map((x) => ({ jc: x.jobs || null, points: x.r.points })));
   const balance = c.capH - c.plan;
-
-  const setDraft = (patch: Partial<Draft>) => setDrafts((s) => ({ ...s, [sel.id]: { ...(s[sel.id] ?? draftOf(sd)), ...patch } }));
-  // Changes this person's own days and hours from whatever they are right now.
-  const setCap = (fn: (now: Cap) => Partial<Cap>) => setDrafts((s) => {
-    const cur = s[sel.id] ?? draftOf(sd), now = capOf(sd, cur);
-    return { ...s, [sel.id]: { ...cur, cap: { ...now, ...fn(now) } } };
-  });
+  const setJobs = (id: string, v: string) => setDrafts((s) => ({ ...s, [sel.id]: { ...(s[sel.id] ?? draftOf(sd)), [id]: v } }));
 
   async function save() {
-    if (!canEdit || !dirty) return;
+    if (!dirty) return;
     if (c.over) { toast.error(`${first} is ${fmtHours(c.plan - c.capH)} over capacity — reduce the jobs first.`); return; }
     const bad = sd.rows.find((r) => {
-      const v = dr.jc[r.contentFormatId]?.trim();
+      const v = dr[r.contentFormatId]?.trim();
       return v && (!Number.isInteger(Number(v)) || Number(v) < 0);
     });
     if (bad) { toast.error(`Jobs for ${bad.name} must be a whole number.`); return; }
     setSaving(true);
     try {
-      if (capChanged && dr.cap) {
-        await api("/goals/capacity", { method: "PUT", body: JSON.stringify({ scope: "editor", editorId: sel.id, month: `${month}-01`, workingDays: dr.cap.workingDays, hoursPerDay: dr.cap.hoursPerDay }) });
-      }
       const goals = sd.rows.map((r) => {
-        const v = dr.jc[r.contentFormatId]?.trim();
-        return { contentFormatId: r.contentFormatId, jc: v ? Number(v) : null, jph: Number(dr.jph[r.contentFormatId] || 0) };
+        const v = dr[r.contentFormatId]?.trim();
+        return { contentFormatId: r.contentFormatId, jc: v ? Number(v) : null, jph: jphOf(r) };
       });
       await api("/goals", { method: "PUT", body: JSON.stringify({ editorId: sel.id, month: `${month}-01`, goals }) });
       const fresh = await api<GoalsResp>(`/goals?editorId=${sel.id}&month=${month}-01`);
@@ -200,7 +165,7 @@ export function SetGoals() {
           {months.map((m) => <button key={m} type="button" className={month === m ? "on" : ""} aria-pressed={month === m} onClick={() => setMonth(m)}><span className="gs-ml">{monthName(m)}</span><span className="gs-ms">{monthName(m, "short")}</span></button>)}
         </div>
         <span className="gl-grow" />
-        <span className="gs-who">{IC.lock}{canEdit ? "Admins and goal editors · editable any time" : "Your goals, set by an admin · read-only"}</span>
+        <span className="gs-who">{IC.lock}Admins and goal editors · editable any time</span>
       </div>
 
       <div className="gs-wrap">
@@ -208,17 +173,15 @@ export function SetGoals() {
           <div className="gs-listhead"><b>Editors</b><span>% planned</span></div>
           <div className="gs-people">
             {loaded.map((p) => {
-              const pd = drafts[p.id] ?? draftOf(data[p.id]);
-              const pc = calc(data[p.id], pd);
+              const pc = calc(data[p.id], drafts[p.id] ?? draftOf(data[p.id]));
               const pb = bandOf(pc);
               const on = p.id === sel.id;
-              const pending = unsaved.includes(p.id);
               return (
                 <button key={p.id} type="button" className={"gs-person" + (on ? " on" : "")} aria-pressed={on} onClick={() => setSelId(p.id)}>
                   <Face editor={p} size="sm" />
                   <span>
                     <b>{p.name}</b>
-                    <small>{pending ? "Unsaved · " : ""}{fmtHours(pc.plan)} of {fmtHours(pc.capH)}</small>
+                    <small>{unsaved.includes(p.id) ? "Unsaved · " : ""}{fmtHours(pc.plan)} of {fmtHours(pc.capH)}</small>
                   </span>
                   <em className={"gs-u " + pb.cls}>{Math.floor(pc.util * 100)}%</em>
                 </button>
@@ -235,7 +198,7 @@ export function SetGoals() {
                 <b>{sel.name}</b>
                 <small>{sel.designation || "Team member"} · {monthName(month)} capacity</small>
               </span>
-              {canEdit && <Link to="/settings" className="gs-cal">{IC.cal}Work calendar</Link>}
+              <Link to="/settings" className="gs-cal">{IC.cal}Work calendar</Link>
             </div>
             <div className="gs-tiles">
               <div><b>{c.cap.workingDays}</b><span>working days</span></div>
@@ -246,26 +209,9 @@ export function SetGoals() {
               <span className="gs-formula">
                 {c.cap.workingDays} working days × {fmtHours(c.cap.hoursPerDay)} = {fmtHours(c.capH)}
                 <small>{ownHours
-                  ? `Own hours for ${first} · the team has ${team.workingDays} days × ${fmtHours(team.hoursPerDay)}`
-                  : "Same as the team's work calendar"}</small>
+                  ? `${first} has their own hours · the team has ${team.workingDays} days × ${fmtHours(team.hoursPerDay)}`
+                  : "From the team's work calendar — change it in Settings › General"}</small>
               </span>
-              {canEdit && (
-                <span className="gs-own">
-                  Days
-                  <span className="gs-step">
-                    <button type="button" aria-label="One day less" disabled={c.cap.workingDays <= 0} onClick={() => setCap((k) => ({ workingDays: Math.max(0, k.workingDays - 1) }))}>{IC.minus}</button>
-                    <b>{c.cap.workingDays}</b>
-                    <button type="button" aria-label="One day more" disabled={c.cap.workingDays >= dim} onClick={() => setCap((k) => ({ workingDays: Math.min(dim, k.workingDays + 1) }))}>{IC.plus}</button>
-                  </span>
-                  Hours
-                  <span className="gs-step">
-                    <button type="button" aria-label="Quarter hour less a day" disabled={c.cap.hoursPerDay <= 0.5} onClick={() => setCap((k) => ({ hoursPerDay: Math.max(0.5, k.hoursPerDay - 0.25) }))}>{IC.minus}</button>
-                    <b>{fmtHours(c.cap.hoursPerDay)}</b>
-                    <button type="button" aria-label="Quarter hour more a day" disabled={c.cap.hoursPerDay >= 16} onClick={() => setCap((k) => ({ hoursPerDay: Math.min(16, k.hoursPerDay + 0.25) }))}>{IC.plus}</button>
-                  </span>
-                  {ownHours && <button type="button" className="gs-reset" onClick={() => setCap(() => ({ workingDays: team.workingDays, hoursPerDay: team.hoursPerDay }))}>Use the team's</button>}
-                </span>
-              )}
             </div>
           </section>
 
@@ -278,10 +224,9 @@ export function SetGoals() {
                 ) : c.rows.map((x) => (
                   <div className={"gs-row" + (x.jobs ? "" : " none")} key={x.r.contentFormatId}>
                     <span className="gs-type"><b>{x.r.icon} {x.r.name}</b><small>{x.r.category ? CAT[x.r.category] ?? x.r.category : ""}</small></span>
-                    <input type="number" min={0} step={1} placeholder="—" disabled={!canEdit} aria-label={`Jobs of ${x.r.name}`}
-                      value={dr.jc[x.r.contentFormatId] ?? ""} onChange={(e) => setDraft({ jc: { ...dr.jc, [x.r.contentFormatId]: e.target.value } })} />
-                    <input type="number" min={0} step={0.25} disabled={!canEdit} aria-label={`Hours per job of ${x.r.name}`}
-                      value={dr.jph[x.r.contentFormatId] ?? ""} onChange={(e) => setDraft({ jph: { ...dr.jph, [x.r.contentFormatId]: e.target.value } })} />
+                    <input type="number" min={0} step={1} placeholder="—" aria-label={`Jobs of ${x.r.name}`}
+                      value={dr[x.r.contentFormatId] ?? ""} onChange={(e) => setJobs(x.r.contentFormatId, e.target.value)} />
+                    <span className="c gs-jph" title="The task type's time — change it in Settings › Tasks & time">{x.jph ? fmtHours(x.jph) : "—"}</span>
                     <b className="r">{x.jobs ? fmtHours(x.hrs) : "—"}</b>
                     <span className="r gs-split">{x.jobs ? `${Math.ceil(x.jobs / 2)} · ${x.jobs - Math.ceil(x.jobs / 2)}` : "—"}</span>
                   </div>
@@ -289,9 +234,8 @@ export function SetGoals() {
               </div>
             </div>
             <p className="gs-hint">
-              {canEdit
-                ? "Leave Jobs blank when there's no goal for that type. Hrs / job starts from the task type's time budget in Settings — change it here if this editor is faster or slower. R1 · R2 splits the target across the two reviews."
-                : "These are your goals for the month, set by an admin. R1 · R2 is how the target splits across the two reviews."}
+              Leave Jobs blank when there's no goal for that type. Hrs / job is each type's time from Settings › Tasks &amp; time. R1 · R2 splits
+              the target across the two reviews.
             </p>
           </section>
 
@@ -304,15 +248,13 @@ export function SetGoals() {
               <span>{b.icon}<span>{b.l}</span><em>{Math.floor(c.util * 100)}%</em></span>
               <i><i style={{ width: `${Math.min(100, c.util * 100)}%` }} /><s aria-hidden="true" /></i>
             </span>
-            {canEdit && (
-              <span className="gs-acts">
-                {dirty && <button type="button" className="gl-btn" onClick={discard}>Discard</button>}
-                <button type="button" className="gl-btn pri" disabled={!dirty || c.over || saving} onClick={save}
-                  title={c.over ? "Planned hours are more than the capacity" : !dirty ? "No changes" : undefined}>
-                  {IC.check}{saving ? "Saving…" : "Save goals"}
-                </button>
-              </span>
-            )}
+            <span className="gs-acts">
+              {dirty && <button type="button" className="gl-btn" onClick={discard}>Discard</button>}
+              <button type="button" className="gl-btn pri" disabled={!dirty || c.over || saving} onClick={save}
+                title={c.over ? "Planned hours are more than the capacity" : !dirty ? "No changes" : undefined}>
+                {IC.check}{saving ? "Saving…" : "Save goals"}
+              </button>
+            </span>
           </section>
         </div>
       </div>
