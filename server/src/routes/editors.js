@@ -4,6 +4,7 @@ import { pool } from "../db.js";
 import { requireAdmin } from "../resolve-workspace.js";
 import { logActivity } from "../activity.js";
 import { hasColumn } from "../schema-flags.js";
+import { superState, isSuperUser } from "../super-admin.js";
 
 export const editorsRouter = Router();
 
@@ -14,12 +15,18 @@ const EditorSchema = z.object({
   imageUrl: z.string().max(2_000_000).optional(),
   // Company ID shown on the roster (e.g. MHS001); "" clears it.
   employeeCode: z.string().trim().max(20).optional(),
+  // Counts in the Task Points rankings: true/false set by a Super Admin, null
+  // follows the position (Managers and Team Leads stay out).
+  inTaskScore: z.boolean().nullable().optional(),
 });
 
 const BASE_COLUMNS = "id, name, designation, image_url, active";
-// employee_code arrived with a later database change — read it once it's there.
+// employee_code and in_task_score arrived with later database changes — read
+// them once they're there.
 const editorColumns = async () =>
-  BASE_COLUMNS + ((await hasColumn("editor", "employee_code")) ? ", employee_code" : ", null::text as employee_code");
+  BASE_COLUMNS +
+  ((await hasColumn("editor", "employee_code")) ? ", employee_code" : ", null::text as employee_code") +
+  ((await hasColumn("editor", "in_task_score")) ? ", in_task_score" : ", null::boolean as in_task_score");
 const codeOf = (v) => (v ? v.toUpperCase() : null);
 
 // Editors are the shared Media House team — scoped to the org, so every channel
@@ -97,6 +104,17 @@ editorsRouter.patch("/editors/:id", requireAdmin, async (req, res, next) => {
       }
       params.push(codeOf(parsed.data.employeeCode));
       sets.push(`employee_code = $${params.length}`);
+    }
+    if (parsed.data.inTaskScore !== undefined) {
+      // Who counts in the Task Points rankings is the Super Admin's call.
+      if (!(await isSuperUser(req.user.sub, await superState(req.workspaceId)))) {
+        return res.status(403).json({ error: "Only a Super Admin can change who counts in the task score." });
+      }
+      if (!(await hasColumn("editor", "in_task_score"))) {
+        return res.status(409).json({ error: "The task score switch needs a database update first — ask whoever runs the database to apply 20261024120000_task_score_flag." });
+      }
+      params.push(parsed.data.inTaskScore);
+      sets.push(`in_task_score = $${params.length}`);
     }
     if (!sets.length) return res.status(400).json({ error: "No fields to update" });
     const { rows } = await pool.query(

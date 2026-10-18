@@ -7,7 +7,7 @@ import { ManagementPerformanceBoard } from "@/pages/management-performance";
 import { useResource } from "@/lib/use-resource";
 import { useTasks } from "@/lib/use-tasks";
 import { rangeFor, inRange, compactNum } from "@/lib/date-range";
-import { ymd, taskPoints, isScorableTask } from "@/lib/task-points";
+import { ymd, taskPoints, isScorableTask, countsInTaskScore } from "@/lib/task-points";
 import { Avatar, ringColorOf } from "@/lib/editor-visuals";
 import type { Post, Editor, Task } from "@/lib/types";
 
@@ -327,11 +327,13 @@ export function LeaderboardPage() {
   // Ranked monthly, current calendar month only: no carryover, no persisted
   // running balance — a plain sum of this month's completed tasks' points,
   // recomputed fresh every render (so an admin correcting a task after the
-  // fact just updates the total, no manual reversal needed).
+  // fact just updates the total, no manual reversal needed). People out of the
+  // task score (Managers and Team Leads by default) aren't on it.
   const houseRows = useMemo<HouseRow[]>(() => {
     if (!editors || !tasks) return [];
     const thisMonth = ymd(new Date()).slice(0, 7);
     return editors
+      .filter(countsInTaskScore)
       .map((editor) => {
         const own = tasks.filter(
           (t) => t.editor_id === editor.id && t.completed_at && isScorableTask(t) && ymd(new Date(t.completed_at)).slice(0, 7) === thisMonth,
@@ -345,6 +347,7 @@ export function LeaderboardPage() {
 
   const houseRanked = houseRows.filter((r) => r.completed > 0);
   const houseUnranked = houseRows.filter((r) => r.completed === 0);
+  const notScored = (editors ?? []).filter((e) => e.active && !countsInTaskScore(e));
   // Team-wide Goal total (pts) — sum across everyone with a goal this month.
   const houseTeamGoal = houseRows.reduce((s, r) => s + r.goal, 0);
 
@@ -363,10 +366,12 @@ export function LeaderboardPage() {
   // dropped from the ranked lines entirely (a task counts if its due date OR its
   // completion falls in the month — the same rule that lists the month). Editors
   // WITH tasks but zero completed stay (flat at 0 = genuinely behind). Content
-  // mode is untouched: every editor is shown, nobody excluded.
+  // mode is untouched: every editor is shown, nobody excluded. People out of the
+  // task score never get a task line.
   const pathShown = useMemo(() => {
     if (!editors) return { shown: [] as Editor[], excluded: [] as Editor[] };
     if (pathMode !== "task" || !effectiveMonth) return { shown: editors, excluded: [] as Editor[] };
+    const scored = editors.filter(countsInTaskScore);
     const assignedInMonth = (e: Editor) =>
       (tasks ?? []).some(
         (t) =>
@@ -374,8 +379,8 @@ export function LeaderboardPage() {
           (((t.due_date && t.due_date.slice(0, 7) === effectiveMonth)) ||
             (t.completed_at && ymd(new Date(t.completed_at)).slice(0, 7) === effectiveMonth)),
       );
-    const shown = editors.filter(assignedInMonth);
-    return { shown, excluded: editors.filter((e) => !shown.includes(e)) };
+    const shown = scored.filter(assignedInMonth);
+    return { shown, excluded: scored.filter((e) => !shown.includes(e)) };
   }, [editors, tasks, pathMode, effectiveMonth]);
 
   const loading = editors === null || posts === null;
@@ -507,6 +512,11 @@ export function LeaderboardPage() {
                   Not shown: {pathShown.excluded.map((e) => e.name).join(", ")} — no tasks assigned in {labelMonth(effectiveMonth)}.
                 </div>
               )}
+              {pathMode === "task" && notScored.length > 0 && (
+                <div className="hint" style={{ marginTop: 6 }}>
+                  Not in the task score: {notScored.map((e) => e.name).join(", ")}.
+                </div>
+              )}
             </>
           )}
         </div>
@@ -555,6 +565,11 @@ export function LeaderboardPage() {
                 ))}
               </div>
             </div>
+            {notScored.length > 0 && (
+              <div className="hint" style={{ marginTop: 10 }}>
+                Not in the task score: {notScored.map((e) => e.name).join(", ")}. A Super Admin can change this on Team › Roster.
+              </div>
+            )}
             {houseTeamGoal > 0 && (
               <div className="lb-teamgoal">Team Goal · <b>{Math.round(houseTeamGoal).toLocaleString()}</b> pts this month</div>
             )}

@@ -2,7 +2,7 @@ import { Fragment, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import { toast } from "sonner";
 import { useResource } from "@/lib/use-resource";
-import { ymd, lateDays, taskPoints, isScorableTask } from "@/lib/task-points";
+import { ymd, lateDays, taskPoints, isScorableTask, countsInTaskScore } from "@/lib/task-points";
 import { gradFor } from "@/lib/editor-visuals";
 import { DAILY_BREAK_CAP_SEC } from "@/lib/task-timing";
 import type { Editor, Task } from "@/lib/types";
@@ -67,10 +67,12 @@ function daysLate(t: Task): number {
   return Math.max(0, lateDays(t));
 }
 
-export type RankedRow = { editor: Editor; tasks: Task[]; points: number; done: number; open: number; late: number };
+export type RankedRow = { editor: Editor; tasks: Task[]; points: number; done: number; open: number; late: number; scored: boolean };
 
 // Everyone on the active roster with their tasks in the range, ranked: points,
 // then tasks completed, then name. (My Team's Ranking and Today's Day report.)
+// People out of the task score (Managers and Team Leads by default) still show,
+// with their work, after everyone ranked — but never with a rank.
 export function rankTeam(tasks: Task[], editors: Editor[], from: string, to: string, today: string): RankedRow[] {
   return editors
     .filter((e) => e.active)
@@ -88,9 +90,12 @@ export function rankTeam(tasks: Task[], editors: Editor[], from: string, to: str
         done: done.length,
         open: open.length,
         late: open.filter((t) => lateDays(t) > 0).length,
+        scored: countsInTaskScore(e),
       };
     })
-    .sort((a, b) => b.points - a.points || b.done - a.done || a.editor.name.localeCompare(b.editor.name));
+    .sort((a, b) => Number(b.scored) - Number(a.scored)
+      || (a.scored ? b.points - a.points || b.done - a.done : 0)
+      || a.editor.name.localeCompare(b.editor.name));
 }
 
 // The report for a weekly or month-end meeting: exactly what the panel shows for
@@ -109,9 +114,9 @@ export async function exportReport(ranked: RankedRow[], from: string, to: string
   summary.addRow([]);
   summary.addRow(["Rank", "Employee", "Designation", "Points", "Completed", "Open", "Late"]).font = { bold: true };
   ranked.forEach((r, i) => summary.addRow([
-    i + 1, r.editor.name, r.editor.designation ?? "", Math.round(r.points * 10) / 10, r.done, r.open, r.late,
+    r.scored ? i + 1 : "Not scored", r.editor.name, r.editor.designation ?? "", Math.round(r.points * 10) / 10, r.done, r.open, r.late,
   ]));
-  summary.columns.forEach((c, i) => { c.width = [8, 28, 22, 10, 12, 10, 10][i] ?? 12; });
+  summary.columns.forEach((c, i) => { c.width = [11, 28, 22, 10, 12, 10, 10][i] ?? 12; });
 
   // Every detail of one task, as a row. The work link is a real hyperlink so a
   // completed task's output opens straight from the sheet.
@@ -352,7 +357,9 @@ export function TeamPanel({ tasks, editors, onOpenTask, focusId }: {
               return (
                 <button key={r.editor.id} type="button" role="tab" aria-selected={on} className={"mt-person" + (on ? " on" : "")}
                   onClick={() => { setSelectedId(r.editor.id); setExpandedId(null); }}>
-                  <span className="mt-ptop"><Face editor={r.editor} /><span className="mt-grow" /><b className={"mt-rank" + (i === 0 && r.points > 0 ? " first" : "")}>#{i + 1}</b></span>
+                  <span className="mt-ptop"><Face editor={r.editor} /><span className="mt-grow" />{r.scored
+                    ? <b className={"mt-rank" + (i === 0 && r.points > 0 ? " first" : "")}>#{i + 1}</b>
+                    : <b className="mt-rank off" title="Not in the task score — a Super Admin can change this on Team › Roster">Not scored</b>}</span>
                   <span className="mt-who"><b>{r.editor.name}</b><span>{r.editor.designation || "Team member"}</span></span>
                   <span className="mt-pts"><b>{fmtPts(r.points)}</b><span>pts · {r.done} done{r.late > 0 && <em> · {r.late} late</em>}</span></span>
                   <span className={"mt-live " + lv.tone}><i />{lv.text || `${r.open} open`}</span>
@@ -366,7 +373,7 @@ export function TeamPanel({ tasks, editors, onOpenTask, focusId }: {
               <section className="mt-card mt-profile">
                 <div className="mt-phead">
                   <Face editor={selected.editor} big />
-                  <span className="mt-who"><b>{selected.editor.name}</b><span>{selected.editor.designation || "Team member"} · #{selectedIndex + 1} {rangeWord}</span></span>
+                  <span className="mt-who"><b>{selected.editor.name}</b><span>{selected.editor.designation || "Team member"} · {selected.scored ? `#${selectedIndex + 1} ${rangeWord}` : "not in the task score"}</span></span>
                 </div>
                 {live && live.text && <div className={"mt-livebox " + live.tone}><i />{live.text}</div>}
                 <div className="mt-kpis">

@@ -4,12 +4,13 @@ import { api, ApiError } from "@/lib/api";
 import { useEditors } from "@/lib/use-editors";
 import { useWorkspaces } from "@/lib/workspaces-context";
 import { gradFor } from "@/lib/editor-visuals";
+import { countsInTaskScore, leadsByPosition } from "@/lib/task-points";
 import type { AppUser, Editor } from "@/lib/types";
 import { DESIGNATIONS, ROLE_KEY_LABEL, TeamMemberModal, roleKeyOf, type RoleKey, type TeamRow } from "@/pages/teams";
 
 // Team › Roster (Pulse Redesign v5): everyone on the team in one table — their
-// position, employee code, login, role and whether they can sign in — changed
-// right on the row. Role runs Super Admin › Admin › Editor › Viewer › No login;
+// position, employee code, whether they count in the task score, login, role
+// and whether they can sign in — changed right on the row. Role runs Super Admin › Admin › Editor › Viewer › No login;
 // only a Super Admin can make or change an admin (the server holds to it too).
 // Add member and Edit open the full window (photo, name, a new login,
 // removing someone). Admin-only, like the rest of My Team.
@@ -77,6 +78,14 @@ export function TeamRoster() {
     if (code === (ed.employee_code ?? "")) return;
     patchEditor(ed, { employeeCode: code }, code ? `${ed.name}'s employee code is ${code}.` : `${ed.name}'s employee code cleared.`, "Couldn't save the employee code.");
   }
+  // Task score: Managers and Team Leads stay out by default; a Super Admin
+  // switches anyone in or out. Matching the position again goes back to
+  // following it (null), so a later position change still counts.
+  function setTaskScore(ed: Editor, on: boolean) {
+    const byPosition = !leadsByPosition(ed.designation);
+    patchEditor(ed, { inTaskScore: on === byPosition ? null : on },
+      on ? `${ed.name} now counts in the task score.` : `${ed.name} is out of the task score.`, "Couldn't change the task score.");
+  }
   function setRole(r: TeamRow, key: RoleKey) {
     const u = r.user;
     const name = r.editor?.name ?? u?.name ?? u?.email ?? "them";
@@ -133,6 +142,7 @@ export function TeamRoster() {
               <span role="columnheader">Member</span>
               <span role="columnheader">Position</span>
               <span role="columnheader">Emp. code</span>
+              <span role="columnheader">Task score</span>
               <span role="columnheader">Login</span>
               <span role="columnheader">Role</span>
               <span role="columnheader">Status</span>
@@ -177,6 +187,21 @@ export function TeamRoster() {
                         onBlur={(e) => setCode(ed, e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") (e.target as HTMLInputElement).blur(); }} />
                     ) : <span className="mt-muted">—</span>}
                   </span>
+                  <span role="cell" className="mt-rscore">
+                    {ed ? (() => {
+                      const on = countsInTaskScore(ed);
+                      const why = ed.in_task_score == null
+                        ? (on ? "Counts by default" : `${pos} — out by default`)
+                        : "Set by a Super Admin";
+                      return (
+                        <label className={"mt-score" + (on ? " on" : "")} title={amSuper ? why : `${why}. Only a Super Admin can change it.`}>
+                          <button type="button" role="switch" aria-checked={on} aria-label={`${name} counts in the task score`}
+                            className={"mt-tog" + (on ? " on" : "")} disabled={busy === ed.id || !amSuper} onClick={() => setTaskScore(ed, !on)} />
+                          {on ? "Counts" : "Not scored"}
+                        </label>
+                      );
+                    })() : <span className="mt-muted">—</span>}
+                  </span>
                   <span role="cell" className={"mt-rmail" + (u ? "" : " none")} title={u?.email}>{u ? u.email : "No login access"}</span>
                   <span role="cell" className="mt-rrole">
                     <select className="mt-rin" value={rk} disabled={(u ? busy === u.id : false) || !!u?.isSelf || locked} aria-label={`${name}'s role`}
@@ -213,7 +238,8 @@ export function TeamRoster() {
         </div>
       )}
       <p className="mt-rnote">
-        Roles apply to <b>{active?.name ?? "this workspace"}</b>. Only a Super Admin can make or change an admin. Deactivating a login blocks sign-in
+        Roles apply to <b>{active?.name ?? "this workspace"}</b>. Only a Super Admin can make or change an admin. <b>Task score</b>: Managers and
+        Team Leads are left out of the points rankings unless a Super Admin switches them in, and anyone can be switched out. Deactivating a login blocks sign-in
         everywhere; removing it (No login, or in Edit) only takes away access here — the person stays on the team.
       </p>
       {modal && (

@@ -17,7 +17,7 @@ import "./my-day.css";
 // team oversight). home.tsx works the numbers out once and hands them here as
 // MyDayData; the layouts only arrange the same sections differently.
 
-type RankWindow = { points: number; completed: number; rank: number | null; totalRanked: number };
+type RankWindow = { points: number; completed: number; rank: number | null; totalRanked: number; counted: boolean };
 
 export type MyDayData = {
   loading: boolean;
@@ -639,6 +639,7 @@ function TodayCard({ d }: { d: MyDayData }) {
 }
 
 function rankText(w: RankWindow) {
+  if (!w.counted) return "not in the task score";
   return w.rank ? `${ordinal(w.rank)} of ${w.totalRanked}` : "not ranked yet";
 }
 function goalPace(goal: NonNullable<Goal>, daysLeft: number) {

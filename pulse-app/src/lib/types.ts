@@ -42,6 +42,9 @@ export type Editor = {
   active: boolean;
   // Company ID shown on the roster, e.g. MHS001.
   employee_code?: string | null;
+  // Counts in the Task Points rankings: set by a Super Admin on the roster;
+  // null follows the position (see countsInTaskScore in lib/task-points).
+  in_task_score?: boolean | null;
   // True when this editor is linked to a user with an admin role. Admins are
   // hidden from "assign an editor" pickers (they don't get assigned editing).
   is_admin?: boolean;
