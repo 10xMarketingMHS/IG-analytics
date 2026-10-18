@@ -514,7 +514,7 @@ export function LeaderboardPage() {
               )}
               {pathMode === "task" && notScored.length > 0 && (
                 <div className="hint" style={{ marginTop: 6 }}>
-                  Not in the task score: {notScored.map((e) => e.name).join(", ")}.
+                  Exempt from task scoring: {notScored.map((e) => e.name).join(", ")}.
                 </div>
               )}
             </>
@@ -567,7 +567,7 @@ export function LeaderboardPage() {
             </div>
             {notScored.length > 0 && (
               <div className="hint" style={{ marginTop: 10 }}>
-                Not in the task score: {notScored.map((e) => e.name).join(", ")}. A Super Admin can change this on Team › Roster.
+                Exempt from task scoring: {notScored.map((e) => e.name).join(", ")}. A Super Admin can change this on Team › Roster.
               </div>
             )}
             {houseTeamGoal > 0 && (

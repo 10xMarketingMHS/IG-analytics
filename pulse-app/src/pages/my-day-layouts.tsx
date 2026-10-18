@@ -639,7 +639,7 @@ function TodayCard({ d }: { d: MyDayData }) {
 }
 
 function rankText(w: RankWindow) {
-  if (!w.counted) return "not in the task score";
+  if (!w.counted) return "exempt from task scoring";
   return w.rank ? `${ordinal(w.rank)} of ${w.totalRanked}` : "not ranked yet";
 }
 function goalPace(goal: NonNullable<Goal>, daysLeft: number) {

@@ -82,7 +82,7 @@ export function TeamRoster() {
   // Team Lead), and back in whenever they like.
   function setTaskScore(ed: Editor, on: boolean) {
     patchEditor(ed, { inTaskScore: on },
-      on ? `${ed.name} now counts in the task score.` : `${ed.name} is out of the task score.`, "Couldn't change the task score.");
+      on ? `${ed.name} is now eligible for task scoring.` : `${ed.name} is now exempt from task scoring.`, "Couldn't change the task score.");
   }
   function setRole(r: TeamRow, key: RoleKey) {
     const u = r.user;
@@ -188,12 +188,12 @@ export function TeamRoster() {
                   <span role="cell" className="mt-rscore">
                     {ed ? (() => {
                       const on = countsInTaskScore(ed);
-                      const why = on ? `${name}'s tasks count in the task score` : `${name} is out of the task score — their tasks aren't ranked`;
+                      const why = on ? `${name}'s tasks count toward the rankings` : `${name} is exempt — their tasks aren't ranked`;
                       return (
                         <label className={"mt-score" + (on ? " on" : "")} title={amSuper ? why : `${why}. Only a Super Admin can change it.`}>
-                          <button type="button" role="switch" aria-checked={on} aria-label={`${name} counts in the task score`}
+                          <button type="button" role="switch" aria-checked={on} aria-label={`${name} is eligible for task scoring`}
                             className={"mt-tog" + (on ? " on" : "")} disabled={busy === ed.id || !amSuper} onClick={() => setTaskScore(ed, !on)} />
-                          {on ? "Counts" : "Not scored"}
+                          {on ? "Eligible" : "Exempt"}
                         </label>
                       );
                     })() : <span className="mt-muted">—</span>}
@@ -234,8 +234,8 @@ export function TeamRoster() {
         </div>
       )}
       <p className="mt-rnote">
-        Roles apply to <b>{active?.name ?? "this workspace"}</b>. Only a Super Admin can make or change an admin. <b>Task score</b>: everyone's
-        tasks count in the points rankings; a Super Admin can switch someone out (say a Team Lead) and back in any time. Deactivating a login blocks sign-in
+        Roles apply to <b>{active?.name ?? "this workspace"}</b>. Only a Super Admin can make or change an admin. <b>Task score</b>: everyone
+        is eligible for the points rankings; a Super Admin can mark someone Exempt (say a Team Lead) and make them Eligible again any time. Deactivating a login blocks sign-in
         everywhere; removing it (No login, or in Edit) only takes away access here — the person stays on the team.
       </p>
       {modal && (
