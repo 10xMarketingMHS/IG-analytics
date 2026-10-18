@@ -8,11 +8,11 @@ html[data-theme="dark"]{--sheet-panel:oklch(0.2 0.04 var(--acH) / .72)}
 
 /* the top bar lets the accent tint show through, as in the design */
 .app .topbar{background:color-mix(in srgb,var(--bg) 45%,transparent);backdrop-filter:blur(16px) saturate(160%);-webkit-backdrop-filter:blur(16px) saturate(160%)}
-/* the frame's edges: a soft accent-tinted shadow (10%) under the top bar and
+/* the frame's edges: a soft accent-tinted shadow (5%) under the top bar and
    along the sidebar, so the frame doesn't sit flat on the page. The sidebar
    lies above the top bar, so its shadow runs on past the corner. */
-.app .topbar{box-shadow:0 4px 18px oklch(0.3 0.08 var(--acH) / .1)}
-@media (min-width:769px){.app>aside.sb2{z-index:25;box-shadow:4px 0 18px oklch(0.3 0.08 var(--acH) / .1)}}
+.app .topbar{box-shadow:0 4px 18px oklch(0.3 0.08 var(--acH) / .05)}
+@media (min-width:769px){.app>aside.sb2{z-index:25;box-shadow:4px 0 18px oklch(0.3 0.08 var(--acH) / .05)}}
 .app .content{--content-x:26px;max-width:none}
 @media (max-width:768px){.app .content{--content-x:16px}}
 
