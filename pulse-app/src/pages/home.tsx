@@ -135,10 +135,10 @@ export function HomePage() {
   const { active, isAdmin, workspaces, hasPermission } = useWorkspaces();
   const { session: eodSession, start: startEod, busy: eodBusy, openSod, openEod } = useEodState();
   const isEditor = active?.role === "editor";
-  // My reports (your own SOD and EOD, today and past days) — for team members
-  // on the roster; admins don't get it.
+  // My reports (your own SOD and EOD, today and past days) — for anyone on the
+  // team roster, admins included.
   const [reportsOpen, setReportsOpen] = useState(false);
-  const canReports = !isAdmin && !!user?.editorId;
+  const canReports = !!user?.editorId;
   const reportsLink = canReports && (
     <button type="button" className="mh-reports" onClick={() => setReportsOpen(true)} title="Your Start of Day and End of Day, today and past days">
       {HeroIcon.reports}My reports
