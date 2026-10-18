@@ -1,4 +1,6 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { toast } from "sonner";
+import { ApiError } from "@/lib/api";
 import { useTasks } from "@/lib/use-tasks";
 import { useAuth } from "@/lib/auth-context";
 import { useWorkspaces } from "@/lib/workspaces-context";
@@ -140,6 +142,11 @@ export function HomePage() {
   // Start Work / End Work: anyone on the roster (editors are locked until they
   // start; admins aren't, but can clock in too). Nothing shows while loading.
   const canClock = !!user?.editorId && !eodLoading;
+  // A Start Work that fails (no connection, the server down) says so, instead
+  // of the button just going back to how it was.
+  const startWork = () => startEod().catch((e) => {
+    toast.error(e instanceof ApiError ? e.message : "Couldn't start your work day. Check your connection and try again.");
+  });
   const reportsLink = canReports && (
     <button type="button" className="mh-reports" onClick={() => setReportsOpen(true)} title="Your Start of Day and End of Day, today and past days">
       {HeroIcon.reports}My reports
@@ -504,7 +511,7 @@ export function HomePage() {
                 <button className="mhc-ghost mhc-sod" onClick={openSod} title="Copy today's Start of Day report">Start of Day</button>
               </>
             ) : (
-              <button className="mhc-primary eod-live" onClick={() => startEod()} disabled={eodBusy} title={locked ? "Start your work day: the menu and your tasks unlock" : "Start your work day"}>
+              <button className="mhc-primary eod-live" onClick={startWork} disabled={eodBusy} title={locked ? "Start your work day: the menu and your tasks unlock" : "Start your work day"}>
                 {HeroIcon.play}<span>{eodBusy ? "Starting…" : "Start Work"}</span>
               </button>
             ))}
@@ -540,7 +547,7 @@ export function HomePage() {
                   </>
                 ) : (
                   <div className="mh-startwrap">
-                    <button className="btn btn-primary mh-cta eod-live" onClick={() => startEod()} disabled={eodBusy}>
+                    <button className="btn btn-primary mh-cta eod-live" onClick={startWork} disabled={eodBusy}>
                       {eodBusy ? "Starting…" : "▶ Start Work"}
                     </button>
                     {/* Before Start Work an editor's app is greyed out — say why. */}
