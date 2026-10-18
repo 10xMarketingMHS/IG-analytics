@@ -282,8 +282,7 @@ function AppShellInner() {
   }
   const [jumpOpen, setJumpOpen] = useState(false);
   const canWrite = active?.role !== "viewer";
-  const canSee = (i: NavItem) => (!i.adminOnly || isAdmin || (!!i.permission && hasPermission(i.permission))) && (!i.chatBadge || chatAvailable)
-    && (!i.hideForViewers || active?.role !== "viewer");
+  const canSee = (i: NavItem) => (!i.adminOnly || isAdmin || (!!i.permission && hasPermission(i.permission))) && (!i.chatBadge || chatAvailable);
   const placed = new Set(SIDEBAR_GROUPS.flatMap((g) => g.hrefs));
   const sideGroups = SIDEBAR_GROUPS.map((g, gi) => ({
     label: g.label,
