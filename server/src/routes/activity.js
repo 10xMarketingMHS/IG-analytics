@@ -9,10 +9,10 @@ export const activityRouter = Router();
 //
 // Admins see the whole org. Everyone else gets a personal feed: events on tasks
 // assigned to them (including one that was deleted or moved to someone else),
-// things they did themselves,
-// and new team members — plus,
+// things they did themselves, and their own joining the team — plus,
 // for resolve_tasks grantees, tasks submitted for review that fall inside their
-// review scope — and, for assigners, tasks they assigned that went into review. Other people's tasks, published posts and channel changes are
+// review scope — and, for assigners, tasks they assigned that went into review.
+// Other people's tasks and arrivals, published posts and channel changes are
 // left out.
 activityRouter.get("/activity", async (req, res, next) => {
   try {
@@ -37,7 +37,7 @@ activityRouter.get("/activity", async (req, res, next) => {
         [params.length - 5, params.length - 4, params.length - 3, params.length - 2, params.length - 1, params.length];
       where += ` and (
         a.actor_id = $${uid}
-        or a.verb = 'editor_added'
+        or (a.verb = 'editor_added' and a.entity_id = $${eid}::uuid)
         or (a.verb = 'deleted' and a.meta->>'editorId' = $${eid}::text)
         or (a.verb = 'assigned' and a.meta->>'fromEditorId' = $${eid}::text)
         or (a.entity_type = 'task' and exists (

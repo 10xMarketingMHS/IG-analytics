@@ -520,27 +520,30 @@ export function HomePage() {
                     <p className="mh-lockhint">Press Start Work to begin your day. Pipeline, Posts, Leaderboard and Goals open once you do.</p>
                   </div>
                 ) : (
-                  <div className="mh-cta-row">
-                    <button className="btn btn-primary mh-cta" onClick={() => navigate("/tasks")}>▶ Task Board</button>
-                    <button className="mh-glass" onClick={() => setReplay((n) => n + 1)} title="Play the banner's intro again">{HeroIcon.replay} Replay intro</button>
+                  <>
+                    <div className="mh-cta-row">
+                      <button className="btn btn-primary mh-cta" onClick={() => navigate("/tasks")}>▶ Task Board</button>
+                      {isEditor && eodSession && (
+                        <>
+                          <button
+                            className="btn mh-endeod"
+                            onClick={() => openEod()}
+                            title="Write today's notes and end your work day"
+                            disabled={eodBusy}
+                          >
+                            {eodBusy ? "Ending…" : "End Work"}
+                          </button>
+                          {/* Start of Day: today's tasks and the report to copy for WhatsApp. */}
+                          <button className="btn mh-endeod" onClick={openSod} title="Copy today's Start of Day report">
+                            Start of Day
+                          </button>
+                        </>
+                      )}
+                    </div>
                     {isEditor && eodSession && (
-                      <>
-                        <button
-                          className="btn mh-endeod"
-                          onClick={() => openEod()}
-                          title="Write today's notes and end your work day"
-                          disabled={eodBusy}
-                        >
-                          {eodBusy ? "Ending…" : "⏹ End Work"}
-                        </button>
-                        <span className="mh-clockedin">🟢 Clocked in since {fmtClock(eodSession.startedAt)}</span>
-                        {/* Start of Day: today's tasks and the report to copy for WhatsApp. */}
-                        <button className="btn mh-endeod" onClick={openSod} title="Copy today's Start of Day report">
-                          📋 Start of Day
-                        </button>
-                      </>
+                      <p className="mh-clockedin"><i aria-hidden="true" />Clocked in since {fmtClock(eodSession.startedAt)}</p>
                     )}
-                  </div>
+                  </>
                 )}
               </div>
               <div className="mh-right">
@@ -560,7 +563,11 @@ export function HomePage() {
                 ))}
               </div>
             )}
-            <button className="mh-glass mh-compact-btn" onClick={toggleCompact} title="Shrink the banner to a strip">{HeroIcon.shrink} Compact</button>
+            {/* Bottom-right corner: replay the intro (a small icon) and fold the banner. */}
+            <div className="mh-corner">
+              <button className="mh-glass mh-replay-btn" onClick={() => setReplay((n) => n + 1)} title="Replay intro" aria-label="Replay intro">{HeroIcon.replay}</button>
+              <button className="mh-glass mh-compact-btn" onClick={toggleCompact} title="Shrink the banner to a strip">{HeroIcon.shrink} Compact</button>
+            </div>
           </>
         )}
       </div>
