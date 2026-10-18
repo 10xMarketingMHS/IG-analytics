@@ -17,6 +17,7 @@ import { fmtWait } from "@/lib/task-timing";
 import { TaskPanel } from "@/pages/tasks";
 import type { Task } from "@/lib/types";
 import "./chat.css";
+import { clockTime, dateTime } from "@/lib/time-format";
 
 // Team Chat — Slack-style: conversations on the left, the open one in the
 // middle, a thread on the right. The open conversation and thread live in the
@@ -33,7 +34,7 @@ const SECTIONS_KEY = "pulse-chat-closed-sections";
 const errText = (err: unknown) => (err instanceof ApiError ? err.message : "Something went wrong — try again.");
 
 function timeOf(iso: string) {
-  return new Date(iso).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+  return clockTime(iso);
 }
 
 function dayLabel(iso: string) {
@@ -577,7 +578,7 @@ function MessageItem({ m, compact, ctx, onReply, inThread }: {
         {!compact && (
           <div className="msg-head">
             <b title={author?.designation || undefined}>{author?.name ?? "Former member"}</b>
-            <span className="msg-time" title={new Date(m.createdAt).toLocaleString()}>{timeOf(m.createdAt)}</span>
+            <span className="msg-time" title={dateTime(m.createdAt)}>{timeOf(m.createdAt)}</span>
           </div>
         )}
         {m.deleted ? (

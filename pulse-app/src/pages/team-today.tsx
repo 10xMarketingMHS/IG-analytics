@@ -9,6 +9,7 @@ import { breakOffsetMs, DAILY_BREAK_CAP_SEC } from "@/lib/task-timing";
 import { achievement, currentPeriod, doneByType, goalLines, monthName, pctText, periodBounds, periodLabel, type PerfRow } from "@/lib/goal-periods";
 import type { Editor, Task } from "@/lib/types";
 import { exportReport, rankTeam } from "@/pages/team-panel";
+import { clockTime } from "@/lib/time-format";
 
 // My Team › Today (Pulse Redesign v5): who is working, on a break, not started
 // or wrapped up right now, what each person is on and for how long, and — for
@@ -25,7 +26,7 @@ const STAGE: Record<Task["status"], { l: string; t: string }> = {
 };
 
 const initials = (n: string) => n.split(/\s+/).filter(Boolean).map((w) => w[0]).join("").slice(0, 2).toUpperCase();
-const clock = (iso: string | null) => (iso ? new Date(iso).toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" }) : "");
+const clock = (iso: string | null) => (iso ? clockTime(iso) : "");
 const hm = (sec: number) => { const m = Math.max(0, Math.floor(sec / 60)); return `${Math.floor(m / 60)}h ${String(m % 60).padStart(2, "0")}m`; };
 function Face({ editor, big, tone }: { editor: Editor; big?: boolean; tone?: Tone }) {
   return (
@@ -134,7 +135,7 @@ export function TeamToday({ tasks, editors, onOpenTask, focusId }: {
     }
   }
 
-  const liveLabel = new Date(nowMs).toLocaleString("en-GB", { weekday: "short", day: "numeric", month: "short", hour: "numeric", minute: "2-digit", hour12: true });
+  const liveLabel = `${new Date(nowMs).toLocaleDateString("en-GB", { weekday: "short", day: "numeric", month: "short" })}, ${clockTime(nowMs)}`;
   const goalTone = goal ? (goal.x >= 0.8 ? "good" : goal.x >= 0.5 ? "warn" : "bad") : "";
 
   return (

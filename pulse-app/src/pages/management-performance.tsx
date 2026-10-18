@@ -1,5 +1,6 @@
 import { Fragment, useEffect, useState } from "react";
 import { api } from "@/lib/api";
+import { clockTime } from "@/lib/time-format";
 
 // Management Performance (points-based): the Leaderboard tab. The measure is
 // Overall Performance % — the Earned (80%) + Discipline (20%) split of Total
@@ -151,7 +152,7 @@ type DetailResp = BoardRow & {
 };
 
 function fmtClock(iso: string | null) {
-  return iso ? new Date(iso).toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" }) : "—";
+  return iso ? clockTime(iso) : "—";
 }
 
 function PerformanceDetailInline({ editorId, month }: { editorId: string; month: string }) {

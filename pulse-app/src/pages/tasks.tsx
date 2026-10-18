@@ -19,6 +19,7 @@ import { Modal } from "@/components/modal";
 import { toast } from "sonner";
 import type { Task, TaskStatus, TaskPriority, TaskType, TaskMeta, TaskAttachment, TaskReviewLogEntry, ContentFormatDef, Editor, Subtask, TaskComment } from "@/lib/types";
 import "./tasks-board.css";
+import { clockTime, clockTimeShort, dateTime } from "@/lib/time-format";
 
 function relTime(iso: string) {
   const mins = Math.round((Date.now() - new Date(iso).getTime()) / 60000);
@@ -186,7 +187,7 @@ function budgetInfo(t: Task, nowMs: number) {
   if (t.budget_hours == null || !t.budget_started_at || t.status === "done") return null;
   const startMs = new Date(t.budget_started_at).getTime();
   if (startMs > nowMs) {
-    return { scheduled: true, over: false, paused: false, label: `Starts ${new Date(startMs).toLocaleString([], { weekday: "short", hour: "numeric", minute: "2-digit" })}` };
+    return { scheduled: true, over: false, paused: false, label: `Starts ${new Date(startMs).toLocaleDateString([], { weekday: "short" })} ${clockTime(startMs)}` };
   }
   const deadlineMs = startMs + t.budget_hours * 3_600_000 + breakOffsetMs(t, nowMs);
   const remainingMs = deadlineMs - nowMs;
@@ -1163,7 +1164,7 @@ export function TasksPage() {
                           </span>
                         )}
                         {t.status === "done" ? (
-                          <span className="task-due done" title={t.completed_at ? `Done ${new Date(t.completed_at).toLocaleString()}` : "Done"}>{TB_ICON.due} Done</span>
+                          <span className="task-due done" title={t.completed_at ? `Done ${dateTime(t.completed_at)}` : "Done"}>{TB_ICON.due} Done</span>
                         ) : t.due_date ? (
                           <span className={"task-due" + (overdue ? " over" : t.due_date === today() ? " today" : "")} title={t.due_date}>
                             {TB_ICON.due} {dueText(t.due_date)}
@@ -1764,7 +1765,7 @@ export function TaskModal({
           <div className="field">
             <label className="f">Time allotted</label>
             <div className="autofield">
-              ⏱ {fmtHours(Number(task.budget_hours))}h, started {new Date(task.budget_started_at!).toLocaleString()} — set by your admin, not editable here.
+              ⏱ {fmtHours(Number(task.budget_hours))}h, started {dateTime(task.budget_started_at!)} — set by your admin, not editable here.
             </div>
           </div>
         )}
@@ -2937,7 +2938,7 @@ function layoutTimedEvents(items: { task: Task; startMin: number; durMin: number
 function fmtClock(min: number) {
   const h = Math.floor(min / 60) % 24;
   const m = min % 60;
-  return new Date(2000, 0, 1, h, m).toLocaleTimeString([], { hour: "numeric", minute: m ? "2-digit" : undefined });
+  return clockTimeShort(new Date(2000, 0, 1, h, m));
 }
 
 const ROW_H = 52; // px per hour

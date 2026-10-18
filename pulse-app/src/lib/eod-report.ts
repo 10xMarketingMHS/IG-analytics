@@ -1,8 +1,9 @@
 import { fmtDuration, type EodDayTask, type EodSummary } from "@/lib/use-eod";
+import { clockTime } from "@/lib/time-format";
 
 export function eodTime(iso: string | null): string {
   if (!iso) return "—";
-  return new Date(iso).toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" });
+  return clockTime(iso);
 }
 function fmtDay(date: string): string {
   return new Date(date + "T00:00:00").toLocaleDateString(undefined, { weekday: "long", day: "numeric", month: "long", year: "numeric" });

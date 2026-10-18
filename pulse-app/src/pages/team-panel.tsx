@@ -7,6 +7,7 @@ import { gradFor } from "@/lib/editor-visuals";
 import { DAILY_BREAK_CAP_SEC } from "@/lib/task-timing";
 import type { Editor, Task } from "@/lib/types";
 import "./my-team.css";
+import { clockTime } from "@/lib/time-format";
 
 // The body of the admin-only My Team page (Pulse Redesign v5, Team): every team
 // member as a card, ranked by Task Points for a chosen date range, with what
@@ -49,7 +50,7 @@ function fmtDay(day: string) {
   return new Date(y, m - 1, d).toLocaleDateString("en-GB", { day: "numeric", month: "short" });
 }
 function fmtClock(iso: string | null) {
-  return iso ? new Date(iso).toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" }) : "";
+  return iso ? clockTime(iso) : "";
 }
 const fmtPts = (n: number) => (Math.round(n * 10) / 10).toString();
 const plural = (n: number, one: string) => `${n} ${one}${n === 1 ? "" : "s"}`;

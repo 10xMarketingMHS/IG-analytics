@@ -7,6 +7,7 @@ import { gradFor } from "@/lib/editor-visuals";
 import { countsInTaskScore } from "@/lib/task-points";
 import type { AppUser, Editor } from "@/lib/types";
 import { DESIGNATIONS, ROLE_KEY_LABEL, TeamMemberModal, roleKeyOf, type RoleKey, type TeamRow } from "@/pages/teams";
+import { dateTime } from "@/lib/time-format";
 
 // Team › Roster (Pulse Redesign v5): everyone on the team in one table — their
 // position, employee code, whether they count in the task score, login, role
@@ -209,7 +210,7 @@ export function TeamRoster() {
                     </select>
                   </span>
                   <span role="cell" className="mt-rstc">
-                    <span className={"mt-rst " + st[1]} title={u?.resetRequestedAt ? `Asked on ${new Date(u.resetRequestedAt).toLocaleString()}` : undefined}>{st[2]}{st[0]}</span>
+                    <span className={"mt-rst " + st[1]} title={u?.resetRequestedAt ? `Asked on ${dateTime(u.resetRequestedAt)}` : undefined}>{st[2]}{st[0]}</span>
                   </span>
                   <span role="cell" className="mt-racts">
                     {u ? (

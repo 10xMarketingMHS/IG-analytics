@@ -17,6 +17,7 @@ import { TaskPanel } from "@/pages/tasks";
 import { MyDayBody, type MyDayData } from "@/pages/my-day-layouts";
 import type { Editor, Post, Task } from "@/lib/types";
 import { MyReportsModal } from "@/components/my-reports";
+import { clockTime } from "@/lib/time-format";
 
 // DF Foods runs a 6-day week (Mon–Sat) — used to spread the monthly Goal Points
 // target across the month for the (provisional) Daily Goal pace. Change this one
@@ -27,7 +28,7 @@ function todayStr() {
   return ymd(new Date());
 }
 function fmtClock(iso: string): string {
-  return new Date(iso).toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" });
+  return clockTime(iso);
 }
 function greeting(now: Date) {
   const h = now.getHours();

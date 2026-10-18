@@ -7,6 +7,7 @@ import { EodSummaryCard } from "@/components/eod-summary-card";
 import { SodReportModal } from "@/components/sod-report-card";
 import { fmtDuration, type EodSummary, type SodPlan } from "@/lib/use-eod";
 import "./my-reports.css";
+import { clockTime } from "@/lib/time-format";
 
 // My reports — a team member's own Start of Day and End of Day reports, today
 // and past days, to read again or copy for WhatsApp. A pop-up opened from the
@@ -28,7 +29,7 @@ type Day = {
 function ymd(d: Date) {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
 }
-const fmtTime = (iso: string | null) => (iso ? new Date(iso).toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" }) : "");
+const fmtTime = (iso: string | null) => (iso ? clockTime(iso) : "");
 function dayLabel(date: string): [string, string] {
   const d = new Date(`${date}T00:00:00`);
   const today = new Date();

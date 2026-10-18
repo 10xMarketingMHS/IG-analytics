@@ -4,6 +4,7 @@ import { api } from "@/lib/api";
 import { EodSummaryCard } from "@/components/eod-summary-card";
 import { SodReportModal } from "@/components/sod-report-card";
 import { fmtDuration, type EodSummary, type SodPlan } from "@/lib/use-eod";
+import { clockTime } from "@/lib/time-format";
 
 // Admin work-day oversight — one row per (non-admin) editor, their Start/End status
 // for a chosen date, with a way to open any editor's full summary for that day.
@@ -25,7 +26,7 @@ function todayStr() {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
 }
 function fmtTime(iso: string | null): string {
-  return iso ? new Date(iso).toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" }) : "—";
+  return iso ? clockTime(iso) : "—";
 }
 const STATUS: Record<TeamRow["status"], { label: string; cls: string }> = {
   not_started: { label: "Not started", cls: "" },
