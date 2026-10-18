@@ -75,6 +75,9 @@
      screen with its own header and back button, like a messaging app */
   .chat{height:calc(100dvh - var(--m-top) - var(--m-tab))!important}
   .app:has(.chat.has-conv) .topbar,.app:has(.chat.has-conv) .tabbar,.app:has(.chat.has-conv) .tab-fab{display:none}
+  /* a task sheet (New task, or a task opened) takes the whole screen: its own
+     footer holds Create / Save, so the tab bar and + step aside */
+  .app:has(.tp2-scrim) .tabbar,.app:has(.tp2-scrim) .tab-fab{display:none}
   .chat.has-conv{height:100dvh!important;padding-top:env(safe-area-inset-top);padding-bottom:env(safe-area-inset-bottom);box-sizing:border-box}
 
   /* rows of tabs that don't fit swipe sideways instead of widening the page */

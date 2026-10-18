@@ -15,6 +15,7 @@ import { scopeAllowsTask, useReviewAccess } from "@/lib/use-review-access";
 import { useOrg } from "@/lib/use-org";
 import { setWeekStart } from "@/lib/date-range";
 import { ViewAsBar, ViewAsModal } from "@/components/view-as";
+import { TaskPanel } from "@/pages/tasks";
 import { BreakWidget } from "@/components/break-widget";
 import { BreakOverlay } from "@/components/break-overlay";
 import { BreakProvider, useBreakState } from "@/lib/break-context";
@@ -240,6 +241,8 @@ function AppShellInner() {
   // Viewing as someone is look-only, so their Start Work lock doesn't apply.
   const eodLocked = !user?.viewingAs && active?.role === "editor" && !eodLoading && !eodUnlinked && !eodSession;
   const [viewAsOpen, setViewAsOpen] = useState(false);
+  // New task (sidebar, phone +) opens its sheet over whatever page you're on.
+  const [newTaskOpen, setNewTaskOpen] = useState(false);
   // A page that waits for Start Work, asked for while the day isn't started.
   const [lockAsk, setLockAsk] = useState<{ title: string; href: string; state?: unknown } | null>(null);
   const { editors } = useEditors();
@@ -408,7 +411,7 @@ function AppShellInner() {
           </button>
           {canWrite && (
             <button type="button" className="sb2-compose" title="New task" aria-label="New task"
-              onClick={() => { setMenuOpen(false); navigate("/tasks", { state: { newTask: true } }); }}>
+              onClick={() => { setMenuOpen(false); setNewTaskOpen(true); }}>
               {COMPOSE_ICON}
             </button>
           )}
@@ -584,7 +587,7 @@ function AppShellInner() {
       </nav>
       {canWrite && (
         <button type="button" className="tab-fab" title="New task" aria-label="New task"
-          onClick={() => { setMenuOpen(false); navigate("/tasks", { state: { newTask: true } }); }}>
+          onClick={() => { setMenuOpen(false); setNewTaskOpen(true); }}>
           {PLUS_ICON}
         </button>
       )}
@@ -592,6 +595,19 @@ function AppShellInner() {
       <BreakOverlay />
       <SodModal />
       {viewAsOpen && <ViewAsModal onClose={() => setViewAsOpen(false)} />}
+      {newTaskOpen && (
+        <TaskPanel
+          mode="create" task={null} canWrite={canWrite} editors={editors ?? []} channels={workspaces ?? []}
+          onClose={() => setNewTaskOpen(false)}
+          onChanged={notifyTasksChanged}
+          onCreated={(id) => {
+            setNewTaskOpen(false);
+            // Every task list reloads; on the Task Board the new task opens.
+            notifyTasksChanged();
+            if (location.pathname === "/tasks") navigate("/tasks", { replace: true, state: { openTask: id } });
+          }}
+        />
+      )}
       {lockAsk && (
         <Modal title="Start your work day first" onClose={() => setLockAsk(null)}>
           <div className="lock-ask">

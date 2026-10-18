@@ -462,17 +462,19 @@ export function TasksPage() {
   // "New Task" (and every per-column ＋) opens the full categorized creation
   // card — Social/Ads → Brand → Content Type. Every new task starts in To Do.
   const startNewTask = () => { setSelectedId(null); setCreating(true); };
-  // The sidebar's New task button lands here with { newTask: true }: open the
-  // sheet once, then clear the flag so Back or a refresh doesn't reopen it.
+  // A task just made from the sidebar's New task (app-shell) arrives here as
+  // { openTask: id }: open it once, then clear the flag so Back or a refresh
+  // doesn't reopen it.
   const location = useLocation();
   const navigate = useNavigate();
-  const wantsNewTask = !!(location.state as { newTask?: boolean } | null)?.newTask;
+  const openTaskId = (location.state as { openTask?: string } | null)?.openTask ?? null;
   useEffect(() => {
-    if (!wantsNewTask) return;
-    if (canWrite) startNewTask();
+    if (!openTaskId) return;
+    setCreating(false);
+    setSelectedId(openTaskId);
     navigate(location.pathname + location.search, { replace: true, state: null });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [wantsNewTask]);
+  }, [openTaskId]);
   const selectedTask = (tasks ?? []).find((t) => t.id === selectedId) ?? null;
   // Dual-confirmation prompt when accepting would run the budget past office
   // close — null when no prompt is showing.
