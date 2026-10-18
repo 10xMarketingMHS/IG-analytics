@@ -56,7 +56,8 @@ export function GoalsPage() {
   const { isAdmin, hasPermission } = useWorkspaces();
   const [params, setParams] = useSearchParams();
   const canDisc = isAdmin || hasPermission("discipline");
-  const canSet = hasPermission("edit_goals") || hasPermission("goal_setting_access");
+  // Set goals is for whoever sets them; everyone else has My goals.
+  const canSet = hasPermission("edit_goals");
   // Everyone but admins and the goal grants sees only their own goals.
   const selfOnly = !isAdmin && !hasPermission("edit_goals") && !hasPermission("discipline");
   const raw = params.get("tab");

@@ -42,11 +42,12 @@ const SIDEBAR_GROUPS: { label: string; hrefs: string[] }[] = [
   { label: "Operations", hrefs: ["/metrics", "/posts", "/leaderboard", "/goals-board", "/my-team"] },
 ];
 const OFF_SIDEBAR = new Set(["/settings", "/posts/new"]);
-// Before Start Work an editor can still open these — Settings shows only what
-// their permissions allow, Goals only their own — and the rest (Pipeline,
-// Posts, Leaderboard) wait for it. Their links stay live in the sidebar and tab bar.
-const OPEN_WHEN_LOCKED = new Set(["/home", "/activity", "/chat", "/tasks", "/analytics", "/goals-board", "/settings", "/channels", "/task-rules"]);
-const LIVE_WHEN_LOCKED = new Set(["/home", "/chat", "/tasks", "/analytics", "/goals-board"]);
+// Before Start Work an editor can still open these — the Workspace group, plus
+// Activity and Settings (which shows only what their permissions allow). The
+// Operations group (Pipeline, Posts, Leaderboard, Goals) waits for it: those
+// links stay greyed, and clicking one asks them to start work.
+const OPEN_WHEN_LOCKED = new Set(["/home", "/activity", "/chat", "/tasks", "/analytics", "/settings", "/channels", "/task-rules"]);
+const LIVE_WHEN_LOCKED = new Set(["/home", "/chat", "/tasks", "/analytics"]);
 const openWhenLocked = (path: string) => OPEN_WHEN_LOCKED.has(path) || path.startsWith("/analytics/");
 const RAIL_KEY = "pulse-sidebar-rail";
 // The phone tab bar has ~54px a tab: two names go short there (the sidebar and
@@ -234,11 +235,13 @@ function AppShellInner() {
   // grayscale/disable is CSS keyed off this class; see index.css `.eod-lock`.
   const {
     session: eodSession, loading: eodLoading, unlinked: eodUnlinked, summary: eodSummary,
-    eodOpen, openEod, signOutAfter, clearSignOutAfter,
+    eodOpen, openEod, signOutAfter, clearSignOutAfter, start: startEod, busy: eodBusy,
   } = useEodState();
   // Viewing as someone is look-only, so their Start Work lock doesn't apply.
   const eodLocked = !user?.viewingAs && active?.role === "editor" && !eodLoading && !eodUnlinked && !eodSession;
   const [viewAsOpen, setViewAsOpen] = useState(false);
+  // A page that waits for Start Work, asked for while the day isn't started.
+  const [lockAsk, setLockAsk] = useState<{ title: string; href: string; state?: unknown } | null>(null);
   const { editors } = useEditors();
   const { theme, toggle } = useTheme();
   const location = useLocation();
@@ -326,7 +329,7 @@ function AppShellInner() {
   // and the lock disables the nav, so landing anywhere else — sign-in, refresh,
   // an old link — would strand them on a dead page. Send them to My Day. The
   // exceptions (OPEN_WHEN_LOCKED): Activity, Team Chat, the Task Board,
-  // Analytics, Goals and Settings. Each gets a way back in the top bar, see below.
+  // Analytics and Settings. Each gets a way back in the top bar, see below.
   const lockedOnOpenPage = eodLocked && openWhenLocked(location.pathname) && location.pathname !== "/home";
   useEffect(() => {
     if (eodLocked && !openWhenLocked(location.pathname)) {
@@ -420,7 +423,11 @@ function AppShellInner() {
                   to={item.href}
                   end={item.href === "/posts"}
                   title={rail ? item.title : undefined}
-                  onClick={() => setMenuOpen(false)}
+                  onClick={(e) => {
+                    if (eodLocked && !LIVE_WHEN_LOCKED.has(item.href)) { e.preventDefault(); setLockAsk({ title: item.title, href: item.href }); return; }
+                    setMenuOpen(false);
+                  }}
+                  aria-disabled={eodLocked && !LIVE_WHEN_LOCKED.has(item.href) ? true : undefined}
                   className={({ isActive }) =>
                     "navitem" + (isActive ? " active" : "") + (eodLocked && LIVE_WHEN_LOCKED.has(item.href) ? " eod-live" : "")
                   }
@@ -444,7 +451,11 @@ function AppShellInner() {
               </div>
               {workspaces.map((w) => (
                 <button key={w.id} type="button" className="navitem sb2-channel" title={rail ? w.name : `${w.name} — see its posts`}
-                  onClick={() => { setMenuOpen(false); navigate("/posts", { state: { channel: w.id } }); }}>
+                  aria-disabled={eodLocked ? true : undefined}
+                  onClick={() => {
+                    if (eodLocked) { setLockAsk({ title: `${w.name}'s posts`, href: "/posts", state: { channel: w.id } }); return; }
+                    setMenuOpen(false); navigate("/posts", { state: { channel: w.id } });
+                  }}>
                   <span className="ic sb2-chtile" style={w.logo_url ? undefined : { backgroundColor: channelTile(w.id) }}>
                     {w.logo_url ? <img src={w.logo_url} alt="" /> : initialsOf(w.name)}
                   </span>
@@ -581,6 +592,25 @@ function AppShellInner() {
       <BreakOverlay />
       <SodModal />
       {viewAsOpen && <ViewAsModal onClose={() => setViewAsOpen(false)} />}
+      {lockAsk && (
+        <Modal title="Start your work day first" onClose={() => setLockAsk(null)}>
+          <div className="lock-ask">
+            <p><b>{lockAsk.title}</b> opens once you start work. Social & Ads Pipeline, Posts, Leaderboard and Goals all wait for Start Work.</p>
+            <div className="lock-ask-acts">
+              <button type="button" className="btn" onClick={() => setLockAsk(null)}>Not now</button>
+              <button type="button" className="btn btn-primary" disabled={eodBusy}
+                onClick={async () => {
+                  const to = lockAsk;
+                  try { await startEod(); } catch { return; }
+                  setLockAsk(null); setMenuOpen(false);
+                  navigate(to.href, to.state ? { state: to.state } : undefined);
+                }}>
+                {eodBusy ? "Starting…" : "▶ Start Work"}
+              </button>
+            </div>
+          </div>
+        </Modal>
+      )}
       {user?.viewingAs && <ViewAsBar name={user.name || user.email} realName={user.viewingAs.name} />}
     </div>
     </BreakProvider>

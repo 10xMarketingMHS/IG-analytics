@@ -1702,8 +1702,13 @@ img.lb-ava{object-fit:cover}
 .eod-lock .topbar-title,
 .eod-lock:not(.lock-page-open) .content > .screen:not(.myday):not(.eod-open),
 .eod-lock .myday > *:not(.myday-hero){filter:grayscale(100%);opacity:.92}
-.eod-lock nav.side .navitem:not(.eod-live),
 .eod-lock:not(.lock-page-open) .content{pointer-events:none}
+/* A greyed link that waits for Start Work still answers a click — with the
+   "start your work day first" pop-up (app-shell.tsx). */
+.eod-lock nav.side .navitem:not(.eod-live){cursor:pointer}
+.lock-ask p{margin:0 0 16px;line-height:1.55;color:var(--muted)}
+.lock-ask p b{color:var(--text)}
+.lock-ask-acts{display:flex;justify-content:flex-end;gap:8px}
 /* Re-enable the few live controls even under the disabled content. */
 .eod-lock .eod-live{pointer-events:auto !important}
 /* Pages a locked editor may still open (Activity): full colour and

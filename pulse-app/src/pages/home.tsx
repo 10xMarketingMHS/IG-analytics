@@ -517,7 +517,7 @@ export function HomePage() {
                       {eodBusy ? "Starting…" : "▶ Start Work"}
                     </button>
                     {/* Before Start Work the rest of the app is greyed out — say why. */}
-                    <p className="mh-lockhint">Press Start Work to begin your day. The menu and your tasks unlock once you do.</p>
+                    <p className="mh-lockhint">Press Start Work to begin your day. Pipeline, Posts, Leaderboard and Goals open once you do.</p>
                   </div>
                 ) : (
                   <div className="mh-cta-row">

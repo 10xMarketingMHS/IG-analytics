@@ -27,7 +27,6 @@ const GROUPS: { scope: "self" | "admin"; l: string; d: string }[] = [
 ];
 const PERMISSIONS: { key: PermissionKey; label: string; desc: string; scope: "self" | "admin"; warn?: boolean }[] = [
   { key: "create_post", label: "Create posts", scope: "self", desc: "Add posts; any editing task it creates is assigned to them, never to anyone else" },
-  { key: "goal_setting_access", label: "View own goals", scope: "self", desc: "Read-only Set goals for themselves; can't change targets or give discipline" },
   { key: "task_settings", label: "Task settings", scope: "admin", desc: "Task types, points and time budgets — affects everyone's scoring" },
   { key: "channels", label: "Channels & integrations", scope: "admin", desc: "Add, rename and delete channels; connect Instagram, Facebook and YouTube" },
   { key: "content_taxonomy", label: "Content taxonomy", scope: "admin", desc: "Pillars, avatars, content types and formats" },
