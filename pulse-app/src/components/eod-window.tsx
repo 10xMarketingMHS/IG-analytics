@@ -27,6 +27,8 @@ export function EodWindow() {
   const [openId, setOpenId] = useState<string | null>(null);
 
   const sessionId = session?.id ?? null;
+  // Bumped by "Try again" to load the day once more.
+  const [attempt, setAttempt] = useState(0);
   useEffect(() => {
     if (!eodOpen || !sessionId) return;
     let cancel = false;
@@ -39,7 +41,7 @@ export function EodWindow() {
       })
       .catch(() => { if (!cancel) setFailed(true); });
     return () => { cancel = true; };
-  }, [eodOpen, sessionId]);
+  }, [eodOpen, sessionId, attempt]);
 
   if (!eodOpen) return null;
   const close = (ended: boolean) => { closeEod(ended); setDay(null); setNotes({}); setOpenId(null); };
@@ -98,7 +100,10 @@ export function EodWindow() {
       </div>
 
       {failed ? (
-        <div className="plan-empty" style={{ margin: "12px 0" }}>Couldn't load today's tasks. Close this and try again.</div>
+        <div className="plan-empty" style={{ margin: "12px 0", display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
+          Couldn't load today's tasks. Check your connection, then try again.
+          <button type="button" className="btn btn-sm" onClick={() => { setFailed(false); setAttempt((n) => n + 1); }}>Try again</button>
+        </div>
       ) : !day ? (
         <div className="plan-empty" style={{ margin: "12px 0" }}>Loading today's tasks…</div>
       ) : tasks.length === 0 ? (
