@@ -7,6 +7,7 @@ import { assignFormats, hasActiveGrant, reviewAccess, scopeAllowsTask } from "..
 import { logActivity } from "../activity.js";
 import { canSeeTask, editorRanks, mayOpenTask, taskViewer } from "../hierarchy.js";
 import { closePendingHandovers } from "../handover.js";
+import { hasColumn } from "../schema-flags.js";
 
 export const tasksRouter = Router();
 
@@ -123,7 +124,9 @@ const SELECT = `
          t.status, t.priority, t.due_date, t.recurrence, t.task_type,
          t.tid, t.sid, t.ad_id, t.svid, t.pid, t.start_date, t.meta, t.revision, t.pending_note,
          t.content_format_id, cf.name as content_format_name, cf.icon as content_format_icon,
-         cf.points as content_format_points, cf.duration_days as content_format_duration,
+         -- a completed task keeps the points it earned (points_at_done, see
+         -- 20261027120000_frozen_points.sql); open ones show the type's points now
+         case when t.status = 'done' then coalesce((to_jsonb(t)->>'points_at_done')::numeric, cf.points) else cf.points end as content_format_points, cf.duration_days as content_format_duration,
          cf.metrics_description as content_format_metrics,
          cf.review_link_required as content_format_link_required,
          coalesce(t.review_link_required, cf.review_link_required, false) as link_required,
@@ -685,6 +688,12 @@ tasksRouter.patch("/tasks/:id", requireEditor, requireActiveEod, async (req, res
       push("status", d.status);
       // Stamp/clear completion time as status moves in/out of "done".
       sets.push(`completed_at = case when $${params.length} = 'done' then coalesce(completed_at, now()) else null end`);
+      // …and the points it earns, as the type is worth today: changing a
+      // type's points later never rewrites it. Reopened, it's scored afresh.
+      if (await hasColumn("task", "points_at_done")) {
+        sets.push(`points_at_done = case when $${params.length} = 'done'
+          then (select cf.points from task_content_format cf where cf.id = task.content_format_id) else null end`);
+      }
     }
 
     // Hold / Resume — parks an in-progress task (it stays In Progress, just

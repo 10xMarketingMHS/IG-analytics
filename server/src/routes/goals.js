@@ -122,7 +122,7 @@ goalsRouter.get("/goals/totals", async (req, res, next) => {
     const { rows: mrow } = await pool.query("select date_trunc('month', $1::date)::date m", [monthIn]);
     const month = mrow[0].m;
     const { rows } = await pool.query(
-      `select g.editor_id as "editorId", coalesce(sum(g.jc * cf.points), 0)::float as "goalPoints"
+      `select g.editor_id as "editorId", coalesce(sum(g.jc * coalesce((to_jsonb(g)->>'points')::numeric, cf.points)), 0)::float as "goalPoints"
          from editor_goal g
          join task_content_format cf on cf.id = g.content_format_id
         where g.org_id = $1 and g.period_month = $2
@@ -151,7 +151,7 @@ goalsRouter.get("/goals", goalView, async (req, res, next) => {
       [req.orgId],
     );
     const { rows: goals } = await pool.query(
-      "select content_format_id, jc, jph from editor_goal where org_id=$1 and editor_id=$2 and period_month=$3",
+      "select content_format_id, jc, jph, (to_jsonb(editor_goal)->>'points')::numeric as pts from editor_goal where org_id=$1 and editor_id=$2 and period_month=$3",
       [req.orgId, editorId, month],
     );
     const goalBy = new Map(goals.map((g) => [g.content_format_id, g]));
@@ -163,7 +163,8 @@ goalsRouter.get("/goals", goalView, async (req, res, next) => {
       const budget = await resolveBudgetHours(req.orgId, editorId, f.id);
       rows.push({
         contentFormatId: f.id, name: f.name, icon: f.icon, category: f.category,
-        points: Number(f.points),
+        // a goal already set keeps the points it was set with
+        points: g && g.pts != null ? Number(g.pts) : Number(f.points),
         jc: g ? Number(g.jc) : null,
         jph: g ? Number(g.jph) : (budget != null ? Number(budget) : 0),
         budget: budget != null ? Number(budget) : null,
@@ -255,11 +256,19 @@ goalsRouter.put("/goals", requirePermission("edit_goals"), async (req, res, next
           [req.orgId, d.editorId, g.contentFormatId, month],
         );
       } else {
+        // A new goal takes the type's points today and keeps them; changing
+        // its count later doesn't change its points.
+        const withPoints = await hasColumn("editor_goal", "points");
         await pool.query(
-          `insert into editor_goal (org_id, editor_id, content_format_id, period_month, jc, jph)
-           values ($1,$2,$3,$4,$5,$6)
-           on conflict (org_id, editor_id, content_format_id, period_month)
-           do update set jc = excluded.jc, jph = excluded.jph, updated_at = now()`,
+          withPoints
+            ? `insert into editor_goal (org_id, editor_id, content_format_id, period_month, jc, jph, points)
+               values ($1,$2,$3,$4,$5,$6, (select points from task_content_format where id = $3))
+               on conflict (org_id, editor_id, content_format_id, period_month)
+               do update set jc = excluded.jc, jph = excluded.jph, points = coalesce(editor_goal.points, excluded.points), updated_at = now()`
+            : `insert into editor_goal (org_id, editor_id, content_format_id, period_month, jc, jph)
+               values ($1,$2,$3,$4,$5,$6)
+               on conflict (org_id, editor_id, content_format_id, period_month)
+               do update set jc = excluded.jc, jph = excluded.jph, updated_at = now()`,
           [req.orgId, d.editorId, g.contentFormatId, month, g.jc, g.jph],
         );
       }
@@ -281,7 +290,7 @@ goalsRouter.get("/goals/performance", goalView, async (req, res, next) => {
     const { rows: mrow } = await pool.query("select date_trunc('month', $1::date)::date m", [monthIn]);
     const month = mrow[0].m;
     const { rows: goals } = await pool.query(
-      `select g.content_format_id, g.jc, g.jph, cf.name, cf.icon, cf.category, cf.points
+      `select g.content_format_id, g.jc, g.jph, cf.name, cf.icon, cf.category, coalesce((to_jsonb(g)->>'points')::numeric, cf.points) as points
          from editor_goal g join task_content_format cf on cf.id = g.content_format_id
         where g.org_id=$1 and g.editor_id=$2 and g.period_month=$3
         order by cf.category, cf.sort_order, cf.name`,
@@ -454,7 +463,7 @@ goalsRouter.get("/goals/discipline", requirePermission("discipline"), async (req
       "select id, name from editor where org_id=$1 and active order by name", [req.orgId],
     );
     const { rows: goals } = await pool.query(
-      `select g.editor_id, g.content_format_id, g.jc, cf.points
+      `select g.editor_id, g.content_format_id, g.jc, coalesce((to_jsonb(g)->>'points')::numeric, cf.points) as points
          from editor_goal g join task_content_format cf on cf.id = g.content_format_id
         where g.org_id=$1 and g.period_month=$2`,
       [req.orgId, month],
@@ -560,7 +569,7 @@ goalsRouter.get("/goals/my-breakdown", requireEditor, async (req, res, next) => 
     const { rows: mrow } = await pool.query("select date_trunc('month', $1::date)::date m", [monthIn]);
     const month = mrow[0].m;
     const { rows: goals } = await pool.query(
-      `select g.content_format_id, g.jc, cf.points
+      `select g.content_format_id, g.jc, coalesce((to_jsonb(g)->>'points')::numeric, cf.points) as points
          from editor_goal g join task_content_format cf on cf.id = g.content_format_id
         where g.org_id=$1 and g.editor_id=$2 and g.period_month=$3`,
       [req.orgId, editorId, month],

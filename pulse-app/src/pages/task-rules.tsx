@@ -139,7 +139,7 @@ export function TaskRulesSection() {
       <section className="st-card">
         <div className="st-cardhead">
           <span className="st-titleline"><b>Task types</b><span className="st-count">{formats.length}</span></span>
-          <span>One list for the whole workspace. Points are what a finished job earns; time budget is how long the timer gives it.</span>
+          <span>One list for the whole workspace. Points are what a finished job earns; time budget is how long the timer gives it. A change to points counts from now on: jobs already completed, and goals already set, keep the points they had.</span>
           <span className="st-uses">
             <span>{SI.addTask}New task picker</span>
             <span>{SI.flag}Goal types</span>

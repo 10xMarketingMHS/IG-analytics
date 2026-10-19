@@ -85,7 +85,7 @@ function computeScore(rows, ratings, penalty = 0) {
 // in parallel land on 5 warm connections and finish together (~370ms). ----
 async function goalRowsByEditor(orgId, monthFirst) {
   const { rows } = await pool.query(
-    `select g.editor_id, g.content_format_id, g.jc, cf.points
+    `select g.editor_id, g.content_format_id, g.jc, coalesce((to_jsonb(g)->>'points')::numeric, cf.points) as points
        from editor_goal g join task_content_format cf on cf.id = g.content_format_id
       where g.org_id = $1 and g.period_month = $2`,
     [orgId, monthFirst],
@@ -249,14 +249,14 @@ async function scoreForEditor(orgId, editorId, monthFirst) {
   const [goalRes, ratingRes] = await Promise.all([
     pool.query(
       `with g as (
-          select content_format_id id, sum(jc)::int jc
+          select content_format_id id, sum(jc)::int jc, max((to_jsonb(editor_goal)->>'points')::numeric) pts
             from editor_goal where org_id=$1 and editor_id=$2 and period_month=$3 group by content_format_id
         ), a as (
           select content_format_id id, count(*)::int n
             from task where org_id=$1 and editor_id=$2 and status='done' and content_format_id is not null
               and completed_at>=$3 and completed_at<($3::date + interval '1 month') group by content_format_id
         )
-        select cf.points, g.jc as goal, coalesce(a.n,0) as achieved
+        select coalesce(g.pts, cf.points) as points, g.jc as goal, coalesce(a.n,0) as achieved
           from g join task_content_format cf on cf.id = g.id
           left join a on a.id = g.id`,
       [orgId, editorId, monthFirst],
@@ -471,7 +471,7 @@ async function computeDetail(orgId, editorId, monthFirst, isCurrent) {
                    count(*) > 0 as has
               from performance_threshold where org_id = $1
           ), g as (
-            select content_format_id id, sum(jc)::int jc
+            select content_format_id id, sum(jc)::int jc, max((to_jsonb(editor_goal)->>'points')::numeric) pts
               from editor_goal where org_id = $1 and editor_id = $2 and period_month = $3
               group by content_format_id
           ), a as (
@@ -481,7 +481,7 @@ async function computeDetail(orgId, editorId, monthFirst, isCurrent) {
                 and completed_at >= $3 and completed_at < ($3::date + interval '1 month')
               group by content_format_id
           )
-          select cf.id, cf.name, cf.icon, cf.category, cf.metric_tier, cf.points,
+          select cf.id, cf.name, cf.icon, cf.category, cf.metric_tier, coalesce(g.pts, cf.points) as points,
                  coalesce(g.jc, 0) as goal, coalesce(a.n, 0) as achieved,
                  thr.epi::float epi, thr.mpi::float mpi, thr.has
             from task_content_format cf
