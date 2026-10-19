@@ -19,6 +19,7 @@ const VERB_META: Record<ActivityVerb, { icon: string; cls: string }> = {
   channel_added: { icon: "🌐", cls: "v-channel" },
   editor_added: { icon: "🧑‍🎨", cls: "v-editor" },
   review_requested: { icon: "👀", cls: "v-task" },
+  review_copied: { icon: "⏰", cls: "v-task" },
   sent_back: { icon: "↩️", cls: "v-task" },
   reopened: { icon: "🔄", cls: "v-task" },
   deleted: { icon: "🗑️", cls: "v-task" },

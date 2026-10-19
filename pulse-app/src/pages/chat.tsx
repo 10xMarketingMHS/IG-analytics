@@ -11,7 +11,6 @@ import { useAuth } from "@/lib/auth-context";
 import { Loader } from "@/components/loader";
 import { Modal } from "@/components/modal";
 import { useEditors } from "@/lib/use-editors";
-import { useReviewAccess, scopeAllowsTask } from "@/lib/use-review-access";
 import { useWorkspaces } from "@/lib/workspaces-context";
 import { fmtWait } from "@/lib/task-timing";
 import { TaskPanel } from "@/pages/tasks";
@@ -1463,10 +1462,8 @@ export function ChatPage() {
   const chat = useChat();
   const { state, people, available } = chat;
   const { user } = useAuth();
-  const { isAdmin, hasPermission } = useWorkspaces();
   // A failed first load can leave the page with nothing to show; it says why
   // (below) and offers Try again instead of a spinner that never ends.
-  const review = useReviewAccess();
   const [params, setParams] = useSearchParams();
   const channelId = params.get("c");
   const threadId = params.get("t");
@@ -1511,17 +1508,14 @@ export function ChatPage() {
     }
   }, [refresh, open]);
 
-  // The same review rules as My Day and the Task Board: admins; resolve_tasks
-  // grantees within their scope; whoever assigned it with Assign tasks access.
-  // Never your own task. The server checks again either way.
-  const canAssign = isAdmin || hasPermission("assign_tasks");
+  // The same review rule as My Day and the Task Board: the card names who may
+  // review it (server/src/review-route.js). Never your own task. The server
+  // checks again either way.
   const canResolve = useCallback((t: ChatTask) => {
-    if (t.status !== "review") return false;
-    if (isAdmin) return true;
-    if (user?.editorId && t.editor_id === user.editorId) return false;
-    return (review.granted && scopeAllowsTask(review.scope, t))
-      || (canAssign && !!user && t.assigned_by === user.id);
-  }, [isAdmin, user, review, canAssign]);
+    if (t.status !== "review" || !user) return false;
+    if (user.editorId && t.editor_id === user.editorId) return false;
+    return (t.reviewer_ids ?? []).includes(user.id);
+  }, [user]);
 
   const ctx = useMemo<ConvCtx>(() => ({
     me,

@@ -54,6 +54,8 @@ export type ChatMessage = {
 
 export type ChatTask = {
   id: string;
+  // In Review: who may review it (user ids; server/src/review-route.js).
+  reviewer_ids?: string[];
   title: string;
   status: TaskStatus;
   task_type: TaskType;

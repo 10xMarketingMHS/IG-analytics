@@ -1,7 +1,12 @@
 import { Router } from "express";
 import { z } from "zod";
 import { pool } from "../db.js";
-import { PERMISSION_KEYS, activeGrants, assignLimits, requirePermission, reviewAccess } from "../permissions.js";
+import { PERMISSION_KEYS, activeGrants, assignLimits, hasActiveGrant, requirePermission } from "../permissions.js";
+import { rankOf } from "../hierarchy.js";
+
+// Resolve reviews is retired: who reviews a task follows one rule
+// (../review-route.js), so Access no longer hands it out, and a save clears it.
+const RETIRED = new Set(["resolve_tasks"]);
 import { isSuperHere } from "../super-admin.js";
 
 // Settings → Access — the Super Admin's management of per-user permission
@@ -27,37 +32,31 @@ accessRouter.get("/access/grants", manageAccess, async (req, res, next) => {
   const userId = req.query.userId;
   if (!userId) return res.status(400).json({ error: "userId is required." });
   try {
-    const [review, assignScope, permissions] = await Promise.all([
-      reviewAccess(req.orgId, userId), assignLimits(req.orgId, userId), activeGrants(req.orgId, userId),
-    ]);
-    res.json({ permissions, reviewScope: review.scope, assignScope });
+    const [assignScope, permissions] = await Promise.all([assignLimits(req.orgId, userId), activeGrants(req.orgId, userId)]);
+    res.json({ permissions: permissions.filter((k) => !RETIRED.has(k)), assignScope });
   } catch (err) {
     next(err);
   }
 });
 
-// GET /access/review-scope/me — the caller's own review access, so the Task
-// Board can show approve / send-back only on the tasks they may resolve. Open
-// to every signed-in member; it only ever describes the caller.
+// GET /access/review-scope/me — about the caller only: whether any task can
+// come to them for review (they assign work, or they're a Team Lead or above;
+// each task says can_review itself), and any limit on their Assign tasks.
 accessRouter.get("/access/review-scope/me", async (req, res, next) => {
   try {
-    const [review, assignScope] = await Promise.all([reviewAccess(req.orgId, req.user.sub), assignLimits(req.orgId, req.user.sub)]);
-    res.json({ ...review, assignScope });
+    const [assignScope, assigner, me] = await Promise.all([
+      assignLimits(req.orgId, req.user.sub),
+      hasActiveGrant(req.orgId, req.user.sub, "assign_tasks"),
+      pool.query("select e.designation from app_user u left join editor e on e.id = u.editor_id where u.id = $1", [req.user.sub]),
+    ]);
+    const admin = req.role === "admin";
+    const reviewer = admin || assigner || rankOf(me.rows[0]?.designation, admin) <= 2;
+    res.json({ reviewer, assignScope });
   } catch (err) {
     next(err);
   }
 });
 
-const ReviewScopeSchema = z.union([
-  z.object({
-    editors: z.array(z.object({
-      editorId: z.string().uuid(),
-      taskIds: z.array(z.string().uuid()).nullable(),
-    })),
-  }),
-  // Content types: every task of these content formats (e.g. all Carousels).
-  z.object({ formats: z.array(z.string().uuid()).min(1) }),
-]);
 // Assign tasks limited to some content types, some people, or both.
 const AssignScopeSchema = z.object({
   formats: z.array(z.string().uuid()).min(1).optional(),
@@ -68,9 +67,6 @@ const SaveSchema = z.object({
   userId: z.string().uuid(),
   // A desired-state map; only known keys are honored, unknown ones ignored.
   permissions: z.record(z.string(), z.boolean()),
-  // Narrows resolve_tasks: null/omitted = everyone, otherwise only these
-  // people/tasks. Ignored unless resolve_tasks is being granted.
-  reviewScope: ReviewScopeSchema.nullable().optional(),
   // Narrows assign_tasks to some content types and/or people: null/omitted = any.
   assignScope: AssignScopeSchema.nullable().optional(),
 });
@@ -81,7 +77,7 @@ const SaveSchema = z.object({
 accessRouter.put("/access/grants", manageAccess, async (req, res, next) => {
   const parsed = SaveSchema.safeParse(req.body);
   if (!parsed.success) return res.status(400).json({ error: "Invalid grant payload." });
-  const { userId, permissions, reviewScope, assignScope } = parsed.data;
+  const { userId, permissions, assignScope } = parsed.data;
   try {
     // Target must be a member of this workspace, and not an admin — grants are
     // meaningless for admins (they already have everything).
@@ -94,7 +90,7 @@ accessRouter.put("/access/grants", manageAccess, async (req, res, next) => {
 
     const current = new Set(await activeGrants(req.orgId, userId));
     for (const key of PERMISSION_KEYS) {
-      const want = permissions[key] === true;
+      const want = permissions[key] === true && !RETIRED.has(key);
       const have = current.has(key);
       if (want && !have) {
         await pool.query(
@@ -108,19 +104,13 @@ accessRouter.put("/access/grants", manageAccess, async (req, res, next) => {
         );
       }
     }
-    if (permissions.resolve_tasks === true) {
-      await pool.query(
-        "update user_permission_grant set scope=$4 where org_id=$1 and user_id=$2 and permission_key=$3 and revoked_at is null",
-        [req.orgId, userId, "resolve_tasks", reviewScope ? JSON.stringify(reviewScope) : null],
-      );
-    }
     if (permissions.assign_tasks === true) {
       await pool.query(
         "update user_permission_grant set scope=$4 where org_id=$1 and user_id=$2 and permission_key=$3 and revoked_at is null",
         [req.orgId, userId, "assign_tasks", assignScope ? JSON.stringify(assignScope) : null],
       );
     }
-    res.json({ ok: true, permissions: await activeGrants(req.orgId, userId), reviewScope: reviewScope ?? null, assignScope: assignScope ?? null });
+    res.json({ ok: true, permissions: (await activeGrants(req.orgId, userId)).filter((k) => !RETIRED.has(k)), assignScope: assignScope ?? null });
   } catch (err) {
     next(err);
   }

@@ -3,7 +3,8 @@ import { z } from "zod";
 import { pool } from "../db.js";
 import { requireEditor } from "../resolve-workspace.js";
 import { requireActiveEod } from "./eod.js";
-import { assignLimits, hasActiveGrant, reviewAccess, scopeAllowsTask } from "../permissions.js";
+import { assignLimits, hasActiveGrant } from "../permissions.js";
+import { reviewContext, routeReview, withReview } from "../review-route.js";
 import { logActivity } from "../activity.js";
 import { canSeeTask, editorRanks, mayOpenTask, taskViewer } from "../hierarchy.js";
 import { closePendingHandovers } from "../handover.js";
@@ -266,7 +267,8 @@ tasksRouter.get("/tasks", async (req, res, next) => {
       taskViewer(req),
       editorRanks(req.orgId),
     ]);
-    res.json({ tasks: viewer.seesAll ? rows : rows.filter((t) => canSeeTask(viewer, ranks, t)) });
+    const seen = viewer.seesAll ? rows : rows.filter((t) => canSeeTask(viewer, ranks, t));
+    res.json({ tasks: await withReview(req, seen) });
   } catch (err) {
     next(err);
   }
@@ -450,7 +452,7 @@ tasksRouter.patch("/tasks/:id", requireEditor, requireActiveEod, async (req, res
     // Capture prior state so we can spawn the next occurrence on completion,
     // guard task_type for post-linked tasks, and re-resolve the time budget.
     const prior = (await pool.query(
-      "select status, recurrence, post_id, editor_id, channel_id, content_format_id, accepted, budget_hours, budget_started_at, budget_used_seconds, on_hold, sid, ad_id, svid, pid, start_date, due_date, revision, task_type, delivery_link, review_link_required, title, description, priority, content_type, platforms, attachments, meta, created_by, held_by, assigned_by, to_jsonb(task)->>'covered_from_editor_id' as covered_from from task where id = $1 and org_id = $2",
+      "select status, recurrence, post_id, editor_id, channel_id, content_format_id, accepted, budget_hours, budget_started_at, budget_used_seconds, on_hold, sid, ad_id, svid, pid, start_date, due_date, revision, task_type, delivery_link, review_link_required, title, description, priority, content_type, platforms, attachments, meta, created_by, held_by, assigned_by, review_started_at, to_jsonb(task)->>'covered_from_editor_id' as covered_from from task where id = $1 and org_id = $2",
       [req.params.id, req.orgId],
     )).rows[0];
     if (!prior) return res.status(404).json({ error: "Task not found" });
@@ -551,34 +553,26 @@ tasksRouter.patch("/tasks/:id", requireEditor, requireActiveEod, async (req, res
     // written after the main update below.
     let reviewLogAction = null;
     let reviewNote = null;
+    let selfClosed = false;
     let holdAction = null;
     let budgetStartSet = false;
     if (d.status !== undefined && d.status !== prior.status) {
       if (prior.status === "review") {
-        // Resolving a review (approve into done, or send back for rework) is an
-        // admin power — or a resolve_tasks grantee, within whatever scope their
-        // grant carries (everyone / certain people / certain tasks). A grantee
-        // can never resolve a task assigned to themselves.
-        // Whoever assigned the task may also resolve it, while they still have
-        // Assign tasks access. Nobody resolves their own task.
-        if (req.role !== "admin") {
-          if (prior.editor_id && prior.editor_id === (await callerEditorId(req))) {
-            return res.status(403).json({ error: "You can't review a task that's assigned to you." });
-          }
-          const asAssigner = !!prior.assigned_by && prior.assigned_by === req.user.sub && (await canAssignTasks(req));
-          if (!asAssigner) {
-            const review = await reviewAccess(req.orgId, req.user.sub);
-            if (!review.granted) {
-              return res.status(403).json({ error: "Only an admin, a reviewer or the person who assigned it can approve or send back this task." });
-            }
-            if (!scopeAllowsTask(review.scope, { id: req.params.id, editor_id: prior.editor_id, content_format_id: prior.content_format_id })) {
-              if (Array.isArray(review.scope?.formats)) {
-                const { rows: fr } = await pool.query("select name from task_content_format where id = any($1::uuid[]) order by name", [review.scope.formats]);
-                return res.status(403).json({ error: `You review only ${fr.map((r) => r.name).join(", ") || "certain content types"} tasks.` });
-              }
-              return res.status(403).json({ error: "You don't have review access for this task." });
-            }
-          }
+        // Resolving a review (approve into done, or send back for rework)
+        // follows one rule for everyone, admins included (../review-route.js):
+        // whoever assigned it; for a task its owner made, a Team Lead, or a
+        // Manager (a Team Lead's task, or after 24 hours). Never the owner.
+        if (prior.editor_id && prior.editor_id === (await callerEditorId(req))) {
+          return res.status(403).json({ error: "You can't review a task that's assigned to you." });
+        }
+        const route = routeReview(prior, await reviewContext(req.orgId));
+        if (!route.reviewers.includes(req.user.sub)) {
+          return res.status(403).json({
+            error: route.kind === "assigner" ? `Only ${route.label}, who assigned this task, can review it.`
+              : route.kind === "leads" && route.copyAt ? "A Team Lead reviews this task. A Manager can too once it has waited 24 hours."
+              : route.kind === "leads" ? "Only a Team Lead or a Manager can review this task."
+              : "Only a Manager can review this task.",
+          });
         }
         if (d.status !== "done" && d.status !== "in_progress") {
           return res.status(400).json({ error: "From review, a task can only move to Completed or back to In progress." });
@@ -690,6 +684,15 @@ tasksRouter.patch("/tasks/:id", requireEditor, requireActiveEod, async (req, res
         push("budget_started_at", new Date(startAt.getTime() - usedSec * 1000));
         push("budget_used_seconds", 0);
         budgetStartSet = true;
+      }
+      // A Manager's or Asst. Manager's own task needs no review: sending it
+      // for review completes it (../review-route.js).
+      if (d.status === "review" && prior.status !== "review"
+          && routeReview(prior, await reviewContext(req.orgId)).kind === "none") {
+        d.status = "done";
+        selfClosed = true;
+        reviewLogAction = "approved";
+        reviewNote = "No review needed: a Manager's own task.";
       }
       // Time waiting for a reviewer never counts against the assignee: note
       // when it went into Review, and when it leaves (approved, sent back or
@@ -904,7 +907,7 @@ tasksRouter.patch("/tasks/:id", requireEditor, requireActiveEod, async (req, res
         entityType: "task",
         entityId: full[0].id,
         channelId: full[0].channel_id,
-        summary: `Approved task “${full[0].title}”`,
+        summary: selfClosed ? `Completed task “${full[0].title}” (no review needed)` : `Approved task “${full[0].title}”`,
       });
     }
     // Handed to someone else — the new assignee needs to know.
@@ -933,10 +936,13 @@ tasksRouter.patch("/tasks/:id", requireEditor, requireActiveEod, async (req, res
         summary: `Reopened completed task “${full[0].title}”`,
       });
     } else if (prior.status !== "review" && finalStatus === "review") {
+      // Told: whoever reviews it now (the Managers' 24-hour copy comes later).
+      const route = routeReview(full[0], await reviewContext(req.orgId));
       await logActivity({
         orgId: req.orgId, actorId: req.user.sub, verb: "review_requested",
         entityType: "task", entityId: full[0].id, channelId: full[0].channel_id,
         summary: `Submitted task “${full[0].title}” for review`,
+        meta: { notifyUserIds: route.reviewers },
       });
     }
     if (reviewLogAction === "sent_back") {
@@ -956,7 +962,7 @@ tasksRouter.patch("/tasks/:id", requireEditor, requireActiveEod, async (req, res
         [req.params.id, full[0].revision, reviewLogAction, reviewNote, req.user.sub],
       );
     }
-    res.json({ task: full[0] });
+    res.json({ task: await withReview(req, full[0]) });
   } catch (err) {
     next(err);
   }
@@ -1009,7 +1015,7 @@ tasksRouter.post("/tasks/:id/accept", requireEditor, requireActiveEod, async (re
       orgId: req.orgId, actorId: req.user.sub, verb: "accepted", entityType: "task", entityId: full[0].id, channelId: full[0].channel_id,
       summary: `Accepted task “${full[0].title}”`,
     });
-    res.json({ task: full[0] });
+    res.json({ task: await withReview(req, full[0]) });
   } catch (err) {
     next(err);
   }

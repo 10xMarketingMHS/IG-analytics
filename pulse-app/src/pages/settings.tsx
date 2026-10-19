@@ -355,7 +355,7 @@ function NotificationsSection() {
   }
   const ROWS: [NotifyKey, string, string, boolean][] = [
     ["assigned", "A task is assigned to me", "Someone gives you a task, or a post makes one for you", !!user?.editorId],
-    ["review", "Work is waiting for my review", "A task you can approve lands in review", isAdmin || review.granted],
+    ["review", "Work is waiting for my review", "A task you review lands in review", review.reviewer],
     ["overdue", "A task of mine goes overdue", "One of your tasks passes its due date unfinished", !!user?.editorId],
     ["budget", "A task passes its time budget", "Any task on the team runs past its time", isAdmin],
   ];

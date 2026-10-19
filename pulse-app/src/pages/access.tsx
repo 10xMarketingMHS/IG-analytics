@@ -4,9 +4,8 @@ import { toast } from "sonner";
 import { api, ApiError } from "@/lib/api";
 import type { PermissionKey } from "@/lib/workspaces-context";
 import { useEditors } from "@/lib/use-editors";
-import { useTasks } from "@/lib/use-tasks";
 import { gradFor } from "@/lib/editor-visuals";
-import type { AssignScope, ReviewScope } from "@/lib/use-review-access";
+import type { AssignScope } from "@/lib/use-review-access";
 import { useContentFormats } from "@/lib/use-content-formats";
 import type { ContentFormatDef } from "@/lib/types";
 import { SI, Seg } from "@/pages/settings-ui";
@@ -14,10 +13,9 @@ import { SI, Seg } from "@/pages/settings-ui";
 // Settings › Access (Pulse Redesign v5) — admin or the access_manage grant.
 // Pick a person, tick the extra permissions they get on top of their role,
 // Save. Grants are meaningless for admins, so admins are left out of the
-// picker. Resolve reviews can be narrowed to some people (and for each of them
-// to all their tasks or a hand-picked few) or to some content types, so e.g. a
-// Carousel owner gets every Carousel review. Assign tasks can be limited to
-// some content types, and to some people, the same way.
+// picker. Assign tasks can be limited to some content types, and to some
+// people. Who reviews a task isn't handed out here: it follows one rule
+// (server/src/review-route.js).
 
 type UserRow = { id: string; email: string; name: string | null; active: boolean; editor_id: string | null; role: "admin" | "editor" | "viewer" };
 
@@ -36,16 +34,14 @@ const PERMISSIONS: { key: PermissionKey; label: string; desc: string; scope: "se
   { key: "content_taxonomy", label: "Content taxonomy", scope: "admin", desc: "Pillars, avatars, content types and formats" },
   { key: "access_manage", label: "Manage access", scope: "admin", desc: "Grant or revoke permissions for other people", warn: true },
   { key: "assign_tasks", label: "Assign tasks", scope: "admin", desc: "Assign tasks to other editors, not only themselves" },
-  { key: "resolve_tasks", label: "Resolve reviews", scope: "admin", desc: "Approve or send back work waiting in review" },
   { key: "hold_tasks", label: "Hold any task", scope: "admin", desc: "Pause or resume anyone's task, not only their own" },
   { key: "edit_goals", label: "Edit goals", scope: "admin", desc: "Set any editor's goals and capacity" },
   { key: "discipline", label: "Discipline", scope: "admin", desc: "Give discipline ratings for the whole team" },
 ];
 
-type ReviewMode = "all" | "people" | "types";
 const CATEGORY_LABEL: Record<string, string> = { social: "Social", ad: "Ads", service: "Services", project: "Projects" };
 
-// Content-type chips, grouped by category, for the two content-type scopes.
+// Content-type chips, grouped by category, for the Assign tasks limit.
 function FormatPicker({ formats, picked, onChange, label }: { formats: ContentFormatDef[]; picked: string[]; onChange: (ids: string[]) => void; label: string }) {
   if (formats.length === 0) return <span className="st-note">No content types yet. Add them in Settings › Content.</span>;
   const groups = [...new Set(formats.map((f) => f.category ?? "other"))];
@@ -81,19 +77,15 @@ export function AccessSection() {
   const [checked, setChecked] = useState<Record<string, boolean>>({});
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
-  const [reviewMode, setReviewMode] = useState<ReviewMode>("all");
-  const [reviewWho, setReviewWho] = useState<Record<string, { all: boolean; taskIds: string[] }>>({});
-  const [reviewFmts, setReviewFmts] = useState<string[]>([]);
   // Assign tasks: any task, or only these content types; to anyone, or only these people.
   const [assignAll, setAssignAll] = useState(true);
   const [assignFmts, setAssignFmts] = useState<string[]>([]);
   const [assignAnyone, setAssignAnyone] = useState(true);
   const [assignWho, setAssignWho] = useState<string[]>([]);
   // What's saved, to tell when there's something to save.
-  type Snap = { checked: Record<string, boolean>; reviewMode: ReviewMode; reviewWho: Record<string, { all: boolean; taskIds: string[] }>; reviewFmts: string[]; assignAll: boolean; assignFmts: string[]; assignAnyone: boolean; assignWho: string[] };
+  type Snap = { checked: Record<string, boolean>; assignAll: boolean; assignFmts: string[]; assignAnyone: boolean; assignWho: string[] };
   const [saved, setSaved] = useState<Snap | null>(null);
   const { editors } = useEditors();
-  const { tasks } = useTasks();
   const { contentFormats } = useContentFormats();
   const formats = useMemo(() => (contentFormats ?? []).filter((f) => f.active), [contentFormats]);
 
@@ -111,19 +103,15 @@ export function AccessSection() {
   useEffect(() => {
     if (!userId) { setChecked({}); setSaved(null); return; }
     setLoading(true);
-    api<{ permissions: PermissionKey[]; reviewScope: ReviewScope; assignScope?: AssignScope }>(`/access/grants?userId=${userId}`)
+    api<{ permissions: PermissionKey[]; assignScope?: AssignScope }>(`/access/grants?userId=${userId}`)
       .then((d) => {
         const c = Object.fromEntries(PERMISSIONS.map((p) => [p.key, d.permissions.includes(p.key)]));
-        const rs = d.reviewScope;
-        const mode: ReviewMode = !rs ? "all" : "formats" in rs ? "types" : "people";
-        const who = Object.fromEntries((rs && "editors" in rs ? rs.editors : []).map((e) => [e.editorId, { all: e.taskIds == null, taskIds: e.taskIds ?? [] }]));
-        const rf = rs && "formats" in rs ? rs.formats : [];
         const af = d.assignScope?.formats ?? [];
         const aAll = af.length === 0;
         const aw = d.assignScope?.editors ?? [];
         const aAny = aw.length === 0;
-        setChecked(c); setReviewMode(mode); setReviewWho(who); setReviewFmts(rf); setAssignAll(aAll); setAssignFmts(af); setAssignAnyone(aAny); setAssignWho(aw);
-        setSaved({ checked: c, reviewMode: mode, reviewWho: who, reviewFmts: rf, assignAll: aAll, assignFmts: af, assignAnyone: aAny, assignWho: aw });
+        setChecked(c); setAssignAll(aAll); setAssignFmts(af); setAssignAnyone(aAny); setAssignWho(aw);
+        setSaved({ checked: c, assignAll: aAll, assignFmts: af, assignAnyone: aAny, assignWho: aw });
       })
       .catch((e) => toast.error(e instanceof ApiError ? e.message : "Couldn't load their access."))
       .finally(() => setLoading(false));
@@ -133,13 +121,10 @@ export function AccessSection() {
     setSaving(true);
     try {
       const permissions = Object.fromEntries(PERMISSIONS.map((p) => [p.key, !!checked[p.key]]));
-      const reviewScope: ReviewScope = reviewMode === "all" ? null
-        : reviewMode === "types" ? { formats: reviewFmts }
-        : { editors: Object.entries(reviewWho).map(([editorId, w]) => ({ editorId, taskIds: w.all ? null : w.taskIds })) };
       const assignScope: AssignScope = assignAll && assignAnyone ? null
         : { ...(assignAll ? {} : { formats: assignFmts }), ...(assignAnyone ? {} : { editors: assignWho }) };
-      await api("/access/grants", { method: "PUT", body: JSON.stringify({ userId, permissions, reviewScope, assignScope }) });
-      setSaved({ checked, reviewMode, reviewWho, reviewFmts, assignAll, assignFmts, assignAnyone, assignWho });
+      await api("/access/grants", { method: "PUT", body: JSON.stringify({ userId, permissions, assignScope }) });
+      setSaved({ checked, assignAll, assignFmts, assignAnyone, assignWho });
       toast.success("Access saved.");
     } catch (e) {
       toast.error(e instanceof ApiError ? e.message : "Couldn't save access.");
@@ -152,14 +137,12 @@ export function AccessSection() {
   const editorOf = (u: UserRow | null) => (u?.editor_id ? (editors ?? []).find((e) => e.id === u.editor_id) ?? null : null);
   const ed = editorOf(person);
   const nameOf = (u: UserRow) => u.name || ed?.name || u.email.split("@")[0];
-  // Whose work this reviewer can be handed — everyone active except themselves.
+  // Who they could assign to — everyone active except themselves.
   const reviewable = useMemo(() => (editors ?? []).filter((e) => e.active && e.id !== person?.editor_id), [editors, person?.editor_id]);
-  const openTasksOf = (editorId: string) => (tasks ?? []).filter((t) => t.editor_id === editorId && t.status !== "done");
   const extra = Object.values(saved?.checked ?? {}).filter(Boolean).length;
-  const dirty = !!saved && !sameJson(saved, { checked, reviewMode, reviewWho, reviewFmts, assignAll, assignFmts, assignAnyone, assignWho });
+  const dirty = !!saved && !sameJson(saved, { checked, assignAll, assignFmts, assignAnyone, assignWho });
   // A content-type limit needs at least one type picked, a people limit one person.
-  const missingType = (checked.resolve_tasks && reviewMode === "types" && reviewFmts.length === 0)
-    || (checked.assign_tasks && !assignAll && assignFmts.length === 0);
+  const missingType = !!checked.assign_tasks && !assignAll && assignFmts.length === 0;
   const missingPerson = !!checked.assign_tasks && !assignAnyone && assignWho.length === 0;
 
   return (
@@ -233,78 +216,6 @@ export function AccessSection() {
                           })}
                         </div>
                         <span className="st-note">Only these people show when they assign a task. They can still make tasks for themselves.</span>
-                      </>
-                    )
-                  )}
-                </div>
-              )}
-              {p.key === "resolve_tasks" && checked.resolve_tasks && (
-                <div className="st-scope">
-                  <div className="st-scopeline">
-                    Whose reviews
-                    <Seg label="Whose reviews" value={reviewMode} options={[["all", "Everyone"], ["people", "Selected people"], ["types", "Content types"]]}
-                      onChange={setReviewMode} />
-                  </div>
-                  {reviewMode === "types" && (
-                    <>
-                      <FormatPicker formats={formats} picked={reviewFmts} onChange={setReviewFmts} label="Content types they review" />
-                      <span className="st-note">Every task of these types comes to them for review, whoever did the work. Admins can still review anything.</span>
-                    </>
-                  )}
-                  {reviewMode === "people" && (
-                    reviewable.length === 0 ? <span className="st-note">No other team members yet.</span> : (
-                      <>
-                        <div className="st-people">
-                          {reviewable.map((e) => {
-                            const on = !!reviewWho[e.id];
-                            return (
-                              <button key={e.id} type="button" className={"st-pill" + (on ? " on" : "")} aria-pressed={on}
-                                onClick={() => setReviewWho((s) => {
-                                  const next = { ...s };
-                                  if (on) delete next[e.id]; else next[e.id] = { all: true, taskIds: [] };
-                                  return next;
-                                })}>
-                                {e.image_url
-                                  ? <img className="st-ava sm" src={e.image_url} alt="" />
-                                  : <span className="st-ava sm" style={{ background: gradFor(e.name) }}>{initials(e.name)}</span>}
-                                {e.name.split(" ")[0]}
-                              </button>
-                            );
-                          })}
-                        </div>
-                        {Object.keys(reviewWho).length > 0 && (
-                          <div className="st-picks">
-                            {reviewable.filter((e) => reviewWho[e.id]).map((e) => {
-                              const w = reviewWho[e.id];
-                              const open = openTasksOf(e.id);
-                              return (
-                                <div className="st-pickrow" key={e.id}>
-                                  <b>{e.name}</b>
-                                  <select className="st-in" aria-label={`Which of ${e.name}'s tasks`} value={w.all ? "all" : "some"}
-                                    onChange={(ev) => setReviewWho((s) => ({ ...s, [e.id]: { ...w, all: ev.target.value === "all" } }))}>
-                                    <option value="all">All their tasks</option>
-                                    <option value="some">Only some tasks</option>
-                                  </select>
-                                  {!w.all && (
-                                    <div className="st-tasks">
-                                      {open.length === 0 && <span className="st-note">{e.name} has no open tasks right now.</span>}
-                                      {open.map((t) => (
-                                        <label key={t.id}>
-                                          <input type="checkbox" checked={w.taskIds.includes(t.id)}
-                                            onChange={(ev) => setReviewWho((s) => ({
-                                              ...s,
-                                              [e.id]: { ...w, taskIds: ev.target.checked ? [...w.taskIds, t.id] : w.taskIds.filter((id) => id !== t.id) },
-                                            }))} />
-                                          <span>{t.tid ? `${t.tid} · ` : ""}{t.title}</span>
-                                        </label>
-                                      ))}
-                                    </div>
-                                  )}
-                                </div>
-                              );
-                            })}
-                          </div>
-                        )}
                       </>
                     )
                   )}

@@ -2,6 +2,7 @@ import { Router } from "express";
 import { z } from "zod";
 import { pool } from "../db.js";
 import { isOrgAdmin } from "../permissions.js";
+import { reviewContext, routeReview } from "../review-route.js";
 
 // Team chat — channels, direct messages, threads, reactions, @mentions and task
 // links (see the team_chat migration). Everyone who works in the org (an admin or
@@ -451,6 +452,12 @@ async function taskSummaries(orgId, ids) {
       where t.org_id = $1 and t.id = any($2::uuid[])`,
     [orgId, ids],
   );
+  // A card goes to many people at once: one waiting in Review names who may
+  // review it (../review-route.js), and each screen checks itself against that.
+  if (rows.some((r) => r.status === "review")) {
+    const ctx = await reviewContext(orgId);
+    for (const r of rows) if (r.status === "review") r.reviewer_ids = routeReview(r, ctx).reviewers;
+  }
   return Object.fromEntries(rows.map((r) => [r.id, r]));
 }
 

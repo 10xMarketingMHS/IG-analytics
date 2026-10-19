@@ -11,7 +11,7 @@ import { useAutoSync } from "@/lib/auto-sync";
 import { getActivitySeen, onActivitySeenChange } from "@/lib/activity-seen";
 import { hasSeenTask, useTaskAssignNotify } from "@/lib/use-task-notify";
 import { useDueOverdueNotify, useOverdueTaskNotify, useReviewWaitingNotify } from "@/lib/use-overdue-notify";
-import { scopeAllowsTask, useReviewAccess } from "@/lib/use-review-access";
+import { useReviewAccess } from "@/lib/use-review-access";
 import { useOrg } from "@/lib/use-org";
 import { homeRoleOf, seesTeamAttendance } from "@/lib/home-role";
 import { setWeekStart } from "@/lib/date-range";
@@ -117,7 +117,7 @@ function useUnreadActivity() {
 // count.
 const LIVE_VERBS = new Set([
   "completed", "sent_back", "reopened", "assigned", "deleted", "held", "resumed",
-  "review_requested", "password_reset_requested", "sod_submitted",
+  "review_requested", "review_copied", "password_reset_requested", "sod_submitted",
   // hand over (components/handover.tsx): offered, answered, called off, climbed, moved
   "handover_offered", "handover_accepted", "handover_declined", "handover_cancelled", "handover_escalated", "handover_moved",
 ]);
@@ -145,6 +145,10 @@ function useLiveNotices(items: Activity[] | undefined, myId: string | undefined,
     if (newest > since.current) since.current = newest;
     if (!fresh.length) return;
     for (const a of [...fresh].reverse()) {
+      // A review notice names whoever reviews it; an admin's whole-team feed
+      // has everyone's, but only their own pop up.
+      const reviewers = a.meta?.notifyUserIds;
+      if ((a.verb === "review_requested" || a.verb === "review_copied") && Array.isArray(reviewers) && !reviewers.includes(myId)) continue;
       if (a.verb.startsWith("attendance_")) {
         const msg = attendanceNotice(a, myEditorId);
         if (msg) toast(`🔔 ${msg}`);
@@ -284,9 +288,10 @@ function AppShellInner() {
   useTaskAssignNotify();
   useOverdueTaskNotify();
   useDueOverdueNotify();
-  // Anyone who reviews hears when work lands in review (within their scope).
+  // Anyone who reviews hears when work lands in review for them (or reaches
+  // them after 24 hours) — each task says can_review.
   const review = useReviewAccess();
-  useReviewWaitingNotify(isAdmin || review.granted, (t) => isAdmin || scopeAllowsTask(review.scope, t));
+  useReviewWaitingNotify(review.reviewer, (t) => !!t.can_review);
   // The organisation's name (sidebar) and week start (date ranges).
   const { org } = useOrg();
   useEffect(() => { if (org) setWeekStart(org.weekStart); }, [org?.weekStart]); // eslint-disable-line react-hooks/exhaustive-deps

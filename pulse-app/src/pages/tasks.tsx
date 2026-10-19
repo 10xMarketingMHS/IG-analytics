@@ -14,7 +14,7 @@ import { onTasksChanged } from "@/lib/task-events";
 import { peopleVisibleTo } from "@/lib/home-role";
 import { useIsSuper } from "@/lib/use-org";
 import { useAuth } from "@/lib/auth-context";
-import { useReviewAccess, scopeAllowsTask } from "@/lib/use-review-access";
+import { useReviewAccess } from "@/lib/use-review-access";
 import { useWorkspaces } from "@/lib/workspaces-context";
 import { usePosts } from "@/lib/use-posts";
 import { api, ApiError } from "@/lib/api";
@@ -416,16 +416,12 @@ export function TasksPage() {
     return peopleVisibleTo(editors ?? [], me, { seesAll: isSuper, isAdmin });
   }, [editors, user?.editorId, isAdmin, isSuper]);
   // Access grants that give admin-like reach over other people's tasks.
-  // Approve/send back reviews: admins always; a resolve_tasks grantee for tasks
-  // inside their review scope; an assigner for the tasks they assigned — never
-  // anyone for a task of their own.
-  const review = useReviewAccess();
+  // Approve/send back reviews: whoever the task's review goes to — the person
+  // who assigned it, or for a task its owner made a Team Lead or Manager. The
+  // server says so on each task (can_review); never anyone's own task.
   const canHoldAny = isAdmin || hasPermission("hold_tasks");    // hold/resume anyone's task
   const canAssign = isAdmin || hasPermission("assign_tasks");   // set work up for other people
-  const canResolveTask = (t: Task) =>
-    isAdmin || (!isOwner(t) && (
-      (review.granted && scopeAllowsTask(review.scope, t))
-      || (canAssign && !!user && t.assigned_by === user.id)));
+  const canResolveTask = (t: Task) => t.status === "review" && !!t.can_review && !isOwner(t);
   // Deleting erases the work and its points: a completed task is an admin's
   // call; anything else an assigner's — or yours, if you created it for yourself.
   // The server enforces the same rule.
@@ -679,7 +675,7 @@ export function TasksPage() {
     if (!canTransition(t, status)) {
       toast.error(
         t.status === "review"
-          ? "Only an admin can approve or send back a task in review."
+          ? (t.review_by ? `Waiting for ${t.review_by} to review it.` : "Only its reviewer can approve or send it back.")
           : status === "done"
             ? "Move it to Review first."
             : isOwner(t) && !t.accepted
@@ -2045,9 +2041,7 @@ export function TaskPanel({ mode, task, canWrite, editors, channels, onClose, on
   // Delivery Link is writable by the task's assignee or an admin (mirrors the
   // server check); everyone else who can open the panel sees it read-only.
   const isOwnerTask = !!user?.editorId && task?.editor_id === user.editorId;
-  const canResolve = isAdmin || (!!task && !isOwnerTask && (
-    (review.granted && scopeAllowsTask(review.scope, task))
-    || (canAssign && !!user && task.assigned_by === user.id)));
+  const canResolve = !!task && task.status === "review" && !!task.can_review && !isOwnerTask;
   // Who may change what — mirrors the server (PATCH /tasks/:id):
   //  - a completed task is frozen as approved; only an admin changes it;
   //  - the brief (title, description, brand, type, dates, priority, repeat)
@@ -2247,7 +2241,7 @@ export function TaskPanel({ mode, task, canWrite, editors, channels, onClose, on
   const rule = creating || !task ? ""
     : task.status === "review" ? (canResolve
       ? "To approve, set Status to Completed. Sending back for rework needs a note — use the Send back / ← button."
-      : "⏳ Waiting on review.")
+      : task.review_by ? `⏳ Waiting for ${task.review_by} to review it.` : "⏳ Waiting on review.")
     : task.status === "in_progress" ? "Use Hold on the board to park it — a started task can't go back to To Do."
     : "";
   const meEditor = editors.find((ed) => ed.id === user?.editorId);

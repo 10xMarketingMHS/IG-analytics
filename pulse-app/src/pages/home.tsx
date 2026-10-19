@@ -13,7 +13,7 @@ import { performanceScore } from "@/lib/score";
 import { ymd, daysBetween, lateDays, myRankInRange, topEditorsInRange } from "@/lib/task-points";
 import { breakOffsetMs, DAILY_BREAK_CAP_SEC, fmtWait, reviewWaitMs } from "@/lib/task-timing";
 import { Avatar } from "@/lib/editor-visuals";
-import { useReviewAccess, scopeAllowsTask } from "@/lib/use-review-access";
+import { useReviewAccess } from "@/lib/use-review-access";
 import { TaskPanel } from "@/pages/tasks";
 import { useMyGoal, useStartFlow, type MyDayData } from "@/pages/my-day-layouts";
 import { HomeWidgets, useHomeLayout, type HomeCtx } from "@/pages/home-widgets";
@@ -141,7 +141,7 @@ function usePodiumSpots(ref: React.RefObject<HTMLDivElement | null>, on: boolean
 
 export function HomePage() {
   const { user } = useAuth();
-  const { active, isAdmin, workspaces, hasPermission } = useWorkspaces();
+  const { active, isAdmin, workspaces } = useWorkspaces();
   const { session: eodSession, start: startDay, busy: dayBusy } = useEodState();
   const navigate = useNavigate();
   const isEditor = active?.role === "editor";
@@ -152,27 +152,22 @@ export function HomePage() {
   const { data: att, missing: attMissing } = useAttendanceToday(!!user, user?.id ?? "");
   const { org } = useOrg();
   const { tasks, refetch: refetchTasks } = useTasks();
-  // Tasks in Review that THIS person may resolve: all of them for an admin; for
-  // a resolve_tasks grantee, whatever their review scope covers; for an assigner,
-  // the tasks they assigned — never their own.
+  // Tasks in Review that THIS person may resolve: the server says so on each
+  // (can_review, server/src/review-route.js) — never their own.
   const review = useReviewAccess();
-  const canAssign = isAdmin || hasPermission("assign_tasks");
-  const canReview = isAdmin || review.granted || canAssign;
+  const canReview = review.reviewer;
   // The task whose details panel is open (from a review row). Held by id so the
   // panel always shows the freshest copy after a refetch.
   const [openTaskId, setOpenTaskId] = useState<string | null>(null);
   const openTask = (tasks ?? []).find((t) => t.id === openTaskId) ?? null;
   const reviewQueue = useMemo(
     () => (tasks ?? [])
-      .filter((t) => t.status === "review")
-      .filter((t) => isAdmin || (t.editor_id !== user?.editorId && (
-        (review.granted && scopeAllowsTask(review.scope, t))
-        || (canAssign && !!user && t.assigned_by === user.id))))
+      .filter((t) => t.status === "review" && !!t.can_review && t.editor_id !== user?.editorId)
       // Longest-waiting first — the assignee isn't charged for the wait, but
       // their work is stuck until someone looks at it.
       .sort((a, b) => (a.review_started_at ?? "9999").localeCompare(b.review_started_at ?? "9999")
         || (a.due_date ?? "9999").localeCompare(b.due_date ?? "9999")),
-    [tasks, isAdmin, review, canAssign, user],
+    [tasks, user],
   );
   const { editors } = useEditors();
   const { data: postData } = useResource<{ posts: (Post & { channel_name?: string })[] }>("/posts?channel=all");

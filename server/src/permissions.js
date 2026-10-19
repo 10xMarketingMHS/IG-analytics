@@ -48,20 +48,6 @@ export async function hasActiveGrant(orgId, userId, key) {
   return rows.length > 0;
 }
 
-// The caller's standing as a reviewer. `granted` = holds an active resolve_tasks
-// grant. `scope` narrows it (see the review_scope migration): null = may review
-// everyone's tasks; { editors } = only the listed team members, and for each
-// either all their tasks (taskIds null) or just the listed ones; { formats } =
-// only tasks of the listed content types (e.g. every Carousel), whoever does them.
-export async function reviewAccess(orgId, userId) {
-  const { rows } = await pool.query(
-    "select scope from user_permission_grant where org_id=$1 and user_id=$2 and permission_key='resolve_tasks' and revoked_at is null limit 1",
-    [orgId, userId],
-  );
-  if (!rows.length) return { granted: false, scope: null };
-  return { granted: true, scope: rows[0].scope ?? null };
-}
-
 // Assign tasks can be limited to some content types and to some people:
 // { formats, editors }, each null when it isn't limited (e.g. Carousel only,
 // to Kamesh and Priya only); null when there's no limit at all.
@@ -74,15 +60,6 @@ export async function assignLimits(orgId, userId) {
   const formats = Array.isArray(s.formats) && s.formats.length ? s.formats : null;
   const editors = Array.isArray(s.editors) && s.editors.length ? s.editors : null;
   return formats || editors ? { formats, editors } : null;
-}
-
-// Whether a review scope covers one task ({ id, editor_id, content_format_id }).
-export function scopeAllowsTask(scope, task) {
-  if (!scope) return true;
-  if (Array.isArray(scope.formats)) return !!task.content_format_id && scope.formats.includes(task.content_format_id);
-  const entry = (scope.editors ?? []).find((e) => e.editorId === task.editor_id);
-  if (!entry) return false;
-  return entry.taskIds == null || entry.taskIds.includes(task.id);
 }
 
 // Org-wide admin = admin of ANY channel in the org. Such a user sees AND manages
