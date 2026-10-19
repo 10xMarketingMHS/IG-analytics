@@ -1193,14 +1193,13 @@ select.mini{font-family:inherit;font-size:12.5px;font-weight:700;color:var(--tex
 .lb-head,.lb-row{display:grid;grid-template-columns:110px 1fr 124px 92px 104px;align-items:center}
 .lb-head{padding:0 22px 12px;font-size:11px;text-transform:uppercase;letter-spacing:.5px;color:var(--muted);font-weight:700}
 .lb-list{display:flex;flex-direction:column;gap:10px}
-/* Caps the ranked list at ~6 rows tall and scrolls the rest, so the page
-   stays the same size whether the team has 4 people or 40 — same "keep
-   room" pattern as the Task Settings format table. The header row rides
-   along, pinned to the top of the scroll area. */
-.lb-table-wrap{max-height:600px;overflow-y:auto;padding:6px 10px 10px;margin:0 -10px;scrollbar-width:none}
+/* The list scrolls with the page; its column titles freeze just below the top
+   bar on a solid band, so rows pass cleanly underneath. */
+.lb-table-wrap{padding:6px 10px 10px;margin:0 -10px}
 /* room on every side for a row lifting on hover, and no scrollbar showing beside the points */
 .lb-table-wrap::-webkit-scrollbar{display:none}
-.lb-table-wrap .lb-head{position:sticky;top:0;z-index:2;background:var(--bg);padding-top:2px}
+.lb-table-wrap .lb-head{position:sticky;top:var(--topbar-h,84px);z-index:5;margin-bottom:2px;padding:12px 22px;border:1px solid var(--border);border-radius:12px;
+  background:var(--glass-solid);box-shadow:0 6px 16px -10px rgba(30,20,80,.25)}
 .lb-row{position:relative;background:var(--panel);border:1px solid var(--border);border-radius:12px;height:74px;overflow:hidden;
   transition:transform .3s cubic-bezier(.22,.61,.36,1),box-shadow .3s ease,border-color .2s ease;will-change:transform}
 /* soft top-halo that fades in on hover — the premium "glow" */
@@ -1236,7 +1235,7 @@ img.lb-ava{object-fit:cover}
 /* featured #1 champion panel (right column) */
 .lb-layout{display:grid;grid-template-columns:minmax(0,1fr) 300px;gap:20px;align-items:start}
 .lb-main{min-width:0}
-.lb-featured{position:sticky;top:14px;height:auto;border-radius:22px;overflow:hidden;padding:18px 18px 22px;text-align:center;
+.lb-featured{position:sticky;top:calc(var(--topbar-h,84px) + 14px);height:auto;border-radius:22px;overflow:hidden;padding:18px 18px 22px;text-align:center;
   background:radial-gradient(120% 75% at 50% -5%,oklch(0.55 0.22 var(--acH)),oklch(0.32 0.13 var(--acH)) 52%,oklch(0.18 0.07 var(--acH)));
   border:1px solid rgba(180,140,255,.30);
   box-shadow:0 24px 60px rgba(8,20,60,.5),inset 0 1px 0 rgba(255,255,255,.07);

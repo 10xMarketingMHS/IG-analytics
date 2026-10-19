@@ -6,6 +6,7 @@ import { requireActiveEod } from "./eod.js";
 import { logActivity } from "../activity.js";
 import { isOrgAdmin } from "../permissions.js";
 import { resolveBudgetHours } from "./tasks.js";
+import { editorRanks, taskViewer } from "../hierarchy.js";
 import { hasColumn } from "../schema-flags.js";
 import { coverFrom } from "../goal-score.js";
 import { LEVEL_LABEL, handoverPeople, handoverReady, leadsAndManagers, pauseForHandover, resumeAfterHandover, syncHandovers } from "../handover.js";
@@ -103,8 +104,11 @@ handoverRouter.get("/handovers", async (req, res, next) => {
       canMove: who.admin || (!!who.editorId && (reached ?? []).includes(who.editorId)),
       reachedLabel: LEVEL_LABEL[r.level] ?? null,
     }));
+    // who you can hand to or move to: never people above you (admins: anyone)
+    const viewer = await taskViewer(req);
+    const ranks = viewer.admin ? null : await editorRanks(req.orgId);
     const people = (await handoverPeople(req.orgId))
-      .filter((p) => p.id !== who.editorId)
+      .filter((p) => p.id !== who.editorId && (viewer.admin || (ranks.get(p.id) ?? 3) >= viewer.rank))
       .map(({ id, name, designation, imageUrl }) => ({ id, name, designation, imageUrl }));
     res.json({ ready: true, people, items });
   } catch (err) {

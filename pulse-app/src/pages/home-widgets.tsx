@@ -127,14 +127,13 @@ export type HomeLayout = ReturnType<typeof useHomeLayout>;
 // Greeting row, Customize panel, grid
 // ---------------------------------------------------------------------------
 
-export function HomeWidgets({ c, layout, showHello, hello, canPreview, previewRole, onPreview, sod, blocked = [] }: {
+export function HomeWidgets({ c, layout, showHello, hello, canPublish, sod, blocked = [] }: {
   c: HomeCtx;
   layout: HomeLayout;
   showHello: boolean;
   hello: string;
-  canPreview: boolean;
-  previewRole: HomeRole | null;
-  onPreview: (r: HomeRole | null) => void;
+  // admins: Customize can set this layout as the default for their Home role
+  canPublish: boolean;
   sod: ReactNode;
   // Widgets this person can't have though their role could (e.g. Team today
   // when their position may not see the team's attendance).
@@ -177,19 +176,6 @@ export function HomeWidgets({ c, layout, showHello, hello, canPreview, previewRo
           <span>{greetingSub(c)}</span>
         </div>
         <span className="hw-grow" />
-        {canPreview && (
-          <span className="hw-preview">
-            <span className="hw-faint">Preview as</span>
-            <span className="hw-seg" role="group" aria-label="Preview Home as">
-              {(["manager", "lead", "editor"] as HomeRole[]).map((r) => (
-                <button key={r} type="button" aria-pressed={role === r} className={role === r ? "on" : undefined}
-                  onClick={() => onPreview(previewRole === r ? null : r)}>
-                  {HOME_ROLE_LABEL[r]}
-                </button>
-              ))}
-            </span>
-          </span>
-        )}
         {!layout.editing && (
           <button type="button" className="hw-btn" onClick={layout.begin}><Icon name="dashboard_customize" size={17} />Customize</button>
         )}
@@ -209,7 +195,7 @@ export function HomeWidgets({ c, layout, showHello, hello, canPreview, previewRo
               <Icon name={layout.banner ? "visibility_off" : "visibility"} size={17} />{layout.banner ? "Hide banner" : "Show banner"}
             </button>
             <button type="button" className="hw-btn" onClick={layout.reset}><Icon name="restart_alt" size={17} />Reset</button>
-            {canPreview && (
+            {canPublish && (
               <button type="button" className="hw-btn" onClick={layout.publish}><Icon name="groups" size={17} />Set as default for {HOME_ROLE_LABEL[role]}s</button>
             )}
             <button type="button" className="hw-btn primary" onClick={layout.done}><Icon name="check" size={17} />Done</button>

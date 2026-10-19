@@ -447,27 +447,23 @@ export function HomePage() {
     viewsByDay,
   };
 
-  // ---- Home role (from the position; admins can preview the others) ----
+  // ---- Home role, from the position: a Manager sees the Manager Home, a Team
+  // Lead the Team lead Home, an Editor the Editor Home. (A Super Admin can see
+  // anyone's Pulse with View as.)
   const myEditor = (editors ?? []).find((e) => e.id === user?.editorId) ?? null;
-  const realRole: HomeRole = homeRoleOf(myEditor?.designation, isAdmin);
-  const [previewRole, setPreviewRole] = useState<HomeRole | null>(null);
-  const role: HomeRole = isAdmin && previewRole ? previewRole : realRole;
+  const role: HomeRole = homeRoleOf(myEditor?.designation, isAdmin);
   const homeLayout = useHomeLayout(role);
   const goal = useMyGoal(!!user?.editorId);
   const flow = useStartFlow(ops.active, refetchTasks);
   // Team leads and managers look after the whole team.
   const teamIds: Set<string> | null = null;
-  // Team today only for positions Settings › Attendance lets see the team (a
-  // preview follows the setting for the role previewed).
+  // Team today only for positions Settings › Attendance lets see the team.
   const teamView = org?.attendance?.teamView;
-  const seesTeam = previewRole
-    ? previewRole === "manager" ? teamView?.manager !== false : previewRole === "lead" ? teamView?.teamLead !== false : false
-    : att ? att.scope === "all" : seesTeamAttendance(myEditor?.designation, isAdmin, teamView);
+  const seesTeam = att ? att.scope === "all" : seesTeamAttendance(myEditor?.designation, isAdmin, teamView);
   const blocked: WidgetKey[] = seesTeam ? [] : ["attend"];
-  // Start of day: team leads and editors who check in (an admin previewing
-  // those roles sees it as a preview).
+  // Start of day: team leads and editors who check in.
   // Until attendance answers, go by the position so the bar shows at once.
-  const showSod = role !== "manager" && (previewRole ? true : att ? att.checksIn : !!user?.editorId && active?.role !== "viewer");
+  const showSod = role !== "manager" && (att ? att.checksIn : !!user?.editorId && active?.role !== "viewer");
   const ctx: HomeCtx = {
     role, d: myDay, tasks: tasks ?? [], editors: editors ?? [], posts: posts ?? [],
     goalTotals: goalTotals?.totals ?? [], att: att ?? null, cal: org?.calendar ?? null,
@@ -500,7 +496,7 @@ export function HomePage() {
   const dayIn = !!eodSession || (!!att?.me?.checkInAt && !att?.me?.checkOutAt);
   const dayClosed = !eodSession && !!att?.me?.checkOutAt;
   // A closed day can be reopened: the same Start day, and the task clocks run on.
-  const dayAction: "start" | "end" | "reopen" | null = !showSod || previewRole ? null : dayClosed ? "reopen" : dayIn ? "end" : "start";
+  const dayAction: "start" | "end" | "reopen" | null = !showSod ? null : dayClosed ? "reopen" : dayIn ? "end" : "start";
   async function bannerStart() {
     try {
       await startDay();
@@ -619,17 +615,17 @@ export function HomePage() {
       )}
 
       {/* Tasks a teammate wants to hand you, and hand-overs that have climbed to you */}
-      {!previewRole && <HandoverInbox onOpen={setOpenTaskId} />}
+      <HandoverInbox onOpen={setOpenTaskId} />
       {/* Everything under the banner: the greeting row, Start of day (team leads
           and editors), and the widgets for this Home role (home-widgets.tsx). */}
       <HomeWidgets
         c={ctx} layout={homeLayout} showHello={!homeLayout.banner} hello={greetText}
-        canPreview={isAdmin} previewRole={previewRole} onPreview={setPreviewRole} blocked={blocked}
+        canPublish={isAdmin} blocked={blocked}
         sod={showSod ? (
           <StartDaySection
-            att={previewRole ? null : att} attMissing={attMissing} firstName={firstName} today={today}
+            att={att} attMissing={attMissing} firstName={firstName} today={today}
             myTasks={ops.active} completedToday={ops.completedToday} pointsToday={scoreWindows?.today.points ?? 0}
-            preview={!!previewRole} onOpenReports={() => setReportsOpen(true)} onOpenTask={setOpenTaskId}
+            preview={false} onOpenReports={() => setReportsOpen(true)} onOpenTask={setOpenTaskId}
           />
         ) : null}
       />

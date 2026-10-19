@@ -11,6 +11,7 @@ import { useContentFormats } from "@/lib/use-content-formats";
 import { noteTaskSeen } from "@/lib/use-task-notify";
 import { bankedMs, breakOffsetMs, fmtWait, isDayPaused, isOverBudget, OFFICE_CLOSE_HOUR, reviewWaitMs, SLOW_REVIEW_MS } from "@/lib/task-timing";
 import { onTasksChanged } from "@/lib/task-events";
+import { peopleVisibleTo } from "@/lib/home-role";
 import { useAuth } from "@/lib/auth-context";
 import { useReviewAccess, scopeAllowsTask } from "@/lib/use-review-access";
 import { useWorkspaces } from "@/lib/workspaces-context";
@@ -407,6 +408,11 @@ export function TasksPage() {
   const { user } = useAuth();
   const { active, workspaces, isAdmin, hasPermission } = useWorkspaces();
   const role = active?.role;
+  // The Team list: nobody sees people above them (lib/home-role.ts).
+  const teamPeople = useMemo(() => {
+    const me = (editors ?? []).find((e) => e.id === user?.editorId) ?? null;
+    return peopleVisibleTo(editors ?? [], me, isAdmin);
+  }, [editors, user?.editorId, isAdmin]);
   // Access grants that give admin-like reach over other people's tasks.
   // Approve/send back reviews: admins always; a resolve_tasks grantee for tasks
   // inside their review scope; an assigner for the tasks they assigned — never
@@ -890,7 +896,7 @@ export function TasksPage() {
                 >
                   All team members
                 </button>
-                {(editors ?? []).map((e) => (
+                {teamPeople.map((e) => (
                   <button
                     key={e.id}
                     type="button"
@@ -2018,6 +2024,12 @@ export function TaskPanel({ mode, task, canWrite, editors, channels, onClose, on
   const creating = mode === "create";
   const { user } = useAuth();
   const { isAdmin, hasPermission } = useWorkspaces();
+  // People to assign to: nobody sees people above them (lib/home-role.ts); a
+  // task's current assignee stays listed.
+  const assignPeople = useMemo(() => {
+    const me = editors.find((e) => e.id === user?.editorId) ?? null;
+    return peopleVisibleTo(editors, me, isAdmin, task?.editor_id ?? null);
+  }, [editors, user?.editorId, isAdmin, task?.editor_id]);
   // Access grants: assign tasks to others, and resolve reviews.
   const canAssign = isAdmin || hasPermission("assign_tasks");
   const review = useReviewAccess();
@@ -2248,7 +2260,7 @@ export function TaskPanel({ mode, task, canWrite, editors, channels, onClose, on
                 <button type="button" disabled={ro} className={"tp2-person" + (!cur.editor_id ? " on" : "")} onClick={() => set("editor_id", "editorId", null)}>
                   <span className="tb-ava init none">–</span>Unassigned
                 </button>
-                {editors.map((ed) => (
+                {assignPeople.map((ed) => (
                   <button key={ed.id} type="button" disabled={ro} className={"tp2-person" + (cur.editor_id === ed.id ? " on" : "")} onClick={() => set("editor_id", "editorId", ed.id)}>
                     <Ava name={ed.name} image={ed.image_url} size={24} />{ed.name}
                   </button>
@@ -2261,7 +2273,7 @@ export function TaskPanel({ mode, task, canWrite, editors, channels, onClose, on
           ) : (
             <select className="t" disabled={!canReassign} value={cur.editor_id ?? ""} onChange={(e) => set("editor_id", "editorId", e.target.value || null)}>
               <option value="">Unassigned</option>
-              {editors.map((ed) => (<option key={ed.id} value={ed.id}>{ed.name}</option>))}
+              {assignPeople.map((ed) => (<option key={ed.id} value={ed.id}>{ed.name}</option>))}
             </select>
           )}
         </>

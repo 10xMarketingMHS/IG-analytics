@@ -25,6 +25,31 @@ export function positionKey(designation: string | null | undefined): TeamViewKey
   if (p === "team lead") return "teamLead";
   return null;
 }
+// The team's hierarchy (Team › Roster positions): Manager › Asst. Manager ›
+// Team Lead › Editor › Viewer; an admin with no position, or an older title,
+// sits at the top. Lower number = more senior. Mirrors rankOf() in
+// server/src/hierarchy.js.
+export function rankOf(designation: string | null | undefined, isAdmin: boolean): number {
+  const k = positionKey(designation);
+  if (k === "manager") return 0;
+  if (k === "asstManager") return 1;
+  if (k === "teamLead") return 2;
+  const p = String(designation || "").trim().toLowerCase();
+  if (p === "viewer") return 4;
+  if (isAdmin && p !== "editor") return 0;
+  return 3;
+}
+// Who someone sees in lists of people: admins see everyone; anyone else sees
+// people at their own level or below (and themselves), never above them, as
+// with tasks. `keep` stays listed regardless (say, a task's current assignee).
+export function peopleVisibleTo<T extends { id: string; designation?: string | null; is_admin?: boolean }>(
+  people: T[], me: { id: string; designation?: string | null } | null, viewerIsAdmin: boolean, keep?: string | null,
+): T[] {
+  if (viewerIsAdmin || !me) return people;
+  const mine = rankOf(me.designation, false);
+  return people.filter((p) => p.id === me.id || p.id === keep || rankOf(p.designation, !!p.is_admin) >= mine);
+}
+
 export function seesTeamAttendance(designation: string | null | undefined, isAdmin: boolean, teamView?: Partial<Record<TeamViewKey, boolean>>) {
   if (isAdmin) return true;
   const k = positionKey(designation);

@@ -39,7 +39,7 @@ html[data-theme="dark"]{--sheet-panel:oklch(0.2 0.04 var(--acH) / .72)}
 .app .content:has(> .screen.tb){padding-top:0}
 .app .content>.screen.tb>.tb-bar{margin:0 calc(-1 * var(--content-x)) 16px;border-radius:0;border-width:0 0 1px;padding-inline:var(--content-x)}
 /* the Leaderboard's pinned column titles sit on the sheet too */
-.app .content .lb-table-wrap .lb-head{background:color-mix(in srgb,var(--bg) 88%,transparent);backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px)}
+.app .content .lb-table-wrap .lb-head{background:var(--glass-solid)}
 
 /* the accent colour picker in the top bar */
 .accent-pick{position:relative}

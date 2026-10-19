@@ -308,6 +308,18 @@ function AppShellInner() {
     });
   }
   const [jumpOpen, setJumpOpen] = useState(false);
+  // The top bar's height as --topbar-h, so what sticks while the page scrolls
+  // (the Leaderboard's column titles, its Top Performer card) stops below it.
+  const topbarRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    const el = topbarRef.current;
+    if (!el) return;
+    const set = () => document.documentElement.style.setProperty("--topbar-h", `${el.offsetHeight}px`);
+    set();
+    const ro = new ResizeObserver(set);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
   const canWrite = active?.role !== "viewer";
   // My Team: admins, plus team leads and managers (Attendance only).
   const myEd = (editors ?? []).find((e) => e.id === user?.editorId) ?? null;
@@ -589,7 +601,7 @@ function AppShellInner() {
       </aside>
 
       <main>
-        <div className="topbar">
+        <div className="topbar" ref={topbarRef}>
           <button
             className="btn icon menu-btn"
             title="Menu"
