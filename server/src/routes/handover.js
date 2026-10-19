@@ -6,7 +6,7 @@ import { requireActiveEod } from "./eod.js";
 import { logActivity } from "../activity.js";
 import { isOrgAdmin } from "../permissions.js";
 import { resolveBudgetHours } from "./tasks.js";
-import { LEVEL_LABEL, handoverPeople, handoverReady, pauseForHandover, resumeAfterHandover, syncHandovers } from "../handover.js";
+import { LEVEL_LABEL, handoverPeople, handoverReady, leadsAndManagers, pauseForHandover, resumeAfterHandover, syncHandovers } from "../handover.js";
 
 // Hand over (see ../handover.js): offer your own task to a teammate; they
 // accept or decline; you can call it off; once it has climbed to someone,
@@ -139,7 +139,8 @@ handoverRouter.post("/tasks/:id/handover", requireEditor, async (req, res, next)
     await logActivity({
       orgId: req.orgId, actorId: req.user.sub, verb: "handover_offered", entityType: "task", entityId: t.id, channelId: t.channel_id,
       summary: `Wants to hand over “${t.title}” to ${person.name}${parsed.data.note ? `: ${parsed.data.note}` : ""}`,
-      meta: { handoverId: rows[0].id, notifyEditorIds: [to] },
+      // the teammate, plus every Team Lead and Manager
+      meta: { handoverId: rows[0].id, notifyEditorIds: [...new Set([to, ...(await leadsAndManagers(req.orgId))])].filter((x) => x !== who.editorId) },
     });
     res.status(201).json({ ok: true, id: rows[0].id });
   } catch (err) {
@@ -166,7 +167,8 @@ handoverRouter.post("/handovers/:id/accept", requireEditor, requireActiveEod, as
     await logActivity({
       orgId: req.orgId, actorId: req.user.sub, verb: "handover_accepted", entityType: "task", entityId: h.task_id, channelId: h.channel_id,
       summary: `Took over “${h.title}” from ${h.from_name ?? "a teammate"}`,
-      meta: { handoverId: h.id, notifyEditorIds: [h.from_editor_id].filter(Boolean) },
+      // the owner, plus every Team Lead and Manager
+      meta: { handoverId: h.id, notifyEditorIds: [...new Set([h.from_editor_id, ...(await leadsAndManagers(req.orgId))])].filter((x) => x && x !== who.editorId) },
     });
     res.json({ ok: true });
   } catch (err) {

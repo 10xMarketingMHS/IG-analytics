@@ -52,6 +52,14 @@ export async function handoverPeople(orgId) {
   return rows.filter((r) => r.canWork);
 }
 
+// Team Leads and Managers hear about every hand-over offered and every one
+// accepted (a notice only; moving it on is for when it climbs).
+export async function leadsAndManagers(orgId) {
+  return (await handoverPeople(orgId))
+    .filter((p) => ["teamLead", "manager"].includes(positionKey(p.designation)))
+    .map((p) => p.id);
+}
+
 // Who a hand-over reaches at a level: that position's people, or, when nobody
 // holds it, the next one up, then the admins. Never the two people in it.
 async function targetsFor(orgId, level, skip) {

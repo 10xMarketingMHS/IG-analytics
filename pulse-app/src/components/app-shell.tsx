@@ -118,6 +118,8 @@ function useUnreadActivity() {
 const LIVE_VERBS = new Set([
   "completed", "sent_back", "reopened", "assigned", "deleted", "held", "resumed",
   "review_requested", "password_reset_requested", "sod_submitted",
+  // hand over (components/handover.tsx): offered, answered, called off, climbed, moved
+  "handover_offered", "handover_accepted", "handover_declined", "handover_cancelled", "handover_escalated", "handover_moved",
 ]);
 // Attendance notices, worded for whoever reads them: the person themselves, or
 // their lead / a manager.
@@ -153,6 +155,8 @@ function useLiveNotices(items: Activity[] | undefined, myId: string | undefined,
       // task"); one that comes back after you had it before is announced here.
       if (a.verb === "assigned" && myEditorId && a.meta?.toEditorId === myEditorId
           && myId && a.entity_id && !hasSeenTask(myId, a.entity_id)) continue;
+      // Pulse's own notices (a hand-over climbing) have no one behind them.
+      if (!a.actor_id) { toast(`🔔 ${a.summary}`); continue; }
       const summary = a.summary.charAt(0).toLowerCase() + a.summary.slice(1);
       const note = a.verb === "sent_back" && typeof a.meta?.note === "string" ? a.meta.note : undefined;
       toast(`🔔 ${a.actor_name ?? "Someone"} ${summary}`, { description: note });
