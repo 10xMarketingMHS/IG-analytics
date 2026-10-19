@@ -499,11 +499,12 @@ export function HomePage() {
   // beside it. Managers, who don't check in, get Task Board.
   const dayIn = !!eodSession || (!!att?.me?.checkInAt && !att?.me?.checkOutAt);
   const dayClosed = !eodSession && !!att?.me?.checkOutAt;
-  const dayAction: "start" | "end" | null = !showSod || previewRole ? null : dayClosed ? null : dayIn ? "end" : "start";
+  // A closed day can be reopened: the same Start day, and the task clocks run on.
+  const dayAction: "start" | "end" | "reopen" | null = !showSod || previewRole ? null : dayClosed ? "reopen" : dayIn ? "end" : "start";
   async function bannerStart() {
     try {
       await startDay();
-      toast.success("Day started — add today's plan from the bar below if you like.");
+      toast.success(dayClosed ? "Day reopened. Your task timers are running again." : "Day started — add today's plan from the bar below if you like.");
     } catch (e) {
       toast.error(e instanceof ApiError ? e.message : "Couldn't start your day. Check your connection and try again.");
     }
@@ -553,6 +554,9 @@ export function HomePage() {
             {dayAction === "end" && (
               <button className="mhc-primary" onClick={bannerEnd}>{HeroIcon.stop}<span className="mhc-label">End day</span></button>
             )}
+            {dayAction === "reopen" && (
+              <button className="mhc-primary eod-live" onClick={bannerStart} disabled={dayBusy}>{HeroIcon.play}<span>{dayBusy ? "Reopening…" : "Reopen day"}</span></button>
+            )}
             {dayAction ? (
               <button className="mhc-ghost" onClick={() => navigate("/tasks")}>Task Board</button>
             ) : (
@@ -574,13 +578,18 @@ export function HomePage() {
                   {dayAction === "end" && (
                     <button className="btn btn-primary mh-cta" onClick={bannerEnd}>■ End day</button>
                   )}
+                  {dayAction === "reopen" && (
+                    <button className="btn btn-primary mh-cta eod-live" onClick={bannerStart} disabled={dayBusy}>{dayBusy ? "Reopening…" : "↻ Reopen day"}</button>
+                  )}
                   {dayAction ? (
                     <button className="btn mh-endeod" onClick={() => navigate("/tasks")}>Task Board</button>
                   ) : (
                     <button className="btn btn-primary mh-cta" onClick={() => navigate("/tasks")}>▶ Task Board</button>
                   )}
                 </div>
-                {locked && <p className="mh-lockhint">Start your day to begin. Pipeline, Posts, Leaderboard and Goals open once you do.</p>}
+                {locked && <p className="mh-lockhint">{dayClosed
+                  ? "Your day is closed and your task timers are paused. Reopen it to keep working."
+                  : "Start your day to begin. Pipeline, Posts, Leaderboard and Goals open once you do."}</p>}
               </div>
               <div className="mh-right">
                 <div className="mh-date">{dateStr}</div>

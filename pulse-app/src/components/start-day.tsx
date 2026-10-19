@@ -182,12 +182,13 @@ export function StartDaySection({
   // ---- Checked out: one line ----
   if (closed && me?.checkInAt && me.checkOutAt) {
     return (
-      <section className="sd-bar closed" aria-label="Day closed">
+      // eod-live: the day lock leaves it in colour and clickable (Reopen day, My reports)
+      <section className="sd-bar closed eod-live" aria-label="Day closed">
         <Icon name="task_alt" size={18} className="sd-good" />
-        <span><b>Day closed</b> · {clockTime(me.checkInAt)} – {clockTime(me.checkOutAt)} · {fmtHM(new Date(me.checkOutAt).getTime() - new Date(me.checkInAt).getTime())} in office</span>
+        <span><b>Day closed</b> · {clockTime(me.checkInAt)} – {clockTime(me.checkOutAt)} · {fmtHM(new Date(me.checkOutAt).getTime() - new Date(me.checkInAt).getTime())} in office · task timers paused</span>
         <span className="sd-grow" />
         <button type="button" className="sd-link" onClick={onOpenReports}>My reports</button>
-        <button type="button" className="sd-link" onClick={() => start().catch((e) => toast.error(e instanceof ApiError ? e.message : "Couldn't reopen your day."))} disabled={busy}>Reopen day</button>
+        <button type="button" className="sd-btn primary" onClick={() => start().then(() => toast.success("Day reopened. Your task timers are running again.")).catch((e) => toast.error(e instanceof ApiError ? e.message : "Couldn't reopen your day."))} disabled={busy}>{busy ? "Reopening…" : "Reopen day"}</button>
       </section>
     );
   }

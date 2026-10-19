@@ -432,6 +432,17 @@ html[data-theme="dark"] .task-panel-scrim.tp2-scrim{background:rgba(0,0,0,.55)}
 .tp2-dfoot svg{flex:none;margin-top:1px}
 .tp2 .tp-work{align-self:flex-start}
 
+/* a task's History (TaskHistory): one line per step, a thin rail down the left */
+.tp-history{list-style:none;margin:0;padding:0 0 0 2px;display:flex;flex-direction:column}
+.tp-history li{position:relative;display:grid;grid-template-columns:24px minmax(0,1fr);gap:2px 8px;padding:0 0 12px}
+.tp-history li:not(:last-child)::before{content:"";position:absolute;left:11px;top:22px;bottom:2px;width:2px;border-radius:1px;background:var(--tb-line,rgba(30,20,80,.09))}
+.tp-history-ic{grid-row:span 2;width:24px;height:24px;display:grid;place-items:center;border-radius:50%;background:var(--tb-sunk,rgba(30,20,80,.04));font-size:12px}
+.tp-history-tx{font-size:13px;line-height:1.4;color:var(--tb-text,inherit)}
+.tp-history-at{font-size:11.5px;color:var(--tb-text3,#6b6b75)}
+.tp-history-more{grid-template-columns:1fr!important;padding-bottom:10px!important}
+.tp-history-more::before{display:none}
+.tp-history-more button{justify-self:start;padding:0;border:0;background:transparent;color:var(--tb-acText,var(--accent));font:600 12.5px 'Plus Jakarta Sans',sans-serif;cursor:pointer}
+
 @media (max-width:1100px){.tb .task-board{grid-template-columns:repeat(2,minmax(0,1fr))}}
 @media (max-width:768px){
   .tb .task-board{grid-template-columns:minmax(0,1fr)}

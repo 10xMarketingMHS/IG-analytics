@@ -9,7 +9,7 @@ import { compactNum } from "@/lib/date-range";
 import { performanceScore } from "@/lib/score";
 import { capacityFor, type WorkCalendar } from "@/lib/work-calendar";
 import { ymd, taskPoints, isScorableTask, topEditorsInRange } from "@/lib/task-points";
-import { breakOffsetMs, DAILY_BREAK_CAP_SEC } from "@/lib/task-timing";
+import { bankedMs, breakOffsetMs, DAILY_BREAK_CAP_SEC, isDayPaused } from "@/lib/task-timing";
 import { HOME_ROLE_LABEL, type HomeRole } from "@/lib/home-role";
 import { DEFAULT_LAYOUT, WIDGETS, WIDGET_ORDER, allowed, cleanLayout, type LayoutItem, type Size, type WidgetKey } from "@/lib/home-widgets";
 import { attendanceAction, type AttToday, type TeamPerson } from "@/lib/use-attendance";
@@ -365,10 +365,12 @@ function TimerW({ c }: { c: HomeCtx }) {
     return () => clearInterval(id);
   }, []);
   const [busy, setBusy] = useState(false);
-  const mine = c.tasks.filter((t) => t.editor_id === c.myEditorId && t.status === "in_progress" && t.budget_started_at && new Date(t.budget_started_at).getTime() <= now);
-  const task = mine.find((t) => !t.on_hold) ?? mine[0] ?? null;
+  // Running now, or stopped because the day is closed (it runs again on Start day).
+  const mine = c.tasks.filter((t) => t.editor_id === c.myEditorId && t.status === "in_progress"
+    && ((t.budget_started_at && new Date(t.budget_started_at).getTime() <= now) || isDayPaused(t)));
+  const task = mine.find((t) => !t.on_hold && t.budget_started_at) ?? mine.find((t) => !t.on_hold) ?? mine[0] ?? null;
   const locked = !!c.att?.settings.requireSod && !!c.att?.checksIn && !c.checkedIn;
-  const usedMs = task ? Math.max(0, now - new Date(task.budget_started_at!).getTime() - breakOffsetMs(task, now)) : 0;
+  const usedMs = !task ? 0 : task.budget_started_at ? Math.max(0, now - new Date(task.budget_started_at).getTime() - breakOffsetMs(task, now)) : bankedMs(task);
   const budgetMs = task?.budget_hours != null ? Number(task.budget_hours) * 3_600_000 : null;
   const hms = (ms: number) => {
     const s = Math.floor(ms / 1000);
@@ -394,7 +396,8 @@ function TimerW({ c }: { c: HomeCtx }) {
       setBusy(false);
     }
   }
-  const state = !task ? { l: "Idle", t: "" } : task.on_hold ? { l: "On hold", t: "warn" } : { l: "Running", t: "good" };
+  const state = !task ? { l: "Idle", t: "" } : task.on_hold ? { l: "On hold", t: "warn" }
+    : isDayPaused(task) ? { l: "Paused · day closed", t: "warn" } : { l: "Running", t: "good" };
   return (
     <div className="hw-pad hw-timer">
       <span className={"hw-state " + state.t}><i />{state.l}</span>

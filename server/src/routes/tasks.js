@@ -127,7 +127,7 @@ const SELECT = `
          cf.metrics_description as content_format_metrics,
          cf.review_link_required as content_format_link_required,
          coalesce(t.review_link_required, cf.review_link_required, false) as link_required,
-         t.budget_hours, t.budget_started_at, t.accepted, t.on_hold, t.held_by, t.created_at, t.completed_at, t.created_by, t.assigned_by,
+         t.budget_hours, t.budget_started_at, t.budget_used_seconds, t.accepted, t.on_hold, t.held_by, t.created_at, t.completed_at, t.created_by, t.assigned_by,
          -- Time spent waiting for a reviewer, taken off lateness when scoring.
          t.review_started_at, t.review_wait_seconds::float as review_wait_seconds,
          -- The assignee made this task for themselves (marked in the UI, so
@@ -391,7 +391,11 @@ tasksRouter.post("/tasks", requireEditor, requireActiveEod, async (req, res, nex
       entityType: "task",
       entityId: full[0].id,
       channelId: full[0].channel_id,
-      summary: `Created task “${full[0].title}”`,
+      // who it's for, so the task's History starts with it
+      summary: !full[0].editor_id ? `Created task “${full[0].title}”`
+        : assignedBy ? `Created task “${full[0].title}” for ${full[0].editor_name ?? "a team member"}`
+        : `Created task “${full[0].title}” for themselves`,
+      meta: { toEditorId: full[0].editor_id ?? null },
     });
     res.status(201).json({ task: full[0] });
   } catch (err) {
@@ -961,7 +965,29 @@ tasksRouter.post("/tasks/:id/accept", requireEditor, requireActiveEod, async (re
       );
     }
     const { rows: full } = await pool.query(`${SELECT} where t.id = $1`, [req.params.id]);
+    await logActivity({
+      orgId: req.orgId, actorId: req.user.sub, verb: "accepted", entityType: "task", entityId: full[0].id, channelId: full[0].channel_id,
+      summary: `Accepted task “${full[0].title}”`,
+    });
     res.json({ task: full[0] });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// A task's History (its panel): everything that happened to it, oldest first —
+// created (and for whom), assigned, accepted, handed over, reviewed.
+tasksRouter.get("/tasks/:id/history", async (req, res, next) => {
+  try {
+    if (!(await mayOpenTask(req, req.params.id))) return res.status(403).json({ error: "You can't open this task." });
+    const { rows } = await pool.query(
+      `select a.id, a.verb, a.summary, a.created_at, a.actor_id, coalesce(u.name, u.email) as actor_name
+         from activity a left join app_user u on u.id = a.actor_id
+        where a.org_id = $1 and a.entity_type = 'task' and a.entity_id = $2
+        order by a.created_at, a.id`,
+      [req.orgId, req.params.id],
+    );
+    res.json({ history: rows });
   } catch (err) {
     next(err);
   }

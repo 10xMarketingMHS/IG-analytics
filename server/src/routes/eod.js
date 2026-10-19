@@ -25,11 +25,64 @@ let lastSweep = 0;
 export async function closeStaleSessions() {
   if (Date.now() - lastSweep < 60_000) return;
   lastSweep = Date.now();
+  // …and their task clocks stop where the day was closed (see pauseDayTimers).
   await pool.query(
-    `update eod_session
-        set ended_at = greatest(started_at, (date + time '18:00') at time zone 'Asia/Kolkata'),
-            auto_closed = true
-      where ended_at is null and date < current_date`,
+    `with closed as (
+       update eod_session
+          set ended_at = greatest(started_at, (date + time '18:00') at time zone 'Asia/Kolkata'),
+              auto_closed = true
+        where ended_at is null and date < current_date
+        returning editor_id, ended_at, date
+     )
+     update task t
+        set budget_used_seconds = coalesce(t.budget_used_seconds, 0)
+              + greatest(0, extract(epoch from c.ended_at - t.budget_started_at)
+                            - case when e.break_date = c.date then coalesce(e.break_used_seconds, 0) else 0 end),
+            budget_started_at = null
+       from closed c join editor e on e.id = c.editor_id
+      where t.editor_id = c.editor_id and t.status = 'in_progress' and t.accepted and not t.on_hold
+        and t.budget_hours is not null and t.budget_started_at is not null and t.budget_started_at <= c.ended_at`,
+  );
+}
+
+// Today's break so far for the task's person, as the board nets it out of a
+// running clock (lib/task-timing.ts breakOffsetMs): what's banked plus the
+// break under way, capped at the day's 75 minutes.
+const BREAK_NOW = `(case when e.break_date = current_date
+    then coalesce(e.break_used_seconds, 0)
+       + case when e.break_started_at is not null
+              then least(greatest(0, extract(epoch from now() - e.break_started_at)), greatest(0, 4500 - coalesce(e.break_used_seconds, 0)))
+              else 0 end
+    else 0 end)`;
+
+// Closing the day stops every running clock on that person's tasks: the time
+// so far (less today's breaks) is banked and the clock waits, the task still
+// In Progress, accepted and not on hold, until they start their day again.
+export async function pauseDayTimers(eid) {
+  await pool.query(
+    `update task t
+        set budget_used_seconds = coalesce(t.budget_used_seconds, 0)
+              + greatest(0, extract(epoch from now() - t.budget_started_at) - ${BREAK_NOW}),
+            budget_started_at = null
+       from editor e
+      where e.id = t.editor_id and t.editor_id = $1 and t.status = 'in_progress' and t.accepted and not t.on_hold
+        and t.budget_hours is not null and t.budget_started_at is not null and t.budget_started_at <= now()`,
+    [eid],
+  );
+}
+
+// Starting (or reopening) the day: those clocks run on from what was banked.
+// The start point also allows for today's breaks so far, which the board
+// takes off again, so the time shown carries straight on.
+async function resumeDayTimers(eid) {
+  await pool.query(
+    `update task t
+        set budget_started_at = now() - make_interval(secs => (coalesce(t.budget_used_seconds, 0) + ${BREAK_NOW})::double precision),
+            budget_used_seconds = 0
+       from editor e
+      where e.id = t.editor_id and t.editor_id = $1 and t.status = 'in_progress' and t.accepted and not t.on_hold
+        and t.budget_hours is not null and t.budget_started_at is null`,
+    [eid],
   );
 }
 
@@ -202,6 +255,7 @@ export async function startSession(orgId, eid) {
        returning id, date, started_at as "startedAt", ended_at as "endedAt"`,
       [orgId, eid],
     );
+    await resumeDayTimers(eid);
     return { session: rows[0], created: true };
   } catch (e) {
     // Lost a race to the partial-unique index — return whoever won.
@@ -228,6 +282,7 @@ export async function endSession(orgId, eid) {
     [eid],
   );
   if (!rows.length) return null;
+  await pauseDayTimers(eid);
   if (await hasColumn("attendance", "id")) {
     await pool.query(
       `update attendance set check_out_at = now(), updated_at = now()

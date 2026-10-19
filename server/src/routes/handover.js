@@ -251,7 +251,7 @@ handoverRouter.post("/handovers/:id/move", requireEditor, async (req, res, next)
     await answer(h.id, "moved", req.user.sub);
     await logActivity({
       orgId: req.orgId, actorId: req.user.sub, verb: "handover_moved", entityType: "task", entityId: h.task_id, channelId: h.channel_id,
-      summary: `Moved “${h.title}” to ${person.name} (${h.to_name ?? "the teammate"} hadn't accepted it from ${h.from_name ?? "its owner"})`,
+      summary: `${toSelf ? `Took over “${h.title}”` : `Moved “${h.title}” to ${person.name}`} (${h.to_name ?? "the teammate"} hadn't accepted it from ${h.from_name ?? "its owner"})`,
       meta: { handoverId: h.id, toEditorId: to, notifyEditorIds: [...new Set([h.from_editor_id, h.to_editor_id, to].filter((x) => x && x !== who.editorId))] },
     });
     res.json({ ok: true });

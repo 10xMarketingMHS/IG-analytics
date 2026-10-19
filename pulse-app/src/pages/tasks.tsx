@@ -9,7 +9,8 @@ import { useTasks } from "@/lib/use-tasks";
 import { useEditors } from "@/lib/use-editors";
 import { useContentFormats } from "@/lib/use-content-formats";
 import { noteTaskSeen } from "@/lib/use-task-notify";
-import { breakOffsetMs, fmtWait, isOverBudget, OFFICE_CLOSE_HOUR, reviewWaitMs, SLOW_REVIEW_MS } from "@/lib/task-timing";
+import { bankedMs, breakOffsetMs, fmtWait, isDayPaused, isOverBudget, OFFICE_CLOSE_HOUR, reviewWaitMs, SLOW_REVIEW_MS } from "@/lib/task-timing";
+import { onTasksChanged } from "@/lib/task-events";
 import { useAuth } from "@/lib/auth-context";
 import { useReviewAccess, scopeAllowsTask } from "@/lib/use-review-access";
 import { useWorkspaces } from "@/lib/workspaces-context";
@@ -185,10 +186,18 @@ const VIEW_KEY_PREFIX = "pulse-tasks-view:";
 // "starts at …" instead of counting down. The assignee's break time (if any)
 // pushes the deadline out — a break pauses every task they have running.
 function budgetInfo(t: Task, nowMs: number) {
+  // The day is closed: the clock waits with what it had used.
+  if (isDayPaused(t)) {
+    const remainingMs = Number(t.budget_hours) * 3_600_000 - bankedMs(t);
+    const absMs = Math.abs(remainingMs);
+    const h = Math.floor(absMs / 3_600_000);
+    const m = Math.floor((absMs % 3_600_000) / 60_000);
+    return { scheduled: false, over: remainingMs < 0, paused: true, dayPaused: true, label: h > 0 ? `${h}h ${m}m` : m > 0 ? `${m}m` : "<1m" };
+  }
   if (t.budget_hours == null || !t.budget_started_at || t.status === "done") return null;
   const startMs = new Date(t.budget_started_at).getTime();
   if (startMs > nowMs) {
-    return { scheduled: true, over: false, paused: false, label: `Starts ${new Date(startMs).toLocaleDateString([], { weekday: "short" })} ${clockTime(startMs)}` };
+    return { scheduled: true, over: false, paused: false, dayPaused: false, label: `Starts ${new Date(startMs).toLocaleDateString([], { weekday: "short" })} ${clockTime(startMs)}` };
   }
   const deadlineMs = startMs + t.budget_hours * 3_600_000 + breakOffsetMs(t, nowMs);
   const remainingMs = deadlineMs - nowMs;
@@ -196,10 +205,11 @@ function budgetInfo(t: Task, nowMs: number) {
   // On break right now, and not already over even accounting for the break
   // offset — the clock reads as paused (yellow) rather than running (green).
   const paused = !over && !!t.editor_break_started_at;
+  const dayPaused = false;
   const absMs = Math.abs(remainingMs);
   const h = Math.floor(absMs / 3_600_000);
   const m = Math.floor((absMs % 3_600_000) / 60_000);
-  return { scheduled: false, over, paused, label: h > 0 ? `${h}h ${m}m` : m > 0 ? `${m}m` : "<1m" };
+  return { scheduled: false, over, paused, dayPaused, label: h > 0 ? `${h}h ${m}m` : m > 0 ? `${m}m` : "<1m" };
 }
 
 // Office hours the acceptance dual-confirmation checks against.
@@ -330,6 +340,7 @@ function dueText(due: string) {
 
 // How much of a running task's time budget is used, 0–1 (break time doesn't count).
 function budgetFrac(t: Task, nowMs: number) {
+  if (isDayPaused(t)) return Math.max(0, Math.min(1, bankedMs(t) / (Number(t.budget_hours) * 3_600_000)));
   if (t.budget_hours == null || !t.budget_started_at) return 0;
   const used = nowMs - new Date(t.budget_started_at).getTime() - breakOffsetMs(t, nowMs);
   return Math.max(0, Math.min(1, used / (Number(t.budget_hours) * 3_600_000)));
@@ -358,9 +369,11 @@ function TaskClock({ t, nowMs }: { t: Task; nowMs: number }) {
     ? "Timer hasn't started yet"
     : b.over
       ? "Ran past its allotted time — needs follow-up"
-      : b.paused
-        ? "Paused — the assignee is on a break"
-        : "Time remaining";
+      : b.dayPaused
+        ? "Paused: the day is closed. It runs again when the day starts."
+        : b.paused
+          ? "Paused — the assignee is on a break"
+          : "Time remaining";
   return (
     <span className={"task-timer" + cls} title={title}>
       {ring(b.scheduled ? 0 : b.over ? 1 : budgetFrac(t, nowMs), cls.trim())}
@@ -596,14 +609,24 @@ export function TasksPage() {
       const top = el.getBoundingClientRect().top + window.scrollY;
       el.style.setProperty("--tb-board-h", `${Math.max(window.innerHeight - top - 16, 380)}px`);
     };
-    fit();
     const ro = new ResizeObserver(fit);
-    const bar = el.closest(".tb")?.querySelector(".tb-bar");
-    if (bar) ro.observe(bar);
+    const page = el.closest(".tb");
+    const bar = page?.querySelector(".tb-bar");
+    // Refit whenever anything above the board changes height, appears or goes
+    // (the toolbar folding, "Hand-overs for you" after an Accept), so no gap
+    // opens below it and it never runs past the window.
+    const watchAbove = () => {
+      ro.disconnect();
+      for (const c of Array.from(page?.children ?? [])) if (!c.contains(el)) ro.observe(c);
+      fit();
+    };
+    watchAbove();
+    const mo = new MutationObserver(watchAbove);
+    if (page) mo.observe(page, { childList: true });
     // …and once the toolbar's fold finishes opening or closing.
     bar?.addEventListener("transitionend", fit);
     window.addEventListener("resize", fit);
-    return () => { ro.disconnect(); bar?.removeEventListener("transitionend", fit); window.removeEventListener("resize", fit); };
+    return () => { ro.disconnect(); mo.disconnect(); bar?.removeEventListener("transitionend", fit); window.removeEventListener("resize", fit); };
   }, [boardShown]);
   // The number on each due chip: open work in that window, under every other filter.
   const dueCounts = useMemo(() => {
@@ -1937,11 +1960,13 @@ function TimerCard({ t }: { t: Task }) {
   const startMs = t.budget_started_at ? new Date(t.budget_started_at).getTime() : null;
   const b = budgetInfo(t, nowMs);
   const running = startMs != null && startMs <= nowMs && t.status !== "done";
-  const usedMs = running ? Math.max(0, nowMs - startMs - breakOffsetMs(t, nowMs)) : 0;
-  const frac = t.status === "done" ? 1 : running ? Math.min(1, usedMs / budgetMs) : 0;
+  // A stopped clock (on hold, or the day closed) shows the time it had banked.
+  const usedMs = running ? Math.max(0, nowMs - startMs - breakOffsetMs(t, nowMs)) : bankedMs(t);
+  const frac = t.status === "done" ? 1 : budgetMs ? Math.min(1, usedMs / budgetMs) : 0;
   const tone = t.status === "done" ? "done" : t.on_hold || b?.paused ? "paused" : b?.over ? "over" : running ? "running" : "";
   const state = t.status === "done" ? "Done"
     : t.on_hold ? "Paused — on hold"
+    : b?.dayPaused ? "Paused · day closed. It runs again when you start your day"
     : b?.scheduled ? b.label
     : !running ? (t.status === "todo" ? "Not started — starts with ▶ Start" : "Not started")
     : b?.paused ? "Paused — on a break"
@@ -2448,6 +2473,7 @@ export function TaskPanel({ mode, task, canWrite, editors, channels, onClose, on
           <Checklist taskId={t.id} readOnly={!canEditWork} onChanged={onChanged} />
           {!adminEdit && <DeliveryLink task={t} canEdit={canEditDelivery} onChanged={onChanged} />}
           <ReviewHistory taskId={t.id} />
+          <TaskHistory taskId={t.id} title={t.title} />
           <Comments taskId={t.id} readOnly={ro} />
         </div>
         {rule && <div className="tp2-dfoot">{TB_ICON.info}<span>{rule}</span></div>}
@@ -2674,6 +2700,55 @@ function ReviewHistory({ taskId }: { taskId: string }) {
           </div>
         ))}
       </div>
+    </div>
+  );
+}
+
+// Everything that happened to the task, oldest first: who created it and for
+// whom, who it was assigned to, who accepted, every hand-over and its answer,
+// reviews. Read from the activity log (GET /tasks/:id/history).
+type HistoryEntry = { id: string; verb: string; summary: string; created_at: string; actor_id: string | null; actor_name: string | null };
+const HISTORY_ICON: Record<string, string> = {
+  created: "✨", assigned: "👤", accepted: "👍", review_requested: "📤", sent_back: "↩️", completed: "🎉", reopened: "🔄",
+  held: "⏸", resumed: "▶️", handover_offered: "🔁", handover_accepted: "🤝", handover_declined: "✋", handover_cancelled: "↩️",
+  handover_escalated: "⚠️", handover_moved: "🔁", commented: "💬",
+};
+function TaskHistory({ taskId, title }: { taskId: string; title: string }) {
+  const [items, setItems] = useState<HistoryEntry[] | null>(null);
+  const [all, setAll] = useState(false);
+  useEffect(() => {
+    let cancel = false;
+    const load = () => api<{ history: HistoryEntry[] }>(`/tasks/${taskId}/history`)
+      .then((d) => { if (!cancel) setItems(d.history); })
+      .catch(() => { if (!cancel) setItems([]); });
+    load();
+    const off = onTasksChanged(load);
+    return () => { cancel = true; off(); };
+  }, [taskId]);
+  const rows = (items ?? []).filter((h) => h.verb !== "commented");
+  if (rows.length === 0) return null;
+  // The task's own name reads as "this task" here.
+  const tidy = (s: string) => s.split(`task “${title}”`).join("this task").split(`“${title}”`).join("this task");
+  const line = (h: HistoryEntry) => {
+    const s = tidy(h.summary);
+    return h.actor_id ? `${h.actor_name ?? "Someone"} ${s.charAt(0).toLowerCase()}${s.slice(1)}` : s;
+  };
+  const shown = all || rows.length <= 6 ? rows : rows.slice(-6);
+  return (
+    <div className="field">
+      <label className="f">History</label>
+      <ol className="tp-history">
+        {!all && rows.length > 6 && (
+          <li className="tp-history-more"><button type="button" onClick={() => setAll(true)}>Show all {rows.length} steps</button></li>
+        )}
+        {shown.map((h) => (
+          <li key={h.id}>
+            <span className="tp-history-ic" aria-hidden="true">{HISTORY_ICON[h.verb] ?? "•"}</span>
+            <span className="tp-history-tx">{line(h)}</span>
+            <span className="tp-history-at">{dateTime(h.created_at)}</span>
+          </li>
+        ))}
+      </ol>
     </div>
   );
 }

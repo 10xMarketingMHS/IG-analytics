@@ -3,7 +3,7 @@ import { z } from "zod";
 import { pool } from "../db.js";
 import { logActivity } from "../activity.js";
 import { capacityFor, LUNCH_MIN, TEA_MIN, normalizeCalendar } from "../work-calendar.js";
-import { startSession, endSession } from "./eod.js";
+import { startSession, endSession, pauseDayTimers } from "./eod.js";
 import {
   attendancePeople, attendanceReady, callerScope, canSee, classify, closingFor, istAt, istNow,
   minutesOf, openingFor, penaltyOf, readSettings, syncAttendance, weekdayOf,
@@ -139,6 +139,8 @@ attendanceRouter.post("/attendance/undo-check-in", async (req, res, next) => {
       "delete from eod_session where editor_id = $1 and ended_at is null and started_at > now() - interval '6 minutes'",
       [caller.editorId],
     );
+    // Not started after all: the task clocks Start day set going stop again.
+    await pauseDayTimers(caller.editorId);
     // A lead's mark (working now, leave, half day) stays; otherwise the day goes
     // back to what the clock says — and an excuse goes with the late start.
     const { cal, att } = await readSettings(req.orgId);

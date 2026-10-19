@@ -1702,7 +1702,7 @@ img.lb-ava{object-fit:cover}
 .eod-lock .topbar-title,
 .eod-lock:not(.lock-page-open) .content > .screen:not(.myday):not(.eod-open),
 .eod-lock .myday > *:not(.myday-hero):not(.hw),
-.eod-lock .myday .hw > *:not(.sd-card){filter:grayscale(100%);opacity:.92}
+.eod-lock .myday .hw > *:not(.sd-card):not(.sd-bar){filter:grayscale(100%);opacity:.92}
 .eod-lock:not(.lock-page-open) .content{pointer-events:none}
 /* A greyed link that waits for Start Work still answers a click — with the
    "start your work day first" pop-up (app-shell.tsx). */

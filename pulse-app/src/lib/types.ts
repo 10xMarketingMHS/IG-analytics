@@ -234,6 +234,8 @@ export type Task = {
   link_required: boolean;
   budget_hours: number | null;
   budget_started_at: string | null;
+  // Time banked while the clock waits (on hold, or the day closed).
+  budget_used_seconds?: number | null;
   // Time spent waiting for a reviewer, which never counts against the assignee:
   // when it last went into Review (null while it isn't there), and every
   // finished wait added up. See workedUntil() in task-points.ts.
@@ -300,7 +302,7 @@ export type ActivityVerb =
   | "created" | "completed" | "assigned" | "commented" | "published"
   | "stage_completed" | "channel_added" | "editor_added"
   | "review_requested" | "sent_back" | "reopened" | "deleted"
-  | "held" | "resumed" | "password_reset_requested" | "password_reset" | "sod_submitted"
+  | "held" | "resumed" | "accepted" | "password_reset_requested" | "password_reset" | "sod_submitted"
   // Attendance (Start day, a lead's marks, nudges, corrections, the no-SOD alert)
   | "attendance_check_in" | "attendance_no_sod" | "attendance_nudge" | "attendance_marked" | "attendance_excused"
   | "attendance_undone" | "attendance_correction" | "attendance_correction_answered"

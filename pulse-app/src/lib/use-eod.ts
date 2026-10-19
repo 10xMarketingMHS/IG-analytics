@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { api, ApiError } from "@/lib/api";
+import { notifyTasksChanged } from "@/lib/task-events";
 
 // 7h 40m / 45m — a length of time, not a clock time.
 export function fmtDuration(seconds: number): string {
@@ -141,6 +142,8 @@ export function useEod() {
         setSession(d.session);
       }
       window.dispatchEvent(new Event("pulse:attendance-changed"));
+      // task clocks pause or run on with the day: every task list reloads
+      notifyTasksChanged();
     } finally {
       setBusy(false);
     }
@@ -161,6 +164,8 @@ export function useEod() {
       setSession(null);
       setSummary(d.summary);
       window.dispatchEvent(new Event("pulse:attendance-changed"));
+      // task clocks pause or run on with the day: every task list reloads
+      notifyTasksChanged();
       return d.summary;
     } finally {
       setBusy(false);
@@ -174,6 +179,8 @@ export function useEod() {
       await api("/attendance/undo-check-in", { method: "POST" });
       setSession(null);
       window.dispatchEvent(new Event("pulse:attendance-changed"));
+      // task clocks pause or run on with the day: every task list reloads
+      notifyTasksChanged();
     } finally {
       setBusy(false);
     }
