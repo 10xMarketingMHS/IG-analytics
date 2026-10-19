@@ -6,7 +6,7 @@ import { useTaxonomy } from "@/lib/use-taxonomy";
 import { useWorkspaces } from "@/lib/workspaces-context";
 import { useResource } from "@/lib/use-resource";
 import { useAuth } from "@/lib/auth-context";
-import { useOrg } from "@/lib/use-org";
+import { useIsSuper, useOrg } from "@/lib/use-org";
 import { useReviewAccess } from "@/lib/use-review-access";
 import { setWeekStart } from "@/lib/date-range";
 import { notifyOn, type NotifyKey } from "@/lib/notify-prefs";
@@ -35,8 +35,13 @@ type Section = "general" | "channels" | "content" | "tasks" | "attendance" | "sc
 const SECTION_FOR_PATH: Record<string, Section> = { "/channels": "channels", "/task-rules": "tasks" };
 const LEAVE_UNSAVED = "You have changes that aren't saved. Leave them?";
 
+// Three tiers: an editor sees their own look, alerts and the content lists; an
+// admin also runs channels, task types and times, attendance rules and the work
+// day, and sees the calendar, points, penalties and bands; the Super Admin
+// changes those too, and Access.
 export function SettingsPage() {
-  const { isAdmin } = useWorkspaces();
+  const { isAdmin, hasPermission } = useWorkspaces();
+  const isSuper = useIsSuper();
   const location = useLocation();
   const navigate = useNavigate();
   const [params] = useSearchParams();
@@ -49,7 +54,7 @@ export function SettingsPage() {
     { k: "tasks", l: "Tasks & time", d: "Task types, budgets, breaks", icon: SI.timer, show: isAdmin },
     { k: "attendance", l: "Attendance", d: "Start of day, late and absent rules", icon: SI.clock, show: isAdmin },
     { k: "scoring", l: "Scoring", d: "How rankings are calculated", icon: SI.chart, show: isAdmin },
-    { k: "access", l: "Access", d: "Extra permissions per person", icon: SI.admin, show: isAdmin },
+    { k: "access", l: "Access", d: "Extra permissions per person", icon: SI.admin, show: isSuper || (!isAdmin && hasPermission("access_manage")) },
     { k: "alerts", l: "Notifications", d: "What pings you, and where", icon: SI.bell, show: true },
     { k: "workday", l: "Work day", d: "Who started and ended their day", icon: SI.clock, show: isAdmin },
   ];
@@ -77,7 +82,7 @@ export function SettingsPage() {
         <span className="st-grow" />
         <span className="st-note">
           {SI.shield}
-          {isAdmin ? "Super Admin & Admin · changes apply to everyone" : "Some sections can only be changed by an admin"}
+          {isSuper ? "Super Admin · changes apply to everyone" : isAdmin ? "Admin · locked parts are changed by the Super Admin" : "Some sections can only be changed by an admin"}
         </span>
       </div>
       <div className="st-body">
@@ -118,9 +123,9 @@ const ymOf = (d: Date) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStar
 // The workspace (name, time zone, week start) and the work calendar, kept as a
 // draft until Save; then the review cycle and how Pulse looks for you.
 function GeneralSection({ onDirty }: { onDirty: (dirty: boolean) => void }) {
-  const { isAdmin, hasPermission } = useWorkspaces();
-  const canCal = hasPermission("edit_goals");
+  const { isAdmin } = useWorkspaces();
   const { org, refetch } = useOrg();
+  const isSuper = !!org?.superAdmin;
   const months = useMemo(() => {
     const d = new Date();
     return [ymOf(new Date(d.getFullYear(), d.getMonth(), 1)), ymOf(new Date(d.getFullYear(), d.getMonth() + 1, 1))];
@@ -142,6 +147,8 @@ function GeneralSection({ onDirty }: { onDirty: (dirty: boolean) => void }) {
   useEffect(() => () => onDirty(false), [onDirty]);
   const setC = (patch: Partial<WorkCalendar>) => setCal({ ...c, ...patch });
   const canStore = org?.canSaveSettings ?? false;
+  // everyone sees the work calendar; only the Super Admin changes it
+  const lockCal = !canStore || !isSuper;
 
   const [y, m] = month.split("-").map(Number);
   const cc = capacityFor(c, y, m - 1);
@@ -198,83 +205,83 @@ function GeneralSection({ onDirty }: { onDirty: (dirty: boolean) => void }) {
         </section>
       )}
 
-      {canCal && (
-        <section className="st-card">
-          <div className="st-cardhead">
-            <b>Work calendar</b>
-            <span>Sets each editor's monthly capacity. Goals set on Goals · Set goals must fit inside it.</span>
-          </div>
-          {!org ? <div className="st-empty">Loading…</div> : (
-            <>
-              <div className="st-row">
-                <span className="st-label"><b>Monday – Friday</b><small>{fmtHours(cc.wdMin / 60)} of work after breaks</small></span>
-                <span className="st-times">
-                  <input type="time" className="st-in" value={c.wdFrom} onChange={(e) => setC({ wdFrom: e.target.value })} aria-label="Weekdays start" disabled={!canStore} />
-                  to
-                  <input type="time" className="st-in" value={c.wdTo} onChange={(e) => setC({ wdTo: e.target.value })} aria-label="Weekdays end" disabled={!canStore} />
+      <section className="st-card">
+        <div className="st-cardhead">
+          <b>Work calendar</b>
+          <span>Sets each editor's monthly capacity. Goals set on Goals · Set goals must fit inside it.</span>
+        </div>
+        {!org ? <div className="st-empty">Loading…</div> : (
+          <>
+            <div className="st-row">
+              <span className="st-label"><b>Monday – Friday</b><small>{fmtHours(cc.wdMin / 60)} of work after breaks</small></span>
+              <span className="st-times">
+                <input type="time" className="st-in" value={c.wdFrom} onChange={(e) => setC({ wdFrom: e.target.value })} aria-label="Weekdays start" disabled={lockCal} />
+                to
+                <input type="time" className="st-in" value={c.wdTo} onChange={(e) => setC({ wdTo: e.target.value })} aria-label="Weekdays end" disabled={lockCal} />
+              </span>
+            </div>
+            <div className="st-row">
+              <span className="st-label"><b>Saturday</b><small>{c.satOff ? "Not a working day" : `${fmtHours(cc.satMin / 60)} of work${c.satBreaks ? " after breaks" : ""}`}</small></span>
+              <span className="st-times">
+                <input type="time" className="st-in" value={c.satFrom} onChange={(e) => setC({ satFrom: e.target.value })} aria-label="Saturday start" disabled={lockCal || c.satOff} />
+                to
+                <input type="time" className="st-in" value={c.satTo} onChange={(e) => setC({ satTo: e.target.value })} aria-label="Saturday end" disabled={lockCal || c.satOff} />
+                <Toggle on={!c.satOff} onChange={(v) => setC({ satOff: !v })} label="Saturday is a working day" disabled={lockCal} />
+              </span>
+            </div>
+            <div className="st-row">
+              <span className="st-label"><b>Sunday</b><small>Never counted</small></span>
+              <span className="st-chip">Off</span>
+            </div>
+            <div className="st-row">
+              <span className="st-label"><b>Lunch break</b><small>The same for everyone — part of the 1h 15m daily break allowance</small></span>
+              <span className="st-value st-mono">{LUNCH_MIN}m</span>
+            </div>
+            <div className="st-row">
+              <span className="st-label"><b>Tea break</b><small>Two of 15 minutes</small></span>
+              <span className="st-value st-mono">{TEA_MIN}m</span>
+            </div>
+            <div className="st-row">
+              <span className="st-label"><b>Breaks on Saturday too</b></span>
+              <Toggle on={c.satBreaks} onChange={(v) => setC({ satBreaks: v })} label="Breaks on Saturday too" disabled={lockCal || c.satOff} />
+            </div>
+            <div className="st-row">
+              <span className="st-label"><b>Sick-leave buffer</b><small>Days per month kept out of every editor's capacity</small></span>
+              <Stepper label="sick-leave days" value={`${c.sickDays} day${c.sickDays === 1 ? "" : "s"}`} decDisabled={lockCal || c.sickDays <= 0} incDisabled={lockCal || c.sickDays >= 10}
+                onDec={() => setC({ sickDays: c.sickDays - 1 })} onInc={() => setC({ sickDays: c.sickDays + 1 })} />
+            </div>
+            <div className="st-row">
+              <span className="st-label"><b>Capacity adjustment</b><small>Add or remove hours from every editor's monthly capacity</small></span>
+              <Stepper label="adjustment hours" value={`${c.adjustHours > 0 ? "+" : ""}${c.adjustHours}h`} decDisabled={lockCal || c.adjustHours <= -100} incDisabled={lockCal || c.adjustHours >= 100}
+                onDec={() => setC({ adjustHours: c.adjustHours - 1 })} onInc={() => setC({ adjustHours: c.adjustHours + 1 })} />
+            </div>
+            <div className="st-row sunk">
+              <span className="st-calc">
+                <span className="st-calcmonth">
+                  <Seg label="Month" value={month} options={months.map((k) => [k, monthName(k, "short")] as [string, string])} onChange={setMonth} />
+                  {monthName(month)} · per editor
                 </span>
-              </div>
-              <div className="st-row">
-                <span className="st-label"><b>Saturday</b><small>{c.satOff ? "Not a working day" : `${fmtHours(cc.satMin / 60)} of work${c.satBreaks ? " after breaks" : ""}`}</small></span>
-                <span className="st-times">
-                  <input type="time" className="st-in" value={c.satFrom} onChange={(e) => setC({ satFrom: e.target.value })} aria-label="Saturday start" disabled={!canStore || c.satOff} />
-                  to
-                  <input type="time" className="st-in" value={c.satTo} onChange={(e) => setC({ satTo: e.target.value })} aria-label="Saturday end" disabled={!canStore || c.satOff} />
-                  <Toggle on={!c.satOff} onChange={(v) => setC({ satOff: !v })} label="Saturday is a working day" disabled={!canStore} />
+                <span>{cc.days} days − {cc.sundays} Sundays{c.satOff ? ` − ${cc.satCount} Saturdays` : ""} − {cc.sick} sick leave = {cc.workingDays} working days</span>
+                <span>
+                  {cc.weekdays} weekdays × {fmtHours(cc.wdMin / 60)}
+                  {!c.satOff && ` + ${cc.sats} Saturdays × ${fmtHours(cc.satMin / 60)}`}
+                  {c.adjustHours ? ` ${c.adjustHours > 0 ? "+" : "−"} ${Math.abs(c.adjustHours)}h` : ""} = {fmtHours(cc.minutes / 60)}
                 </span>
-              </div>
-              <div className="st-row">
-                <span className="st-label"><b>Sunday</b><small>Never counted</small></span>
-                <span className="st-chip">Off</span>
-              </div>
-              <div className="st-row">
-                <span className="st-label"><b>Lunch break</b><small>The same for everyone — part of the 1h 15m daily break allowance</small></span>
-                <span className="st-value st-mono">{LUNCH_MIN}m</span>
-              </div>
-              <div className="st-row">
-                <span className="st-label"><b>Tea break</b><small>Two of 15 minutes</small></span>
-                <span className="st-value st-mono">{TEA_MIN}m</span>
-              </div>
-              <div className="st-row">
-                <span className="st-label"><b>Breaks on Saturday too</b></span>
-                <Toggle on={c.satBreaks} onChange={(v) => setC({ satBreaks: v })} label="Breaks on Saturday too" disabled={!canStore || c.satOff} />
-              </div>
-              <div className="st-row">
-                <span className="st-label"><b>Sick-leave buffer</b><small>Days per month kept out of every editor's capacity</small></span>
-                <Stepper label="sick-leave days" value={`${c.sickDays} day${c.sickDays === 1 ? "" : "s"}`} decDisabled={!canStore || c.sickDays <= 0} incDisabled={!canStore || c.sickDays >= 10}
-                  onDec={() => setC({ sickDays: c.sickDays - 1 })} onInc={() => setC({ sickDays: c.sickDays + 1 })} />
-              </div>
-              <div className="st-row">
-                <span className="st-label"><b>Capacity adjustment</b><small>Add or remove hours from every editor's monthly capacity</small></span>
-                <Stepper label="adjustment hours" value={`${c.adjustHours > 0 ? "+" : ""}${c.adjustHours}h`} decDisabled={!canStore || c.adjustHours <= -100} incDisabled={!canStore || c.adjustHours >= 100}
-                  onDec={() => setC({ adjustHours: c.adjustHours - 1 })} onInc={() => setC({ adjustHours: c.adjustHours + 1 })} />
-              </div>
-              <div className="st-row sunk">
-                <span className="st-calc">
-                  <span className="st-calcmonth">
-                    <Seg label="Month" value={month} options={months.map((k) => [k, monthName(k, "short")] as [string, string])} onChange={setMonth} />
-                    {monthName(month)} · per editor
-                  </span>
-                  <span>{cc.days} days − {cc.sundays} Sundays{c.satOff ? ` − ${cc.satCount} Saturdays` : ""} − {cc.sick} sick leave = {cc.workingDays} working days</span>
-                  <span>
-                    {cc.weekdays} weekdays × {fmtHours(cc.wdMin / 60)}
-                    {!c.satOff && ` + ${cc.sats} Saturdays × ${fmtHours(cc.satMin / 60)}`}
-                    {c.adjustHours ? ` ${c.adjustHours > 0 ? "+" : "−"} ${Math.abs(c.adjustHours)}h` : ""} = {fmtHours(cc.minutes / 60)}
-                  </span>
-                </span>
-                <span className="st-big"><b>{fmtHours(cc.minutes / 60)}</b><span>capacity / editor</span></span>
-              </div>
-              <div className="st-foot">
-                <span className="st-note">
-                  {canStore
-                    ? `Saving sets ${monthName(months[0]).split(" ")[0]} and ${monthName(months[1]).split(" ")[0]} for everyone without their own hours; later months follow it. Change one person's hours on Goals · Set goals.`
-                    : "The work calendar needs a database update before it can be saved."}
-                </span>
-              </div>
-            </>
-          )}
-        </section>
-      )}
+              </span>
+              <span className="st-big"><b>{fmtHours(cc.minutes / 60)}</b><span>capacity / editor</span></span>
+            </div>
+            <div className="st-foot">
+              <span className="st-note">
+                {!isSuper
+                  ? "Only a Super Admin can change the work calendar."
+                  : canStore
+                  ? `Saving sets ${monthName(months[0]).split(" ")[0]} and ${monthName(months[1]).split(" ")[0]} for everyone without their own hours; later months follow it. Change one person's hours on Goals · Set goals.`
+                  : "The work calendar needs a database update before it can be saved."}
+              </span>
+            </div>
+          </>
+        )}
+      </section>
 
       <section className="st-card">
         <div className="st-cardhead">
@@ -563,6 +570,7 @@ type Thresholds = { epiMinPct: number; mpiMinPct: number; isDefault?: boolean };
 
 function ScoringSection() {
   const { isAdmin, hasPermission } = useWorkspaces();
+  const isSuper = useIsSuper();
   const W: [string, number][] = [
     ["View", SCORE_WEIGHTS.view], ["Like", SCORE_WEIGHTS.like], ["Comment", SCORE_WEIGHTS.comment],
     ["Share", SCORE_WEIGHTS.share], ["Save", SCORE_WEIGHTS.save],
@@ -610,7 +618,7 @@ function ScoringSection() {
         )}
       </section>
 
-      {isAdmin && <PerformanceBands />}
+      {isAdmin && <PerformanceBands canEdit={isSuper} />}
 
       <section className="st-card">
         <div className="st-cardhead">
@@ -627,7 +635,8 @@ function ScoringSection() {
 
 // Management Performance: the two cut-offs that band each person's Overall
 // Performance % into EPI / MPI / LPI (Leaderboard › Management Performance).
-function PerformanceBands() {
+// Admins see them; only the Super Admin changes them.
+function PerformanceBands({ canEdit }: { canEdit: boolean }) {
   const [thr, setThr] = useState<Thresholds | null>(null);
   const [epi, setEpi] = useState("85");
   const [mpi, setMpi] = useState("75");
@@ -667,20 +676,20 @@ function PerformanceBands() {
         <>
           <div className="st-row">
             <span className="st-label"><b><span className="st-band epi">EPI</span></b><small>{epiN}% and above</small></span>
-            <span className="st-pct"><input className="st-in" type="number" min={1} max={100} step={1} value={epi} onChange={(e) => setEpi(e.target.value)} aria-label="EPI minimum percent" />%</span>
+            <span className="st-pct"><input className="st-in" type="number" min={1} max={100} step={1} value={epi} onChange={(e) => setEpi(e.target.value)} aria-label="EPI minimum percent" disabled={!canEdit} />%</span>
           </div>
           <div className="st-row">
             <span className="st-label"><b><span className="st-band mpi">MPI</span></b><small>{mpiN}% up to {epiN}%</small></span>
-            <span className="st-pct"><input className="st-in" type="number" min={1} max={100} step={1} value={mpi} onChange={(e) => setMpi(e.target.value)} aria-label="MPI minimum percent" />%</span>
+            <span className="st-pct"><input className="st-in" type="number" min={1} max={100} step={1} value={mpi} onChange={(e) => setMpi(e.target.value)} aria-label="MPI minimum percent" disabled={!canEdit} />%</span>
           </div>
           <div className="st-row">
             <span className="st-label"><b><span className="st-band lpi">LPI</span></b><small>Below {mpiN}%</small></span>
           </div>
           <div className="st-foot">
             <span className="st-note" style={valid ? undefined : { color: "var(--st-bad)" }}>
-              {!valid ? "The MPI minimum can't be higher than the EPI minimum." : thr.isDefault ? "These are the defaults — not saved yet." : "Saved."}
+              {!canEdit ? "Only a Super Admin can change the bands." : !valid ? "The MPI minimum can't be higher than the EPI minimum." : thr.isDefault ? "These are the defaults — not saved yet." : "Saved."}
             </span>
-            <button type="button" className="st-btn pri" disabled={!valid || saving || (!changed && !thr.isDefault)} onClick={save}>{saving ? "Saving…" : "Save bands"}</button>
+            {canEdit && <button type="button" className="st-btn pri" disabled={!valid || saving || (!changed && !thr.isDefault)} onClick={save}>{saving ? "Saving…" : "Save bands"}</button>}
           </div>
         </>
       )}

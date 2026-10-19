@@ -8,6 +8,7 @@ import { resolveBudgetHours } from "./tasks.js";
 import { hasColumn } from "../schema-flags.js";
 import { capacityFor } from "../work-calendar.js";
 import { monthPenalties, readSettings } from "../attendance.js";
+import { isSuperHere } from "../super-admin.js";
 import { scoreMonthAll } from "../goal-score.js";
 
 export const goalsRouter = Router();
@@ -360,6 +361,10 @@ goalsRouter.put("/goals/capacity", requirePermission("edit_goals"), async (req, 
   const d = parsed.data;
   if (d.scope === "editor" && !d.editorId) return res.status(400).json({ error: "editorId is required for an editor override." });
   try {
+    // The team's capacity comes from the work calendar: the Super Admin's call.
+    if (d.scope === "org" && !(await isSuperHere(req))) {
+      return res.status(403).json({ error: "Only a Super Admin can change the work calendar." });
+    }
     const month = monthStart(d.month);
     if (!month) return res.status(400).json({ error: "That month couldn't be read." });
     const editorId = d.scope === "editor" ? d.editorId : null;

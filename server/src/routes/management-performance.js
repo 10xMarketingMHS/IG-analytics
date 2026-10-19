@@ -2,6 +2,7 @@ import { Router } from "express";
 import { z } from "zod";
 import { pool } from "../db.js";
 import { requireAdmin } from "../resolve-workspace.js";
+import { requireSuper } from "../super-admin.js";
 import { monthPenalties } from "../attendance.js";
 import { scoreMonthAll } from "../goal-score.js";
 
@@ -235,7 +236,8 @@ const thresholdBody = z.object({
   mpiMinPct: z.number().positive().max(100),
 });
 
-managementPerformanceRouter.put("/management-performance/thresholds", requireAdmin, async (req, res, next) => {
+// Admins see the bands; only the Super Admin changes them.
+managementPerformanceRouter.put("/management-performance/thresholds", requireSuper("Only a Super Admin can change the performance bands."), async (req, res, next) => {
   try {
     const parsed = thresholdBody.safeParse(req.body);
     if (!parsed.success) return res.status(400).json({ error: "Invalid thresholds." });

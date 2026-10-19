@@ -3,6 +3,7 @@ import { toast } from "sonner";
 import { api, ApiError } from "@/lib/api";
 import { useWorkspaces } from "@/lib/workspaces-context";
 import { useContentFormats } from "@/lib/use-content-formats";
+import { useIsSuper } from "@/lib/use-org";
 import type { ContentFormatDef, TaskTimeRule } from "@/lib/types";
 import { SI, Stepper, Toggle, fmtHours } from "@/pages/settings-ui";
 
@@ -46,6 +47,8 @@ function useAutoSave<T>(value: T, saved: T, save: (v: T) => void, delay = 700) {
 export function TaskRulesSection() {
   const { hasPermission } = useWorkspaces();
   const canManage = hasPermission("task_settings");
+  // what a type is worth is the Super Admin's call; admins see the points
+  const canPoints = useIsSuper();
   const { contentFormats, refetch: refetchFormats } = useContentFormats();
   const [rules, setRules] = useState<TaskTimeRule[] | null>(null);
   const [newName, setNewName] = useState("");
@@ -139,7 +142,7 @@ export function TaskRulesSection() {
       <section className="st-card">
         <div className="st-cardhead">
           <span className="st-titleline"><b>Task types</b><span className="st-count">{formats.length}</span></span>
-          <span>One list for the whole workspace. Points are what a finished job earns; time budget is how long the timer gives it. A change to points counts from now on: jobs already completed, and goals already set, keep the points they had.</span>
+          <span>One list for the whole workspace. Points are what a finished job earns; time budget is how long the timer gives it. A change to points counts from now on: jobs already completed, and goals already set, keep the points they had.{canPoints ? "" : " Only a Super Admin can change points."}</span>
           <span className="st-uses">
             <span>{SI.addTask}New task picker</span>
             <span>{SI.flag}Goal types</span>
@@ -170,6 +173,7 @@ export function TaskRulesSection() {
                   key={f.id}
                   format={f}
                   rule={globalFor(f)}
+                  canPoints={canPoints}
                   onCategory={(category) => moveFormat(f, category)}
                   onIcon={(icon) => patchFormat(f.id, { icon }, "Could not change the icon.")}
                   onRename={(name) => patchFormat(f.id, { name }, "Could not rename that type.", "Renamed.")}
@@ -279,10 +283,11 @@ function IconPicker({ value, onPick }: { value: string; onPick: (icon: string) =
 // One task type: icon, name (click to rename), link toggle, metric tag, points
 // and time (or duration). Every field saves on its own.
 function TypeRow({
-  format, rule, onCategory, onIcon, onRename, onPoints, onMetric, onLink, onHours, onClearHours, onDuration, onMetrics, onRemove,
+  format, rule, canPoints, onCategory, onIcon, onRename, onPoints, onMetric, onLink, onHours, onClearHours, onDuration, onMetrics, onRemove,
 }: {
   format: ContentFormatDef;
   rule: TaskTimeRule | null;
+  canPoints: boolean;
   onCategory: (category: Cat) => void;
   onIcon: (icon: string) => void;
   onRename: (name: string) => void;
@@ -361,7 +366,7 @@ function TypeRow({
         <span className="st-mlabel">Points</span>
         <Stepper className="sm acc pts" label={`points for ${format.name}`} value={trim(points)}
           onDec={() => setPoints((p) => Math.max(0, Math.round((p - 1) * 100) / 100))} onInc={() => setPoints((p) => Math.min(1000, Math.round((p + 1) * 100) / 100))}
-          decDisabled={points <= 0} />
+          decDisabled={!canPoints || points <= 0} incDisabled={!canPoints} />
       </span>
       <span className="st-c-time">
         <span className="st-mlabel">{isProject ? "Days" : "Time"}</span>

@@ -13,9 +13,16 @@ export type Org = {
   canSaveSettings: boolean;
   // Settings › Attendance (missing before the server has it).
   attendance?: AttSettings;
+  // Whether you may change what only the Super Admin changes: the work
+  // calendar, task points, attendance penalties, the scoring bands and Access.
+  superAdmin?: boolean;
 };
 
 export function useOrg() {
   const { data, refetch } = useResource<{ org: Org }>("/org");
   return { org: data?.org ?? null, refetch };
+}
+
+export function useIsSuper() {
+  return !!useOrg().org?.superAdmin;
 }

@@ -2,6 +2,11 @@ import { Router } from "express";
 import { z } from "zod";
 import { pool } from "../db.js";
 import { requirePermission } from "../permissions.js";
+import { isSuperHere } from "../super-admin.js";
+
+// What a type is worth is the Super Admin's call; an admin adds, renames and
+// times types, and sees their points.
+const POINTS_SUPER_ONLY = "Only a Super Admin can change a task type's points.";
 
 export const contentFormatsRouter = Router();
 
@@ -54,6 +59,9 @@ contentFormatsRouter.post("/content-formats", requirePermission("task_settings")
     return res.status(400).json({ error: "Pick a category (Social, Ads, Service or Project) for this content type." });
   }
   try {
+    if (parsed.data.points != null && Number(parsed.data.points) !== 1 && !(await isSuperHere(req))) {
+      return res.status(403).json({ error: POINTS_SUPER_ONLY });
+    }
     // Sort order is per category, so each list numbers from 1 independently.
     const { rows: maxRow } = await pool.query(
       "select coalesce(max(sort_order), 0) + 1 as n from task_content_format where org_id = $1 and category = $2",
@@ -90,6 +98,12 @@ contentFormatsRouter.patch("/content-formats/:id", requirePermission("task_setti
   if (!sets.length) return res.status(400).json({ error: "Nothing to update." });
   vals.push(req.params.id, req.orgId);
   try {
+    if (parsed.data.points !== undefined) {
+      const { rows: cur } = await pool.query("select points from task_content_format where id = $1 and org_id = $2", [req.params.id, req.orgId]);
+      if (cur[0] && Number(cur[0].points) !== Number(parsed.data.points) && !(await isSuperHere(req))) {
+        return res.status(403).json({ error: POINTS_SUPER_ONLY });
+      }
+    }
     const { rows } = await pool.query(
       `update task_content_format set ${sets.join(", ")}
        where id = $${vals.length - 1} and org_id = $${vals.length} returning ${SELECT}`,

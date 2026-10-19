@@ -6,12 +6,13 @@ import { hasColumn } from "../schema-flags.js";
 import { CALENDAR_DEFAULTS, normalizeCalendar } from "../work-calendar.js";
 import { ATTENDANCE_DEFAULTS, clearSettingsCache, normalizeAttendance } from "../attendance.js";
 import { clearCapacityCache } from "./goals.js";
-import { superState, isSuperUser } from "../super-admin.js";
+import { isSuperHere } from "../super-admin.js";
 
 // Settings › General: the organisation's name, the week start and the work
 // calendar. Anyone signed in can read them (the sidebar shows the name, date
 // ranges use the week start, Goals uses the calendar). An admin changes the
-// name and week start; an admin or an edit_goals grantee the calendar.
+// name, week start and attendance rules; only the Super Admin changes the work
+// calendar, the attendance penalties and who sees the team's attendance.
 export const orgRouter = Router();
 
 const HHMM = z.string().regex(/^\d{2}:\d{2}$/);
@@ -59,7 +60,9 @@ async function readOrg(orgId) {
 
 orgRouter.get("/org", async (req, res, next) => {
   try {
-    res.json({ org: await readOrg(req.orgId), calendarDefaults: CALENDAR_DEFAULTS, attendanceDefaults: ATTENDANCE_DEFAULTS });
+    // superAdmin: whether this person may change the Super Admin settings here
+    const [org, superAdmin] = await Promise.all([readOrg(req.orgId), isSuperHere(req)]);
+    res.json({ org: { ...org, superAdmin }, calendarDefaults: CALENDAR_DEFAULTS, attendanceDefaults: ATTENDANCE_DEFAULTS });
   } catch (err) {
     next(err);
   }
@@ -73,12 +76,17 @@ orgRouter.patch("/org", requirePermission("edit_goals"), async (req, res, next) 
     return res.status(403).json({ error: "Only an admin can change the workspace name, week start or attendance rules." });
   }
   try {
-    // Who sees the team's attendance is the Super Admin's call.
-    if (d.attendance?.teamView) {
-      const cur = (await readOrg(req.orgId)).attendance.teamView;
-      const changed = ["manager", "asstManager", "teamLead"].some((k) => cur[k] !== d.attendance.teamView[k]);
-      if (changed && !(await isSuperUser(req.user.sub, await superState(req.workspaceId)))) {
-        return res.status(403).json({ error: "Only a Super Admin can change who sees the team's attendance." });
+    // The work calendar, the attendance penalties and who sees the team's
+    // attendance are the Super Admin's call. A save sends the whole card, so
+    // only what actually changes counts.
+    if (d.calendar || d.attendance) {
+      const cur = await readOrg(req.orgId);
+      const superOnly = [];
+      if (d.calendar && Object.keys(d.calendar).some((k) => cur.calendar[k] !== d.calendar[k])) superOnly.push("the work calendar");
+      if (d.attendance && ["latePenaltyPts", "absentPenaltyPts", "deductCapacity"].some((k) => cur.attendance[k] !== d.attendance[k])) superOnly.push("the attendance penalties");
+      if (d.attendance?.teamView && ["manager", "asstManager", "teamLead"].some((k) => cur.attendance.teamView[k] !== d.attendance.teamView[k])) superOnly.push("who sees the team's attendance");
+      if (superOnly.length && !(await isSuperHere(req))) {
+        return res.status(403).json({ error: `Only a Super Admin can change ${superOnly.join(" or ")}.` });
       }
     }
     if (d.name !== undefined) await pool.query("update org set name = $2 where id = $1", [req.orgId, d.name]);

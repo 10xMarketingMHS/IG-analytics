@@ -2,15 +2,28 @@ import { Router } from "express";
 import { z } from "zod";
 import { pool } from "../db.js";
 import { PERMISSION_KEYS, activeGrants, assignFormats, requirePermission, reviewAccess } from "../permissions.js";
+import { isSuperHere } from "../super-admin.js";
 
-// Settings → Access — admin-only management of per-user permission grants.
-// The user picker is served by the existing GET /users (workspace members);
-// these two routes read and write one user's grants for the current org.
+// Settings → Access — the Super Admin's management of per-user permission
+// grants (or someone the Super Admin gave access_manage; an admin who isn't
+// the Super Admin can't). The user picker is served by the existing GET /users
+// (workspace members); these two routes read and write one user's grants.
 export const accessRouter = Router();
+
+const viaGrant = requirePermission("access_manage");
+async function manageAccess(req, res, next) {
+  try {
+    if (req.role !== "admin") return viaGrant(req, res, next);
+    if (await isSuperHere(req)) return next();
+    return res.status(403).json({ error: "Only a Super Admin can change who has extra access." });
+  } catch (err) {
+    next(err);
+  }
+}
 
 // GET /access/grants?userId= — the active permission keys held by one user,
 // so the Access checklist can show current state (checked = active grant).
-accessRouter.get("/access/grants", requirePermission("access_manage"), async (req, res, next) => {
+accessRouter.get("/access/grants", manageAccess, async (req, res, next) => {
   const userId = req.query.userId;
   if (!userId) return res.status(400).json({ error: "userId is required." });
   try {
@@ -60,7 +73,7 @@ const SaveSchema = z.object({
 // PUT /access/grants — apply a user's desired permission state. New permissions
 // insert a grant (granted_by/granted_at set); un-ticked ones that were active
 // get soft-revoked (revoked_at set), never hard-deleted — history stays intact.
-accessRouter.put("/access/grants", requirePermission("access_manage"), async (req, res, next) => {
+accessRouter.put("/access/grants", manageAccess, async (req, res, next) => {
   const parsed = SaveSchema.safeParse(req.body);
   if (!parsed.success) return res.status(400).json({ error: "Invalid grant payload." });
   const { userId, permissions, reviewScope, assignScope } = parsed.data;

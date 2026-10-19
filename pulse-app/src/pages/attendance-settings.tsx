@@ -2,7 +2,6 @@ import { useEffect, useState } from "react";
 import { toast } from "sonner";
 import { api, ApiError } from "@/lib/api";
 import { useOrg } from "@/lib/use-org";
-import { useAuth } from "@/lib/auth-context";
 import { clockTime } from "@/lib/time-format";
 import type { AttSettings } from "@/lib/use-attendance";
 import { SI, Stepper, Toggle } from "@/pages/settings-ui";
@@ -10,6 +9,8 @@ import { SI, Stepper, Toggle } from "@/pages/settings-ui";
 // Settings › Attendance (Pulse Redesign v7) — admins. Start of day (require it,
 // the grace period, the no-SOD alert, auto-absent, the end-of-day wrap-up,
 // correction requests) and the penalties taken from the discipline score.
+// Admins change the rules; the penalties and who sees the team's attendance
+// only the Super Admin changes (admins see them).
 // Office hours come from General › Work calendar. Kept as a draft until Save.
 
 const DEFAULTS: AttSettings = {
@@ -22,8 +23,7 @@ const plus = (hhmm: string, min: number) => { const d = at(hhmm); d.setMinutes(d
 
 export function AttendanceSection({ onDirty }: { onDirty: (d: boolean) => void }) {
   const { org, refetch } = useOrg();
-  const { user } = useAuth();
-  const isSuper = !!user?.isSuperAdmin;
+  const isSuper = !!org?.superAdmin;
   const saved: AttSettings = { ...DEFAULTS, ...(org?.attendance ?? {}), teamView: { ...DEFAULTS.teamView!, ...(org?.attendance?.teamView ?? {}) } };
   const [draft, setDraft] = useState<AttSettings | null>(null);
   const [saving, setSaving] = useState(false);
@@ -91,20 +91,20 @@ export function AttendanceSection({ onDirty }: { onDirty: (d: boolean) => void }
       </section>
 
       <section className="st-card">
-        <div className="st-cardhead"><b>Penalties</b><span>Taken from the discipline score on Goals and Management Performance.</span></div>
+        <div className="st-cardhead"><b>Penalties</b><span>Taken from the discipline score on Goals and Management Performance.{isSuper ? "" : " Only a Super Admin can change these."}</span></div>
         <div className="st-row">
           <span className="st-label"><b>Late check-in</b><small>Per late day, unless a lead excuses it</small></span>
           <Stepper label="late penalty" value={`−${a.latePenaltyPts} pt${a.latePenaltyPts === 1 ? "" : "s"}`} onDec={() => set("latePenaltyPts", Math.max(0, a.latePenaltyPts - 1))} onInc={() => set("latePenaltyPts", Math.min(10, a.latePenaltyPts + 1))}
-            decDisabled={a.latePenaltyPts <= 0} incDisabled={a.latePenaltyPts >= 10} />
+            decDisabled={!isSuper || a.latePenaltyPts <= 0} incDisabled={!isSuper || a.latePenaltyPts >= 10} />
         </div>
         <div className="st-row">
           <span className="st-label"><b>Unplanned absence</b><small>Absent without approved leave</small></span>
           <Stepper label="absence penalty" value={`−${a.absentPenaltyPts} pt${a.absentPenaltyPts === 1 ? "" : "s"}`} onDec={() => set("absentPenaltyPts", Math.max(0, a.absentPenaltyPts - 1))} onInc={() => set("absentPenaltyPts", Math.min(10, a.absentPenaltyPts + 1))}
-            decDisabled={a.absentPenaltyPts <= 0} incDisabled={a.absentPenaltyPts >= 10} />
+            decDisabled={!isSuper || a.absentPenaltyPts <= 0} incDisabled={!isSuper || a.absentPenaltyPts >= 10} />
         </div>
         <div className="st-row">
           <span className="st-label"><b>Count lost hours against capacity</b><small>Unplanned absence shows as lost hours on the Team › Attendance report</small></span>
-          <Toggle on={a.deductCapacity} onChange={(v) => set("deductCapacity", v)} label="Count lost hours against capacity" />
+          <Toggle on={a.deductCapacity} disabled={!isSuper} onChange={(v) => set("deductCapacity", v)} label="Count lost hours against capacity" />
         </div>
       </section>
 
