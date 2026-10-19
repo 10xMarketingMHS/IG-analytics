@@ -67,6 +67,7 @@ export type ChatTask = {
   editor_name: string | null;
   editor_image: string | null;
   channel_name: string | null;
+  content_format_id: string | null;
   content_format_name: string | null;
   // For approving from the card: who handed it over, the work, the link rule.
   assigned_by: string | null;

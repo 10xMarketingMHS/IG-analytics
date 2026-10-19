@@ -1,7 +1,7 @@
 import { Router } from "express";
 import { z } from "zod";
 import { pool } from "../db.js";
-import { PERMISSION_KEYS, activeGrants, requirePermission, reviewAccess } from "../permissions.js";
+import { PERMISSION_KEYS, activeGrants, assignFormats, requirePermission, reviewAccess } from "../permissions.js";
 
 // Settings → Access — admin-only management of per-user permission grants.
 // The user picker is served by the existing GET /users (workspace members);
@@ -15,7 +15,8 @@ accessRouter.get("/access/grants", requirePermission("access_manage"), async (re
   if (!userId) return res.status(400).json({ error: "userId is required." });
   try {
     const review = await reviewAccess(req.orgId, userId);
-    res.json({ permissions: await activeGrants(req.orgId, userId), reviewScope: review.scope });
+    const formats = await assignFormats(req.orgId, userId);
+    res.json({ permissions: await activeGrants(req.orgId, userId), reviewScope: review.scope, assignScope: formats ? { formats } : null });
   } catch (err) {
     next(err);
   }
@@ -26,18 +27,24 @@ accessRouter.get("/access/grants", requirePermission("access_manage"), async (re
 // to every signed-in member; it only ever describes the caller.
 accessRouter.get("/access/review-scope/me", async (req, res, next) => {
   try {
-    res.json(await reviewAccess(req.orgId, req.user.sub));
+    const formats = await assignFormats(req.orgId, req.user.sub);
+    res.json({ ...(await reviewAccess(req.orgId, req.user.sub)), assignScope: formats ? { formats } : null });
   } catch (err) {
     next(err);
   }
 });
 
-const ReviewScopeSchema = z.object({
-  editors: z.array(z.object({
-    editorId: z.string().uuid(),
-    taskIds: z.array(z.string().uuid()).nullable(),
-  })),
-});
+const ReviewScopeSchema = z.union([
+  z.object({
+    editors: z.array(z.object({
+      editorId: z.string().uuid(),
+      taskIds: z.array(z.string().uuid()).nullable(),
+    })),
+  }),
+  // Content types: every task of these content formats (e.g. all Carousels).
+  z.object({ formats: z.array(z.string().uuid()).min(1) }),
+]);
+const AssignScopeSchema = z.object({ formats: z.array(z.string().uuid()).min(1) });
 
 const SaveSchema = z.object({
   userId: z.string().uuid(),
@@ -46,6 +53,8 @@ const SaveSchema = z.object({
   // Narrows resolve_tasks: null/omitted = everyone, otherwise only these
   // people/tasks. Ignored unless resolve_tasks is being granted.
   reviewScope: ReviewScopeSchema.nullable().optional(),
+  // Narrows assign_tasks to some content types: null/omitted = any task.
+  assignScope: AssignScopeSchema.nullable().optional(),
 });
 
 // PUT /access/grants — apply a user's desired permission state. New permissions
@@ -54,7 +63,7 @@ const SaveSchema = z.object({
 accessRouter.put("/access/grants", requirePermission("access_manage"), async (req, res, next) => {
   const parsed = SaveSchema.safeParse(req.body);
   if (!parsed.success) return res.status(400).json({ error: "Invalid grant payload." });
-  const { userId, permissions, reviewScope } = parsed.data;
+  const { userId, permissions, reviewScope, assignScope } = parsed.data;
   try {
     // Target must be a member of this workspace, and not an admin — grants are
     // meaningless for admins (they already have everything).
@@ -87,7 +96,13 @@ accessRouter.put("/access/grants", requirePermission("access_manage"), async (re
         [req.orgId, userId, "resolve_tasks", reviewScope ? JSON.stringify(reviewScope) : null],
       );
     }
-    res.json({ ok: true, permissions: await activeGrants(req.orgId, userId), reviewScope: reviewScope ?? null });
+    if (permissions.assign_tasks === true) {
+      await pool.query(
+        "update user_permission_grant set scope=$4 where org_id=$1 and user_id=$2 and permission_key=$3 and revoked_at is null",
+        [req.orgId, userId, "assign_tasks", assignScope ? JSON.stringify(assignScope) : null],
+      );
+    }
+    res.json({ ok: true, permissions: await activeGrants(req.orgId, userId), reviewScope: reviewScope ?? null, assignScope: assignScope ?? null });
   } catch (err) {
     next(err);
   }

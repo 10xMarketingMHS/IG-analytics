@@ -440,7 +440,7 @@ async function taskSummaries(orgId, ids) {
   if (!ids.length) return {};
   const { rows } = await pool.query(
     `select t.id, t.title, t.status, t.task_type, t.tid, t.sid, t.ad_id, t.svid, t.pid, t.due_date,
-            t.editor_id, t.assigned_by, t.delivery_link, t.review_started_at, t.pending_note,
+            t.editor_id, t.assigned_by, t.delivery_link, t.review_started_at, t.pending_note, t.content_format_id,
             coalesce(t.review_link_required, cf.review_link_required, false) as link_required,
             e.name as editor_name, e.image_url as editor_image, w.name as channel_name,
             cf.name as content_format_name

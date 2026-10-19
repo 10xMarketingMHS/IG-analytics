@@ -263,6 +263,11 @@ html[data-theme="dark"] .st-box{border-color:rgba(255,255,255,.22)}
   color:var(--st-text2);font:600 12px 'Plus Jakarta Sans',sans-serif;cursor:pointer;white-space:nowrap}
 .st-pill.on{border-color:var(--st-ac);background:var(--st-acSoft);color:var(--st-acText)}
 .st-picks{display:flex;flex-direction:column;gap:6px}
+.st-fmts{display:flex;flex-direction:column;gap:8px}
+.st-fmtgroup{display:flex;flex-direction:column;gap:4px}
+.st-fmtcat{font-size:11px;font-weight:700;color:var(--st-text3);text-transform:uppercase;letter-spacing:.04em}
+.st-pill.fmt{padding:0 10px}
+.st-fmticon{font-size:13px;line-height:1}
 .st-pickrow{display:flex;align-items:center;gap:8px;flex-wrap:wrap;font-size:12px}
 .st-pickrow>b{min-width:110px;font-weight:650}
 .st-pickrow select.st-in{height:28px;font-size:12px}

@@ -32,15 +32,17 @@ activityRouter.get("/activity", async (req, res, next) => {
       const leadsTeam = (await callerScope(req)).scope === "all";
       const review = await reviewAccess(req.orgId, req.user.sub);
       // Unscoped grant → every review request. Scoped → only requests on the
-      // people (all their tasks) or the individual tasks the scope names.
+      // people (all their tasks), the individual tasks, or the content types
+      // the scope names.
       const reviewAll = review.granted && !review.scope;
       const scoped = review.granted && review.scope ? review.scope.editors ?? [] : [];
       const scopeEditors = scoped.filter((e) => e.taskIds == null).map((e) => e.editorId);
       const scopeTasks = scoped.flatMap((e) => e.taskIds ?? []);
+      const scopeFormats = review.granted && Array.isArray(review.scope?.formats) ? review.scope.formats : [];
       const assigner = await hasActiveGrant(req.orgId, req.user.sub, "assign_tasks");
-      params.push(req.user.sub, me[0]?.editor_id ?? null, reviewAll, scopeEditors, scopeTasks, assigner);
-      const [uid, eid, resolve, sEds, sTasks, asg] =
-        [params.length - 5, params.length - 4, params.length - 3, params.length - 2, params.length - 1, params.length];
+      params.push(req.user.sub, me[0]?.editor_id ?? null, reviewAll, scopeEditors, scopeTasks, assigner, scopeFormats);
+      const [uid, eid, resolve, sEds, sTasks, asg, sFmts] =
+        [params.length - 6, params.length - 5, params.length - 4, params.length - 3, params.length - 2, params.length - 1, params.length];
       where += ` and (
         a.actor_id = $${uid}
         or (a.verb = 'editor_added' and a.entity_id = $${eid}::uuid)
@@ -53,6 +55,7 @@ activityRouter.get("/activity", async (req, res, next) => {
               $${resolve}::boolean
               or exists (select 1 from task t where t.id = a.entity_id
                           and (t.editor_id = any($${sEds}::uuid[]) or t.id = any($${sTasks}::uuid[])
+                               or t.content_format_id = any($${sFmts}::uuid[])
                                or ($${asg}::boolean and t.assigned_by = $${uid}::uuid)))))
       )`;
     }

@@ -1519,7 +1519,7 @@ export function ChatPage() {
     if (t.status !== "review") return false;
     if (isAdmin) return true;
     if (user?.editorId && t.editor_id === user.editorId) return false;
-    return (review.granted && scopeAllowsTask(review.scope, { id: t.id, editor_id: t.editor_id }))
+    return (review.granted && scopeAllowsTask(review.scope, t))
       || (canAssign && !!user && t.assigned_by === user.id);
   }, [isAdmin, user, review, canAssign]);
 
