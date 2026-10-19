@@ -6,7 +6,7 @@ import { useWorkspaces } from "@/lib/workspaces-context";
 import { gradFor } from "@/lib/editor-visuals";
 import { countsInTaskScore } from "@/lib/task-points";
 import type { AppUser, Editor } from "@/lib/types";
-import { DESIGNATIONS, ROLE_KEY_LABEL, TeamMemberModal, roleKeyOf, type RoleKey, type TeamRow } from "@/pages/teams";
+import { DESIGNATIONS, ROLE_KEY_LABEL, TeamMemberModal, positionRank, roleKeyOf, type RoleKey, type TeamRow } from "@/pages/teams";
 import { dateTime } from "@/lib/time-format";
 
 // Team › Roster (Pulse Redesign v5): everyone on the team in one table — their
@@ -49,8 +49,12 @@ export function TeamRoster() {
   function refetchAll() { refetchEditors(); loadUsers(); }
 
   const loading = editors === null || users === null;
+  // Team members in hierarchy order (Manager first), then by name; logins not
+  // on the team list come last.
   const rows: TeamRow[] = loading ? [] : [
-    ...editors.map((ed) => ({ editor: ed, user: users.find((u) => u.editor_id === ed.id) ?? null })),
+    ...[...editors]
+      .sort((a, b) => positionRank(a.designation) - positionRank(b.designation) || a.name.localeCompare(b.name))
+      .map((ed) => ({ editor: ed, user: users.find((u) => u.editor_id === ed.id) ?? null })),
     ...users.filter((u) => !u.editor_id).map((u) => ({ editor: null, user: u })),
   ];
   const withLogin = rows.filter((r) => r.user).length;

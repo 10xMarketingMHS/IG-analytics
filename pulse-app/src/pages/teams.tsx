@@ -6,17 +6,16 @@ import type { AppUser, Editor, Role } from "@/lib/types";
 
 // The add / edit window for one team member — used by Team › Roster.
 
-// Common titles across a content team's hierarchy — a suggestion list, not a
-// closed set. Anyone can still type a custom designation (Freelancer, Intern
-// at a client's own name, etc.) since every org's vocabulary differs.
-// Seniority ladder, top (most senior) to bottom, followed by functional
-// specialties. This is a free-text field with suggestions, not an enum —
-// someone who's both a level and a specialty (e.g. a Team Lead who also
-// does video edits) can just type both: "Team Lead – Video Editor".
-export const DESIGNATIONS = [
-  "Manager", "Team Lead", "Senior Editor", "Editor", "Junior Editor", "Fresher / Intern",
-  "Video Editor", "Motion Designer", "Graphic Designer", "Copywriter", "Thumbnail Designer",
-];
+// Positions: the team's hierarchy, most senior first. A job title only — what
+// someone can do in Pulse is their Role. Picked from this list; a position
+// saved before the list was fixed still shows on that person until changed.
+export const DESIGNATIONS = ["Manager", "Asst. Manager", "Team Lead", "Editor", "Viewer"];
+// Where a position sits in the hierarchy (0 = most senior); anything else
+// comes after the list, and no position last.
+export const positionRank = (p: string | null | undefined): number => {
+  const i = DESIGNATIONS.indexOf((p ?? "").trim());
+  return i >= 0 ? i : p?.trim() ? DESIGNATIONS.length : DESIGNATIONS.length + 1;
+};
 
 export const ROLE_LABEL: Record<Role, string> = { admin: "Admin", editor: "Editor", viewer: "Viewer" };
 export const ROLE_HINT: Record<Role, string> = {
@@ -176,11 +175,11 @@ export function TeamMemberModal({ row, onClose, onSaved, existingEmails, startWi
             </div>
             <div className="field">
               <label className="f">Position</label>
-              <input className="t" list="team-designations" placeholder="e.g. Senior Editor" value={designation} onChange={(e) => setDesignation(e.target.value)} />
-              <datalist id="team-designations">
-                {DESIGNATIONS.map((d) => <option key={d} value={d} />)}
-              </datalist>
-              <div className="hint" style={{ marginTop: 5 }}>Pick a suggestion or type your own — combine a level and a specialty if needed, e.g. "Team Lead – Video Editor".</div>
+              <select className="t" value={designation} onChange={(e) => setDesignation(e.target.value)}>
+                <option value="">No position</option>
+                {(designation && !DESIGNATIONS.includes(designation) ? [designation, ...DESIGNATIONS] : DESIGNATIONS).map((d) => <option key={d} value={d}>{d}</option>)}
+              </select>
+              <div className="hint" style={{ marginTop: 5 }}>Manager › Asst. Manager › Team Lead › Editor › Viewer. A job title only; what they can do is set by their Role.</div>
             </div>
             <div className="field">
               <label className="f">Employee code</label>
