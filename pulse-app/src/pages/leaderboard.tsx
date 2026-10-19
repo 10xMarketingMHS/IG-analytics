@@ -15,7 +15,12 @@ type Period = "month" | "all";
 type Tab = "social" | "house" | "path" | "mp";
 
 type Row = { editor: Editor; reels: number; carousels: number; views: number; points: number };
-type HouseRow = { editor: Editor; points: number; completed: number; goal: number };
+// One person on Media House Leaders (server/src/routes/leaderboard.js): the
+// month's points, jobs completed, goal points, and the share of the goal
+// reached, counted in jobs per type (null with no goal set).
+type GoalType = { contentFormatId: string; name: string; icon: string | null; goal: number; done: number; points: number };
+type HouseRow = { editor: Editor; points: number; completed: number; goal: number; goalPct: number | null; byType: GoalType[] };
+type HouseApiRow = { editorId: string; points: number; completed: number; goalPoints: number; goalPct: number | null; byType: GoalType[] };
 
 // Weighted engagement across an editor's reels & carousels.
 function pointsOf(p: Post) {
@@ -257,16 +262,17 @@ function Laurel({ rank, variant }: { rank: number; variant: "gold" | "silver" | 
   );
 }
 
-// Media House Leaders Goal column: the month's Goal Points target (Σ jc × the
-// content type's points, from Goal Setting) plus a completion bar (Points ÷
-// Goal, capped at 100%). No goal set → a dash.
-function GoalCell({ points, goal }: { points: number; goal: number }) {
-  if (goal <= 0) return <span className="lb-goal-none">—</span>;
-  const pct = Math.max(0, Math.min(100, (points / goal) * 100));
+// Media House Leaders Goal column: how much of the month's goal is reached,
+// counted in jobs per content type (each type up to its goal, weighed by its
+// goal points), with the goal points beside it. Hover for each type's count.
+// No goal set: says so.
+function GoalCell({ goal, pct, byType }: { goal: number; pct: number | null; byType: GoalType[] }) {
+  if (pct == null || goal <= 0) return <span className="lb-goal-none">No goal set</span>;
+  const title = byType.map((g) => `${g.name}: ${g.done} of ${g.goal}`).join(" · ");
   return (
-    <div className="lb-goal">
+    <div className="lb-goal" title={title}>
       <div className="lb-goal-top">
-        <span className="lb-goal-num">{Math.round(goal).toLocaleString()}</span>
+        <span className="lb-goal-num">{Math.round(goal).toLocaleString()} pts</span>
         <span className="lb-goal-pct">{Math.round(pct)}%</span>
       </div>
       <div className="lb-goal-bar"><div className="lb-goal-fill" style={{ width: `${pct}%` }} /></div>
@@ -282,15 +288,9 @@ export function LeaderboardPage() {
   // Editor rankings & the progress path are performance — exclude collab mirrors.
   const posts = postData?.posts?.filter((p) => !p.is_collab_mirror) ?? null;
   const { tasks } = useTasks();
-  // Per-editor Goal Points (Σ jc × points) for the current month — powers the
-  // Goal column + completion on Media House Leaders. Readable by any member.
-  const goalMonth = ymd(new Date()).slice(0, 7) + "-01";
-  const { data: goalData } = useResource<{ totals: { editorId: string; goalPoints: number }[] }>(`/goals/totals?month=${goalMonth}`);
-  const goalByEditor = useMemo(() => {
-    const m = new Map<string, number>();
-    for (const g of goalData?.totals ?? []) m.set(g.editorId, g.goalPoints);
-    return m;
-  }, [goalData]);
+  // Media House Leaders, worked out on the server for everyone alike
+  // (server/src/routes/leaderboard.js): points, jobs and % of goal.
+  const { data: houseData } = useResource<{ month: string; rows: HouseApiRow[] }>("/leaderboard/house");
   const [tab, setTab] = useState<Tab>("social");
   const [period, setPeriod] = useState<Period>("month");
   // Progress Path: content-points vs task-completion mode + selected month.
@@ -323,27 +323,19 @@ export function LeaderboardPage() {
   const socialRanked = socialRows.filter((r) => r.reels + r.carousels > 0);
   const socialUnranked = socialRows.filter((r) => r.reels + r.carousels === 0);
 
-  // ---- Media House Leaders — Points Formula (locked spec) ----
-  // Ranked monthly, current calendar month only: no carryover, no persisted
-  // running balance — a plain sum of this month's completed tasks' points,
-  // recomputed fresh every render (so an admin correcting a task after the
-  // fact just updates the total, no manual reversal needed). People a Super
-  // Admin switched out of the task score aren't on it.
+  // ---- Media House Leaders ----
+  // This calendar month only, ranked by the share of each person's own goal
+  // reached (jobs per type, each up to its goal), then points, then jobs; people
+  // with no goal set come after, by points. The server orders them. People a
+  // Super Admin switched out of the task score aren't on it.
   const houseRows = useMemo<HouseRow[]>(() => {
-    if (!editors || !tasks) return [];
-    const thisMonth = ymd(new Date()).slice(0, 7);
-    return editors
-      .filter(countsInTaskScore)
-      .map((editor) => {
-        const own = tasks.filter(
-          (t) => t.editor_id === editor.id && t.completed_at && isScorableTask(t) && ymd(new Date(t.completed_at)).slice(0, 7) === thisMonth,
-        );
-        const points = own.reduce((sum, t) => sum + taskPoints(t), 0);
-        return { editor, points, completed: own.length, goal: goalByEditor.get(editor.id) ?? 0 };
-      })
-      // Rank by points, then by volume completed (fair tiebreak).
-      .sort((a, b) => b.points - a.points || b.completed - a.completed);
-  }, [editors, tasks, goalByEditor]);
+    if (!editors || !houseData) return [];
+    const byId = new Map(editors.map((e) => [e.id, e]));
+    return houseData.rows.flatMap((r) => {
+      const editor = byId.get(r.editorId);
+      return editor ? [{ editor, points: r.points, completed: r.completed, goal: r.goalPoints, goalPct: r.goalPct, byType: r.byType }] : [];
+    });
+  }, [editors, houseData]);
 
   const houseRanked = houseRows.filter((r) => r.completed > 0);
   const houseUnranked = houseRows.filter((r) => r.completed === 0);
@@ -392,7 +384,7 @@ export function LeaderboardPage() {
         <div className="htext">
           <p>
             Two ways to lead: <b>Social Media Leaders</b> climb on the performance of the Reels &amp;
-            Carousels they edit, <b>Media House Leaders</b> climb on points earned finishing tasks on time.
+            Carousels they edit, <b>Media House Leaders</b> climb on how much of their own monthly goal they finish.
           </p>
         </div>
       </div>
@@ -527,7 +519,7 @@ export function LeaderboardPage() {
           <div className="lb-main">
             <div className="lb-statbar">
               <h3>Work performance</h3>
-              <div className="hint" style={{ margin: 0 }}>Ranked by points earned this month — resets on the 1st</div>
+              <div className="hint" style={{ margin: 0 }}>Ranked by how much of their own goal each person reached, counted in jobs per type, then by points. Resets on the 1st.</div>
             </div>
 
             <div className="lb-table-wrap">
@@ -549,7 +541,7 @@ export function LeaderboardPage() {
                       <div className="who"><b>{r.editor.name}</b><small>{r.editor.designation || "Editor"}</small></div>
                     </div>
                     <div className="lb-cell num lb-hidesm">{r.completed}</div>
-                    <div className="lb-cell lb-hidesm"><GoalCell points={r.points} goal={r.goal} /></div>
+                    <div className="lb-cell lb-hidesm"><GoalCell goal={r.goal} pct={r.goalPct} byType={r.byType} /></div>
                     <div className="lb-points">{r.points.toFixed(1)}</div>
                   </div>
                 ))}
@@ -648,6 +640,7 @@ function FeaturedHouse({ champion }: { champion?: HouseRow }) {
       <div className="fx-name">{editor.name}</div>
       <div className="fx-role">{editor.designation || "Editor"}</div>
       <div className="fx-stats">
+        {champion.goalPct != null && <div className="fx-stat"><b>{Math.round(champion.goalPct)}%</b><span>Of goal</span></div>}
         <div className="fx-stat"><b>{champion.points.toFixed(1)}</b><span>Points</span></div>
         <div className="fx-stat"><b>{champion.completed}</b><span>Completed</span></div>
       </div>

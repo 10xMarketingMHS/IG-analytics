@@ -688,12 +688,6 @@ tasksRouter.patch("/tasks/:id", requireEditor, requireActiveEod, async (req, res
       push("status", d.status);
       // Stamp/clear completion time as status moves in/out of "done".
       sets.push(`completed_at = case when $${params.length} = 'done' then coalesce(completed_at, now()) else null end`);
-      // …and the points it earns, as the type is worth today: changing a
-      // type's points later never rewrites it. Reopened, it's scored afresh.
-      if (await hasColumn("task", "points_at_done")) {
-        sets.push(`points_at_done = case when $${params.length} = 'done'
-          then (select cf.points from task_content_format cf where cf.id = task.content_format_id) else null end`);
-      }
     }
 
     // Hold / Resume — parks an in-progress task (it stays In Progress, just
@@ -843,6 +837,22 @@ tasksRouter.patch("/tasks/:id", requireEditor, requireActiveEod, async (req, res
       // already-running clock should count from (e.g. deferring a self-assign
       // made after office hours to 9 AM tomorrow instead).
       push("budget_started_at", new Date(d.startAt));
+    }
+    // The points a completed task earns: its type's points the moment it's
+    // approved, kept from then on, so changing a type's points never rewrites
+    // it. Reopened and approved again, it keeps them; only a change of content
+    // type scores it afresh (at the new type's points, or on its next approval).
+    if (await hasColumn("task", "points_at_done")) {
+      const formatChanged = d.contentFormatId !== undefined && (d.contentFormatId ?? null) !== (prior.content_format_id ?? null);
+      const endsDone = (d.status ?? prior.status) === "done";
+      if (formatChanged && endsDone) {
+        params.push(d.contentFormatId ?? null);
+        sets.push(`points_at_done = (select cf.points from task_content_format cf where cf.id = $${params.length})`);
+      } else if (formatChanged) {
+        sets.push("points_at_done = null");
+      } else if (d.status === "done" && prior.status !== "done") {
+        sets.push("points_at_done = coalesce(task.points_at_done, (select cf.points from task_content_format cf where cf.id = task.content_format_id))");
+      }
     }
     if (!sets.length) return res.status(400).json({ error: "No fields to update" });
 
