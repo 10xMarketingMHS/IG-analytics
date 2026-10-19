@@ -837,7 +837,7 @@ export function TasksPage() {
   }
 
   return (
-    <section className="screen tb">
+    <section className={"screen tb" + (view === "board" && mobileStage ? " m-freeze" : "")}>
       {/* The redesign's toolbar card. First row: how to look at the board
           (view, whose tasks, when they're due). Second row: search, type and
           format, then the counts in one strip and a new task. */}
@@ -989,7 +989,7 @@ export function TasksPage() {
             const sub = col.key === "done" ? "Finished today" : late > 0 ? `${late} overdue` : items.length === 0 ? "Nothing here" : "On track";
             return (
               <button key={col.key} type="button" role="tab" aria-selected={on} aria-controls={`tb-col-${col.key}`}
-                className={"tb-mtile " + col.key + (on ? " on" : "")} onClick={() => toggleMobileStage(col.key)}>
+                className={"tb-mtile " + col.key + (on ? " on" : "") + (late > 0 ? " late" : "")} onClick={() => toggleMobileStage(col.key)}>
                 <span className="tb-mtile-ic">{STAGE_ICON[col.key]}</span>
                 <b className="tb-mtile-n">{items.length}</b>
                 <span className="tb-mtile-l">{col.label}</span>

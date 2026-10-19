@@ -27,7 +27,7 @@ import { notifyTasksChanged } from "@/lib/task-events";
 import { SodModal } from "@/components/sod-modal";
 import { useTheme, ACCENTS } from "@/components/theme-provider";
 import { ChatProvider, useChat } from "@/lib/chat";
-import { navIcon, SIGN_OUT_ICON, RAIL_ICON, COMPOSE_ICON, SEARCH_ICON, PLUS_ICON, BREAK_ICON, GEAR_ICON, MORE_ICON } from "@/components/nav-icons";
+import { navIcon, SIGN_OUT_ICON, RAIL_ICON, COMPOSE_ICON, SEARCH_ICON, PLUS_ICON, BREAK_ICON, GEAR_ICON, MORE_ICON, CLOSE_ICON } from "@/components/nav-icons";
 import { JumpPalette, type JumpItem } from "@/components/jump-palette";
 import { channelTile, initialsOf } from "@/lib/editor-visuals";
 import "./sidebar.css";
@@ -322,6 +322,29 @@ function AppShellInner() {
   // The phone tab bar: the Workspace places you can see; More lights up anywhere else.
   const tabItems = (sideGroups[0]?.items ?? []).slice(0, 4);
   const onTab = tabItems.some((i) => location.pathname === i.href || location.pathname.startsWith(i.href + "/"));
+  // The phone menu doesn't repeat the places the tab bar already has.
+  const tabHrefs = new Set(tabItems.map((i) => i.href));
+  // Phones: the menu is a sheet; drag its handle down to close it.
+  const sheetRef = useRef<HTMLElement>(null);
+  const dragFrom = useRef<number | null>(null);
+  const sheetDrag = {
+    onTouchStart: (e: React.TouchEvent) => { dragFrom.current = e.touches[0].clientY; },
+    onTouchMove: (e: React.TouchEvent) => {
+      const el = sheetRef.current;
+      if (dragFrom.current == null || !el) return;
+      el.style.transition = "none";
+      el.style.transform = `translateY(${Math.max(0, e.touches[0].clientY - dragFrom.current)}px)`;
+    },
+    onTouchEnd: (e: React.TouchEvent) => {
+      const el = sheetRef.current;
+      if (dragFrom.current == null || !el) return;
+      const moved = e.changedTouches[0].clientY - dragFrom.current;
+      dragFrom.current = null;
+      el.style.transition = "";
+      el.style.transform = "";
+      if (moved > 70) setMenuOpen(false);
+    },
+  };
   // Channels: each brand with a dot per platform it posts to.
   const { data: acctData } = useResource<{ accounts: Account[] }>("/accounts?channel=all");
   const platformsOf = useMemo(() => {
@@ -414,7 +437,13 @@ function AppShellInner() {
       {/* sb2: the redesign's sidebar (components/sidebar.css) — brand and
           collapse, search and new task, the Workspace / Operations groups,
           your channels, then break time and you. */}
-      <aside className="sb2">
+      <aside className="sb2" ref={sheetRef}>
+        {/* phones only: the sheet's handle, title and Close (components/mobile.css) */}
+        <div className="sb2-sheethead" {...sheetDrag}>
+          <span className="sb2-grab" aria-hidden="true" />
+          <b>Menu</b>
+          <button type="button" className="sb2-sheetx" aria-label="Close menu" onClick={() => setMenuOpen(false)}>{CLOSE_ICON}</button>
+        </div>
         <div className="brand">
           {user?.isSuperAdmin && !user.viewingAs ? (
             <button type="button" className="logo" onClick={() => setViewAsOpen(true)} title="View Pulse as someone (test)" aria-label="View Pulse as someone">◐</button>
@@ -447,8 +476,9 @@ function AppShellInner() {
         </div>
         <nav className="side">
           {sideGroups.filter((g) => g.items.length > 0).map((g) => (
-            <div key={g.label} className="sb2-group">
+            <div key={g.label} className={"sb2-group" + (g.items.every((i) => tabHrefs.has(i.href)) ? " in-tabbar" : "")}>
               <div className="navsec"><span className="sb2-label">{g.label}</span></div>
+              <div className="sb2-items">
               {g.items.map((item) => (
                 <NavLink
                   key={item.href}
@@ -461,7 +491,7 @@ function AppShellInner() {
                   }}
                   aria-disabled={eodLocked && !LIVE_WHEN_LOCKED.has(item.href) ? true : undefined}
                   className={({ isActive }) =>
-                    "navitem" + (isActive ? " active" : "") + (eodLocked && LIVE_WHEN_LOCKED.has(item.href) ? " eod-live" : "")
+                    "navitem" + (isActive ? " active" : "") + (eodLocked && LIVE_WHEN_LOCKED.has(item.href) ? " eod-live" : "") + (tabHrefs.has(item.href) ? " in-tabbar" : "")
                   }
                 >
                   <span className="ic">{navIcon(item.href) ?? item.icon}</span> <span className="sb2-label">{item.title}</span>
@@ -471,6 +501,7 @@ function AppShellInner() {
                   {item.chatBadge && <ChatBadge />}
                 </NavLink>
               ))}
+              </div>
             </div>
           ))}
           {workspaces.length > 0 && (
@@ -481,6 +512,7 @@ function AppShellInner() {
                   <NavLink to="/channels" className="sb2-secbtn" title="Add or edit channels" aria-label="Add or edit channels" onClick={() => setMenuOpen(false)}>{PLUS_ICON}</NavLink>
                 )}
               </div>
+              <div className="sb2-items">
               {workspaces.map((w) => (
                 <button key={w.id} type="button" className="navitem sb2-channel" title={rail ? w.name : `${w.name} — see its posts`}
                   aria-disabled={eodLocked ? true : undefined}
@@ -497,6 +529,7 @@ function AppShellInner() {
                   </span>
                 </button>
               ))}
+              </div>
             </div>
           )}
         </nav>

@@ -487,5 +487,28 @@ html[data-theme="dark"] .task-panel-scrim.tp2-scrim{background:rgba(0,0,0,.55)}
   .tb .tb-chips::-webkit-scrollbar{display:none}
   .tb .tb-chip{flex:none}
 }
+/* Phones, once a stage is open: the page stops scrolling. The toolbar, the
+   stages (now one slim row, so you can switch without scrolling back up) and
+   the column's title stay put, and only the cards scroll, on under the tab bar. */
+@media (max-width:768px){
+  .app .content:has(> .screen.tb.m-freeze){padding-bottom:0}
+  .tb.m-freeze{display:flex;flex-direction:column;height:calc(100dvh - var(--m-top));overflow:hidden}
+  .tb.m-freeze>*{flex:none}
+  .tb.m-freeze .tb-mtiles{grid-template-columns:repeat(4,minmax(0,1fr));gap:8px;margin:0 0 12px}
+  .tb.m-freeze .tb-mtile{min-height:0;padding:9px 9px 8px;gap:0 4px;border-radius:15px}
+  .tb.m-freeze .tb-mtile-ic{position:relative;width:26px;height:26px;border-radius:8px;box-shadow:none}
+  .tb.m-freeze .tb-mtile-ic svg{width:15px;height:15px}
+  .tb.m-freeze .tb-mtile-n{font-size:19px}
+  .tb.m-freeze .tb-mtile-l{padding-top:6px;font-size:11.5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .tb.m-freeze .tb-mtile-s{display:none}
+  /* overdue cards in a stage: a red dot on its icon */
+  .tb.m-freeze .tb-mtile.late .tb-mtile-ic::after{content:"";position:absolute;top:-3px;right:-3px;width:9px;height:9px;border-radius:50%;background:var(--tb-bad);
+    box-shadow:0 0 0 2px var(--tb-panel)}
+  .tb.m-freeze .task-board{flex:1 1 auto;min-height:0;display:flex;flex-direction:column;align-items:stretch}
+  .tb.m-freeze .task-col.m-open{flex:1 1 auto;min-height:0;width:100%;display:flex;flex-direction:column}
+  .tb.m-freeze .task-col.m-open .task-colhead{flex:none}
+  .tb.m-freeze .task-col.m-open .tb-col-body{flex:1 1 auto;min-height:0;max-height:none;overflow-y:auto;overscroll-behavior:contain;-webkit-overflow-scrolling:touch;
+    padding-bottom:calc(var(--m-tab) + 20px)}
+}
 @keyframes tb-mopen{from{opacity:0;transform:translateY(-6px)}to{opacity:1;transform:none}}
 @media (prefers-reduced-motion:reduce){.tb .task-col.m-open{animation:none}.tb-mtile{transition:none}}

@@ -73,6 +73,10 @@ html[data-theme="dark"] .app>aside.sb2{
   box-shadow:0 8px 18px -8px oklch(0.55 0.22 var(--acH) / .7)}
 .sb2-compose:hover{filter:brightness(1.07)}
 .sb2-railsearch{display:none}
+/* the phone menu's own pieces (components/mobile.css); on wider screens the
+   rows sit straight in their group */
+.sb2-sheethead{display:none}
+.sb2-items{display:contents}
 
 /* the menu: it still scrolls on short screens, without showing a scrollbar */
 .sb2 nav.side{padding:2px 10px 10px;gap:1px;overflow-x:hidden;scrollbar-width:none;transition:padding var(--sb-t) var(--sb-ease)}

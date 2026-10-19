@@ -35,3 +35,4 @@ export const PLUS_ICON = svg(<path d="M12 5v14M5 12h14" />);
 export const BREAK_ICON = svg(<><path d="M4 9h13v5a5 5 0 0 1-5 5H9a5 5 0 0 1-5-5Z" /><path d="M17 10h1.5a2.5 2.5 0 0 1 0 5H17M8 3v3M12 3v3" /></>);
 export const GEAR_ICON = NAV_ICONS["/settings"];
 export const MORE_ICON = svg(<path d="M4 7h16M4 12h16M4 17h10" />);
+export const CLOSE_ICON = svg(<path d="M6 6l12 12M18 6 6 18" />);
