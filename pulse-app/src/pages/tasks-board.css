@@ -361,6 +361,11 @@ html[data-theme="dark"] .task-panel-scrim.tp2-scrim{background:rgba(0,0,0,.55)}
 .tp2 .tp-title.tp2-title.filled{border-bottom-color:var(--tb-ac)}
 .tp2 .tp-fields.tp2-card{flex:none;display:flex;flex-direction:column;gap:0;margin:0;border:1.5px solid var(--tb-line);border-radius:16px;overflow:hidden;background:var(--tb-panel)}
 .tp2-foot{flex:none;display:flex;align-items:center;gap:10px;padding:14px 18px;border-top:1.5px solid var(--tb-line);background:var(--tb-sunk)}
+/* New task while the day isn't started: say so first, with Start day right there */
+.tp2-dayask{display:flex;align-items:center;gap:12px;padding:12px 14px;border:1.5px solid var(--tb-warn);border-radius:14px;background:var(--tb-panel);color:var(--tb-text);font-size:13px;line-height:1.4}
+.tp2-dayask > span{flex:1;min-width:0;text-wrap:pretty}
+.tp2-dayask .tp2-btn{height:36px;flex:none}
+@media (max-width:560px){.tp2-dayask{flex-direction:column;align-items:stretch}.tp2-dayask .tp2-btn{justify-content:center}}
 .tp2-foot-hint{flex:1;min-width:0;display:flex;align-items:center;gap:6px;font-size:12px;font-weight:600;color:var(--tb-text3);text-wrap:pretty}
 .tp2-foot-hint.ok{color:var(--tb-good)}
 .tp2-foot-hint svg{flex:none}

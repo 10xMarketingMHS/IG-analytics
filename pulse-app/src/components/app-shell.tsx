@@ -20,7 +20,7 @@ import { TaskPanel } from "@/pages/tasks";
 import { BreakWidget } from "@/components/break-widget";
 import { BreakOverlay } from "@/components/break-overlay";
 import { BreakProvider, useBreakState } from "@/lib/break-context";
-import { useEodState } from "@/lib/eod-context";
+import { useDayLocked, useEodState } from "@/lib/eod-context";
 import { MyProfileModal } from "@/components/my-profile-modal";
 import { Modal } from "@/components/modal";
 import { notifyTasksChanged } from "@/lib/task-events";
@@ -264,19 +264,34 @@ function AppShellInner() {
   // and non-interactive (except a few live controls) until they Start EOD. The
   // grayscale/disable is CSS keyed off this class; see index.css `.eod-lock`.
   const {
-    session: eodSession, loading: eodLoading, unlinked: eodUnlinked, summary: eodSummary,
+    session: eodSession, summary: eodSummary,
     eodOpen, openEod, signOutAfter, clearSignOutAfter, start: startEod, busy: eodBusy,
   } = useEodState();
   // Viewing as someone is look-only, so their Start Work lock doesn't apply.
   // Settings › Attendance › Require Start of day off: nothing waits for it.
   const { org: orgSettings } = useOrg();
-  const sodRequired = orgSettings?.attendance?.requireSod !== false;
-  const eodLocked = sodRequired && !user?.viewingAs && active?.role === "editor" && !eodLoading && !eodUnlinked && !eodSession;
+  const eodLocked = useDayLocked();
   const [viewAsOpen, setViewAsOpen] = useState(false);
   // New task (sidebar, phone +) opens its sheet over whatever page you're on.
   const [newTaskOpen, setNewTaskOpen] = useState(false);
-  // A page that waits for Start Work, asked for while the day isn't started.
-  const [lockAsk, setLockAsk] = useState<{ title: string; href: string; state?: unknown } | null>(null);
+  // A page (href) or an action (then) that waits for Start Work, asked for
+  // while the day isn't started.
+  const [lockAsk, setLockAsk] = useState<{ title: string; href?: string; state?: unknown; then?: () => void } | null>(null);
+  // Any page can ask (lib/eod-context.tsx askStartDay), e.g. the board's New task.
+  useEffect(() => {
+    const onAsk = (e: Event) => {
+      const d = (e as CustomEvent<{ title: string; then: () => void }>).detail;
+      if (d) setLockAsk({ title: d.title, then: d.then });
+    };
+    window.addEventListener("pulse:ask-start-day", onAsk);
+    return () => window.removeEventListener("pulse:ask-start-day", onAsk);
+  }, []);
+  // New task needs the day started: ask first rather than after the form is filled.
+  const openNewTask = () => {
+    setMenuOpen(false);
+    if (eodLocked) setLockAsk({ title: "New task", then: () => setNewTaskOpen(true) });
+    else setNewTaskOpen(true);
+  };
   const { editors } = useEditors();
   const { theme, toggle } = useTheme();
   const location = useLocation();
@@ -490,7 +505,7 @@ function AppShellInner() {
           </button>
           {canWrite && (
             <button type="button" className="sb2-compose" title="New task" aria-label="New task"
-              onClick={() => { setMenuOpen(false); setNewTaskOpen(true); }}>
+              onClick={openNewTask}>
               {COMPOSE_ICON}
             </button>
           )}
@@ -621,7 +636,14 @@ function AppShellInner() {
           </div>
           <div className="spacer" />
           {lockedOnOpenPage && (
-            <button className="btn" onClick={() => navigate("/home")}>← My Day</button>
+            <>
+              <button className="btn btn-primary topbar-startday" disabled={eodBusy}
+                title="Your tasks, timers and new tasks wait for Start day"
+                onClick={() => { startEod().catch(() => {}); }}>
+                {eodBusy ? "Starting…" : "▶ Start day"}
+              </button>
+              <button className="btn" onClick={() => navigate("/home")}>← My Day</button>
+            </>
           )}
           {/* The bell is a toggle: it opens Activity, and pressed again there it
               returns to My Day — the Activity page has no other way back. */}
@@ -670,7 +692,7 @@ function AppShellInner() {
       </nav>
       {canWrite && (
         <button type="button" className="tab-fab" title="New task" aria-label="New task"
-          onClick={() => { setMenuOpen(false); setNewTaskOpen(true); }}>
+          onClick={openNewTask}>
           {PLUS_ICON}
         </button>
       )}
@@ -694,7 +716,9 @@ function AppShellInner() {
       {lockAsk && (
         <Modal title="Start your day first" onClose={() => setLockAsk(null)}>
           <div className="lock-ask">
-            <p><b>{lockAsk.title}</b> opens once you start your day. Social & Ads Pipeline, Posts, Leaderboard and Goals all wait for Start day.</p>
+            {lockAsk.then
+              ? <p><b>{lockAsk.title}</b> needs your day started. Tasks are made and worked on once you tap Start day.</p>
+              : <p><b>{lockAsk.title}</b> opens once you start your day. Social & Ads Pipeline, Posts, Leaderboard and Goals all wait for Start day.</p>}
             <div className="lock-ask-acts">
               <button type="button" className="btn" onClick={() => setLockAsk(null)}>Not now</button>
               <button type="button" className="btn btn-primary" disabled={eodBusy}
@@ -702,7 +726,8 @@ function AppShellInner() {
                   const to = lockAsk;
                   try { await startEod(); } catch { return; }
                   setLockAsk(null); setMenuOpen(false);
-                  navigate(to.href, to.state ? { state: to.state } : undefined);
+                  if (to.then) to.then();
+                  else if (to.href) navigate(to.href, to.state ? { state: to.state } : undefined);
                 }}>
                 {eodBusy ? "Starting…" : "▶ Start day"}
               </button>

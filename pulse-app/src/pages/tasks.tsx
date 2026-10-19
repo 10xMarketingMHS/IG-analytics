@@ -13,6 +13,7 @@ import { bankedMs, breakOffsetMs, fmtWait, isDayPaused, isOverBudget, OFFICE_CLO
 import { onTasksChanged } from "@/lib/task-events";
 import { peopleVisibleTo } from "@/lib/home-role";
 import { useIsSuper } from "@/lib/use-org";
+import { askStartDay, useDayLocked, useEodState } from "@/lib/eod-context";
 import { useAuth } from "@/lib/auth-context";
 import { useReviewAccess } from "@/lib/use-review-access";
 import { useWorkspaces } from "@/lib/workspaces-context";
@@ -480,7 +481,13 @@ export function TasksPage() {
   const openTask = (t: Task) => { setCreating(false); setSelectedId(t.id); };
   // "New Task" (and every per-column ＋) opens the full categorized creation
   // card — Social/Ads → Brand → Content Type. Every new task starts in To Do.
-  const startNewTask = () => { setSelectedId(null); setCreating(true); };
+  // New task needs the day started: ask for Start day first, not after the
+  // form is filled in (the server refuses it either way).
+  const dayLocked = useDayLocked();
+  const startNewTask = () => {
+    const open = () => { setSelectedId(null); setCreating(true); };
+    if (dayLocked) askStartDay("New task", open); else open();
+  };
   // A task just made from the sidebar's New task (app-shell) arrives here as
   // { openTask: id }: open it once, then clear the flag so Back or a refresh
   // doesn't reopen it.
@@ -2189,8 +2196,13 @@ export function TaskPanel({ mode, task, canWrite, editors, channels, onClose, on
   // A Project must have its type picked first (it drives duration + points).
   // An Admin task is assigned to its creator, so the creator must be on the roster.
   const adminNeedsRoster = category === "admin" && !user?.editorId;
+  // The day must be started to make a task (the server refuses it otherwise):
+  // said at the top of the form, re-checked as it opens in case it closed meanwhile.
+  const dayLocked = useDayLocked();
+  const { refresh: refreshDay, start: startDay, busy: dayBusy } = useEodState();
+  useEffect(() => { if (creating) refreshDay(); }, [creating, refreshDay]);
   const canCreate = Boolean(title.trim() && category && !adminNeedsRoster && (category === "admin" || draft.channel_id) && (category !== "project" || draft.content_format_id)
-    && (!limitTypes || category === "admin" || !!draft.content_format_id));
+    && (!limitTypes || category === "admin" || !!draft.content_format_id)) && !(creating && dayLocked);
   async function create() {
     if (!canCreate || busy) return;
     setBusy(true);
@@ -2229,7 +2241,8 @@ export function TaskPanel({ mode, task, canWrite, editors, channels, onClose, on
   const pfx = activeCategory ? CATEGORY_PREFIX[activeCategory] : null;
   const ref = task ? taskRef(task) : null;
   const otherIds = task ? [task.tid, showId(task.sid), showId(task.ad_id), task.svid, task.pid].filter((x): x is string => !!x && x !== ref) : [];
-  const createHint = !category ? `Choose a category — Social, Ads, Service or Project${isAdmin ? " or Admin" : ""} — to begin.`
+  const createHint = creating && dayLocked ? "Start your day first: tap Start day above."
+    : !category ? `Choose a category — Social, Ads, Service or Project${isAdmin ? " or Admin" : ""} — to begin.`
     : adminNeedsRoster ? "You're not on the team roster yet, so an Admin task would have no owner. Add yourself on Team › Roster (Edit on your row) first."
     : adminTask ? (!title.trim() ? "Add a title — Admin tasks need nothing else." : "Admin task — just for you.")
     : !draft.channel_id ? "Pick a Brand — Social, Ads, Service and Project tasks are numbered per brand."
@@ -2404,6 +2417,14 @@ export function TaskPanel({ mode, task, canWrite, editors, channels, onClose, on
             <button type="button" className="tp2-x" onClick={close} aria-label="Close">{TB_ICON.close}</button>
           </div>
           <div className="tp-body tp2-body">
+            {dayLocked && (
+              <div className="tp2-dayask" role="status">
+                <span><b>Your day hasn't started.</b> Start it to create this task. Its timer and points count from then.</span>
+                <button type="button" className="tp2-btn pri" disabled={dayBusy} onClick={() => { startDay().catch(() => {}); }}>
+                  {dayBusy ? "Starting…" : "▶ Start day"}
+                </button>
+              </div>
+            )}
             <input className={"tp-title tp2-title" + (title.trim() ? " filled" : "")} autoFocus placeholder="Task title…" value={title}
               onChange={(e) => setTitle(e.target.value)} />
             <textarea className="tp-desc tp2-desc" placeholder="Add a description…" value={description} onChange={(e) => setDescription(e.target.value)} />
