@@ -492,7 +492,7 @@ html[data-theme="dark"] .task-panel-scrim.tp2-scrim{background:rgba(0,0,0,.55)}
    the column's title stay put, and only the cards scroll, on under the tab bar. */
 @media (max-width:768px){
   .app .content:has(> .screen.tb.m-freeze){padding-bottom:0}
-  .tb.m-freeze{display:flex;flex-direction:column;height:calc(100dvh - var(--m-top));overflow:hidden}
+  .tb.m-freeze{display:flex;flex-direction:column;height:calc(100dvh - var(--m-top))}
   .tb.m-freeze>*{flex:none}
   .tb.m-freeze .tb-mtiles{grid-template-columns:repeat(4,minmax(0,1fr));gap:8px;margin:0 0 12px}
   .tb.m-freeze .tb-mtile{min-height:0;padding:9px 9px 8px;gap:0 4px;border-radius:15px}

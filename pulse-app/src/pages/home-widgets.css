@@ -227,7 +227,8 @@ div.hw-timer-title{cursor:default}
 @media (max-width:768px){
   .sd-card{padding:16px}
   .hw-greet{gap:8px}
-  .hw-preview{width:100%;justify-content:space-between}
+  /* Preview as is a desk tool for setting up each role's Home: not on phones */
+  .hw-preview{display:none}
 }
 
 .sd-loading{color:var(--md-text3)}
