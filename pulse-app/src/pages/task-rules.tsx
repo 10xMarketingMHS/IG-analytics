@@ -1,4 +1,4 @@
-import { Fragment, useCallback, useEffect, useRef, useState, type ReactNode } from "react";
+import { Fragment, useCallback, useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
 import { toast } from "sonner";
 import { api, ApiError } from "@/lib/api";
 import { useWorkspaces } from "@/lib/workspaces-context";
@@ -240,10 +240,20 @@ function RuleRow({ l, d }: { l: string; d: string }) {
 }
 
 // A small icon-swatch popover — click the current icon to pick a new one.
-// Closes on an outside click or after picking.
+// Closes on an outside click or after picking. The settings card hides what
+// spills past its edge, so near the bottom (New task type, the last type)
+// it opens upward instead.
 function IconPicker({ value, onPick }: { value: string; onPick: (icon: string) => void }) {
   const [open, setOpen] = useState(false);
+  const [up, setUp] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
+  const popRef = useRef<HTMLDivElement>(null);
+  useLayoutEffect(() => {
+    if (!open) { setUp(false); return; }
+    const pop = popRef.current?.getBoundingClientRect();
+    const card = ref.current?.closest(".st-card")?.getBoundingClientRect();
+    if (pop && card && pop.bottom > card.bottom - 4) setUp(true);
+  }, [open]);
   useEffect(() => {
     if (!open) return;
     function onDocClick(e: MouseEvent) {
@@ -256,7 +266,7 @@ function IconPicker({ value, onPick }: { value: string; onPick: (icon: string) =
     <div className="st-ic" ref={ref}>
       <button type="button" onClick={() => setOpen((o) => !o)} title="Change icon" aria-label="Change icon" aria-expanded={open}>{value}</button>
       {open && (
-        <div className="st-icpop" role="listbox" aria-label="Icons">
+        <div ref={popRef} className={"st-icpop" + (up ? " up" : "")} role="listbox" aria-label="Icons">
           {ICON_OPTIONS.map((ic) => (
             <button key={ic} type="button" role="option" aria-selected={ic === value} className={ic === value ? "on" : ""} onClick={() => { onPick(ic); setOpen(false); }}>{ic}</button>
           ))}

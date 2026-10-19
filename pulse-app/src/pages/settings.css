@@ -208,6 +208,8 @@ html[data-theme="dark"] .st-pt.carousel{background:oklch(0.3 0.06 200);color:okl
   border:1px solid var(--st-line);border-radius:12px;background:var(--st-solid);box-shadow:0 18px 44px -12px rgba(0,0,0,.3)}
 .st-icpop button{width:30px;height:30px;display:grid;place-items:center;padding:0;border:0;border-radius:7px;background:transparent;font-size:15px;cursor:pointer}
 .st-icpop button:hover,.st-icpop button.on{background:var(--st-acSoft)}
+/* no room below inside the card: open above the icon */
+.st-icpop.up{top:auto;bottom:calc(100% + 6px)}
 /* time per person */
 .st-ovwrap{overflow:auto;max-height:440px;border-top:1px solid var(--st-line2)}
 .st-ov{width:100%;border-collapse:collapse}
