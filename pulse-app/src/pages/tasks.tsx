@@ -2145,6 +2145,21 @@ export function TaskPanel({ mode, task, canWrite, editors, channels, onClose, on
   // (which bounds the Due Date) and its read-only points. Declared after `cur`.
   const isProject = activeCategory === "project";
   const selectedFormat = (contentFormats ?? []).find((f) => f.id === cur.content_format_id) ?? null;
+  // An Assign tasks grant limited to some content types (Settings › Access)
+  // covers only those types on other people's tasks; the server holds the same
+  // line. Your own tasks can be any type.
+  const assignLimit = !isAdmin && review.assignScope?.formats ? review.assignScope.formats : null;
+  const limitTypes = assignLimit && !!cur.editor_id && cur.editor_id !== user?.editorId ? assignLimit : null;
+  const typeChoices = limitTypes
+    ? contentTypeChoices.filter((f) => limitTypes.includes(f.id) || (!creating && f.id === cur.content_format_id))
+    : contentTypeChoices;
+  const limitNames = (contentFormats ?? []).filter((f) => assignLimit?.includes(f.id)).map((f) => f.name).join(", ") || "certain content types";
+  // Picking someone else clears a type they can't be given.
+  useEffect(() => {
+    if (creating && limitTypes && draft.content_format_id && !limitTypes.includes(draft.content_format_id)) {
+      setDraft((d) => ({ ...d, content_format_id: null }));
+    }
+  }, [creating, limitTypes, draft.content_format_id]);
   const linkRequired = creating
     ? (linkOverride ?? selectedFormat?.review_link_required ?? false)
     : !!task?.link_required;
@@ -2177,7 +2192,8 @@ export function TaskPanel({ mode, task, canWrite, editors, channels, onClose, on
   // A Project must have its type picked first (it drives duration + points).
   // An Admin task is assigned to its creator, so the creator must be on the roster.
   const adminNeedsRoster = category === "admin" && !user?.editorId;
-  const canCreate = Boolean(title.trim() && category && !adminNeedsRoster && (category === "admin" || draft.channel_id) && (category !== "project" || draft.content_format_id));
+  const canCreate = Boolean(title.trim() && category && !adminNeedsRoster && (category === "admin" || draft.channel_id) && (category !== "project" || draft.content_format_id)
+    && (!limitTypes || category === "admin" || !!draft.content_format_id));
   async function create() {
     if (!canCreate || busy) return;
     setBusy(true);
@@ -2223,6 +2239,7 @@ export function TaskPanel({ mode, task, canWrite, editors, channels, onClose, on
     : !title.trim() ? "Add a task title."
     : category === "project" && contentTypeChoices.length === 0 ? "No project types exist yet. Add one under Settings › Tasks & time (as a Project type) first."
     : category === "project" && !draft.content_format_id ? "Pick a project type."
+    : limitTypes && !draft.content_format_id ? `Pick a content type. You can give others only ${limitNames} tasks.`
     : "Checklist & comments become available after you create the task.";
   const rule = creating || !task ? ""
     : task.status === "review" ? (canResolve
@@ -2337,8 +2354,13 @@ export function TaskPanel({ mode, task, canWrite, editors, channels, onClose, on
           configured in Task Settings for the active category. */}
       <select className="t tp2-narrow" disabled={briefRo} value={cur.content_format_id ?? ""} onChange={(e) => onPickContentType(e.target.value || null)}>
         <option value="">—</option>
-        {contentTypeChoices.map((f) => (<option key={f.id} value={f.id}>{f.icon} {f.name}{!activeCategory ? ` · ${CATEGORY_LABEL[f.category ?? "social"]}` : ""}</option>))}
+        {typeChoices.map((f) => (<option key={f.id} value={f.id}>{f.icon} {f.name}{!activeCategory ? ` · ${CATEGORY_LABEL[f.category ?? "social"]}` : ""}</option>))}
       </select>
+      {limitTypes && !briefRo && (
+        <span className="hint" style={{ display: "block", marginTop: 4 }}>
+          {typeChoices.length ? `For someone else you can pick only ${limitNames}.` : `For someone else you can pick only ${limitNames}, which isn't in this category.`}
+        </span>
+      )}
     </Row>
   );
   /* Whoever assigns work decides if this task needs its output linked before

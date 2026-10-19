@@ -491,7 +491,11 @@ tasksRouter.patch("/tasks/:id", requireEditor, requireActiveEod, async (req, res
       if (assigneeChanged && !claiming && !assigner) {
         return res.status(403).json({ error: "Only an admin can reassign a task." });
       }
-      if (assigneeChanged && !claiming && d.editorId && d.editorId !== myEid) {
+      // A limited Assign tasks grant (say Carousel only) covers only those
+      // types on other people's tasks: handing one over, or changing its brief
+      // or its type.
+      const ownerAfter = d.editorId !== undefined ? (d.editorId ?? null) : prior.editor_id;
+      if (ownerAfter && ownerAfter !== myEid && ((assigneeChanged && !claiming) || briefChanged)) {
         const limit = await assignLimitError(req, d.contentFormatId !== undefined ? d.contentFormatId : prior.content_format_id);
         if (limit) return res.status(403).json({ error: limit });
       }
