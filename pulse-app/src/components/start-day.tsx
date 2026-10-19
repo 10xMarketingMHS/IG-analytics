@@ -60,8 +60,10 @@ export function StartDaySection({
   const graceMin = s?.graceMinutes ?? 10;
   const now = new Date(nowMs);
   const nowMin = now.getHours() * 60 + now.getMinutes();
-  const checkedIn = !!me?.checkInAt || (!!session && !me?.checkOutAt);
-  const closed = !!me?.checkOutAt && !session;
+  // A preview (an admin seeing another role's Home) always shows the card a
+  // team member sees before Start day.
+  const checkedIn = !preview && (!!me?.checkInAt || (!!session && !me?.checkOutAt));
+  const closed = !preview && !!me?.checkOutAt && !session;
 
   // ---- Before check-in: the Start your day card ----
   if (!checkedIn && !closed) {
