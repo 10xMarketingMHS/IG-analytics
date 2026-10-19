@@ -76,6 +76,13 @@ export function TeamRoster() {
   }
   const patchEditor = (ed: Editor, body: object, ok: string, fail: string) =>
     run(ed.id, () => api(`/editors/${ed.id}`, { method: "PATCH", body: JSON.stringify(body) }), ok, fail);
+  // Team lead: who this person reports to. A lead sees only their own people
+  // on Home's Team today and Team › Attendance.
+  const leads = (editors ?? []).filter((e) => e.active && (e.designation ?? "").trim().toLowerCase() === "team lead");
+  const setLead = (ed: Editor, leadId: string) => {
+    const lead = leads.find((l) => l.id === leadId);
+    patchEditor(ed, { leadEditorId: leadId || null }, lead ? `${ed.name} now reports to ${lead.name}.` : `${ed.name} has no team lead.`, "Couldn't change the team lead.");
+  };
   const setPosition = (ed: Editor, designation: string) =>
     patchEditor(ed, { designation }, designation ? `${ed.name} is now ${designation}.` : `${ed.name}'s position cleared.`, "Couldn't change the position.");
   function setCode(ed: Editor, raw: string) {
@@ -144,6 +151,7 @@ export function TeamRoster() {
             <div className="mt-rrow mt-rth" role="row">
               <span role="columnheader">Member</span>
               <span role="columnheader">Position</span>
+              <span role="columnheader">Team lead</span>
               <span role="columnheader">Emp. code</span>
               <span role="columnheader">Task score</span>
               <span role="columnheader">Login</span>
@@ -182,6 +190,21 @@ export function TeamRoster() {
                         {posOpts.map((d) => <option key={d} value={d}>{d}</option>)}
                       </select>
                     ) : <span className="mt-muted">—</span>}
+                  </span>
+                  <span role="cell" className="mt-rlead">
+                    {ed ? (() => {
+                      const options = leads.filter((l) => l.id !== ed.id);
+                      const cur = ed.lead_editor_id ?? "";
+                      const known = !cur || options.some((l) => l.id === cur);
+                      return (
+                        <select className="mt-rin" value={cur} disabled={busy === ed.id} aria-label={`${name}'s team lead`} onChange={(e) => setLead(ed, e.target.value)}
+                          title={options.length ? undefined : "Give someone the Team Lead position first"}>
+                          <option value="">No team lead</option>
+                          {!known && <option value={cur}>{(editors ?? []).find((x) => x.id === cur)?.name ?? "Former lead"}</option>}
+                          {options.map((l) => <option key={l.id} value={l.id}>{l.name}</option>)}
+                        </select>
+                      );
+                    })() : <span className="mt-muted">—</span>}
                   </span>
                   <span role="cell" className="mt-rcode">
                     {ed ? (

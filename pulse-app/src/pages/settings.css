@@ -324,3 +324,9 @@ html[data-theme="dark"] .st-box{border-color:rgba(255,255,255,.22)}
   .st-tasks{padding-left:0}
 }
 .st-mlabel{display:none;font-size:11px;font-weight:700;color:var(--st-text3);margin-right:4px}
+
+/* Settings › Attendance (attendance-settings.tsx) */
+.st-time{width:112px;flex:none}
+.st-time:disabled{opacity:.5}
+.st-inline{flex:none;display:inline-flex;align-items:center;gap:12px}
+.st-summary{flex:1 1 260px;padding:10px 12px;border-radius:10px;background:var(--st-sunk,rgba(30,20,80,.035));color:var(--st-text2);font:500 12px/1.6 "Geist Mono",ui-monospace,monospace;white-space:pre-wrap}

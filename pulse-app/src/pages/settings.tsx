@@ -18,6 +18,7 @@ import { monthName } from "@/lib/goal-periods";
 import { TaskRulesSection } from "@/pages/task-rules";
 import { ChannelsSection } from "@/pages/channels";
 import { EodOversightSection } from "@/pages/eod-oversight";
+import { AttendanceSection } from "@/pages/attendance-settings";
 import { AccessSection } from "@/pages/access";
 import { SI, Seg, Stepper, Toggle, fmtHours } from "@/pages/settings-ui";
 import "./settings.css";
@@ -30,7 +31,7 @@ import "./settings.css";
 // People, logins and roles live in Team › Roster; each person's goals in
 // Goals › Set goals. /channels and /task-rules still land here on their own
 // section; ?s= picks one.
-type Section = "general" | "channels" | "content" | "tasks" | "scoring" | "access" | "alerts" | "workday";
+type Section = "general" | "channels" | "content" | "tasks" | "attendance" | "scoring" | "access" | "alerts" | "workday";
 const SECTION_FOR_PATH: Record<string, Section> = { "/channels": "channels", "/task-rules": "tasks" };
 const LEAVE_UNSAVED = "You have changes that aren't saved. Leave them?";
 
@@ -46,6 +47,7 @@ export function SettingsPage() {
     { k: "channels", l: "Channels", d: "Brands and platform accounts", icon: SI.hub, show: isAdmin },
     { k: "content", l: "Content", d: "Pillars, types, avatars, formats", icon: SI.category, show: true },
     { k: "tasks", l: "Tasks & time", d: "Task types, budgets, breaks", icon: SI.timer, show: isAdmin },
+    { k: "attendance", l: "Attendance", d: "Start of day, late and absent rules", icon: SI.clock, show: isAdmin },
     { k: "scoring", l: "Scoring", d: "How rankings are calculated", icon: SI.chart, show: isAdmin },
     { k: "access", l: "Access", d: "Extra permissions per person", icon: SI.admin, show: isAdmin },
     { k: "alerts", l: "Notifications", d: "What pings you, and where", icon: SI.bell, show: true },
@@ -99,6 +101,7 @@ export function SettingsPage() {
           {cur.k === "channels" && <ChannelsSection />}
           {cur.k === "content" && <ContentSection />}
           {cur.k === "tasks" && <TaskRulesSection />}
+          {cur.k === "attendance" && <AttendanceSection onDirty={setDirty} />}
           {cur.k === "scoring" && <ScoringSection />}
           {cur.k === "access" && <AccessSection />}
           {cur.k === "alerts" && <NotificationsSection />}

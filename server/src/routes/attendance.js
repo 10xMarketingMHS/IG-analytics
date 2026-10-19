@@ -372,9 +372,10 @@ attendanceRouter.get("/attendance/month", async (req, res, next) => {
     const caller = await callerScope(req);
     const { cal, att } = await readSettings(req.orgId);
     const people = await attendancePeople(req.orgId);
-    const shown = caller.scope === "all" ? people
-      : caller.scope === "team" ? people.filter((p) => p.leadEditorId === caller.editorId || p.id === caller.editorId)
-      : people.filter((p) => p.id === caller.editorId);
+    // ?self=1 (My profile): just your own row, whatever you can see.
+    const shown = req.query.self === "1" || caller.scope === "self" ? people.filter((p) => p.id === caller.editorId)
+      : caller.scope === "all" ? people
+      : people.filter((p) => p.leadEditorId === caller.editorId || p.id === caller.editorId);
     const [y, m] = month.split("-").map(Number);
     const count = new Date(Date.UTC(y, m, 0)).getUTCDate();
     const days = Array.from({ length: count }, (_, i) => {
