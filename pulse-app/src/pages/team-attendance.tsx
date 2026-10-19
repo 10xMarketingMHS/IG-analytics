@@ -7,9 +7,9 @@ import type { Editor } from "@/lib/types";
 import "./team-attendance.css";
 
 // Team › Attendance (Pulse Redesign v7): one row per person, one square per
-// day of the month in its status colour, then the month's totals. Managers see
-// everyone, team leads their team, and anyone else only their own row (used on
-// My profile with `self`). Data: GET /attendance/month.
+// day of the month in its status colour, then the month's totals. Managers and
+// team leads see everyone; anyone else only their own row (used on My profile
+// with `self`). Data: GET /attendance/month.
 
 type Cell = { status: ShownStatus | null; row: { checkInAt: string | null; lateMinutes: number; excused: boolean; reason: string | null } | null };
 type Row = {
@@ -69,7 +69,7 @@ export function TeamAttendance({ editors, self = false }: { editors: Editor[] | 
         </span>
       </header>
       {err ? <div className="ta-empty">{err}</div> : !data ? <div className="ta-empty">Loading…</div> : data.rows.length === 0 ? (
-        <div className="ta-empty">{data.scope === "team" ? "No one is assigned to you yet. Team leads are set on Team › Roster." : "No one checks in yet."}</div>
+        <div className="ta-empty">No one checks in yet.</div>
       ) : (
         <>
           <div className="ta-scroll">

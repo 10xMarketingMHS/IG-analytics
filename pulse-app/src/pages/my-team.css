@@ -158,8 +158,8 @@ html[data-theme="dark"] .mt{
   font-size:12px;color:var(--mt-text3)}
 .mt-roles b{color:var(--mt-text);font-weight:700}
 .mt-rscroll{overflow-x:auto}
-.mt-rtable{min-width:1360px}
-.mt-rrow{display:grid;grid-template-columns:minmax(0,1.4fr) minmax(0,1.1fr) minmax(0,1.1fr) minmax(0,.75fr) minmax(0,.85fr) minmax(0,1.4fr) minmax(0,1fr) minmax(0,1fr) 210px;gap:12px;align-items:center;padding:11px 20px;
+.mt-rtable{min-width:1220px}
+.mt-rrow{display:grid;grid-template-columns:minmax(0,1.4fr) minmax(0,1.1fr) minmax(0,.75fr) minmax(0,.85fr) minmax(0,1.4fr) minmax(0,1fr) minmax(0,1fr) 210px;gap:12px;align-items:center;padding:11px 20px;
   border-top:1px solid var(--mt-line2)}
 .mt-rrow:first-child{border-top:0}
 .mt-rrow.mt-rth{padding-top:10px;padding-bottom:10px;font-size:11px;font-weight:800;letter-spacing:.06em;text-transform:uppercase;color:var(--mt-text3)}
@@ -205,8 +205,7 @@ html[data-theme="dark"] .mt{
   .mt-rhead,.mt-roles,.mt-rnote{padding-left:14px;padding-right:14px}
   .mt-rtable{min-width:0}
   .mt-rrow.mt-rth{display:none}
-  .mt-rrow{grid-template-columns:minmax(0,1fr) minmax(0,1fr);grid-template-areas:"who st" "pos role" "lead lead" "code score" "mail mail" "acts acts";gap:8px 10px;padding:12px 14px}
-  .mt-rlead{grid-area:lead}
+  .mt-rrow{grid-template-columns:minmax(0,1fr) minmax(0,1fr);grid-template-areas:"who st" "pos role" "code score" "mail mail" "acts acts";gap:8px 10px;padding:12px 14px}
   .mt-rrow:nth-child(2){border-top:0}
   .mt-rwho{grid-area:who}
   .mt-rstc{grid-area:st;justify-self:end}

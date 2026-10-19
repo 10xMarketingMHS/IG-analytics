@@ -54,7 +54,8 @@ attendanceRouter.get("/attendance/today", async (req, res, next) => {
 
     let team = null;
     if (caller.scope !== "self") {
-      const mine = caller.scope === "all" ? people : people.filter((p) => p.leadEditorId === caller.editorId);
+      // Everyone who checks in, apart from yourself (your own day is the bar above).
+      const mine = people.filter((p) => p.id !== caller.editorId);
       const ids = mine.map((p) => p.id);
       const { rows } = ids.length
         ? await pool.query(`select ${ROW_COLS} from attendance where editor_id = any($1::uuid[]) and date = $2`, [ids, today.ymd])
@@ -232,7 +233,7 @@ async function leadTarget(req, res) {
   const caller = await callerScope(req);
   const editorId = req.params.editorId;
   if (caller.scope === "self" || editorId === caller.editorId || !(await canSee(caller, editorId))) {
-    res.status(403).json({ error: "Only their team lead or a manager can do that." });
+    res.status(403).json({ error: "Only a team lead or a manager can do that." });
     return null;
   }
   const { rows } = await pool.query("select name from editor where id = $1 and org_id = $2", [editorId, req.orgId]);
@@ -373,9 +374,7 @@ attendanceRouter.get("/attendance/month", async (req, res, next) => {
     const { cal, att } = await readSettings(req.orgId);
     const people = await attendancePeople(req.orgId);
     // ?self=1 (My profile): just your own row, whatever you can see.
-    const shown = req.query.self === "1" || caller.scope === "self" ? people.filter((p) => p.id === caller.editorId)
-      : caller.scope === "all" ? people
-      : people.filter((p) => p.leadEditorId === caller.editorId || p.id === caller.editorId);
+    const shown = req.query.self === "1" || caller.scope === "self" ? people.filter((p) => p.id === caller.editorId) : people;
     const [y, m] = month.split("-").map(Number);
     const count = new Date(Date.UTC(y, m, 0)).getUTCDate();
     const days = Array.from({ length: count }, (_, i) => {

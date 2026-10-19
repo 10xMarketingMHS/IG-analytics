@@ -449,13 +449,8 @@ export function HomePage() {
   const homeLayout = useHomeLayout(role);
   const goal = useMyGoal(!!user?.editorId);
   const flow = useStartFlow(ops.active, refetchTasks);
-  // A team lead looks after the people assigned to them; managers and admins
-  // see everyone.
-  const teamIds = useMemo(() => {
-    const leadsOwn = att ? att.scope === "team" : realRole === "lead" && !isAdmin;
-    if (!leadsOwn || !user?.editorId) return null;
-    return new Set((editors ?? []).filter((e) => e.lead_editor_id === user.editorId).map((e) => e.id));
-  }, [att, realRole, isAdmin, editors, user?.editorId]);
+  // Team leads and managers look after the whole team.
+  const teamIds: Set<string> | null = null;
   // Start of day: team leads and editors who check in (an admin previewing
   // those roles sees it as a preview).
   const showSod = role !== "manager" && (previewRole ? true : att ? att.checksIn : attMissing && isEditor && !!user?.editorId);

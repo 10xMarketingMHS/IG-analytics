@@ -28,7 +28,7 @@ export type TeamPerson = {
 };
 export type AttToday = {
   date: string; now: string; opening: string | null; closing: string | null;
-  settings: AttSettings; role: HomeRole; scope: "all" | "team" | "self";
+  settings: AttSettings; role: HomeRole; scope: "all" | "self";
   checksIn: boolean; me: AttRow | null; team: TeamPerson[] | null;
 };
 

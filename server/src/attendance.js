@@ -89,11 +89,9 @@ export function homeRoleOf(designation, isAdmin) {
 }
 
 // The caller: their roster person, Home role and what they can see.
-//   scope "all"  — managers and admins: everyone
-//   scope "team" — team leads: people assigned to them
-//   scope "self" — everyone else
+//   scope "all"  — admins, managers and team leads: the whole team
+//   scope "self" — everyone else (their own day only)
 export async function callerScope(req) {
-  const withLead = await hasColumn("editor", "lead_editor_id");
   const { rows } = await pool.query(
     `select u.editor_id, e.designation, e.name from app_user u left join editor e on e.id = u.editor_id where u.id = $1`,
     [req.user.sub],
@@ -101,17 +99,14 @@ export async function callerScope(req) {
   const editorId = rows[0]?.editor_id ?? null;
   const admin = req.role === "admin" || (await isOrgAdmin(req.orgId, req.user.sub));
   const role = homeRoleOf(rows[0]?.designation, admin);
-  const scope = admin || role === "manager" ? "all" : role === "lead" && editorId && withLead ? "team" : "self";
+  const scope = admin || role === "manager" || role === "lead" ? "all" : "self";
   return { editorId, role, admin, scope, name: rows[0]?.name ?? null };
 }
 
 // Can this caller act on (or see) that person's attendance?
 export async function canSee(caller, editorId) {
   if (caller.scope === "all") return true;
-  if (caller.editorId && editorId === caller.editorId) return true;
-  if (caller.scope !== "team") return false;
-  const { rows } = await pool.query("select 1 from editor where id = $1 and lead_editor_id = $2", [editorId, caller.editorId]);
-  return rows.length > 0;
+  return !!caller.editorId && editorId === caller.editorId;
 }
 
 // Who checks in: active team members with an active login who can work

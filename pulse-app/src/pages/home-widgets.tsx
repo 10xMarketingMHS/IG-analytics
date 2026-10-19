@@ -456,7 +456,7 @@ function TeamNowW({ c }: { c: HomeCtx }) {
   const count = (k: string) => rows.filter((r) => r.kind === k).length;
   const chips = [["working", "Working", "good"], ["break", "On break", "warn"], ["not", "Not started", ""], ["wrapped", "Wrapped up", "ac"]] as const;
   const shown = rows.slice(0, 6);
-  if (!rows.length) return <div className="hw-empty">No one on your team yet. Team leads are set on Team › Roster.</div>;
+  if (!rows.length) return <div className="hw-empty">No one on the team yet.</div>;
   return (
     <div className="hw-pad">
       <div className="hw-chips">
@@ -508,7 +508,7 @@ function CapacityW({ c }: { c: HomeCtx }) {
     })
     .sort((a, b) => b.pct - a.pct)
     .slice(0, 6);
-  if (!rows.length) return <div className="hw-empty">No one on your team yet.</div>;
+  if (!rows.length) return <div className="hw-empty">No one on the team yet.</div>;
   const tone = (p: number) => (p >= 100 ? "bad" : p >= 85 ? "good" : "warn");
   return (
     <div className="hw-pad">
@@ -657,7 +657,7 @@ function AttendW({ c }: { c: HomeCtx }) {
   const att = c.att;
   const team = useMemo(() => [...(att?.team ?? [])].sort((a, b) => (ORDER[a.status] ?? 9) - (ORDER[b.status] ?? 9) || a.name.localeCompare(b.name)), [att]);
   if (!att) return <div className="hw-empty">Attendance needs the database update first.</div>;
-  if (!team.length) return <div className="hw-empty">{att.scope === "team" ? "No one is assigned to you yet. Team leads are set on Team › Roster." : "No one checks in yet."}</div>;
+  if (!team.length) return <div className="hw-empty">No one checks in yet.</div>;
   const s = att.settings;
   const counts = [
     ["on time", team.filter((p) => p.status === "on_time").length, "good"],
