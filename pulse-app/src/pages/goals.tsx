@@ -112,8 +112,8 @@ function TeamGoals({ month, isCurrent, focusId, selfOnly }: { month: string; isC
   const [perf, setPerf] = useState<Record<string, PerfRow[]> | null>(null);
   const [exporting, setExporting] = useState(false);
 
-  // Each person's goals and the month's done counts (one request per person) —
-  // only your own unless you oversee the team.
+  // Each person's goals and the month's done counts, in one request — only
+  // your own unless you oversee the team.
   const active = useMemo(
     () => (editors ?? []).filter((e) => e.active && (!selfOnly || e.id === user?.editorId)),
     [editors, selfOnly, user?.editorId],
@@ -122,10 +122,9 @@ function TeamGoals({ month, isCurrent, focusId, selfOnly }: { month: string; isC
     if (!active.length) { if (editors) setPerf({}); return; }
     let live = true;
     setPerf(null);
-    Promise.all(active.map((e) =>
-      api<{ rows: PerfRow[] }>(`/goals/performance?editorId=${e.id}&month=${month}-01`)
-        .then((r) => [e.id, r.rows] as const).catch(() => [e.id, [] as PerfRow[]] as const),
-    )).then((all) => { if (live) setPerf(Object.fromEntries(all)); });
+    api<{ people: Record<string, { rows: PerfRow[] }> }>(`/goals/performance-all?month=${month}-01`)
+      .then((d) => { if (live) setPerf(Object.fromEntries(active.map((e) => [e.id, d.people[e.id]?.rows ?? []]))); })
+      .catch(() => { if (live) setPerf(Object.fromEntries(active.map((e) => [e.id, [] as PerfRow[]]))); });
     return () => { live = false; };
   }, [active, month, editors]);
 

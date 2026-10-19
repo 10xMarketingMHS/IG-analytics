@@ -86,18 +86,22 @@ export function SetGoals() {
   const [selId, setSelId] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
 
-  // Everyone's goals and capacity for the month (one request per person).
+  // Everyone's goals and capacity for the month, in one request.
+  const [loadError, setLoadError] = useState(false);
+  const [reload, setReload] = useState(0);
   useEffect(() => {
     if (editors === null) return;
     if (!ids) { setData({}); return; }
     let live = true;
     setData(null);
     setDrafts({});
-    Promise.all(ids.split(",").map((id) =>
-      api<GoalsResp>(`/goals?editorId=${id}&month=${month}-01`).then((d) => [id, d] as const).catch(() => null),
-    )).then((all) => { if (live) setData(Object.fromEntries(all.filter((x): x is readonly [string, GoalsResp] => !!x))); });
+    setLoadError(false);
+    const want = new Set(ids.split(","));
+    api<{ people: Record<string, GoalsResp> }>(`/goals/set-all?month=${month}-01`)
+      .then((d) => { if (live) setData(Object.fromEntries(Object.entries(d.people).filter(([id]) => want.has(id)))); })
+      .catch(() => { if (live) setLoadError(true); });
     return () => { live = false; };
-  }, [editors, ids, month]);
+  }, [editors, ids, month, reload]);
 
   const unsaved = Object.keys(drafts).filter((id) => data?.[id] && isDirty(data[id], drafts[id]));
   function setMonth(m: string) {
@@ -115,6 +119,14 @@ export function SetGoals() {
     return plain ? { workingDays: plain.capacity.workingDays, hoursPerDay: plain.capacity.hoursPerDay } : { workingDays: 22, hoursPerDay: 8 };
   }, [data]);
 
+  if (loadError) {
+    return (
+      <div className="gl-card gl-empty">
+        Couldn't load the goals. Check your connection and try again.{" "}
+        <button type="button" className="gl-btn" onClick={() => setReload((n) => n + 1)}>Try again</button>
+      </div>
+    );
+  }
   if (editors === null || data === null) return <div className="gl-card gl-empty">Loading goals…</div>;
   const loaded = people.filter((p) => data[p.id]);
   if (!loaded.length) return <div className="gl-card gl-empty">No team members to set goals for yet.</div>;

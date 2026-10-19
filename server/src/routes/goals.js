@@ -192,6 +192,116 @@ goalsRouter.get("/goals", goalView, async (req, res, next) => {
   }
 });
 
+// GET /goals/set-all?month= — Set goals for everyone at once: each active
+// person's GET /goals answer, from a handful of queries. (One request per
+// person ran ~14 queries each, most in a row, through a pool of 5 connections
+// to a remote database: with a full team the screen sat on Loading.)
+const NIL_ID = "00000000-0000-0000-0000-000000000000";
+goalsRouter.get("/goals/set-all", requirePermission("edit_goals"), async (req, res, next) => {
+  const monthIn = req.query.month;
+  if (!monthIn) return res.status(400).json({ error: "month is required." });
+  try {
+    const { rows: mrow } = await pool.query("select date_trunc('month', $1::date)::date m", [monthIn]);
+    const month = mrow[0].m;
+    const [eds, formats, goals, rules, caps, orgEff] = await Promise.all([
+      pool.query("select id from editor where org_id=$1 and active", [req.orgId]),
+      pool.query("select id, name, icon, category, sort_order, points from task_content_format where org_id=$1 and active order by category, sort_order, name", [req.orgId]),
+      pool.query("select editor_id, content_format_id, jc, jph, (to_jsonb(editor_goal)->>'points')::numeric as pts from editor_goal where org_id=$1 and period_month=$2", [req.orgId, month]),
+      pool.query("select content_format_id, editor_id, hours from task_time_rule where org_id=$1", [req.orgId]),
+      pool.query("select editor_id, working_days, hours_per_day from editor_capacity where org_id=$1 and period_month=$2", [req.orgId, month]),
+      // a person with no capacity of their own gets the org's (or the calendar's)
+      effectiveCapacity(req.orgId, NIL_ID, month),
+    ]);
+    // the type's time for a person: theirs, else the org's (as resolveBudgetHours)
+    const rule = new Map(rules.rows.map((r) => [`${r.content_format_id}:${r.editor_id ?? ""}`, r.hours]));
+    const budgetOf = (editorId, formatId) => rule.get(`${formatId}:${editorId}`) ?? rule.get(`${formatId}:`) ?? null;
+    const goalBy = new Map(goals.rows.map((g) => [`${g.editor_id}:${g.content_format_id}`, g]));
+    const capOf = (r) => r && { workingDays: Number(r.working_days), hoursPerDay: Number(r.hours_per_day) };
+    const orgRow = caps.rows.find((r) => r.editor_id == null) ?? null;
+    const people = {};
+    for (const { id } of eds.rows) {
+      const own = caps.rows.find((r) => r.editor_id === id) ?? null;
+      const cap = own ? { ...own, source: "editor" } : orgEff;
+      people[id] = {
+        month,
+        capacity: { workingDays: Number(cap.working_days), hoursPerDay: Number(cap.hours_per_day), hours: capHours(cap), source: cap.source },
+        orgDefault: capOf(orgRow),
+        editorOverride: capOf(own),
+        rows: formats.rows.map((f) => {
+          const g = goalBy.get(`${id}:${f.id}`);
+          const budget = budgetOf(id, f.id);
+          return {
+            contentFormatId: f.id, name: f.name, icon: f.icon, category: f.category,
+            points: g && g.pts != null ? Number(g.pts) : Number(f.points),
+            jc: g ? Number(g.jc) : null,
+            jph: g ? Number(g.jph) : (budget != null ? Number(budget) : 0),
+            budget: budget != null ? Number(budget) : null,
+          };
+        }),
+      };
+    }
+    res.json({ month, people });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// GET /goals/performance-all?month= — Team goals for everyone at once: each
+// person's GET /goals/performance rows. Only your own unless you oversee goals.
+goalsRouter.get("/goals/performance-all", goalView, async (req, res, next) => {
+  const monthIn = req.query.month;
+  if (!monthIn) return res.status(400).json({ error: "month is required." });
+  try {
+    const g0 = req.viaGrant;
+    const overseer = !g0?.goal_setting_access || g0.edit_goals || g0.discipline;
+    const self = overseer ? null : await scopedEditorId(req, null);
+    if (!overseer && !self) return res.json({ month: monthIn, people: {} });
+    const { rows: mrow } = await pool.query("select date_trunc('month', $1::date)::date m", [monthIn]);
+    const month = mrow[0].m;
+    const one = self ? " and g.editor_id = $3" : "";
+    const P = self ? [req.orgId, month, self] : [req.orgId, month];
+    const [goals, actuals, scores] = await Promise.all([
+      pool.query(
+        `select g.editor_id, g.content_format_id, g.jc, g.jph, cf.name, cf.icon, cf.category, cf.sort_order,
+                coalesce((to_jsonb(g)->>'points')::numeric, cf.points) as points
+           from editor_goal g join task_content_format cf on cf.id = g.content_format_id
+          where g.org_id=$1 and g.period_month=$2${one}
+          order by cf.category, cf.sort_order, cf.name`,
+        P,
+      ),
+      pool.query(
+        `select editor_id, content_format_id, count(*)::int actual
+           from task
+          where org_id=$1 and status='done' and content_format_id is not null
+            and completed_at >= $2 and completed_at < ($2::date + interval '1 month')${self ? " and editor_id = $3" : ""}
+          group by editor_id, content_format_id`,
+        P,
+      ),
+      scoreMonthAll(req.orgId, String(month).slice(0, 10), self),
+    ]);
+    const actualBy = new Map(actuals.rows.map((a) => [`${a.editor_id}:${a.content_format_id}`, a.actual]));
+    const people = {};
+    for (const g of goals.rows) {
+      const scored = scores.get(g.editor_id);
+      const t = (scored?.types ?? []).find((x) => x.contentFormatId === g.content_format_id);
+      const goalJC = Number(g.jc), jph = Number(g.jph);
+      const actualJC = actualBy.get(`${g.editor_id}:${g.content_format_id}`) ?? 0;
+      (people[g.editor_id] ??= { rows: [] }).rows.push({
+        contentFormatId: g.content_format_id, name: g.name, icon: g.icon, category: g.category,
+        goalJC, actualJC, jph, points: Number(g.points),
+        goalHours: goalJC * jph, actualHours: actualJC * jph,
+        balance: goalJC * jph - actualJC * jph,
+        achievement: goalJC > 0 ? (actualJC / goalJC) * 100 : null,
+        goalAdjusted: t ? Math.round(t.goal * 10) / 10 : goalJC,
+        covered: scored?.coveredByType?.[g.content_format_id] ?? 0,
+      });
+    }
+    res.json({ month, people });
+  } catch (err) {
+    next(err);
+  }
+});
+
 const CapacitySchema = z.object({
   scope: z.enum(["org", "editor"]),
   editorId: z.string().uuid().optional(),
