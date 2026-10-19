@@ -18,7 +18,8 @@ import type { Editor } from "@/lib/types";
 // planned; the bar at the bottom has the totals and Save, which stays off while
 // the plan is more than they have time for.
 
-type Row = { contentFormatId: string; name: string; icon: string; category: string | null; jc: number | null; jph: number; points: number; budget?: number | null };
+// durationDays: a project's days, each one a full work day of hours (server/src/routes/goals.js)
+type Row = { contentFormatId: string; name: string; icon: string; category: string | null; jc: number | null; jph: number; points: number; budget?: number | null; durationDays?: number | null };
 type Cap = { workingDays: number; hoursPerDay: number };
 type GoalsResp = {
   month: string;
@@ -238,7 +239,13 @@ export function SetGoals() {
                     <span className="gs-type"><b>{x.r.icon} {x.r.name}</b><small>{x.r.category ? CAT[x.r.category] ?? x.r.category : ""}</small></span>
                     <input type="number" min={0} step={1} placeholder="—" aria-label={`Jobs of ${x.r.name}`}
                       value={dr[x.r.contentFormatId] ?? ""} onChange={(e) => setJobs(x.r.contentFormatId, e.target.value)} />
-                    <span className="c gs-jph" title="The task type's time — change it in Settings › Tasks & time">{x.jph ? fmtHours(x.jph) : "—"}</span>
+                    {x.r.durationDays ? (
+                      <span className="c gs-jph" title={`A project's days count as full work days: ${x.r.durationDays} × ${fmtHours(c.cap.hoursPerDay)} = ${fmtHours(x.jph)}. Change the days in Settings › Tasks & time.`}>
+                        {x.r.durationDays} day{x.r.durationDays === 1 ? "" : "s"}
+                      </span>
+                    ) : (
+                      <span className="c gs-jph" title="The task type's time — change it in Settings › Tasks & time">{x.jph ? fmtHours(x.jph) : "—"}</span>
+                    )}
                     <b className="r">{x.jobs ? fmtHours(x.hrs) : "—"}</b>
                     <span className="r gs-split">{x.jobs ? `${Math.ceil(x.jobs / 2)} · ${x.jobs - Math.ceil(x.jobs / 2)}` : "—"}</span>
                   </div>
