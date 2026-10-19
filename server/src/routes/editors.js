@@ -32,6 +32,26 @@ const editorColumns = async () =>
   ((await hasColumn("editor", "lead_editor_id")) ? ", lead_editor_id" : ", null::uuid as lead_editor_id");
 const codeOf = (v) => (v ? v.toUpperCase() : null);
 
+// An admin's or Super Admin's roster record (position, employee code, name,
+// photo, removal) is a Super Admin's to change — the position decides their
+// Home and what they see. Someone may still change their own name and photo.
+const SUPER_ONLY_RECORD = "Only a Super Admin can change an admin's details.";
+async function adminOwner(editorId) {
+  const { rows } = await pool.query(
+    `select u.id from app_user u join membership m on m.user_id = u.id
+      where u.editor_id = $1 and m.role = 'admin' limit 1`,
+    [editorId],
+  );
+  return rows[0]?.id ?? null;
+}
+async function mayChangeRecord(req, editorId, fields) {
+  const owner = await adminOwner(editorId);
+  if (!owner) return true;
+  if (await isSuperUser(req.user.sub, await superState(req.workspaceId))) return true;
+  // Your own record: name and photo only.
+  return owner === req.user.sub && fields.every((f) => f === "name" || f === "imageUrl");
+}
+
 // Editors are the shared Media House team — scoped to the org, so every channel
 // sees the same people.
 editorsRouter.get("/editors", async (req, res, next) => {
@@ -93,6 +113,12 @@ editorsRouter.patch("/editors/:id", requireAdmin, async (req, res, next) => {
   if (!parsed.success) {
     return res.status(400).json({ error: parsed.error.flatten().fieldErrors });
   }
+  try {
+    const fields = Object.keys(parsed.data).filter((k) => parsed.data[k] !== undefined);
+    if (!(await mayChangeRecord(req, req.params.id, fields))) return res.status(403).json({ error: SUPER_ONLY_RECORD });
+  } catch (err) {
+    return next(err);
+  }
   const sets = [];
   const params = [req.params.id, req.orgId];
   for (const [key, col] of [["name", "name"], ["designation", "designation"], ["imageUrl", "image_url"]]) {
@@ -149,6 +175,7 @@ editorsRouter.patch("/editors/:id", requireAdmin, async (req, res, next) => {
 // ON DELETE SET NULL, so those posts simply become unassigned.
 editorsRouter.delete("/editors/:id", requireAdmin, async (req, res, next) => {
   try {
+    if (!(await mayChangeRecord(req, req.params.id, ["remove"]))) return res.status(403).json({ error: SUPER_ONLY_RECORD });
     const { rowCount } = await pool.query(
       "delete from editor where id = $1 and org_id = $2",
       [req.params.id, req.orgId],

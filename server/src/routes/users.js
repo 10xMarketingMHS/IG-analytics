@@ -270,6 +270,9 @@ usersRouter.patch("/users/:id", requireAdmin, async (req, res, next) => {
         [editorId, req.orgId],
       );
       if (!erows.length) return res.status(400).json({ error: "That team member wasn't found." });
+      // One login per team member — never take over someone else's record.
+      const { rows: taken } = await pool.query("select 1 from app_user where editor_id = $1 and id != $2", [editorId, targetId]);
+      if (taken.length) return res.status(409).json({ error: "That team member already has a login linked." });
     }
     const { rows: mrows } = await pool.query(
       "select role from membership where workspace_id = $1 and user_id = $2",
@@ -299,7 +302,8 @@ usersRouter.patch("/users/:id", requireAdmin, async (req, res, next) => {
       ? !!(await pool.query("select is_super_admin from app_user where id = $1", [targetId])).rows[0]?.is_super_admin
       : false;
     const touchesAdmin = (role === "admin" && currentRole !== "admin") || superAdmin === true || (superAdmin === false && targetSuper)
-      || (currentRole === "admin" && !isSelf && (role !== undefined || active !== undefined || password !== undefined));
+      || (currentRole === "admin" && !isSelf && (role !== undefined || active !== undefined || password !== undefined
+        || name !== undefined || editorId !== undefined));
     if (touchesAdmin && !(await isSuperUser(req.user.sub, st))) {
       return res.status(403).json({ error: SUPER_ONLY });
     }

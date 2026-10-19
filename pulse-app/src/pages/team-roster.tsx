@@ -158,6 +158,10 @@ export function TeamRoster() {
               const rk = roleKeyOf(u);
               // An admin's role, password and sign-in are a Super Admin's to change.
               const locked = !!u && u.role === "admin" && !amSuper && !u.isSelf;
+              // An admin's position and code — your own included — are a Super
+              // Admin's to set (the position decides their Home and access).
+              const recordLocked = !!u && u.role === "admin" && !amSuper;
+              const lockTip = recordLocked ? "Only a Super Admin can change an admin's details" : undefined;
               const st = !u ? ["No login", "", IC.none] as const
                 : !u.active ? ["Deactivated", "bad", IC.off] as const
                 : u.resetRequestedAt ? ["Asked for reset", "warn", IC.key] as const
@@ -177,7 +181,7 @@ export function TeamRoster() {
                   </span>
                   <span role="cell" className="mt-rpos">
                     {ed ? (
-                      <select className="mt-rin" value={pos} disabled={busy === ed.id} aria-label={`${name}'s position`} onChange={(e) => setPosition(ed, e.target.value)}>
+                      <select className="mt-rin" value={pos} disabled={busy === ed.id || recordLocked} title={lockTip} aria-label={`${name}'s position`} onChange={(e) => setPosition(ed, e.target.value)}>
                         <option value="">No position</option>
                         {posOpts.map((d) => <option key={d} value={d}>{d}</option>)}
                       </select>
@@ -186,7 +190,7 @@ export function TeamRoster() {
                   <span role="cell" className="mt-rcode">
                     {ed ? (
                       <input className="mt-rin mono" defaultValue={ed.employee_code ?? ""} key={ed.employee_code ?? ""} placeholder="MHS000" maxLength={20}
-                        aria-label={`${name}'s employee code`} disabled={busy === ed.id}
+                        aria-label={`${name}'s employee code`} disabled={busy === ed.id || recordLocked} title={lockTip}
                         onBlur={(e) => setCode(ed, e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") (e.target as HTMLInputElement).blur(); }} />
                     ) : <span className="mt-muted">—</span>}
                   </span>
@@ -230,7 +234,8 @@ export function TeamRoster() {
                     ) : (
                       <button type="button" className="mt-rlink" onClick={() => setModal({ row: r, login: true })}>Give login</button>
                     )}
-                    <button type="button" className="mt-ricon" title={`Edit ${name}`} aria-label={`Edit ${name}`} onClick={() => setModal({ row: r })}>{IC.edit}</button>
+                    <button type="button" className="mt-ricon" title={locked ? "Only a Super Admin can edit an admin" : `Edit ${name}`} aria-label={`Edit ${name}`}
+                      disabled={locked} onClick={() => setModal({ row: r })}>{IC.edit}</button>
                   </span>
                 </div>
               );

@@ -191,7 +191,8 @@ html[data-theme="dark"] .mt{
 .mt-rlink.good{color:var(--mt-good)}
 .mt-rlink:disabled{opacity:.5;cursor:default}
 .mt-ricon{flex:none;width:30px;height:30px;display:grid;place-items:center;padding:0;border:1px solid var(--mt-line);border-radius:8px;background:var(--mt-solid);color:var(--mt-text2);cursor:pointer}
-.mt-ricon:hover{color:var(--mt-text);border-color:var(--mt-text3)}
+.mt-ricon:hover:not(:disabled){color:var(--mt-text);border-color:var(--mt-text3)}
+.mt-ricon:disabled{opacity:.4;cursor:not-allowed}
 /* Task score: a switch and the words for it (only a Super Admin can flip it) */
 .mt-score{display:inline-flex;align-items:center;gap:8px;font-size:12.5px;font-weight:600;color:var(--mt-text3);white-space:nowrap}
 .mt-score.on{color:var(--mt-text)}

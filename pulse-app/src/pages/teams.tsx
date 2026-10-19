@@ -52,6 +52,9 @@ export function TeamMemberModal({ row, onClose, onSaved, existingEmails, startWi
 }) {
   const { editor, user } = row;
   const editingEditor = Boolean(editor);
+  // An admin's position and code are a Super Admin's to set; on your own row
+  // you can still change your name and photo.
+  const adminLocked = !canManageAdmins && !!user && user.role === "admin";
   const fileRef = useRef<HTMLInputElement>(null);
 
   const [name, setName] = useState(editor?.name ?? user?.name ?? "");
@@ -175,7 +178,8 @@ export function TeamMemberModal({ row, onClose, onSaved, existingEmails, startWi
             </div>
             <div className="field">
               <label className="f">Position</label>
-              <select className="t" value={designation} onChange={(e) => setDesignation(e.target.value)}>
+              <select className="t" value={designation} onChange={(e) => setDesignation(e.target.value)} disabled={adminLocked}
+                title={adminLocked ? "Only a Super Admin can change an admin's position" : undefined}>
                 <option value="">No position</option>
                 {(designation && !DESIGNATIONS.includes(designation) ? [designation, ...DESIGNATIONS] : DESIGNATIONS).map((d) => <option key={d} value={d}>{d}</option>)}
               </select>
@@ -183,7 +187,8 @@ export function TeamMemberModal({ row, onClose, onSaved, existingEmails, startWi
             </div>
             <div className="field">
               <label className="f">Employee code</label>
-              <input className="t" placeholder="e.g. MHS001" maxLength={20} value={code} onChange={(e) => setCode(e.target.value.toUpperCase())} style={{ maxWidth: 200 }} />
+              <input className="t" placeholder="e.g. MHS001" maxLength={20} value={code} onChange={(e) => setCode(e.target.value.toUpperCase())} style={{ maxWidth: 200 }}
+                disabled={adminLocked} title={adminLocked ? "Only a Super Admin can change an admin's employee code" : undefined} />
             </div>
 
             <label style={{ display: "flex", alignItems: "center", gap: 9, margin: "18px 0 4px", cursor: user ? "default" : "pointer", fontSize: 13.5, fontWeight: 700 }}>
@@ -222,7 +227,7 @@ export function TeamMemberModal({ row, onClose, onSaved, existingEmails, startWi
             {error && <p className="login-err">{error}</p>}
           </div>
           <div className="mfoot">
-            {editor && onRemoveEditor && (
+            {editor && onRemoveEditor && !adminLocked && (
               <button type="button" className="linkbtn" style={{ color: "var(--rose)", marginRight: "auto" }} onClick={() => onRemoveEditor(editor)}>Remove from team</button>
             )}
             {user && !user.isSelf && onRemoveLogin && (
