@@ -19,6 +19,7 @@ import { Modal } from "@/components/modal";
 import { toast } from "sonner";
 import type { Task, TaskStatus, TaskPriority, TaskType, TaskMeta, TaskAttachment, TaskReviewLogEntry, ContentFormatDef, Editor, Subtask, TaskComment } from "@/lib/types";
 import "./tasks-board.css";
+import { HandoverBlock, HandoverInbox, HandoverPill, useHandovers } from "@/components/handover";
 import { clockTime, clockTimeShort, dateTime } from "@/lib/time-format";
 
 function relTime(iso: string) {
@@ -619,6 +620,8 @@ export function TasksPage() {
   const [barOpen, setBarOpen] = useState(() => { try { return window.localStorage.getItem("pulse-tasks-toolbar-open") === "1"; } catch { return false; } });
   // Phones: which stage's cards are unfolded under the tiles (none to start;
   // kept while you move around the app).
+  // Hand-overs waiting on tasks here (a pill on the card) and for you (above the board).
+  const handovers = useHandovers();
   const [mobileStage, setMobileStage] = useState<TaskStatus | null>(() => {
     try { return (window.sessionStorage.getItem(MOBILE_STAGE_KEY) as TaskStatus | null) || null; } catch { return null; }
   });
@@ -968,6 +971,8 @@ export function TasksPage() {
         </div>
       )}
 
+      <HandoverInbox onOpen={(id) => { setCreating(false); setSelectedId(id); }} />
+
       {tasks === null ? (
         <div className="hint">Loading…</div>
       ) : tasks.length === 0 ? (
@@ -1149,6 +1154,7 @@ export function TasksPage() {
                           {TB_ICON.note}<span>Rework: {t.pending_note}</span>
                         </div>
                       )}
+                      {handovers.byTask.get(t.id) && <HandoverPill h={handovers.byTask.get(t.id)!} />}
                       {t.status === "review" && t.review_started_at && (() => {
                         const wait = reviewWaitMs(t, nowMs);
                         return (
@@ -2407,6 +2413,8 @@ export function TaskPanel({ mode, task, canWrite, editors, channels, onClose, on
               {TB_ICON.note}<span>Rework: {t.pending_note}</span>
             </div>
           )}
+          {/* Hand over your own task, answer one offered to you, or move one on */}
+          <HandoverBlock task={t} onChanged={onChanged} />
           {!ro && briefRo && (
             <div className="hint tp-locked">
               🔒 {isDoneTask ? "This task is completed — only an admin can change it."

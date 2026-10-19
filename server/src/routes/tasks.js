@@ -6,6 +6,7 @@ import { requireActiveEod } from "./eod.js";
 import { assignFormats, hasActiveGrant, reviewAccess, scopeAllowsTask } from "../permissions.js";
 import { logActivity } from "../activity.js";
 import { canSeeTask, editorRanks, mayOpenTask, taskViewer } from "../hierarchy.js";
+import { closePendingHandovers } from "../handover.js";
 
 export const tasksRouter = Router();
 
@@ -840,6 +841,11 @@ tasksRouter.patch("/tasks/:id", requireEditor, requireActiveEod, async (req, res
 
     const finalStatus = d.status ?? prior.status;
     const finalRecurrence = d.recurrence ?? prior.recurrence;
+    // Given to someone another way, or sent on to Review / Completed: a
+    // waiting hand-over is over (../handover.js).
+    if ((d.editorId !== undefined && (d.editorId ?? null) !== prior.editor_id) || finalStatus === "review" || finalStatus === "done") {
+      await closePendingHandovers(req.params.id);
+    }
     if (prior.status !== "done" && finalStatus === "done" && finalRecurrence !== "none") {
       await spawnNextOccurrence(req.params.id, finalRecurrence);
     }

@@ -35,6 +35,12 @@ const VERB_META: Record<ActivityVerb, { icon: string; cls: string }> = {
   attendance_undone: { icon: "↩️", cls: "v-editor" },
   attendance_correction: { icon: "🕘", cls: "v-editor" },
   attendance_correction_answered: { icon: "🕘", cls: "v-editor" },
+  handover_offered: { icon: "🔁", cls: "v-task" },
+  handover_accepted: { icon: "🤝", cls: "v-done" },
+  handover_declined: { icon: "↩️", cls: "v-task" },
+  handover_cancelled: { icon: "↩️", cls: "v-task" },
+  handover_escalated: { icon: "⚠️", cls: "v-task" },
+  handover_moved: { icon: "🔁", cls: "v-task" },
 };
 
 function relTime(iso: string) {

@@ -303,7 +303,9 @@ export type ActivityVerb =
   | "held" | "resumed" | "password_reset_requested" | "password_reset" | "sod_submitted"
   // Attendance (Start day, a lead's marks, nudges, corrections, the no-SOD alert)
   | "attendance_check_in" | "attendance_no_sod" | "attendance_nudge" | "attendance_marked" | "attendance_excused"
-  | "attendance_undone" | "attendance_correction" | "attendance_correction_answered";
+  | "attendance_undone" | "attendance_correction" | "attendance_correction_answered"
+  // Hand over (components/handover.tsx)
+  | "handover_offered" | "handover_accepted" | "handover_declined" | "handover_cancelled" | "handover_escalated" | "handover_moved";
 
 export type Activity = {
   id: string;

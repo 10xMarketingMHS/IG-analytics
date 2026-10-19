@@ -24,6 +24,7 @@ import type { WidgetKey } from "@/lib/home-widgets";
 import { useOrg } from "@/lib/use-org";
 import type { Editor, Post, Task } from "@/lib/types";
 import { MyReportsModal } from "@/components/my-reports";
+import { HandoverInbox } from "@/components/handover";
 import { clockTime } from "@/lib/time-format";
 
 // DF Foods runs a 6-day week (Mon–Sat) — used to spread the monthly Goal Points
@@ -608,6 +609,8 @@ export function HomePage() {
       </div>
       )}
 
+      {/* Tasks a teammate wants to hand you, and hand-overs that have climbed to you */}
+      {!previewRole && <HandoverInbox onOpen={setOpenTaskId} />}
       {/* Everything under the banner: the greeting row, Start of day (team leads
           and editors), and the widgets for this Home role (home-widgets.tsx). */}
       <HomeWidgets

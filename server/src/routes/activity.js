@@ -2,6 +2,7 @@ import { Router } from "express";
 import { pool } from "../db.js";
 import { callerScope } from "../attendance.js";
 import { hasActiveGrant, reviewAccess } from "../permissions.js";
+import { syncHandovers } from "../handover.js";
 
 export const activityRouter = Router();
 
@@ -14,9 +15,11 @@ export const activityRouter = Router();
 // for resolve_tasks grantees, tasks submitted for review that fall inside their
 // review scope — and, for assigners, tasks they assigned that went into review.
 // Other people's tasks and arrivals, published posts and channel changes are
-// left out.
+// left out. Hand-over notices go to the people they name (meta.notifyEditorIds).
 activityRouter.get("/activity", async (req, res, next) => {
   try {
+    // an unanswered hand-over climbs at each office close (../handover.js)
+    await syncHandovers(req.orgId);
     const params = [req.orgId];
     let where = "a.org_id = $1";
     if (req.query.channel && req.query.channel !== "all") {
@@ -49,6 +52,7 @@ activityRouter.get("/activity", async (req, res, next) => {
         or (a.verb like 'attendance_%' and (a.entity_id = $${eid}::uuid${leadsTeam ? " or true" : ""}))
         or (a.verb = 'deleted' and a.meta->>'editorId' = $${eid}::text)
         or (a.verb = 'assigned' and a.meta->>'fromEditorId' = $${eid}::text)
+        or (a.verb like 'handover_%' and coalesce(a.meta->'notifyEditorIds', '[]'::jsonb) ? ($${eid}::uuid)::text)
         or (a.entity_type = 'task' and exists (
               select 1 from task t where t.id = a.entity_id and t.editor_id = $${eid}::uuid))
         or (a.verb = 'review_requested' and (
