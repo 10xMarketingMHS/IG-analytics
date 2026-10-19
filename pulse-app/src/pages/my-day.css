@@ -159,7 +159,6 @@ html[data-theme="dark"] .myday{
 .md-grow-x{flex:1}
 .md-tabs{display:inline-flex;padding:3px;border:1px solid var(--md-line);border-radius:10px;background:var(--md-panel);backdrop-filter:blur(16px) saturate(160%);-webkit-backdrop-filter:blur(16px) saturate(160%)}
 .md-tabs button{height:30px;padding:0 13px;border:0;border-radius:7px;background:transparent;color:var(--md-text3);font:600 12.5px 'Plus Jakarta Sans',sans-serif;cursor:pointer;white-space:nowrap}
-.md-tabs button:hover{color:var(--md-text)}
 .md-tabs button.on{background:var(--md-panel);color:var(--md-text);box-shadow:var(--md-sh1)}
 html:not([data-theme="dark"]) .md-tabs button.on{background:#fff}
 .md-summary{font-size:12.5px;color:var(--md-text3)}

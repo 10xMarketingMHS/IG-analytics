@@ -52,7 +52,6 @@ html[data-theme="dark"] .tb,html[data-theme="dark"] .tp2{
 .tb-row{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
 .tb .tb-bar .seg{margin:0;padding:3px;gap:2px;border:1px solid var(--tb-line);border-radius:12px;background:var(--tb-sunk)}
 .tb .tb-bar .seg button{height:30px;padding:0 12px 0 9px;gap:6px;border-radius:9px;font:600 12.5px 'Plus Jakarta Sans',sans-serif;color:var(--tb-text3)}
-.tb .tb-bar .seg button:hover{color:var(--tb-text)}
 .tb .tb-bar .seg button.on{background:var(--tb-solid);color:var(--tb-text);box-shadow:var(--tb-sh1)}
 .tb-chips{display:flex;gap:6px;flex-wrap:wrap}
 .tb-chip{display:inline-flex;align-items:center;gap:5px;height:36px;padding:0 12px;border:1px solid var(--tb-line);border-radius:11px;background:var(--tb-panel);

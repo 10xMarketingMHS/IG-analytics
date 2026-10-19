@@ -33,7 +33,6 @@ html[data-theme="dark"] .mt{
 .mt-bar{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
 .mt-seg{display:flex;flex-wrap:wrap;padding:3px;border:1px solid var(--mt-line);border-radius:12px;background:var(--mt-panel)}
 .mt-seg button{height:30px;padding:0 13px;border:0;border-radius:9px;background:transparent;color:var(--mt-text3);font:700 12.5px 'Plus Jakarta Sans',sans-serif;cursor:pointer;white-space:nowrap}
-.mt-seg button:hover{color:var(--mt-text)}
 .mt-seg button.on{background:var(--mt-solid);color:var(--mt-text);box-shadow:0 1px 2px rgba(30,20,80,.08),0 4px 10px -4px rgba(60,40,140,.2)}
 .mt-range{color:var(--mt-text3);font-size:12.5px;font-weight:600;white-space:nowrap}
 .mt-dates{display:flex;align-items:center;gap:8px;font-size:12.5px;color:var(--mt-text3)}
@@ -146,7 +145,6 @@ html[data-theme="dark"] .mt{
 .mt.mt-tabs{flex-direction:row;align-items:center;gap:18px;flex-wrap:wrap;border-bottom:1px solid var(--mt-line)}
 .mt-tabs>button{display:flex;align-items:center;gap:6px;height:38px;padding:0 2px;margin-bottom:-1px;border:0;border-bottom:2px solid transparent;background:transparent;
   color:var(--mt-text3);font:700 13px 'Plus Jakarta Sans',sans-serif;cursor:pointer;white-space:nowrap}
-.mt-tabs>button:hover{color:var(--mt-text)}
 .mt-tabs>button.on{color:var(--mt-text);border-bottom-color:var(--mt-ac)}
 
 /* roster: everyone's position, login and role, changed on the row */

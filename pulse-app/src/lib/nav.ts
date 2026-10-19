@@ -60,7 +60,7 @@ export const PAGE_META: Record<string, [string, string]> = {
   "/chat": ["Team Chat", "Channels for the team, direct messages for one-to-one"],
   "/analytics/": ["Format analytics", "Total performance across all posts of one format"],
   "/analytics": ["Analytics", "Content performance across your channels and platforms"],
-  "/metrics": ["Social & Ads Pipeline", "Who's working on which Social post or Ad, and where it stands"],
+  "/metrics": ["Social & Ads Pipeline", "Every reel, carousel and ad in production. Stages are read-only here — move work on the Task Board."],
   "/insights": ["Insights", "What your data is telling you — computed automatically"],
   "/trends": ["Trends", "How your content is performing over time, and platform vs platform"],
   "/leaderboard": ["Editor Leaderboard", "Editor performance & rankings from published posts"],

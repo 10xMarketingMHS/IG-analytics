@@ -37,7 +37,6 @@ html[data-theme="dark"] .gl{
 .gl-tabs{display:flex;align-items:center;gap:18px;flex-wrap:wrap;border-bottom:1px solid var(--gl-line)}
 .gl-tabs button{display:flex;align-items:center;gap:6px;height:38px;padding:0 2px;margin-bottom:-1px;border:0;border-bottom:2px solid transparent;background:transparent;
   color:var(--gl-text3);font:700 13px 'Plus Jakarta Sans',sans-serif;cursor:pointer;white-space:nowrap}
-.gl-tabs button:hover{color:var(--gl-text)}
 .gl-tabs button.on{color:var(--gl-text);border-bottom-color:var(--gl-ac)}
 .gl-admin{padding:1px 6px;border-radius:5px;background:var(--gl-sunk2);color:var(--gl-text3);font-size:10px;font-weight:800;letter-spacing:.04em}
 
@@ -45,7 +44,6 @@ html[data-theme="dark"] .gl{
 .gl-bar{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
 .gl-seg{display:flex;padding:3px;border:1px solid var(--gl-line);border-radius:12px;background:var(--gl-panel)}
 .gl-seg button{height:30px;padding:0 12px;border:0;border-radius:9px;background:transparent;color:var(--gl-text3);font:700 12.5px 'Plus Jakarta Sans',sans-serif;cursor:pointer;white-space:nowrap}
-.gl-seg button:hover{color:var(--gl-text)}
 .gl-seg button.on{background:var(--gl-solid);color:var(--gl-text);box-shadow:0 1px 2px rgba(30,20,80,.08),0 4px 10px -4px rgba(60,40,140,.2)}
 .gl-hint{font-size:12px;color:var(--gl-text3)}
 .gl-btn{display:inline-flex;align-items:center;gap:6px;height:36px;padding:0 13px 0 11px;border:1px solid var(--gl-line);border-radius:10px;background:var(--gl-panel);

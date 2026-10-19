@@ -40,7 +40,6 @@ html[data-theme="dark"] .st{
 .st-nav::-webkit-scrollbar{display:none}
 .st-nav>button{display:flex;align-items:center;gap:10px;padding:8px 10px;border:1px solid transparent;border-radius:10px;background:transparent;
   color:var(--st-text2);font:inherit;text-align:left;cursor:pointer}
-.st-nav>button:hover{background:var(--st-panel)}
 .st-nav>button.on{background:var(--st-panel);border-color:var(--st-line);color:var(--st-text)}
 .st-nav>button>svg{flex:none;color:var(--st-text3)}
 .st-nav>button.on>svg{color:var(--st-acText)}
