@@ -10,7 +10,7 @@ import { TeamRoster } from "@/pages/team-roster";
 import { TaskPanel } from "@/pages/tasks";
 import { TeamAttendance } from "@/pages/team-attendance";
 import { useAuth } from "@/lib/auth-context";
-import { homeRoleOf, seesTeamAttendance } from "@/lib/home-role";
+import { homeRoleOf, peopleVisibleTo, seesTeamAttendance } from "@/lib/home-role";
 import { useOrg } from "@/lib/use-org";
 
 // My Team — the admin's view of everyone on the roster (Pulse Redesign v5):
@@ -28,6 +28,9 @@ export function MyTeamPage() {
   const me = (editors ?? []).find((e) => e.id === user?.editorId) ?? null;
   const homeRole = homeRoleOf(me?.designation, isAdmin);
   const { org } = useOrg();
+  // Today and Ranking list people by their tasks: nobody sees people above them
+  // (lib/home-role.ts), so an admin who is a Team Lead doesn't see Managers.
+  const seenPeople = editors ? peopleVisibleTo(editors, me, { seesAll: !!org?.superAdmin, isAdmin }) : editors;
   // Team leads and managers who aren't admins: Attendance only, and only when
   // Settings › Attendance lets their position see the team.
   const attendanceOnly = !isAdmin && (homeRole === "lead" || homeRole === "manager")
@@ -73,9 +76,9 @@ export function MyTeamPage() {
         )}
       </div>
       {tab === "today"
-        ? <TeamToday tasks={tasks} editors={editors} onOpenTask={(t) => setOpenTaskId(t.id)} focusId={focusId} />
+        ? <TeamToday tasks={tasks} editors={seenPeople} onOpenTask={(t) => setOpenTaskId(t.id)} focusId={focusId} />
         : tab === "ranking"
-          ? <TeamPanel tasks={tasks} editors={editors} onOpenTask={(t) => setOpenTaskId(t.id)} focusId={focusId} />
+          ? <TeamPanel tasks={tasks} editors={seenPeople} onOpenTask={(t) => setOpenTaskId(t.id)} focusId={focusId} />
           : tab === "attendance"
             ? <div className="mt"><TeamAttendance editors={editors} /></div>
             : <TeamRoster />}

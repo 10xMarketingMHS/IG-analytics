@@ -12,6 +12,7 @@ import { noteTaskSeen } from "@/lib/use-task-notify";
 import { bankedMs, breakOffsetMs, fmtWait, isDayPaused, isOverBudget, OFFICE_CLOSE_HOUR, reviewWaitMs, SLOW_REVIEW_MS } from "@/lib/task-timing";
 import { onTasksChanged } from "@/lib/task-events";
 import { peopleVisibleTo } from "@/lib/home-role";
+import { useIsSuper } from "@/lib/use-org";
 import { useAuth } from "@/lib/auth-context";
 import { useReviewAccess, scopeAllowsTask } from "@/lib/use-review-access";
 import { useWorkspaces } from "@/lib/workspaces-context";
@@ -408,11 +409,12 @@ export function TasksPage() {
   const { user } = useAuth();
   const { active, workspaces, isAdmin, hasPermission } = useWorkspaces();
   const role = active?.role;
+  const isSuper = useIsSuper();
   // The Team list: nobody sees people above them (lib/home-role.ts).
   const teamPeople = useMemo(() => {
     const me = (editors ?? []).find((e) => e.id === user?.editorId) ?? null;
-    return peopleVisibleTo(editors ?? [], me, isAdmin);
-  }, [editors, user?.editorId, isAdmin]);
+    return peopleVisibleTo(editors ?? [], me, { seesAll: isSuper, isAdmin });
+  }, [editors, user?.editorId, isAdmin, isSuper]);
   // Access grants that give admin-like reach over other people's tasks.
   // Approve/send back reviews: admins always; a resolve_tasks grantee for tasks
   // inside their review scope; an assigner for the tasks they assigned — never
@@ -1431,6 +1433,8 @@ export function TaskModal({
   const editing = Boolean(task);
   const { user } = useAuth();
   const { isAdmin } = useWorkspaces();
+  const isSuper = useIsSuper();
+  const me = editors.find((ed) => ed.id === user?.editorId) ?? null;
   const [title, setTitle] = useState(task?.title ?? "");
   const [description, setDescription] = useState(task?.description ?? "");
   // Only admins can assign work to someone else — a non-admin creating a task
@@ -1634,8 +1638,8 @@ export function TaskModal({
             {isAdmin ? (
               <select className="t" value={editorId} onChange={(e) => setEditorId(e.target.value)}>
                 <option value="">Unassigned</option>
-                {/* Admins aren't assignable editors (keep a chosen one visible). */}
-                {editors.filter((ed) => !ed.is_admin || ed.id === editorId).map((ed) => (
+                {/* Admins aren't assignable editors, nor anyone above you (keep a chosen one visible). */}
+                {peopleVisibleTo(editors, me, { seesAll: isSuper, isAdmin }, editorId).filter((ed) => !ed.is_admin || ed.id === editorId).map((ed) => (
                   <option key={ed.id} value={ed.id}>{ed.name}</option>
                 ))}
               </select>
@@ -2024,12 +2028,13 @@ export function TaskPanel({ mode, task, canWrite, editors, channels, onClose, on
   const creating = mode === "create";
   const { user } = useAuth();
   const { isAdmin, hasPermission } = useWorkspaces();
+  const isSuper = useIsSuper();
   // People to assign to: nobody sees people above them (lib/home-role.ts); a
   // task's current assignee stays listed.
   const assignPeople = useMemo(() => {
     const me = editors.find((e) => e.id === user?.editorId) ?? null;
-    return peopleVisibleTo(editors, me, isAdmin, task?.editor_id ?? null);
-  }, [editors, user?.editorId, isAdmin, task?.editor_id]);
+    return peopleVisibleTo(editors, me, { seesAll: isSuper, isAdmin }, task?.editor_id ?? null);
+  }, [editors, user?.editorId, isAdmin, isSuper, task?.editor_id]);
   // Access grants: assign tasks to others, and resolve reviews.
   const canAssign = isAdmin || hasPermission("assign_tasks");
   const review = useReviewAccess();

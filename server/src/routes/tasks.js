@@ -248,19 +248,18 @@ tasksRouter.get("/tasks", async (req, res, next) => {
       params.push(`%${req.query.q}%`);
       clauses.push(`(t.tid ilike $${params.length} or t.sid ilike $${params.length} or t.ad_id ilike $${params.length} or t.svid ilike $${params.length} or t.title ilike $${params.length})`);
     }
-    // Nobody sees the tasks of someone above them in the hierarchy (admins see
-    // all). The list and who's asking are read together.
-    const [{ rows }, viewer, ranksMaybe] = await Promise.all([
+    // Nobody sees the tasks of someone above them in the hierarchy (the Super
+    // Admin sees all). The list, who's asking and everyone's rank are read together.
+    const [{ rows }, viewer, ranks] = await Promise.all([
       pool.query(
         `${SELECT} where ${clauses.join(" and ")}
          order by t.due_date asc nulls last, t.created_at desc`,
         params,
       ),
       taskViewer(req),
-      req.role === "admin" ? Promise.resolve(null) : editorRanks(req.orgId),
+      editorRanks(req.orgId),
     ]);
-    const ranks = viewer.admin ? null : ranksMaybe ?? await editorRanks(req.orgId);
-    res.json({ tasks: viewer.admin ? rows : rows.filter((t) => canSeeTask(viewer, ranks, t)) });
+    res.json({ tasks: viewer.seesAll ? rows : rows.filter((t) => canSeeTask(viewer, ranks, t)) });
   } catch (err) {
     next(err);
   }

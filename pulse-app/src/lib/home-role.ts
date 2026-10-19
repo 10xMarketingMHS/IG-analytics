@@ -39,14 +39,15 @@ export function rankOf(designation: string | null | undefined, isAdmin: boolean)
   if (isAdmin && p !== "editor") return 0;
   return 3;
 }
-// Who someone sees in lists of people: admins see everyone; anyone else sees
-// people at their own level or below (and themselves), never above them, as
-// with tasks. `keep` stays listed regardless (say, a task's current assignee).
+// Who someone sees in lists of people: the Super Admin sees everyone; anyone
+// else, admins included, sees people at their own level or below (and
+// themselves), never above them, as with tasks. `keep` stays listed
+// regardless (say, a task's current assignee).
 export function peopleVisibleTo<T extends { id: string; designation?: string | null; is_admin?: boolean }>(
-  people: T[], me: { id: string; designation?: string | null } | null, viewerIsAdmin: boolean, keep?: string | null,
+  people: T[], me: { id: string; designation?: string | null } | null, viewer: { seesAll: boolean; isAdmin: boolean }, keep?: string | null,
 ): T[] {
-  if (viewerIsAdmin || !me) return people;
-  const mine = rankOf(me.designation, false);
+  if (viewer.seesAll || !me) return people;
+  const mine = rankOf(me.designation, viewer.isAdmin);
   return people.filter((p) => p.id === me.id || p.id === keep || rankOf(p.designation, !!p.is_admin) >= mine);
 }
 

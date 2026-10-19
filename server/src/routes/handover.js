@@ -6,7 +6,7 @@ import { requireActiveEod } from "./eod.js";
 import { logActivity } from "../activity.js";
 import { isOrgAdmin } from "../permissions.js";
 import { resolveBudgetHours } from "./tasks.js";
-import { editorRanks, taskViewer } from "../hierarchy.js";
+import { editorRanks, seesEditor, taskViewer } from "../hierarchy.js";
 import { hasColumn } from "../schema-flags.js";
 import { coverFrom } from "../goal-score.js";
 import { LEVEL_LABEL, handoverPeople, handoverReady, leadsAndManagers, pauseForHandover, resumeAfterHandover, syncHandovers } from "../handover.js";
@@ -74,15 +74,15 @@ async function answer(id, status, userId, note = null) {
 }
 
 // What's waiting that concerns you: hand-overs you offered, ones offered to
-// you, and ones that have climbed to you (admins see them all), plus who you
-// could hand a task to.
+// you, and ones that have climbed to you (admins also see the rest, from people
+// at their level or below; the Super Admin all), plus who you could hand a task to.
 handoverRouter.get("/handovers", async (req, res, next) => {
   try {
     if (!(await handoverReady())) return res.json({ ready: false, people: [], items: [] });
     // the climb is checked at most once a minute, in the background (shows on the next look)
     syncHandovers(req.orgId).catch(() => {});
-    const who = await caller(req);
-    const { rows } = await pool.query(
+    const [who, viewer, ranks] = await Promise.all([caller(req), taskViewer(req), editorRanks(req.orgId)]);
+    const { rows: found } = await pool.query(
       `select h.id, h.task_id as "taskId", t.title as "taskTitle", t.status as "taskStatus",
               -- the number the board shows (pages/tasks.tsx taskRef)
               coalesce(t.sid, regexp_replace(t.ad_id, '^AdID', 'AID', 'i'), t.svid, t.pid, t.tid) as "taskRef",
@@ -98,17 +98,18 @@ handoverRouter.get("/handovers", async (req, res, next) => {
         order by h.created_at`,
       [req.orgId, who.admin, who.editorId],
     );
+    // an admin's wider view stops at people above them
+    const rows = found.filter((r) => r.fromEditorId === who.editorId || r.toEditorId === who.editorId
+      || (r.reached ?? []).includes(who.editorId) || seesEditor(viewer, ranks, r.fromEditorId));
     const items = rows.map(({ reached, ...r }) => ({
       ...r,
       mine: r.fromEditorId && r.fromEditorId === who.editorId ? "from" : r.toEditorId && r.toEditorId === who.editorId ? "to" : "reached",
       canMove: who.admin || (!!who.editorId && (reached ?? []).includes(who.editorId)),
       reachedLabel: LEVEL_LABEL[r.level] ?? null,
     }));
-    // who you can hand to or move to: never people above you (admins: anyone)
-    const viewer = await taskViewer(req);
-    const ranks = viewer.admin ? null : await editorRanks(req.orgId);
+    // who you can hand to or move to: never people above you (the Super Admin: anyone)
     const people = (await handoverPeople(req.orgId))
-      .filter((p) => p.id !== who.editorId && (viewer.admin || (ranks.get(p.id) ?? 3) >= viewer.rank))
+      .filter((p) => p.id !== who.editorId && seesEditor(viewer, ranks, p.id))
       .map(({ id, name, designation, imageUrl }) => ({ id, name, designation, imageUrl }));
     res.json({ ready: true, people, items });
   } catch (err) {
@@ -226,7 +227,8 @@ handoverRouter.post("/handovers/:id/cancel", requireEditor, async (req, res, nex
     if (!h) return res.status(404).json({ error: "Hand-over not found" });
     if (h.status !== "pending") return res.status(409).json({ error: "This hand-over has already been answered." });
     const who = await caller(req);
-    if (!who.admin && (!who.editorId || who.editorId !== h.from_editor_id)) {
+    const own = !!who.editorId && who.editorId === h.from_editor_id;
+    if (!own && !(who.admin && seesEditor(await taskViewer(req), await editorRanks(req.orgId), h.from_editor_id))) {
       return res.status(403).json({ error: "Only the task's owner can call off its hand-over." });
     }
     if (h.paused) await resumeAfterHandover(h.task_id);
@@ -255,10 +257,15 @@ handoverRouter.post("/handovers/:id/move", requireEditor, async (req, res, next)
     if (!h) return res.status(404).json({ error: "Hand-over not found" });
     if (h.status !== "pending") return res.status(409).json({ error: "This hand-over has already been answered." });
     const who = await caller(req);
-    if (!who.admin && !(who.editorId && (h.reached ?? []).includes(who.editorId))) {
+    const reachedMe = !!who.editorId && (h.reached ?? []).includes(who.editorId);
+    const [viewer, ranks] = await Promise.all([taskViewer(req), editorRanks(req.orgId)]);
+    if (!reachedMe && !(who.admin && seesEditor(viewer, ranks, h.from_editor_id))) {
       return res.status(403).json({ error: "This hand-over hasn't come to you." });
     }
     const to = parsed.data.toEditorId;
+    if (to !== who.editorId && !seesEditor(viewer, ranks, to)) {
+      return res.status(403).json({ error: "You can't move a task to someone above you." });
+    }
     const person = (await handoverPeople(req.orgId)).find((p) => p.id === to);
     if (!person) return res.status(400).json({ error: "That person can't take tasks yet. They need an active login on the team." });
     const toSelf = to === who.editorId;
