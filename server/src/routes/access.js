@@ -1,7 +1,7 @@
 import { Router } from "express";
 import { z } from "zod";
 import { pool } from "../db.js";
-import { PERMISSION_KEYS, activeGrants, assignFormats, requirePermission, reviewAccess } from "../permissions.js";
+import { PERMISSION_KEYS, activeGrants, assignLimits, requirePermission, reviewAccess } from "../permissions.js";
 import { isSuperHere } from "../super-admin.js";
 
 // Settings → Access — the Super Admin's management of per-user permission
@@ -27,9 +27,10 @@ accessRouter.get("/access/grants", manageAccess, async (req, res, next) => {
   const userId = req.query.userId;
   if (!userId) return res.status(400).json({ error: "userId is required." });
   try {
-    const review = await reviewAccess(req.orgId, userId);
-    const formats = await assignFormats(req.orgId, userId);
-    res.json({ permissions: await activeGrants(req.orgId, userId), reviewScope: review.scope, assignScope: formats ? { formats } : null });
+    const [review, assignScope, permissions] = await Promise.all([
+      reviewAccess(req.orgId, userId), assignLimits(req.orgId, userId), activeGrants(req.orgId, userId),
+    ]);
+    res.json({ permissions, reviewScope: review.scope, assignScope });
   } catch (err) {
     next(err);
   }
@@ -40,8 +41,8 @@ accessRouter.get("/access/grants", manageAccess, async (req, res, next) => {
 // to every signed-in member; it only ever describes the caller.
 accessRouter.get("/access/review-scope/me", async (req, res, next) => {
   try {
-    const formats = await assignFormats(req.orgId, req.user.sub);
-    res.json({ ...(await reviewAccess(req.orgId, req.user.sub)), assignScope: formats ? { formats } : null });
+    const [review, assignScope] = await Promise.all([reviewAccess(req.orgId, req.user.sub), assignLimits(req.orgId, req.user.sub)]);
+    res.json({ ...review, assignScope });
   } catch (err) {
     next(err);
   }
@@ -57,7 +58,11 @@ const ReviewScopeSchema = z.union([
   // Content types: every task of these content formats (e.g. all Carousels).
   z.object({ formats: z.array(z.string().uuid()).min(1) }),
 ]);
-const AssignScopeSchema = z.object({ formats: z.array(z.string().uuid()).min(1) });
+// Assign tasks limited to some content types, some people, or both.
+const AssignScopeSchema = z.object({
+  formats: z.array(z.string().uuid()).min(1).optional(),
+  editors: z.array(z.string().uuid()).min(1).optional(),
+}).refine((s) => s.formats || s.editors);
 
 const SaveSchema = z.object({
   userId: z.string().uuid(),
@@ -66,7 +71,7 @@ const SaveSchema = z.object({
   // Narrows resolve_tasks: null/omitted = everyone, otherwise only these
   // people/tasks. Ignored unless resolve_tasks is being granted.
   reviewScope: ReviewScopeSchema.nullable().optional(),
-  // Narrows assign_tasks to some content types: null/omitted = any task.
+  // Narrows assign_tasks to some content types and/or people: null/omitted = any.
   assignScope: AssignScopeSchema.nullable().optional(),
 });
 

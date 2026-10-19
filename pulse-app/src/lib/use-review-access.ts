@@ -8,8 +8,9 @@ export type ReviewScope =
   | { editors: { editorId: string; taskIds: string[] | null }[] }
   | { formats: string[] }
   | null;
-// Assign tasks can be limited to certain content types. null = any task.
-export type AssignScope = { formats: string[] } | null;
+// Assign tasks can be limited to certain content types and to certain people
+// (editor ids). A missing or null part isn't limited; null = no limit at all.
+export type AssignScope = { formats?: string[] | null; editors?: string[] | null } | null;
 
 export function scopeAllowsTask(scope: ReviewScope, task: { id: string; editor_id: string | null; content_format_id?: string | null }): boolean {
   if (!scope) return true;

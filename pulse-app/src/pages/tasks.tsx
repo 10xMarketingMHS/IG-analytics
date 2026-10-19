@@ -2029,15 +2029,18 @@ export function TaskPanel({ mode, task, canWrite, editors, channels, onClose, on
   const { user } = useAuth();
   const { isAdmin, hasPermission } = useWorkspaces();
   const isSuper = useIsSuper();
+  const review = useReviewAccess();
   // People to assign to: nobody sees people above them (lib/home-role.ts); a
-  // task's current assignee stays listed.
+  // task's current assignee stays listed. An Assign tasks grant limited to some
+  // people (Settings › Access) lists only them (and you).
+  const assignTo = !isAdmin ? review.assignScope?.editors ?? null : null;
   const assignPeople = useMemo(() => {
     const me = editors.find((e) => e.id === user?.editorId) ?? null;
-    return peopleVisibleTo(editors, me, { seesAll: isSuper, isAdmin }, task?.editor_id ?? null);
-  }, [editors, user?.editorId, isAdmin, isSuper, task?.editor_id]);
+    const seen = peopleVisibleTo(editors, me, { seesAll: isSuper, isAdmin }, task?.editor_id ?? null);
+    return assignTo ? seen.filter((e) => assignTo.includes(e.id) || e.id === user?.editorId || e.id === task?.editor_id) : seen;
+  }, [editors, user?.editorId, isAdmin, isSuper, task?.editor_id, assignTo]);
   // Access grants: assign tasks to others, and resolve reviews.
   const canAssign = isAdmin || hasPermission("assign_tasks");
-  const review = useReviewAccess();
   const ro = !canWrite;
   // Delivery Link is writable by the task's assignee or an admin (mirrors the
   // server check); everyone else who can open the panel sees it read-only.

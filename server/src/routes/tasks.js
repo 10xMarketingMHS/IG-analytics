@@ -3,7 +3,7 @@ import { z } from "zod";
 import { pool } from "../db.js";
 import { requireEditor } from "../resolve-workspace.js";
 import { requireActiveEod } from "./eod.js";
-import { assignFormats, hasActiveGrant, reviewAccess, scopeAllowsTask } from "../permissions.js";
+import { assignLimits, hasActiveGrant, reviewAccess, scopeAllowsTask } from "../permissions.js";
 import { logActivity } from "../activity.js";
 import { canSeeTask, editorRanks, mayOpenTask, taskViewer } from "../hierarchy.js";
 import { closePendingHandovers } from "../handover.js";
@@ -189,15 +189,22 @@ async function callerEditorId(req) {
 async function canAssignTasks(req) {
   return req.role === "admin" || (await hasActiveGrant(req.orgId, req.user.sub, "assign_tasks"));
 }
-// An Assign tasks grant limited to some content types (Settings › Access)
-// only covers tasks of those types. Null when it isn't limited (or for admins).
-async function assignLimitError(req, contentFormatId) {
+// An Assign tasks grant limited to some content types or some people
+// (Settings › Access) covers only those tasks, given to those people. Null when
+// it's allowed (or for admins), else what to tell them.
+async function assignLimitError(req, contentFormatId, editorId) {
   if (req.role === "admin") return null;
-  const formats = await assignFormats(req.orgId, req.user.sub);
-  if (!formats || (contentFormatId && formats.includes(contentFormatId))) return null;
-  const { rows } = await pool.query("select name from task_content_format where id = any($1::uuid[]) order by name", [formats]);
-  const names = rows.map((r) => r.name).join(", ") || "certain content types";
-  return `You can assign only ${names} tasks to other people.`;
+  const lim = await assignLimits(req.orgId, req.user.sub);
+  if (!lim) return null;
+  if (lim.editors && !(editorId && lim.editors.includes(editorId))) {
+    const { rows } = await pool.query("select name from editor where id = any($1::uuid[]) order by name", [lim.editors]);
+    return `You can assign tasks only to ${rows.map((r) => r.name).join(", ") || "certain people"}.`;
+  }
+  if (lim.formats && !(contentFormatId && lim.formats.includes(contentFormatId))) {
+    const { rows } = await pool.query("select name from task_content_format where id = any($1::uuid[]) order by name", [lim.formats]);
+    return `You can assign only ${rows.map((r) => r.name).join(", ") || "certain content types"} tasks to other people.`;
+  }
+  return null;
 }
 
 // List every task in the org, newest-relevant first. Optional filters:
@@ -290,7 +297,7 @@ tasksRouter.post("/tasks", requireEditor, requireActiveEod, async (req, res, nex
       return res.status(403).json({ error: "You can create tasks for yourself. Assigning work to someone else needs an admin." });
     }
     if (!isAdminTask && d.editorId && d.editorId !== callerEid) {
-      const limit = await assignLimitError(req, d.contentFormatId ?? null);
+      const limit = await assignLimitError(req, d.contentFormatId ?? null, d.editorId);
       if (limit) return res.status(403).json({ error: limit });
     }
     const assigneeId = isAdminTask ? callerEid : (d.editorId ?? null);
@@ -496,7 +503,7 @@ tasksRouter.patch("/tasks/:id", requireEditor, requireActiveEod, async (req, res
       // or its type.
       const ownerAfter = d.editorId !== undefined ? (d.editorId ?? null) : prior.editor_id;
       if (ownerAfter && ownerAfter !== myEid && ((assigneeChanged && !claiming) || briefChanged)) {
-        const limit = await assignLimitError(req, d.contentFormatId !== undefined ? d.contentFormatId : prior.content_format_id);
+        const limit = await assignLimitError(req, d.contentFormatId !== undefined ? d.contentFormatId : prior.content_format_id, ownerAfter);
         if (limit) return res.status(403).json({ error: limit });
       }
       if (briefChanged && !(own ? prior.created_by === req.user.sub : assigner)) {

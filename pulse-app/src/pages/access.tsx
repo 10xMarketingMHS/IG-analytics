@@ -17,7 +17,7 @@ import { SI, Seg } from "@/pages/settings-ui";
 // picker. Resolve reviews can be narrowed to some people (and for each of them
 // to all their tasks or a hand-picked few) or to some content types, so e.g. a
 // Carousel owner gets every Carousel review. Assign tasks can be limited to
-// some content types the same way.
+// some content types, and to some people, the same way.
 
 type UserRow = { id: string; email: string; name: string | null; active: boolean; editor_id: string | null; role: "admin" | "editor" | "viewer" };
 
@@ -84,11 +84,13 @@ export function AccessSection() {
   const [reviewMode, setReviewMode] = useState<ReviewMode>("all");
   const [reviewWho, setReviewWho] = useState<Record<string, { all: boolean; taskIds: string[] }>>({});
   const [reviewFmts, setReviewFmts] = useState<string[]>([]);
-  // Assign tasks: any task, or only these content types.
+  // Assign tasks: any task, or only these content types; to anyone, or only these people.
   const [assignAll, setAssignAll] = useState(true);
   const [assignFmts, setAssignFmts] = useState<string[]>([]);
+  const [assignAnyone, setAssignAnyone] = useState(true);
+  const [assignWho, setAssignWho] = useState<string[]>([]);
   // What's saved, to tell when there's something to save.
-  type Snap = { checked: Record<string, boolean>; reviewMode: ReviewMode; reviewWho: Record<string, { all: boolean; taskIds: string[] }>; reviewFmts: string[]; assignAll: boolean; assignFmts: string[] };
+  type Snap = { checked: Record<string, boolean>; reviewMode: ReviewMode; reviewWho: Record<string, { all: boolean; taskIds: string[] }>; reviewFmts: string[]; assignAll: boolean; assignFmts: string[]; assignAnyone: boolean; assignWho: string[] };
   const [saved, setSaved] = useState<Snap | null>(null);
   const { editors } = useEditors();
   const { tasks } = useTasks();
@@ -116,10 +118,12 @@ export function AccessSection() {
         const mode: ReviewMode = !rs ? "all" : "formats" in rs ? "types" : "people";
         const who = Object.fromEntries((rs && "editors" in rs ? rs.editors : []).map((e) => [e.editorId, { all: e.taskIds == null, taskIds: e.taskIds ?? [] }]));
         const rf = rs && "formats" in rs ? rs.formats : [];
-        const aAll = !d.assignScope;
         const af = d.assignScope?.formats ?? [];
-        setChecked(c); setReviewMode(mode); setReviewWho(who); setReviewFmts(rf); setAssignAll(aAll); setAssignFmts(af);
-        setSaved({ checked: c, reviewMode: mode, reviewWho: who, reviewFmts: rf, assignAll: aAll, assignFmts: af });
+        const aAll = af.length === 0;
+        const aw = d.assignScope?.editors ?? [];
+        const aAny = aw.length === 0;
+        setChecked(c); setReviewMode(mode); setReviewWho(who); setReviewFmts(rf); setAssignAll(aAll); setAssignFmts(af); setAssignAnyone(aAny); setAssignWho(aw);
+        setSaved({ checked: c, reviewMode: mode, reviewWho: who, reviewFmts: rf, assignAll: aAll, assignFmts: af, assignAnyone: aAny, assignWho: aw });
       })
       .catch((e) => toast.error(e instanceof ApiError ? e.message : "Couldn't load their access."))
       .finally(() => setLoading(false));
@@ -132,9 +136,10 @@ export function AccessSection() {
       const reviewScope: ReviewScope = reviewMode === "all" ? null
         : reviewMode === "types" ? { formats: reviewFmts }
         : { editors: Object.entries(reviewWho).map(([editorId, w]) => ({ editorId, taskIds: w.all ? null : w.taskIds })) };
-      const assignScope: AssignScope = assignAll ? null : { formats: assignFmts };
+      const assignScope: AssignScope = assignAll && assignAnyone ? null
+        : { ...(assignAll ? {} : { formats: assignFmts }), ...(assignAnyone ? {} : { editors: assignWho }) };
       await api("/access/grants", { method: "PUT", body: JSON.stringify({ userId, permissions, reviewScope, assignScope }) });
-      setSaved({ checked, reviewMode, reviewWho, reviewFmts, assignAll, assignFmts });
+      setSaved({ checked, reviewMode, reviewWho, reviewFmts, assignAll, assignFmts, assignAnyone, assignWho });
       toast.success("Access saved.");
     } catch (e) {
       toast.error(e instanceof ApiError ? e.message : "Couldn't save access.");
@@ -151,10 +156,11 @@ export function AccessSection() {
   const reviewable = useMemo(() => (editors ?? []).filter((e) => e.active && e.id !== person?.editor_id), [editors, person?.editor_id]);
   const openTasksOf = (editorId: string) => (tasks ?? []).filter((t) => t.editor_id === editorId && t.status !== "done");
   const extra = Object.values(saved?.checked ?? {}).filter(Boolean).length;
-  const dirty = !!saved && !sameJson(saved, { checked, reviewMode, reviewWho, reviewFmts, assignAll, assignFmts });
-  // A content-type limit needs at least one type picked.
+  const dirty = !!saved && !sameJson(saved, { checked, reviewMode, reviewWho, reviewFmts, assignAll, assignFmts, assignAnyone, assignWho });
+  // A content-type limit needs at least one type picked, a people limit one person.
   const missingType = (checked.resolve_tasks && reviewMode === "types" && reviewFmts.length === 0)
     || (checked.assign_tasks && !assignAll && assignFmts.length === 0);
+  const missingPerson = !!checked.assign_tasks && !assignAnyone && assignWho.length === 0;
 
   return (
     <>
@@ -203,6 +209,32 @@ export function AccessSection() {
                       <FormatPicker formats={formats} picked={assignFmts} onChange={setAssignFmts} label="Content types they can assign" />
                       <span className="st-note">They can hand out only these tasks to other people. Their own tasks aren't limited.</span>
                     </>
+                  )}
+                  <div className="st-scopeline">
+                    Who to
+                    <Seg label="Who they can assign to" value={assignAnyone ? "all" : "people"} options={[["all", "Anyone"], ["people", "Selected people"]]}
+                      onChange={(v) => setAssignAnyone(v === "all")} />
+                  </div>
+                  {!assignAnyone && (
+                    reviewable.length === 0 ? <span className="st-note">No other team members yet.</span> : (
+                      <>
+                        <div className="st-people" aria-label="People they can assign to">
+                          {reviewable.map((e) => {
+                            const on = assignWho.includes(e.id);
+                            return (
+                              <button key={e.id} type="button" className={"st-pill" + (on ? " on" : "")} aria-pressed={on}
+                                onClick={() => setAssignWho((w) => (on ? w.filter((id) => id !== e.id) : [...w, e.id]))}>
+                                {e.image_url
+                                  ? <img className="st-ava sm" src={e.image_url} alt="" />
+                                  : <span className="st-ava sm" style={{ background: gradFor(e.name) }}>{initials(e.name)}</span>}
+                                {e.name}
+                              </button>
+                            );
+                          })}
+                        </div>
+                        <span className="st-note">Only these people show when they assign a task. They can still make tasks for themselves.</span>
+                      </>
+                    )
                   )}
                 </div>
               )}
@@ -286,8 +318,8 @@ export function AccessSection() {
       {userId && !loading && (
         <section className="st-card">
           <div className="st-foot" style={{ borderTop: 0 }}>
-            <span className="st-note">{missingType ? "Pick at least one content type, or choose All." : "Permissions add to the person's role — they never take anything away."}</span>
-            <button type="button" className="st-btn grad" disabled={!dirty || saving || missingType} onClick={save}>{SI.check}{saving ? "Saving…" : dirty ? "Save access" : "Saved"}</button>
+            <span className="st-note">{missingType ? "Pick at least one content type, or choose All." : missingPerson ? "Pick at least one person, or choose Anyone." : "Permissions add to the person's role — they never take anything away."}</span>
+            <button type="button" className="st-btn grad" disabled={!dirty || saving || missingType || missingPerson} onClick={save}>{SI.check}{saving ? "Saving…" : dirty ? "Save access" : "Saved"}</button>
           </div>
         </section>
       )}
