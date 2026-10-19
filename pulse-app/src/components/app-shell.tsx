@@ -13,7 +13,7 @@ import { hasSeenTask, useTaskAssignNotify } from "@/lib/use-task-notify";
 import { useDueOverdueNotify, useOverdueTaskNotify, useReviewWaitingNotify } from "@/lib/use-overdue-notify";
 import { scopeAllowsTask, useReviewAccess } from "@/lib/use-review-access";
 import { useOrg } from "@/lib/use-org";
-import { homeRoleOf } from "@/lib/home-role";
+import { homeRoleOf, seesTeamAttendance } from "@/lib/home-role";
 import { setWeekStart } from "@/lib/date-range";
 import { ViewAsBar, ViewAsModal } from "@/components/view-as";
 import { TaskPanel } from "@/pages/tasks";
@@ -307,7 +307,8 @@ function AppShellInner() {
   const canWrite = active?.role !== "viewer";
   // My Team: admins, plus team leads and managers (Attendance only).
   const myEd = (editors ?? []).find((e) => e.id === user?.editorId) ?? null;
-  const leadsPeople = !isAdmin && homeRoleOf(myEd?.designation, false) !== "editor";
+  const leadsPeople = !isAdmin && homeRoleOf(myEd?.designation, false) !== "editor"
+    && seesTeamAttendance(myEd?.designation, false, orgSettings?.attendance?.teamView);
   const canSee = (i: NavItem) => (!i.adminOnly || isAdmin || (!!i.permission && hasPermission(i.permission)) || (i.href === "/my-team" && leadsPeople))
     && (!i.chatBadge || chatAvailable);
   const placed = new Set(SIDEBAR_GROUPS.flatMap((g) => g.hrefs));

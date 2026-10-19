@@ -1,6 +1,6 @@
 import { Router } from "express";
 import { pool } from "../db.js";
-import { homeRoleOf } from "../attendance.js";
+import { callerScope } from "../attendance.js";
 import { hasActiveGrant, reviewAccess } from "../permissions.js";
 
 export const activityRouter = Router();
@@ -27,8 +27,9 @@ activityRouter.get("/activity", async (req, res, next) => {
       const { rows: me } = await pool.query(
         "select u.editor_id, e.designation from app_user u left join editor e on e.id = u.editor_id where u.id = $1", [req.user.sub],
       );
-      // Team leads and managers (by position) get everyone's attendance notices.
-      const leadsTeam = homeRoleOf(me[0]?.designation, false) !== "editor";
+      // Whoever may see the team's attendance (Settings › Attendance) gets
+      // everyone's attendance notices.
+      const leadsTeam = (await callerScope(req)).scope === "all";
       const review = await reviewAccess(req.orgId, req.user.sub);
       // Unscoped grant → every review request. Scoped → only requests on the
       // people (all their tasks) or the individual tasks the scope names.

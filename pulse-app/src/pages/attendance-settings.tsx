@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { toast } from "sonner";
 import { api, ApiError } from "@/lib/api";
 import { useOrg } from "@/lib/use-org";
+import { useAuth } from "@/lib/auth-context";
 import { clockTime } from "@/lib/time-format";
 import type { AttSettings } from "@/lib/use-attendance";
 import { SI, Stepper, Toggle } from "@/pages/settings-ui";
@@ -14,13 +15,16 @@ import { SI, Stepper, Toggle } from "@/pages/settings-ui";
 const DEFAULTS: AttSettings = {
   requireSod: true, graceMinutes: 10, noSodAlertAt: "09:30", autoAbsentAt: "11:00", autoAbsentEnabled: true,
   requireEodNote: true, allowCorrections: true, latePenaltyPts: 1, absentPenaltyPts: 3, deductCapacity: true,
+  teamView: { manager: true, asstManager: true, teamLead: true },
 };
 const at = (hhmm: string) => { const d = new Date(); const [h, m] = hhmm.split(":").map(Number); d.setHours(h || 0, m || 0, 0, 0); return d; };
 const plus = (hhmm: string, min: number) => { const d = at(hhmm); d.setMinutes(d.getMinutes() + min); return d; };
 
 export function AttendanceSection({ onDirty }: { onDirty: (d: boolean) => void }) {
   const { org, refetch } = useOrg();
-  const saved: AttSettings = { ...DEFAULTS, ...(org?.attendance ?? {}) };
+  const { user } = useAuth();
+  const isSuper = !!user?.isSuperAdmin;
+  const saved: AttSettings = { ...DEFAULTS, ...(org?.attendance ?? {}), teamView: { ...DEFAULTS.teamView!, ...(org?.attendance?.teamView ?? {}) } };
   const [draft, setDraft] = useState<AttSettings | null>(null);
   const [saving, setSaving] = useState(false);
   const a = draft ?? saved;
@@ -102,6 +106,16 @@ export function AttendanceSection({ onDirty }: { onDirty: (d: boolean) => void }
           <span className="st-label"><b>Count lost hours against capacity</b><small>Unplanned absence shows as lost hours on the Team › Attendance report</small></span>
           <Toggle on={a.deductCapacity} onChange={(v) => set("deductCapacity", v)} label="Count lost hours against capacity" />
         </div>
+      </section>
+
+      <section className="st-card">
+        <div className="st-cardhead"><b>Team attendance access</b><span>Who besides admins sees the whole team's attendance — Team today on Home and Team › Attendance — and can nudge, excuse and mark people.{isSuper ? "" : " Only a Super Admin can change this."}</span></div>
+        {([["manager", "Managers"], ["asstManager", "Asst. Managers"], ["teamLead", "Team Leads"]] as const).map(([k, l]) => (
+          <div className="st-row" key={k}>
+            <span className="st-label"><b>{l}</b><small>{a.teamView?.[k] ? "See the team's attendance" : "See only their own day"}</small></span>
+            <Toggle on={!!a.teamView?.[k]} disabled={!isSuper} onChange={(v) => set("teamView", { ...a.teamView!, [k]: v })} label={`${l} see the team's attendance`} />
+          </div>
+        ))}
       </section>
 
       {dirty && (

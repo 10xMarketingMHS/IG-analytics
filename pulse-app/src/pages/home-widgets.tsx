@@ -127,7 +127,7 @@ export type HomeLayout = ReturnType<typeof useHomeLayout>;
 // Greeting row, Customize panel, grid
 // ---------------------------------------------------------------------------
 
-export function HomeWidgets({ c, layout, showHello, hello, canPreview, previewRole, onPreview, sod }: {
+export function HomeWidgets({ c, layout, showHello, hello, canPreview, previewRole, onPreview, sod, blocked = [] }: {
   c: HomeCtx;
   layout: HomeLayout;
   showHello: boolean;
@@ -136,6 +136,9 @@ export function HomeWidgets({ c, layout, showHello, hello, canPreview, previewRo
   previewRole: HomeRole | null;
   onPreview: (r: HomeRole | null) => void;
   sod: ReactNode;
+  // Widgets this person can't have though their role could (e.g. Team today
+  // when their position may not see the team's attendance).
+  blocked?: WidgetKey[];
 }) {
   const gridRef = useRef<HTMLDivElement>(null);
   const [cols, setCols] = useState(3);
@@ -152,9 +155,10 @@ export function HomeWidgets({ c, layout, showHello, hello, canPreview, previewRo
     return () => ro.disconnect();
   }, []);
   const role = c.role;
-  const items = layout.items;
-  const notAllowed = WIDGET_ORDER.filter((k) => !allowed(k, role));
-  const addable = WIDGET_ORDER.filter((k) => allowed(k, role) && !items.some(([x]) => x === k));
+  const ok = (k: WidgetKey) => allowed(k, role) && !blocked.includes(k);
+  const items = layout.items.filter(([k]) => ok(k));
+  const notAllowed = WIDGET_ORDER.filter((k) => !ok(k));
+  const addable = WIDGET_ORDER.filter((k) => ok(k) && !items.some(([x]) => x === k));
   const move = (i: number, by: -1 | 1) => {
     const j = i + by;
     if (j < 0 || j >= items.length) return;

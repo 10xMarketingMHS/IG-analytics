@@ -10,7 +10,8 @@ import { TeamRoster } from "@/pages/team-roster";
 import { TaskPanel } from "@/pages/tasks";
 import { TeamAttendance } from "@/pages/team-attendance";
 import { useAuth } from "@/lib/auth-context";
-import { homeRoleOf } from "@/lib/home-role";
+import { homeRoleOf, seesTeamAttendance } from "@/lib/home-role";
+import { useOrg } from "@/lib/use-org";
 
 // My Team — the admin's view of everyone on the roster (Pulse Redesign v5):
 // Today, live — who is working, on a break, not started or wrapped up, and on
@@ -26,7 +27,11 @@ export function MyTeamPage() {
   const { editors } = useEditors();
   const me = (editors ?? []).find((e) => e.id === user?.editorId) ?? null;
   const homeRole = homeRoleOf(me?.designation, isAdmin);
-  const attendanceOnly = !isAdmin && (homeRole === "lead" || homeRole === "manager");
+  const { org } = useOrg();
+  // Team leads and managers who aren't admins: Attendance only, and only when
+  // Settings › Attendance lets their position see the team.
+  const attendanceOnly = !isAdmin && (homeRole === "lead" || homeRole === "manager")
+    && seesTeamAttendance(me?.designation, false, org?.attendance?.teamView);
   const location = useLocation();
   const [params, setParams] = useSearchParams();
   const raw = params.get("tab");
@@ -40,7 +45,7 @@ export function MyTeamPage() {
   // Wait for the role to actually be known: right after sign-in is restored the
   // context briefly reports "not loading" with no workspace yet, and deciding
   // then would bounce an admin away on a direct visit or refresh.
-  if (loading || !active || (!isAdmin && editors === null)) return <section className="screen"><Loader label="Loading…" /></section>;
+  if (loading || !active || (!isAdmin && (editors === null || org === null))) return <section className="screen"><Loader label="Loading…" /></section>;
   if (!isAdmin && !attendanceOnly) return <Navigate to="/home" replace />;
 
   return (

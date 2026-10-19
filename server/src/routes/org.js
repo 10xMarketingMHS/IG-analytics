@@ -5,6 +5,7 @@ import { requirePermission } from "../permissions.js";
 import { hasColumn } from "../schema-flags.js";
 import { CALENDAR_DEFAULTS, normalizeCalendar } from "../work-calendar.js";
 import { ATTENDANCE_DEFAULTS, normalizeAttendance } from "../attendance.js";
+import { superState, isSuperUser } from "../super-admin.js";
 
 // Settings › General: the organisation's name, the week start and the work
 // calendar. Anyone signed in can read them (the sidebar shows the name, date
@@ -30,6 +31,7 @@ const AttendanceSchema = z.object({
   latePenaltyPts: z.number().int().min(0).max(10),
   absentPenaltyPts: z.number().int().min(0).max(10),
   deductCapacity: z.boolean(),
+  teamView: z.object({ manager: z.boolean(), asstManager: z.boolean(), teamLead: z.boolean() }).optional(),
 });
 const PatchSchema = z.object({
   name: z.string().trim().min(1).max(60).optional(),
@@ -70,6 +72,14 @@ orgRouter.patch("/org", requirePermission("edit_goals"), async (req, res, next) 
     return res.status(403).json({ error: "Only an admin can change the workspace name, week start or attendance rules." });
   }
   try {
+    // Who sees the team's attendance is the Super Admin's call.
+    if (d.attendance?.teamView) {
+      const cur = (await readOrg(req.orgId)).attendance.teamView;
+      const changed = ["manager", "asstManager", "teamLead"].some((k) => cur[k] !== d.attendance.teamView[k]);
+      if (changed && !(await isSuperUser(req.user.sub, await superState(req.workspaceId)))) {
+        return res.status(403).json({ error: "Only a Super Admin can change who sees the team's attendance." });
+      }
+    }
     if (d.name !== undefined) await pool.query("update org set name = $2 where id = $1", [req.orgId, d.name]);
     if (d.weekStart !== undefined || d.calendar !== undefined || d.attendance !== undefined) {
       if (!(await hasColumn("org", "settings"))) {

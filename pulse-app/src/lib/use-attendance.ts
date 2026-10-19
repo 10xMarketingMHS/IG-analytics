@@ -19,7 +19,10 @@ export type AttRow = {
 export type AttSettings = {
   requireSod: boolean; graceMinutes: number; noSodAlertAt: string; autoAbsentAt: string; autoAbsentEnabled: boolean;
   requireEodNote: boolean; allowCorrections: boolean; latePenaltyPts: number; absentPenaltyPts: number; deductCapacity: boolean;
+  // Who besides admins sees the whole team's attendance, by position.
+  teamView?: TeamView;
 };
+export type TeamView = { manager: boolean; asstManager: boolean; teamLead: boolean };
 // What a person shows as in Team today ("waiting" = not in yet).
 export type ShownStatus = AttStatus | "waiting";
 export type TeamPerson = {

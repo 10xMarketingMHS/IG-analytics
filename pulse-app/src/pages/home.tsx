@@ -16,7 +16,8 @@ import { useMyGoal, useStartFlow, type MyDayData } from "@/pages/my-day-layouts"
 import { HomeWidgets, useHomeLayout, type HomeCtx } from "@/pages/home-widgets";
 import { StartDaySection } from "@/components/start-day";
 import { useAttendanceToday } from "@/lib/use-attendance";
-import { homeRoleOf, type HomeRole } from "@/lib/home-role";
+import { homeRoleOf, seesTeamAttendance, type HomeRole } from "@/lib/home-role";
+import type { WidgetKey } from "@/lib/home-widgets";
 import { useOrg } from "@/lib/use-org";
 import type { Editor, Post, Task } from "@/lib/types";
 import { MyReportsModal } from "@/components/my-reports";
@@ -451,6 +452,13 @@ export function HomePage() {
   const flow = useStartFlow(ops.active, refetchTasks);
   // Team leads and managers look after the whole team.
   const teamIds: Set<string> | null = null;
+  // Team today only for positions Settings › Attendance lets see the team (a
+  // preview follows the setting for the role previewed).
+  const teamView = org?.attendance?.teamView;
+  const seesTeam = previewRole
+    ? previewRole === "manager" ? teamView?.manager !== false : previewRole === "lead" ? teamView?.teamLead !== false : false
+    : att ? att.scope === "all" : seesTeamAttendance(myEditor?.designation, isAdmin, teamView);
+  const blocked: WidgetKey[] = seesTeam ? [] : ["attend"];
   // Start of day: team leads and editors who check in (an admin previewing
   // those roles sees it as a preview).
   const showSod = role !== "manager" && (previewRole ? true : att ? att.checksIn : attMissing && isEditor && !!user?.editorId);
@@ -560,7 +568,7 @@ export function HomePage() {
           and editors), and the widgets for this Home role (home-widgets.tsx). */}
       <HomeWidgets
         c={ctx} layout={homeLayout} showHello={!homeLayout.banner} hello={greetText}
-        canPreview={isAdmin} previewRole={previewRole} onPreview={setPreviewRole}
+        canPreview={isAdmin} previewRole={previewRole} onPreview={setPreviewRole} blocked={blocked}
         sod={showSod ? (
           <StartDaySection
             att={previewRole ? null : att} attMissing={attMissing} firstName={firstName} today={today}

@@ -23,12 +23,25 @@ export const ATTENDANCE_DEFAULTS = {
   latePenaltyPts: 1,
   absentPenaltyPts: 3,
   deductCapacity: true,
+  // Who besides admins sees the whole team's attendance (Team today, Team ›
+  // Attendance, the lead actions), by position. Only a Super Admin changes it.
+  teamView: { manager: true, asstManager: true, teamLead: true },
 };
 
 export function normalizeAttendance(a) {
-  const s = { ...ATTENDANCE_DEFAULTS, ...(a && typeof a === "object" ? a : {}) };
+  const src = a && typeof a === "object" ? a : {};
+  const s = { ...ATTENDANCE_DEFAULTS, ...src, teamView: { ...ATTENDANCE_DEFAULTS.teamView, ...(src.teamView && typeof src.teamView === "object" ? src.teamView : {}) } };
   delete s.since;
   return s;
+}
+
+// The position's key in teamView, or null for everyone else.
+export function positionKey(designation) {
+  const p = String(designation || "").trim().toLowerCase();
+  if (p === "manager") return "manager";
+  if (p === "asst. manager" || p === "assistant manager") return "asstManager";
+  if (p === "team lead") return "teamLead";
+  return null;
 }
 
 export const minutesOf = (hhmm) => {
@@ -89,7 +102,8 @@ export function homeRoleOf(designation, isAdmin) {
 }
 
 // The caller: their roster person, Home role and what they can see.
-//   scope "all"  — admins, managers and team leads: the whole team
+//   scope "all"  — admins, and managers / asst. managers / team leads whose
+//                  position Settings › Attendance lets see the team
 //   scope "self" — everyone else (their own day only)
 export async function callerScope(req) {
   const { rows } = await pool.query(
@@ -99,7 +113,9 @@ export async function callerScope(req) {
   const editorId = rows[0]?.editor_id ?? null;
   const admin = req.role === "admin" || (await isOrgAdmin(req.orgId, req.user.sub));
   const role = homeRoleOf(rows[0]?.designation, admin);
-  const scope = admin || role === "manager" || role === "lead" ? "all" : "self";
+  const key = positionKey(rows[0]?.designation);
+  const { att } = await readSettings(req.orgId);
+  const scope = admin || (key && att.teamView[key]) ? "all" : "self";
   return { editorId, role, admin, scope, name: rows[0]?.name ?? null };
 }
 
