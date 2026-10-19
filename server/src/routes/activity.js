@@ -55,6 +55,19 @@ activityRouter.get("/activity", async (req, res, next) => {
               or (a.meta->'notifyUserIds' is null and $${asg}::boolean and exists (
                     select 1 from task t where t.id = a.entity_id and t.assigned_by = $${uid}::uuid))))
       )`;
+    } else {
+      // An admin sees the whole org, except review notices meant for someone
+      // else: a review goes to its reviewers (../review-route.js), not to every
+      // admin. Their own tasks' and their own actions' notices stay.
+      const { rows: me } = await pool.query("select editor_id from app_user where id = $1", [req.user.sub]);
+      params.push(req.user.sub, me[0]?.editor_id ?? null);
+      const [uid, eid] = [params.length - 1, params.length];
+      where += ` and not (
+        a.verb in ('review_requested', 'review_copied') and a.meta ? 'notifyUserIds'
+        and not (a.meta->'notifyUserIds' ? ($${uid}::uuid)::text)
+        and a.actor_id is distinct from $${uid}::uuid
+        and not exists (select 1 from task t where t.id = a.entity_id and t.editor_id = $${eid}::uuid)
+      )`;
     }
     const limit = Math.min(Number(req.query.limit) || 60, 200);
     params.push(limit);

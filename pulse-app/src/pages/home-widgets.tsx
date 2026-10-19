@@ -155,7 +155,11 @@ export function HomeWidgets({ c, layout, showHello, hello, canPublish, sod, bloc
   }, []);
   const role = c.role;
   const ok = (k: WidgetKey) => allowed(k, role) && !blocked.includes(k);
-  const items = layout.items.filter(([k]) => ok(k));
+  // Work waiting for your review always shows, first, even on a Home laid out
+  // without it (an Editor's, say, when they assigned the task).
+  const laid = layout.items.filter(([k]) => ok(k));
+  const items: typeof laid = !layout.editing && c.d.canReview && c.d.reviewQueue.length > 0 && !laid.some(([k]) => k === "reviews")
+    ? [["reviews", 2], ...laid] : laid;
   const notAllowed = WIDGET_ORDER.filter((k) => !ok(k));
   const addable = WIDGET_ORDER.filter((k) => ok(k) && !items.some(([x]) => x === k));
   const move = (i: number, by: -1 | 1) => {

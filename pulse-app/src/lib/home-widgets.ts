@@ -19,7 +19,8 @@ export const WIDGETS: Record<WidgetKey, WidgetDef> = {
   timer: { title: "My timer", icon: "timer", roles: ALL, link: { label: "Task board", to: "/tasks" } },
   upnext: { title: "My tasks", icon: "checklist", roles: ALL, link: { label: "Task board", to: "/tasks" } },
   mygoals: { title: "My goals", icon: "flag", roles: ["lead", "editor"], link: { label: "Goals", to: "/goals-board" } },
-  reviews: { title: "Waiting for review", icon: "rate_review", roles: LEADS },
+  // Anyone can be a reviewer (whoever assigned a task reviews it), so every Home has it.
+  reviews: { title: "Waiting for review", icon: "rate_review", roles: ALL },
   team: { title: "Team right now", icon: "group", roles: LEADS, link: { label: "Team", to: "/my-team" } },
   goalpace: { title: "Team goal pace", icon: "track_changes", roles: LEADS, link: { label: "Goals", to: "/goals-board" } },
   capacity: { title: "Capacity", icon: "speed", roles: LEADS, link: { label: "Set goals", to: "/goals-board" } },

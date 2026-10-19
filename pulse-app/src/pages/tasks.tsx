@@ -149,8 +149,11 @@ function weekRange(now: Date) {
 // Every board filter except the due window — shared by the board itself and
 // the counts on the due chips, so the two always agree.
 type BoardFilters = { mine: boolean; editorId: string | null; editor: string; type: TaskType | ""; format: string; q: string };
+// My tasks: your own, and anyone's waiting for your review (a task you
+// assigned comes back to you to review).
+const forMyReview = (t: Task) => t.status === "review" && !!t.can_review;
 function passesFilters(t: Task, f: BoardFilters) {
-  if (f.mine && (!f.editorId || t.editor_id !== f.editorId)) return false;
+  if (f.mine && !forMyReview(t) && (!f.editorId || t.editor_id !== f.editorId)) return false;
   if (f.editor && t.editor_id !== f.editor) return false;
   if (f.type && t.task_type !== f.type) return false;
   if (f.format && t.content_format_id !== f.format) return false;
