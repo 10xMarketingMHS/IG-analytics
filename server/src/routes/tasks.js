@@ -8,6 +8,7 @@ import { logActivity } from "../activity.js";
 import { canSeeTask, editorRanks, mayOpenTask, taskViewer } from "../hierarchy.js";
 import { closePendingHandovers } from "../handover.js";
 import { hasColumn } from "../schema-flags.js";
+import { coverFrom } from "../goal-score.js";
 
 export const tasksRouter = Router();
 
@@ -439,7 +440,7 @@ tasksRouter.patch("/tasks/:id", requireEditor, requireActiveEod, async (req, res
     // Capture prior state so we can spawn the next occurrence on completion,
     // guard task_type for post-linked tasks, and re-resolve the time budget.
     const prior = (await pool.query(
-      "select status, recurrence, post_id, editor_id, channel_id, content_format_id, accepted, budget_hours, budget_started_at, budget_used_seconds, on_hold, sid, ad_id, svid, pid, start_date, due_date, revision, task_type, delivery_link, review_link_required, title, description, priority, content_type, platforms, attachments, meta, created_by, held_by, assigned_by from task where id = $1 and org_id = $2",
+      "select status, recurrence, post_id, editor_id, channel_id, content_format_id, accepted, budget_hours, budget_started_at, budget_used_seconds, on_hold, sid, ad_id, svid, pid, start_date, due_date, revision, task_type, delivery_link, review_link_required, title, description, priority, content_type, platforms, attachments, meta, created_by, held_by, assigned_by, to_jsonb(task)->>'covered_from_editor_id' as covered_from from task where id = $1 and org_id = $2",
       [req.params.id, req.orgId],
     )).rows[0];
     if (!prior) return res.status(404).json({ error: "Task not found" });
@@ -813,6 +814,12 @@ tasksRouter.patch("/tasks/:id", requireEditor, requireActiveEod, async (req, res
         accepted = !nextEditorId || toSelf;
         push("accepted", accepted);
         push("assigned_by", nextEditorId && !toSelf ? req.user.sub : null);
+        // Covered work: a task its person had accepted, now someone else's
+        // (server/src/goal-score.js). Fixing an assignment nobody had taken on
+        // yet isn't cover; going back to its first person ends it.
+        if (await hasColumn("task", "covered_from_editor_id")) {
+          push("covered_from_editor_id", coverFrom(prior.covered_from ?? null, prior.accepted ? prior.editor_id : null, nextEditorId));
+        }
       }
     }
     // Format or assignee changed → re-snapshot the budget from current rules.

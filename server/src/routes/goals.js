@@ -8,6 +8,7 @@ import { resolveBudgetHours } from "./tasks.js";
 import { hasColumn } from "../schema-flags.js";
 import { capacityFor } from "../work-calendar.js";
 import { monthPenalties } from "../attendance.js";
+import { scoreMonthAll } from "../goal-score.js";
 
 export const goalsRouter = Router();
 
@@ -307,10 +308,13 @@ goalsRouter.get("/goals/performance", goalView, async (req, res, next) => {
       [req.orgId, editorId, month],
     );
     const actualBy = new Map(actuals.map((a) => [a.content_format_id, a.actual]));
+    const scored = (await scoreMonthAll(req.orgId, String(month).slice(0, 10), editorId)).get(editorId);
+    const typed = new Map((scored?.types ?? []).map((t) => [t.contentFormatId, t]));
     const rows = goals.map((g) => {
       const goalJC = Number(g.jc);
       const jph = Number(g.jph);
       const actualJC = actualBy.get(g.content_format_id) ?? 0;
+      const t = typed.get(g.content_format_id);
       const goalHours = goalJC * jph;
       const actualHours = actualJC * jph;
       return {
@@ -319,6 +323,9 @@ goalsRouter.get("/goals/performance", goalView, async (req, res, next) => {
         goalHours, actualHours,
         balance: goalHours - actualHours,
         achievement: goalJC > 0 ? (actualJC / goalJC) * 100 : null,
+        // the goal after approved leave, and jobs taken over from someone
+        goalAdjusted: t ? Math.round(t.goal * 10) / 10 : goalJC,
+        covered: scored?.coveredByType?.[g.content_format_id] ?? 0,
       };
     });
     // Stored Admin Discipline criterion ratings for this editor+month.
@@ -326,7 +333,12 @@ goalsRouter.get("/goals/performance", goalView, async (req, res, next) => {
       `select ${RATINGS_SELECT}, note from editor_discipline_points where org_id=$1 and editor_id=$2 and period_month=$3`,
       [req.orgId, editorId, month],
     )).rows[0];
-    res.json({ month, rows, ratings: ratingsOf(disc), note: disc?.note ?? null });
+    res.json({
+      month, rows, ratings: ratingsOf(disc), note: disc?.note ?? null,
+      leaveDays: scored?.leaveDays ?? 0, workingDays: scored?.workingDays ?? 0,
+      coveredJobs: scored?.coveredJobs ?? 0, coveredPoints: scored?.coveredPoints ?? 0,
+      scorePct: scored?.pct == null ? null : Math.round(scored.pct * 10) / 10,
+    });
   } catch (err) {
     next(err);
   }
@@ -462,35 +474,15 @@ goalsRouter.get("/goals/discipline", requirePermission("discipline"), async (req
     const { rows: editors } = await pool.query(
       "select id, name from editor where org_id=$1 and active order by name", [req.orgId],
     );
-    const { rows: goals } = await pool.query(
-      `select g.editor_id, g.content_format_id, g.jc, coalesce((to_jsonb(g)->>'points')::numeric, cf.points) as points
-         from editor_goal g join task_content_format cf on cf.id = g.content_format_id
-        where g.org_id=$1 and g.period_month=$2`,
-      [req.orgId, month],
-    );
-    const { rows: actuals } = await pool.query(
-      `select editor_id, content_format_id, count(*)::int actual
-         from task
-        where org_id=$1 and status='done' and content_format_id is not null
-          and completed_at >= $2 and completed_at < ($2::date + interval '1 month')
-        group by editor_id, content_format_id`,
-      [req.orgId, month],
-    );
+    // Each person's month, scored by the one rule (goal-score.js): goals cut for
+    // approved leave, each type up to 150%, covered work on top.
+    const scores = await scoreMonthAll(req.orgId, String(month).slice(0, 10));
     const { rows: disc } = await pool.query(
       `select editor_id, ${RATINGS_SELECT}, note, updated_at from editor_discipline_points where org_id=$1 and period_month=$2`,
       [req.orgId, month],
     );
-    const actualBy = new Map(actuals.map((a) => [`${a.editor_id}:${a.content_format_id}`, a.actual]));
     const discBy = new Map(disc.map((d) => [d.editor_id, d]));
-    const goalsByEd = new Map();
-    for (const g of goals) {
-      if (!goalsByEd.has(g.editor_id)) goalsByEd.set(g.editor_id, []);
-      goalsByEd.get(g.editor_id).push({
-        goalJC: Number(g.jc),
-        actualJC: actualBy.get(`${g.editor_id}:${g.content_format_id}`) ?? 0,
-        points: Number(g.points),
-      });
-    }
+    const rowsOf = (s) => (s?.types ?? []).map((t) => ({ goalJC: t.goal, actualJC: t.done, countedJC: t.counted, points: t.points }));
     // Attendance points lost this month (late, absent) come off discipline.
     const penalties = await monthPenalties(req.orgId, String(month).slice(0, 7));
     res.json({
@@ -499,7 +491,9 @@ goalsRouter.get("/goals/discipline", requirePermission("discipline"), async (req
         const d = discBy.get(e.id);
         return {
           editorId: e.id, editorName: e.name,
-          rows: goalsByEd.get(e.id) ?? [],
+          rows: rowsOf(scores.get(e.id)),
+          coveredPoints: scores.get(e.id)?.coveredPoints ?? 0,
+          leaveDays: scores.get(e.id)?.leaveDays ?? 0,
           ratings: ratingsOf(d),
           attendancePenalty: penalties.get(e.id) ?? 0,
           note: d?.note ?? null,
@@ -568,27 +562,16 @@ goalsRouter.get("/goals/my-breakdown", requireEditor, async (req, res, next) => 
     if (!editorId) return res.json({ month: monthIn, rows: [], discipline: null, note: null, unlinked: true });
     const { rows: mrow } = await pool.query("select date_trunc('month', $1::date)::date m", [monthIn]);
     const month = mrow[0].m;
-    const { rows: goals } = await pool.query(
-      `select g.content_format_id, g.jc, coalesce((to_jsonb(g)->>'points')::numeric, cf.points) as points
-         from editor_goal g join task_content_format cf on cf.id = g.content_format_id
-        where g.org_id=$1 and g.editor_id=$2 and g.period_month=$3`,
-      [req.orgId, editorId, month],
-    );
-    const { rows: actuals } = await pool.query(
-      `select content_format_id, count(*)::int actual from task
-        where org_id=$1 and editor_id=$2 and status='done' and content_format_id is not null
-          and completed_at >= $3 and completed_at < ($3::date + interval '1 month')
-        group by content_format_id`,
-      [req.orgId, editorId, month],
-    );
-    const actualBy = new Map(actuals.map((a) => [a.content_format_id, a.actual]));
+    const scored = (await scoreMonthAll(req.orgId, String(month).slice(0, 10), editorId)).get(editorId);
     const disc = (await pool.query(
       `select ${RATINGS_SELECT}, note from editor_discipline_points where org_id=$1 and editor_id=$2 and period_month=$3`,
       [req.orgId, editorId, month],
     )).rows[0];
     res.json({
       month,
-      rows: goals.map((g) => ({ goalJC: Number(g.jc), actualJC: actualBy.get(g.content_format_id) ?? 0, points: Number(g.points) })),
+      rows: (scored?.types ?? []).map((t) => ({ goalJC: t.goal, actualJC: t.done, countedJC: t.counted, points: t.points })),
+      coveredPoints: scored?.coveredPoints ?? 0,
+      leaveDays: scored?.leaveDays ?? 0,
       ratings: ratingsOf(disc),
       note: disc?.note ?? null,
     });

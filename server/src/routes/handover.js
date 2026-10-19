@@ -6,6 +6,8 @@ import { requireActiveEod } from "./eod.js";
 import { logActivity } from "../activity.js";
 import { isOrgAdmin } from "../permissions.js";
 import { resolveBudgetHours } from "./tasks.js";
+import { hasColumn } from "../schema-flags.js";
+import { coverFrom } from "../goal-score.js";
 import { LEVEL_LABEL, handoverPeople, handoverReady, leadsAndManagers, pauseForHandover, resumeAfterHandover, syncHandovers } from "../handover.js";
 
 // Hand over (see ../handover.js): offer your own task to a teammate; they
@@ -44,12 +46,20 @@ async function giveTask(orgId, h, editorId, accepted, assignedBy) {
   const budget = await resolveBudgetHours(orgId, editorId, h.content_format_id);
   const startAt = accepted && budget != null && h.task_status === "in_progress" ? new Date() : null;
   const params = [h.task_id, editorId, accepted, budget, startAt];
-  if (assignedBy !== undefined) params.push(assignedBy);
+  const extra = [];
+  if (assignedBy !== undefined) { params.push(assignedBy); extra.push(`assigned_by = $${params.length}`); }
+  // It's covered work for its new person: taken over from its owner (or from
+  // whoever it first belonged to), unless it's going back to them.
+  if (await hasColumn("task", "covered_from_editor_id")) {
+    const cur = (await pool.query("select covered_from_editor_id from task where id = $1", [h.task_id])).rows[0]?.covered_from_editor_id ?? null;
+    params.push(coverFrom(cur, h.from_editor_id, editorId));
+    extra.push(`covered_from_editor_id = $${params.length}`);
+  }
   await pool.query(
     `update task
         set editor_id = $2, accepted = $3, on_hold = false, held_by = null, pending_note = null,
             budget_hours = $4, budget_used_seconds = 0, budget_started_at = $5
-            ${assignedBy !== undefined ? ", assigned_by = $6" : ""}
+            ${extra.length ? ", " + extra.join(", ") : ""}
       where id = $1`,
     params,
   );

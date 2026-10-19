@@ -1180,6 +1180,9 @@ select.mini{font-family:inherit;font-size:12.5px;font-weight:700;color:var(--tex
 .lb-goal-bar{height:6px;border-radius:999px;background:var(--panel2);border:1px solid var(--border);overflow:hidden}
 .lb-goal-fill{height:100%;border-radius:inherit;background:linear-gradient(90deg,var(--accent),var(--indigo,#6366f1))}
 .lb-goal-none{color:var(--faint);font-size:13px}
+/* past the goal (extra or covered work), and what changed it */
+.lb-goal-pct.over{color:var(--good)}
+.lb-goal-extra{display:flex;gap:8px;margin-top:4px;font-size:11px;font-weight:600;color:var(--muted)}
 .lb-teamgoal{margin-top:14px;font-size:13px;color:var(--muted);text-align:right;padding-right:22px}
 .lb-teamgoal b{color:var(--text);font-variant-numeric:tabular-nums}
 .lb-statbar{display:flex;align-items:center;gap:16px;margin:0 0 16px}

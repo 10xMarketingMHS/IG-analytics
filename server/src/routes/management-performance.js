@@ -3,16 +3,18 @@ import { z } from "zod";
 import { pool } from "../db.js";
 import { requireAdmin } from "../resolve-workspace.js";
 import { monthPenalties } from "../attendance.js";
+import { scoreMonthAll } from "../goal-score.js";
 
 // Management Performance (points-based). Admin-only board + config; a self view
 // for My Day. The performance measure is Overall Performance % — the Earned
 // (80%) + Discipline (20%) split of Total Goal Points that Goal Setting's
 // Performance tab and My Day already use — banded EPI/MPI/LPI by % thresholds.
 //
-// IMPORTANT: computeScore() below MUST stay in lockstep with the frontend's
-// goalBreakdown() in pulse-app/src/lib/goal-points.ts. That is the canonical
-// 80/20 implementation; the server and app are separate packages and cannot
-// share the module, so this is a deliberate mirror — change both together.
+// IMPORTANT: what a month's work counts for (leave, the 150% per type, covered
+// work) is worked out once, in ../goal-score.js, for every screen. computeScore()
+// below only applies the 80/20 split, as the app's goalBreakdown() in
+// pulse-app/src/lib/goal-points.ts does with the same counted numbers — change
+// the two together.
 export const managementPerformanceRouter = Router();
 
 const DEFAULT_THRESHOLDS = { epiMinPct: 85, mpiMinPct: 75 };
@@ -51,26 +53,26 @@ function classify(pct, thr) {
   return pct >= thr.epiMinPct ? "EPI" : pct >= thr.mpiMinPct ? "MPI" : "LPI";
 }
 
-// Mirror of goal-points.ts goalBreakdown(). `rows`: [{ goalJC, actualJC, points }];
+// The Overall Score from a scored month (goal-score.js scoreMonth: goals cut
+// for approved leave, each type up to 150%, covered work on top): Earned is 80%
+// of what was reached, Discipline up to 20% of the goal points. Can pass 100%.
+// The app's goalBreakdown() (goal-points.ts) takes the same counted numbers.
 // `ratings`: object keyed by the 5 CRITERIA (null = unreviewed → full 5).
-// Returns null when Total Goal Points is 0 (no goals — no score to band).
+// Returns null when there are no goal points (no goals — no score to band).
 // `penalty`: the month's attendance points lost (late, absent), taken off the
 // discipline points, never below 0.
-function computeScore(rows, ratings, penalty = 0) {
-  const total = rows.reduce((s, r) => s + (r.goalJC ?? 0) * (r.points ?? 0), 0);
+function computeScore(scored, ratings, penalty = 0) {
+  const total = scored?.goalPoints ?? 0;
   if (total <= 0) return null;
-  const earned = 0.8 * rows.reduce((s, r) => {
-    const comp = r.goalJC > 0 ? Math.min(1, r.actualJC / r.goalJC) : 0;
-    return s + comp * r.goalJC * r.points;
-  }, 0);
+  const earned = 0.8 * scored.reached;
   const potential = 0.8 * total;               // Earned ceiling — reference, not summed
   const ceiling = 0.2 * total;                 // Discipline bucket ceiling
   const ratingSum = CRITERIA.reduce((s, k) => s + (ratings?.[k] ?? 5), 0);
   const reviewed = CRITERIA.every((k) => ratings?.[k] != null);
   const discipline = Math.max(0, (ratingSum / MAX_RATING_SUM) * ceiling - (penalty || 0));
   const totalPoints = earned + discipline;
-  const goalTarget = rows.reduce((s, r) => s + (r.goalJC ?? 0), 0);
-  const achieved = rows.reduce((s, r) => s + (r.actualJC ?? 0), 0);
+  const goalTarget = Math.round(scored.goalTarget * 10) / 10;
+  const achieved = scored.achieved;
   return {
     total, earned, potential, discipline, totalPoints, reviewed,
     goalTarget, achieved,
@@ -78,40 +80,11 @@ function computeScore(rows, ratings, penalty = 0) {
   };
 }
 
-// ---- Per-editor data for the board — SEPARATE simple queries, run in parallel.
+// ---- Per-editor data for the board (goals and jobs: ../goal-score.js) — SEPARATE simple queries, run in parallel.
 // Counter-intuitively this beats one big combined query here: the remote session
 // pooler answers a warm simple query in ~370ms but runs a big multi-CTE query
 // erratically (1–6s). With the whole pool kept warm (see db.js), 5 simple queries
 // in parallel land on 5 warm connections and finish together (~370ms). ----
-async function goalRowsByEditor(orgId, monthFirst) {
-  const { rows } = await pool.query(
-    `select g.editor_id, g.content_format_id, g.jc, coalesce((to_jsonb(g)->>'points')::numeric, cf.points) as points
-       from editor_goal g join task_content_format cf on cf.id = g.content_format_id
-      where g.org_id = $1 and g.period_month = $2`,
-    [orgId, monthFirst],
-  );
-  const m = new Map();
-  for (const r of rows) {
-    if (!m.has(r.editor_id)) m.set(r.editor_id, []);
-    m.get(r.editor_id).push({ contentFormatId: r.content_format_id, goalJC: Number(r.jc), points: Number(r.points) });
-  }
-  return m;
-}
-
-async function actualsByEditorFormat(orgId, monthFirst) {
-  const { rows } = await pool.query(
-    `select editor_id, content_format_id, count(*)::int n
-       from task
-      where org_id = $1 and status = 'done' and content_format_id is not null
-        and completed_at >= $2 and completed_at < ($2::date + interval '1 month')
-      group by editor_id, content_format_id`,
-    [orgId, monthFirst],
-  );
-  const m = new Map();
-  for (const r of rows) m.set(`${r.editor_id}:${r.content_format_id}`, Number(r.n));
-  return m;
-}
-
 async function ratingsByEditor(orgId, monthFirst) {
   const { rows } = await pool.query(
     `select editor_id, ${CRITERIA.join(", ")} from editor_discipline_points where org_id = $1 and period_month = $2`,
@@ -145,14 +118,6 @@ async function activeEditorsWithThresholds(orgId) {
     ? { epiMinPct: Number(rows[0].epi), mpiMinPct: Number(rows[0].mpi), isDefault: !rows[0].has }
     : { ...DEFAULT_THRESHOLDS, isDefault: true };
   return { editors: rows, thr };
-}
-
-// Build one editor's computeScore() input rows from the shared maps.
-function rowsFor(editorId, goalMap, actualsMap) {
-  return (goalMap.get(editorId) ?? []).map((g) => ({
-    goalJC: g.goalJC, points: g.points,
-    actualJC: actualsMap.get(`${editorId}:${g.contentFormatId}`) ?? 0,
-  }));
 }
 
 // Assemble one editor's board/detail row from a computed score (or null).
@@ -246,28 +211,14 @@ const bgSnapshot = (orgId, monthFirst, rows, thr) =>
 // for the month — the minimal data computeScore needs, without pulling the whole
 // org (used by the /me self view).
 async function scoreForEditor(orgId, editorId, monthFirst) {
-  const [goalRes, ratingRes] = await Promise.all([
-    pool.query(
-      `with g as (
-          select content_format_id id, sum(jc)::int jc, max((to_jsonb(editor_goal)->>'points')::numeric) pts
-            from editor_goal where org_id=$1 and editor_id=$2 and period_month=$3 group by content_format_id
-        ), a as (
-          select content_format_id id, count(*)::int n
-            from task where org_id=$1 and editor_id=$2 and status='done' and content_format_id is not null
-              and completed_at>=$3 and completed_at<($3::date + interval '1 month') group by content_format_id
-        )
-        select coalesce(g.pts, cf.points) as points, g.jc as goal, coalesce(a.n,0) as achieved
-          from g join task_content_format cf on cf.id = g.id
-          left join a on a.id = g.id`,
-      [orgId, editorId, monthFirst],
-    ),
+  const [scores, ratingRes] = await Promise.all([
+    scoreMonthAll(orgId, monthFirst, editorId),
     pool.query(`select ${CRITERIA.join(", ")} from editor_discipline_points where org_id=$1 and editor_id=$2 and period_month=$3`, [orgId, editorId, monthFirst]),
   ]);
-  const rows = goalRes.rows.map((r) => ({ goalJC: Number(r.goal), actualJC: Number(r.achieved), points: Number(r.points) }));
   const rr = ratingRes.rows[0];
   const ratings = rr ? Object.fromEntries(CRITERIA.map((k) => [k, rr[k] == null ? null : Number(rr[k])])) : null;
   const pen = (await monthPenalties(orgId, String(monthFirst).slice(0, 7))).get(editorId) ?? 0;
-  return computeScore(rows, ratings, pen);
+  return computeScore(scores.get(editorId), ratings, pen);
 }
 
 // ---------------------------------------------------------------------------
@@ -353,10 +304,9 @@ function invalidateOrg(orgId) {
 
 // Compute the board response for a month (no caching).
 async function computeBoard(orgId, monthFirst, isCurrent) {
-  const [edThr, goalMap, actualsMap, ratingMap, storedRows] = await Promise.all([
+  const [edThr, scores, ratingMap, storedRows] = await Promise.all([
     activeEditorsWithThresholds(orgId),
-    goalRowsByEditor(orgId, monthFirst),
-    actualsByEditorFormat(orgId, monthFirst),
+    scoreMonthAll(orgId, monthFirst),
     ratingsByEditor(orgId, monthFirst),
     isCurrent
       ? Promise.resolve({ rows: [] })
@@ -371,7 +321,7 @@ async function computeBoard(orgId, monthFirst, isCurrent) {
     if (!isCurrent && stored.has(e.id)) {
       rows.push(rowFromStored(e, stored.get(e.id)));
     } else {
-      const row = scoreToRow(e, computeScore(rowsFor(e.id, goalMap, actualsMap), ratingMap.get(e.id), penalties.get(e.id) ?? 0), thr);
+      const row = scoreToRow(e, computeScore(scores.get(e.id), ratingMap.get(e.id), penalties.get(e.id) ?? 0), thr);
       rows.push(row);
       if (!isCurrent) toSnapshot.push(row); // freeze past months only
     }
@@ -512,6 +462,7 @@ async function computeDetail(orgId, editorId, monthFirst, isCurrent) {
     ]);
     const editor = erowsRes.rows[0];
     if (!editor) return null; // 404
+    const scored = (await scoreMonthAll(orgId, monthFirst, editorId)).get(editorId) ?? null;
     const breakdown = breakdownRes.rows;
     const history = historyRes.rows;
     const eodSessions = eodRes.rows;
@@ -523,26 +474,31 @@ async function computeDetail(orgId, editorId, monthFirst, isCurrent) {
     if (!isCurrent && storedRes.rows[0]) {
       current = rowFromStored(editor, storedRes.rows[0]);
     } else {
-      // Score inputs come straight from the breakdown (goal formats only) — no
-      // extra queries. Same numbers the board produces for this editor.
-      const scoreRows = breakdown.filter((b) => Number(b.goal) > 0)
-        .map((b) => ({ goalJC: Number(b.goal), actualJC: Number(b.achieved), points: Number(b.points) }));
       const rr = ratingRes.rows[0];
       const ratings = rr ? Object.fromEntries(CRITERIA.map((k) => [k, rr[k] == null ? null : Number(rr[k])])) : null;
       const pen = (await monthPenalties(orgId, String(monthFirst).slice(0, 7))).get(editor.id) ?? 0;
-      current = scoreToRow(editor, computeScore(scoreRows, ratings, pen), thr);
+      current = scoreToRow(editor, computeScore(scored, ratings, pen), thr);
       if (!isCurrent) bgSnapshot(orgId, monthFirst, [current], thr); // freeze past months only
     }
 
+    const typed = new Map((scored?.types ?? []).map((t) => [t.contentFormatId, t]));
     return {
       editor: { id: editor.id, name: editor.name, designation: editor.designation, imageUrl: editor.image_url },
       month: monthFirst.slice(0, 7),
       isCurrent,
       thresholds: thr,
       ...current,
+      // approved leave (goals cut for scoring) and covered work (counted on top)
+      leaveDays: scored?.leaveDays ?? 0,
+      workingDays: scored?.workingDays ?? 0,
+      coveredJobs: scored?.coveredJobs ?? 0,
+      coveredPoints: Math.round((scored?.coveredPoints ?? 0) * 100) / 100,
       taskBreakdown: breakdown.map((b) => ({
         contentFormatId: b.id, name: b.name, icon: b.icon, category: b.category,
         metricTier: b.metric_tier, points: Number(b.points), goal: Number(b.goal), achieved: Number(b.achieved),
+        goalAdjusted: typed.has(b.id) ? Math.round(typed.get(b.id).goal * 10) / 10 : Number(b.goal),
+        counted: typed.has(b.id) ? Math.round(typed.get(b.id).counted * 10) / 10 : 0,
+        covered: scored?.coveredByType?.[b.id] ?? 0,
       })),
       history,
       eodSessions: eodSessions.map((s) => ({ ...s, spanHours: s.spanHours == null ? null : Number(s.spanHours) })),

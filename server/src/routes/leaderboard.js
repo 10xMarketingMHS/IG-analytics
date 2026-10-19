@@ -2,6 +2,7 @@ import { Router } from "express";
 import { pool } from "../db.js";
 import { hasColumn } from "../schema-flags.js";
 import { istNow, istYmd } from "../attendance.js";
+import { scoreMonthAll } from "../goal-score.js";
 
 // Media House Leaders (Leaderboard), worked out here so everyone sees the
 // same board whoever is looking (a member's own task list leaves out the
@@ -14,11 +15,11 @@ import { istNow, istYmd } from "../attendance.js";
 // (after 3 send-backs 70%, 5: 50%, 7: 20%). Days waiting for a reviewer don't
 // count as late. Admin tasks never score.
 //
-// The rank is the share of the person's own goal reached, counted in jobs per
-// content type, each type up to its goal: 8 of 10 Reels and 4 of 4 Carousels.
-// Each type weighs by its goal points (jobs × the points the goal was set
-// with), so changing a type's points, or late work, never moves it. Points
-// break ties, so work beyond the goal still counts. No goal set: listed after.
+// The rank is the share of the person's own goal reached, by the one goal rule
+// (../goal-score.js): jobs per content type, each type up to 150% of its goal
+// (cut for approved leave), plus covered work on top, weighed by the goal's
+// points, so changing a type's points, or late work, never moves it. Points
+// break ties. No goal set: listed after.
 export const leaderboardRouter = Router();
 
 const daysBetween = (a, b) => Math.round((Date.parse(`${b}T00:00:00Z`) - Date.parse(`${a}T00:00:00Z`)) / 86_400_000);
@@ -58,27 +59,20 @@ leaderboardRouter.get("/leaderboard/house", async (req, res, next) => {
           and t.completed_at < ($2::date + interval '1 month')::timestamp at time zone 'Asia/Kolkata'`,
       [req.orgId, first],
     );
-    const { rows: goals } = await pool.query(
-      `select g.editor_id, g.content_format_id, g.jc, cf.name, cf.icon,
-              coalesce((to_jsonb(g)->>'points')::numeric, cf.points) as pts
-         from editor_goal g join task_content_format cf on cf.id = g.content_format_id
-        where g.org_id = $1 and g.period_month = $2::date`,
-      [req.orgId, first],
-    );
+    const scores = await scoreMonthAll(req.orgId, first);
     const rows = people.filter((p) => p.scored).map((p) => {
       const mine = done.filter((t) => t.editor_id === p.id);
       const points = mine.reduce((s, t) => s + taskPoints(t), 0);
-      const doneBy = new Map();
-      for (const t of mine) if (t.content_format_id) doneBy.set(t.content_format_id, (doneBy.get(t.content_format_id) ?? 0) + 1);
-      const byType = goals.filter((g) => g.editor_id === p.id && Number(g.jc) > 0).map((g) => ({
-        contentFormatId: g.content_format_id, name: g.name, icon: g.icon,
-        goal: Number(g.jc), done: doneBy.get(g.content_format_id) ?? 0, points: Number(g.pts ?? 0),
+      const s = scores.get(p.id);
+      const byType = (s?.types ?? []).map((t) => ({
+        contentFormatId: t.contentFormatId, name: t.name, icon: t.icon,
+        goal: Math.round(t.goal * 10) / 10, done: t.done, covered: s.coveredByType?.[t.contentFormatId] ?? 0, points: t.points,
       }));
-      const goalPoints = byType.reduce((s, g) => s + g.goal * g.points, 0);
-      const reached = byType.reduce((s, g) => s + Math.min(1, g.done / g.goal) * g.goal * g.points, 0);
       return {
-        editorId: p.id, points: Math.round(points * 100) / 100, completed: mine.length, goalPoints,
-        goalPct: goalPoints > 0 ? Math.round((reached / goalPoints) * 1000) / 10 : null,
+        editorId: p.id, points: Math.round(points * 100) / 100, completed: mine.length,
+        goalPoints: Math.round((s?.goalPoints ?? 0) * 10) / 10,
+        goalPct: s?.pct == null ? null : Math.round(s.pct * 10) / 10,
+        coveredJobs: s?.coveredJobs ?? 0, leaveDays: s?.leaveDays ?? 0,
         byType,
       };
     });
