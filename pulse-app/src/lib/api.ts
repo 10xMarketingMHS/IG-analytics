@@ -48,7 +48,7 @@ export async function api<T>(
     // The server says the work day isn't open (ended on another device, closed
     // automatically, or no plan yet) — let the shell re-check instead of
     // carrying on as if it were.
-    if (res.status === 403 && /Press Start Work/.test(message)) {
+    if (res.status === 403 && /Press Start Work|Start your day first/.test(message)) {
       window.dispatchEvent(new Event("pulse:workday-changed"));
     }
     throw new ApiError(message, res.status);

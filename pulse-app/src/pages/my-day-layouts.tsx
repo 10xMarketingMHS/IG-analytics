@@ -105,7 +105,7 @@ function ordinal(n: number) {
 }
 
 // The number people know a task by: its brand's SID/AID/SVID/PID, else the TID.
-function taskRef(t: Task) {
+export function taskRef(t: Task) {
   return t.sid || t.ad_id?.replace(/^AdID/i, "AID") || t.svid || t.pid || t.tid || "";
 }
 
@@ -120,7 +120,7 @@ function initials(name: string) {
   const w = name.trim().split(/\s+/).filter(Boolean);
   return (w.length > 1 ? w[0][0] + w[1][0] : (w[0]?.[0] ?? "?")).toUpperCase();
 }
-function Initials({ name, size = 30, round }: { name: string; size?: number; round?: boolean }) {
+export function Initials({ name, size = 30, round }: { name: string; size?: number; round?: boolean }) {
   return (
     <span className="md-ini" aria-hidden="true"
       style={{ width: size, height: size, background: avatarColor(name), borderRadius: round ? "50%" : Math.round(size * 0.3), fontSize: Math.round(size * 0.36) }}>
@@ -130,7 +130,7 @@ function Initials({ name, size = 30, round }: { name: string; size?: number; rou
 }
 
 type Due = { label: string; tone: "bad" | "warn" | "quiet" };
-function dueOf(t: Task, today: string): Due {
+export function dueOf(t: Task, today: string): Due {
   if (!t.due_date) return { label: "No due date", tone: "quiet" };
   const d = daysBetween(today, t.due_date);
   if (d < 0) return { label: "Overdue", tone: "bad" };
@@ -140,7 +140,7 @@ function dueOf(t: Task, today: string): Due {
 }
 
 // Where a task stands, in words: "Sent back for changes", "In progress · 1:03 of 1.5h".
-function noteOf(t: Task, nowMs: number) {
+export function noteOf(t: Task, nowMs: number) {
   if (t.pending_note && t.status !== "done") return "Sent back for changes";
   if (t.status === "in_progress") {
     if (t.on_hold) return "On hold";
@@ -179,7 +179,7 @@ function groupTasks(tasks: Task[], today: string): Group[] {
 
 // The monthly task goal (real tracked task counts — see management-performance).
 type MyGoal = { linked: boolean; hasGoal?: boolean; goalTargetNumber: number; achievedNumber: number };
-function useMyGoal(enabled: boolean) {
+export function useMyGoal(enabled: boolean) {
   const [goal, setGoal] = useState<MyGoal | null>(null);
   useEffect(() => {
     if (!enabled) return;
@@ -194,7 +194,7 @@ function useMyGoal(enabled: boolean) {
   };
 }
 type Goal = ReturnType<typeof useMyGoal>;
-const monthName = () => new Date().toLocaleDateString("en-GB", { month: "long" });
+export const monthName = () => new Date().toLocaleDateString("en-GB", { month: "long" });
 
 // ---------------------------------------------------------------------------
 // Starting a task — the Task Board's own rules (accept first if it isn't yours
@@ -213,7 +213,7 @@ function actionOf(t: Task): "accept" | "start" | "open" {
   return "open";
 }
 
-function useStartFlow(myTasks: Task[], onChanged: () => Promise<unknown>) {
+export function useStartFlow(myTasks: Task[], onChanged: () => Promise<unknown>) {
   const [prompt, setPrompt] = useState<StartPrompt | null>(null);
   const [busyId, setBusyId] = useState<string | null>(null);
 
@@ -363,7 +363,7 @@ function Ring({ size, frac, big, small, label }: { size: number; frac: number; b
   );
 }
 
-function Bar({ pct }: { pct: number }) {
+export function Bar({ pct }: { pct: number }) {
   return <div className="md-bar"><div className="md-bar-fill" style={{ width: `${Math.max(0, Math.min(100, pct))}%` }} /></div>;
 }
 
@@ -454,7 +454,7 @@ function RowAction({ t, flow, onOpen }: { t: Task; flow: ReturnType<typeof useSt
 const SHOW_TASKS = 8;
 
 // Your open tasks, grouped by urgency, each with its next action (Focus).
-function UpNext({ d, onOpen, flow }: { d: MyDayData; onOpen: (id: string) => void; flow: ReturnType<typeof useStartFlow> }) {
+export function UpNext({ d, onOpen, flow }: { d: MyDayData; onOpen: (id: string) => void; flow: ReturnType<typeof useStartFlow> }) {
   if (d.loading) return <div className="md-empty">Loading…</div>;
   if (!d.linked) return <div className="md-empty">Nothing personal to show until you're on the team roster.</div>;
   if (d.myTasks.length === 0) return <div className="md-empty">You're clear for today.</div>;
@@ -545,7 +545,7 @@ function TaskTable({ d, onOpen }: { d: MyDayData; onOpen: (id: string) => void }
 
 // Approve or send back, right here. Sending back needs a note (the assignee
 // sees it when they pick the task up again), so it opens a note box first.
-function ReviewList({ d, onOpen, onChanged, stacked }: {
+export function ReviewList({ d, onOpen, onChanged, stacked }: {
   d: MyDayData; onOpen: (id: string) => void; onChanged: () => Promise<unknown>; stacked?: boolean;
 }) {
   const [busyId, setBusyId] = useState<string | null>(null);

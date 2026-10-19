@@ -78,13 +78,13 @@ export const attendanceReady = () => hasColumn("attendance", "id");
 
 // Home role from the position (Team › Roster): Manager and Asst. Manager get
 // the Manager Home, Team Lead the Team lead Home, everyone else the Editor
-// Home; an admin with no position counts as a Manager. Mirrors
-// pulse-app/src/lib/home-role.ts.
+// Home; an admin whose position isn't Editor or Viewer (none, or an older
+// title) counts as a Manager. Mirrors pulse-app/src/lib/home-role.ts.
 export function homeRoleOf(designation, isAdmin) {
   const p = String(designation || "").trim().toLowerCase();
   if (p === "manager" || p === "asst. manager" || p === "assistant manager") return "manager";
   if (p === "team lead") return "lead";
-  if (!p && isAdmin) return "manager";
+  if (isAdmin && p !== "editor" && p !== "viewer") return "manager";
   return "editor";
 }
 

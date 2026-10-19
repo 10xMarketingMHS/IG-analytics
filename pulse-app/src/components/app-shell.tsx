@@ -118,6 +118,20 @@ const LIVE_VERBS = new Set([
   "completed", "sent_back", "reopened", "assigned", "deleted", "held", "resumed",
   "review_requested", "password_reset_requested", "sod_submitted",
 ]);
+// Attendance notices, worded for whoever reads them: the person themselves, or
+// their lead / a manager.
+function attendanceNotice(a: Activity, myEditorId: string | null | undefined): string | null {
+  const mine = !!myEditorId && a.entity_id === myEditorId;
+  const who = a.actor_name ?? "Your lead";
+  switch (a.verb) {
+    case "attendance_nudge": return mine ? `${who} nudged you to start your day` : null;
+    case "attendance_no_sod": return mine ? "You haven't started your day yet — tap Start day on Home" : a.summary;
+    case "attendance_correction": return mine ? null : `${who} ${a.summary.charAt(0).toLowerCase()}${a.summary.slice(1)}`;
+    case "attendance_marked": case "attendance_excused": case "attendance_correction_answered": case "attendance_undone":
+      return mine ? `${who} ${a.summary.charAt(0).toLowerCase()}${a.summary.slice(1)}` : null;
+    default: return null;
+  }
+}
 function useLiveNotices(items: Activity[] | undefined, myId: string | undefined, myEditorId: string | null | undefined) {
   const since = useRef<string | null>(null);
   useEffect(() => {
@@ -128,6 +142,11 @@ function useLiveNotices(items: Activity[] | undefined, myId: string | undefined,
     if (newest > since.current) since.current = newest;
     if (!fresh.length) return;
     for (const a of [...fresh].reverse()) {
+      if (a.verb.startsWith("attendance_")) {
+        const msg = attendanceNotice(a, myEditorId);
+        if (msg) toast(`🔔 ${msg}`);
+        continue;
+      }
       if (!LIVE_VERBS.has(a.verb)) continue;
       // A task newly handed to you is announced by useTaskAssignNotify ("New
       // task"); one that comes back after you had it before is announced here.
@@ -138,6 +157,7 @@ function useLiveNotices(items: Activity[] | undefined, myId: string | undefined,
       toast(`🔔 ${a.actor_name ?? "Someone"} ${summary}`, { description: note });
     }
     if (fresh.some((a) => a.entity_type === "task")) notifyTasksChanged();
+    if (fresh.some((a) => a.verb.startsWith("attendance_"))) window.dispatchEvent(new Event("pulse:attendance-changed"));
   }, [items, myId, myEditorId]);
 }
 
@@ -239,7 +259,10 @@ function AppShellInner() {
     eodOpen, openEod, signOutAfter, clearSignOutAfter, start: startEod, busy: eodBusy,
   } = useEodState();
   // Viewing as someone is look-only, so their Start Work lock doesn't apply.
-  const eodLocked = !user?.viewingAs && active?.role === "editor" && !eodLoading && !eodUnlinked && !eodSession;
+  // Settings › Attendance › Require Start of day off: nothing waits for it.
+  const { org: orgSettings } = useOrg();
+  const sodRequired = orgSettings?.attendance?.requireSod !== false;
+  const eodLocked = sodRequired && !user?.viewingAs && active?.role === "editor" && !eodLoading && !eodUnlinked && !eodSession;
   const [viewAsOpen, setViewAsOpen] = useState(false);
   // New task (sidebar, phone +) opens its sheet over whatever page you're on.
   const [newTaskOpen, setNewTaskOpen] = useState(false);
@@ -609,9 +632,9 @@ function AppShellInner() {
         />
       )}
       {lockAsk && (
-        <Modal title="Start your work day first" onClose={() => setLockAsk(null)}>
+        <Modal title="Start your day first" onClose={() => setLockAsk(null)}>
           <div className="lock-ask">
-            <p><b>{lockAsk.title}</b> opens once you start work. Social & Ads Pipeline, Posts, Leaderboard and Goals all wait for Start Work.</p>
+            <p><b>{lockAsk.title}</b> opens once you start your day. Social & Ads Pipeline, Posts, Leaderboard and Goals all wait for Start day.</p>
             <div className="lock-ask-acts">
               <button type="button" className="btn" onClick={() => setLockAsk(null)}>Not now</button>
               <button type="button" className="btn btn-primary" disabled={eodBusy}
@@ -621,7 +644,7 @@ function AppShellInner() {
                   setLockAsk(null); setMenuOpen(false);
                   navigate(to.href, to.state ? { state: to.state } : undefined);
                 }}>
-                {eodBusy ? "Starting…" : "▶ Start Work"}
+                {eodBusy ? "Starting…" : "▶ Start day"}
               </button>
             </div>
           </div>

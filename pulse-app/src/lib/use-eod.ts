@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
-import { api } from "@/lib/api";
+import { api, ApiError } from "@/lib/api";
 
 // 7h 40m / 45m — a length of time, not a clock time.
 export function fmtDuration(seconds: number): string {
@@ -126,11 +126,54 @@ export function useEod() {
     };
   }, [refresh]);
 
-  const start = useCallback(async () => {
+  // Start day (attendance check-in) opens the work session, as Start Work did.
+  // Before the attendance database change is applied it falls back to plain
+  // Start Work. Tells Home and the widgets that the day changed.
+  const start = useCallback(async (plan?: string) => {
     setBusy(true);
     try {
-      const d = await api<{ session: EodSession }>("/eod/start", { method: "POST" });
-      setSession(d.session);
+      try {
+        const d = await api<{ session: EodSession }>("/attendance/check-in", { method: "POST", body: JSON.stringify(plan ? { plan } : {}) });
+        setSession(d.session);
+      } catch (e) {
+        if (!(e instanceof ApiError && e.status === 409)) throw e;
+        const d = await api<{ session: EodSession }>("/eod/start", { method: "POST" });
+        setSession(d.session);
+      }
+      window.dispatchEvent(new Event("pulse:attendance-changed"));
+    } finally {
+      setBusy(false);
+    }
+  }, []);
+
+  // End day: the wrap-up note, then the work session closes and the summary
+  // (with the report to copy) shows. Falls back to End Work like start().
+  const checkOut = useCallback(async (note: string): Promise<EodSummary | null> => {
+    setBusy(true);
+    try {
+      let d: { summary: EodSummary };
+      try {
+        d = await api<{ summary: EodSummary }>("/attendance/check-out", { method: "POST", body: JSON.stringify({ note }) });
+      } catch (e) {
+        if (!(e instanceof ApiError && e.status === 409)) throw e;
+        d = await api<{ summary: EodSummary }>("/eod/end", { method: "PATCH" });
+      }
+      setSession(null);
+      setSummary(d.summary);
+      window.dispatchEvent(new Event("pulse:attendance-changed"));
+      return d.summary;
+    } finally {
+      setBusy(false);
+    }
+  }, []);
+
+  // Undo Start day within its first 5 minutes.
+  const undoStart = useCallback(async () => {
+    setBusy(true);
+    try {
+      await api("/attendance/undo-check-in", { method: "POST" });
+      setSession(null);
+      window.dispatchEvent(new Event("pulse:attendance-changed"));
     } finally {
       setBusy(false);
     }
@@ -198,7 +241,7 @@ export function useEod() {
   }, []);
 
   return {
-    session, unlinked, loading, busy, summary, start, end, clearSummary, refresh,
+    session, unlinked, loading, busy, summary, start, end, checkOut, undoStart, clearSummary, refresh,
     eodOpen, openEod, closeEod, signOutAfter, clearSignOutAfter, saveNotes,
     sod, planOpen, setPlanOpen, openSod, refreshSod, saveSod,
   };

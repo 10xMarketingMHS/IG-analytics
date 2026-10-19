@@ -1,6 +1,4 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import { toast } from "sonner";
-import { ApiError } from "@/lib/api";
 import { useTasks } from "@/lib/use-tasks";
 import { useAuth } from "@/lib/auth-context";
 import { useWorkspaces } from "@/lib/workspaces-context";
@@ -14,7 +12,12 @@ import { breakOffsetMs, DAILY_BREAK_CAP_SEC, fmtWait, reviewWaitMs } from "@/lib
 import { Avatar } from "@/lib/editor-visuals";
 import { useReviewAccess, scopeAllowsTask } from "@/lib/use-review-access";
 import { TaskPanel } from "@/pages/tasks";
-import { MyDayBody, type MyDayData } from "@/pages/my-day-layouts";
+import { useMyGoal, useStartFlow, type MyDayData } from "@/pages/my-day-layouts";
+import { HomeWidgets, useHomeLayout, type HomeCtx } from "@/pages/home-widgets";
+import { StartDaySection } from "@/components/start-day";
+import { useAttendanceToday } from "@/lib/use-attendance";
+import { homeRoleOf, type HomeRole } from "@/lib/home-role";
+import { useOrg } from "@/lib/use-org";
 import type { Editor, Post, Task } from "@/lib/types";
 import { MyReportsModal } from "@/components/my-reports";
 import { clockTime } from "@/lib/time-format";
@@ -134,25 +137,14 @@ function usePodiumSpots(ref: React.RefObject<HTMLDivElement | null>, on: boolean
 export function HomePage() {
   const { user } = useAuth();
   const { active, isAdmin, workspaces, hasPermission } = useWorkspaces();
-  const { session: eodSession, loading: eodLoading, start: startEod, busy: eodBusy, openSod, openEod } = useEodState();
+  const { session: eodSession } = useEodState();
   const isEditor = active?.role === "editor";
-  // My reports (your own SOD and EOD, today and past days) — for anyone on the
-  // team roster, admins included.
+  // My reports (your own SOD and EOD, today and past days), opened from the
+  // Start of day bar.
   const [reportsOpen, setReportsOpen] = useState(false);
-  const canReports = !!user?.editorId;
-  // Start Work / End Work: anyone on the roster (editors are locked until they
-  // start; admins aren't, but can clock in too). Nothing shows while loading.
-  const canClock = !!user?.editorId && !eodLoading;
-  // A Start Work that fails (no connection, the server down) says so, instead
-  // of the button just going back to how it was.
-  const startWork = () => startEod().catch((e) => {
-    toast.error(e instanceof ApiError ? e.message : "Couldn't start your work day. Check your connection and try again.");
-  });
-  const reportsLink = canReports && (
-    <button type="button" className="mh-reports" onClick={() => setReportsOpen(true)} title="Your Start of Day and End of Day, today and past days">
-      {HeroIcon.reports}My reports
-    </button>
-  );
+  // Attendance: your own day (the Start of day card) and your team's (Team today).
+  const { data: att, missing: attMissing } = useAttendanceToday(!!user);
+  const { org } = useOrg();
   const { tasks, refetch: refetchTasks } = useTasks();
   // Tasks in Review that THIS person may resolve: all of them for an admin; for
   // a resolve_tasks grantee, whatever their review scope covers; for an assigner,
@@ -449,6 +441,32 @@ export function HomePage() {
     viewsByDay,
   };
 
+  // ---- Home role (from the position; admins can preview the others) ----
+  const myEditor = (editors ?? []).find((e) => e.id === user?.editorId) ?? null;
+  const realRole: HomeRole = homeRoleOf(myEditor?.designation, isAdmin);
+  const [previewRole, setPreviewRole] = useState<HomeRole | null>(null);
+  const role: HomeRole = isAdmin && previewRole ? previewRole : realRole;
+  const homeLayout = useHomeLayout(role);
+  const goal = useMyGoal(!!user?.editorId);
+  const flow = useStartFlow(ops.active, refetchTasks);
+  // A team lead looks after the people assigned to them; managers and admins
+  // see everyone.
+  const teamIds = useMemo(() => {
+    const leadsOwn = att ? att.scope === "team" : realRole === "lead" && !isAdmin;
+    if (!leadsOwn || !user?.editorId) return null;
+    return new Set((editors ?? []).filter((e) => e.lead_editor_id === user.editorId).map((e) => e.id));
+  }, [att, realRole, isAdmin, editors, user?.editorId]);
+  // Start of day: team leads and editors who check in (an admin previewing
+  // those roles sees it as a preview).
+  const showSod = role !== "manager" && (previewRole ? true : att ? att.checksIn : attMissing && isEditor && !!user?.editorId);
+  const ctx: HomeCtx = {
+    role, d: myDay, tasks: tasks ?? [], editors: editors ?? [], posts: posts ?? [],
+    goalTotals: goalTotals?.totals ?? [], att: att ?? null, cal: org?.calendar ?? null,
+    myEditorId: user?.editorId ?? null, firstName, nowMs: now.getTime(), today,
+    teamIds, checkedIn: !!eodSession, goal, flow,
+    onOpenTask: setOpenTaskId, onChanged: refetchTasks,
+  };
+
   // One podium chip: the avatar ringed in its medal colour, name and points.
   // Null slot → nothing.
   const podCard = (entry: { row: { points: number }; editor: Editor } | null, rank: 1 | 2 | 3, withRank = false) =>
@@ -485,6 +503,7 @@ export function HomePage() {
           every role. Full size, or a compact strip (remembered per browser). The
           video is decorative; a gradient shows through until the assets are
           present, and a scrim keeps the text legible. */}
+      {homeLayout.banner && (
       <div ref={heroRef} className={"myday-hero" + (compact ? " compact" : "")}>
         <HeroVideo replay={replay} />
         {/* Two shadings, cross-faded: the full banner's, and the compact strip's. */}
@@ -504,21 +523,6 @@ export function HomePage() {
               </div>
             )}
             {scopeToggle}
-            {canClock && (eodSession ? (
-              <>
-                <button className="mhc-primary" onClick={() => openEod()} disabled={eodBusy} title="Write today's notes and end your work day">
-                  {HeroIcon.stop}<span>{eodBusy ? "Ending…" : "End Work"}</span>
-                </button>
-                <button className="mhc-ghost mhc-sod" onClick={openSod} title="Copy today's Start of Day report">Start of Day</button>
-              </>
-            ) : (
-              <button className="mhc-primary eod-live" onClick={startWork} disabled={eodBusy} title={locked ? "Start your work day: the menu and your tasks unlock" : "Start your work day"}>
-                {HeroIcon.play}<span>{eodBusy ? "Starting…" : "Start Work"}</span>
-              </button>
-            ))}
-            {canReports && (
-              <button className="mhc-icon" onClick={() => setReportsOpen(true)} title="My reports — your Start of Day and End of Day" aria-label="My reports">{HeroIcon.reports}</button>
-            )}
             <button className="mhc-icon" onClick={toggleCompact} title="Expand banner" aria-label="Expand banner">{HeroIcon.expand}</button>
           </div>
         ) : (
@@ -527,35 +531,8 @@ export function HomePage() {
               <div className="mh-left">
                 <h1 className="mh-headline">Small Tasks<br /><span className="mh-headline-g">Big Wins</span></h1>
                 <p className="mh-tag">Create. Collaborate. Grow.<br />Level up every day.</p>
-                {/* One main button: Start Work before the day starts (kept live in
-                    colour by .eod-live while a locked editor's app is grayscaled),
-                    End Work once it has, with Start of Day beside it. */}
-                {canClock && (eodSession ? (
-                  <>
-                    <div className="mh-cta-row">
-                      <button className="btn btn-primary mh-cta" onClick={() => openEod()} disabled={eodBusy} title="Write today's notes and end your work day">
-                        {eodBusy ? "Ending…" : "■ End Work"}
-                      </button>
-                      {/* Start of Day: today's tasks and the report to copy for WhatsApp. */}
-                      <button className="btn mh-endeod" onClick={openSod} title="Copy today's Start of Day report">
-                        Start of Day
-                      </button>
-                    </div>
-                    <div className="mh-subline">
-                      <span className="mh-clockedin"><i aria-hidden="true" />Clocked in since {fmtClock(eodSession.startedAt)}</span>
-                      {reportsLink}
-                    </div>
-                  </>
-                ) : (
-                  <div className="mh-startwrap">
-                    <button className="btn btn-primary mh-cta eod-live" onClick={startWork} disabled={eodBusy}>
-                      {eodBusy ? "Starting…" : "▶ Start Work"}
-                    </button>
-                    {/* Before Start Work an editor's app is greyed out — say why. */}
-                    {locked && <p className="mh-lockhint">Press Start Work to begin your day. Pipeline, Posts, Leaderboard and Goals open once you do.</p>}
-                    {reportsLink && <div className="mh-subline">{reportsLink}</div>}
-                  </div>
-                ))}
+                {/* Before Start day an editor's app is greyed out — say why. */}
+                {locked && <p className="mh-lockhint">Tap Start day below to begin. Pipeline, Posts, Leaderboard and Goals open once you do.</p>}
               </div>
               <div className="mh-right">
                 <div className="mh-date">{dateStr}</div>
@@ -582,10 +559,22 @@ export function HomePage() {
           </>
         )}
       </div>
+      )}
 
-      {/* Everything under the banner: three layouts of the same sections, picked
-          by the viewer (see my-day-layouts.tsx). */}
-      <MyDayBody data={myDay} onOpenTask={setOpenTaskId} onChanged={refetchTasks} />
+      {/* Everything under the banner: the greeting row, Start of day (team leads
+          and editors), and the widgets for this Home role (home-widgets.tsx). */}
+      <HomeWidgets
+        c={ctx} layout={homeLayout} showHello={!homeLayout.banner} hello={greetText}
+        canPreview={isAdmin} previewRole={previewRole} onPreview={setPreviewRole}
+        sod={showSod ? (
+          <StartDaySection
+            att={previewRole ? null : att} attMissing={attMissing} firstName={firstName} today={today}
+            myTasks={ops.active} completedToday={ops.completedToday} pointsToday={scoreWindows?.today.points ?? 0}
+            preview={!!previewRole} onOpenReports={() => setReportsOpen(true)} onOpenTask={setOpenTaskId}
+          />
+        ) : null}
+      />
+      {flow.ui}
       {reportsOpen && <MyReportsModal onClose={() => setReportsOpen(false)} />}
       {openTask && (
         <TaskPanel

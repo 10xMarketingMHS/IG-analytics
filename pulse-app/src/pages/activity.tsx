@@ -27,6 +27,14 @@ const VERB_META: Record<ActivityVerb, { icon: string; cls: string }> = {
   password_reset_requested: { icon: "🔑", cls: "v-editor" },
   password_reset: { icon: "🔑", cls: "v-editor" },
   sod_submitted: { icon: "📝", cls: "v-editor" },
+  attendance_check_in: { icon: "☀️", cls: "v-editor" },
+  attendance_no_sod: { icon: "⏰", cls: "v-editor" },
+  attendance_nudge: { icon: "👋", cls: "v-editor" },
+  attendance_marked: { icon: "📋", cls: "v-editor" },
+  attendance_excused: { icon: "✅", cls: "v-editor" },
+  attendance_undone: { icon: "↩️", cls: "v-editor" },
+  attendance_correction: { icon: "🕘", cls: "v-editor" },
+  attendance_correction_answered: { icon: "🕘", cls: "v-editor" },
 };
 
 function relTime(iso: string) {

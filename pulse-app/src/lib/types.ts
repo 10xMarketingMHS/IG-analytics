@@ -45,6 +45,8 @@ export type Editor = {
   // Counts in the Task Points rankings: false when a Super Admin switched them
   // out on the roster; null or true counts (see countsInTaskScore in lib/task-points).
   in_task_score?: boolean | null;
+  // The Team Lead this person reports to (Team › Roster); null for none.
+  lead_editor_id?: string | null;
   // True when this editor is linked to a user with an admin role. Admins are
   // hidden from "assign an editor" pickers (they don't get assigned editing).
   is_admin?: boolean;
@@ -298,7 +300,10 @@ export type ActivityVerb =
   | "created" | "completed" | "assigned" | "commented" | "published"
   | "stage_completed" | "channel_added" | "editor_added"
   | "review_requested" | "sent_back" | "reopened" | "deleted"
-  | "held" | "resumed" | "password_reset_requested" | "password_reset" | "sod_submitted";
+  | "held" | "resumed" | "password_reset_requested" | "password_reset" | "sod_submitted"
+  // Attendance (Start day, a lead's marks, nudges, corrections, the no-SOD alert)
+  | "attendance_check_in" | "attendance_no_sod" | "attendance_nudge" | "attendance_marked" | "attendance_excused"
+  | "attendance_undone" | "attendance_correction" | "attendance_correction_answered";
 
 export type Activity = {
   id: string;
