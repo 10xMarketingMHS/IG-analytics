@@ -229,3 +229,5 @@ div.hw-timer-title{cursor:default}
   .hw-greet{gap:8px}
   .hw-preview{width:100%;justify-content:space-between}
 }
+
+.sd-loading{color:var(--md-text3)}

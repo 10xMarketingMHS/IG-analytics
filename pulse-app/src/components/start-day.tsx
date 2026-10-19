@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 import { api, ApiError } from "@/lib/api";
 import { useEodState } from "@/lib/eod-context";
@@ -40,7 +40,7 @@ export function StartDaySection({
   onOpenReports: () => void;
   onOpenTask: (id: string) => void;
 }) {
-  const { session, start, checkOut, undoStart, busy, openSod, refresh } = useEodState();
+  const { session, loading: dayLoading, start, checkOut, undoStart, busy, openSod, refresh } = useEodState();
   const [plan, setPlan] = useState("");
   const [corrOpen, setCorrOpen] = useState(false);
   const [corrTime, setCorrTime] = useState("");
@@ -49,6 +49,16 @@ export function StartDaySection({
   const [wrap, setWrap] = useState("");
   const [sending, setSending] = useState(false);
   const [nowMs, setNowMs] = useState(() => Date.now());
+  // The banner's End day button opens the wrap-up here.
+  const barRef = useRef<HTMLElement>(null);
+  useEffect(() => {
+    const open = () => {
+      setEnding(true);
+      window.setTimeout(() => barRef.current?.scrollIntoView({ behavior: "smooth", block: "center" }), 50);
+    };
+    window.addEventListener("pulse:end-day", open);
+    return () => window.removeEventListener("pulse:end-day", open);
+  }, []);
   useEffect(() => {
     const id = setInterval(() => setNowMs(Date.now()), 30_000);
     return () => clearInterval(id);
@@ -64,6 +74,12 @@ export function StartDaySection({
   // team member sees before Start day.
   const checkedIn = !preview && (!!me?.checkInAt || (!!session && !me?.checkOutAt));
   const closed = !preview && !!me?.checkOutAt && !session;
+
+  // First visit: nothing known yet about your day — a quiet line, not the
+  // wrong card for a second.
+  if (!preview && !att && !attMissing && dayLoading) {
+    return <section className="sd-bar closed sd-loading" aria-label="Your day" aria-busy="true"><span>Loading your day…</span></section>;
+  }
 
   // ---- Before check-in: the Start your day card ----
   if (!checkedIn && !closed) {
@@ -206,7 +222,7 @@ export function StartDaySection({
     }
   }
   return (
-    <section className={"sd-bar" + (ending ? " open" : "")} aria-label="Your day">
+    <section ref={barRef} className={"sd-bar" + (ending ? " open" : "")} aria-label="Your day">
       <div className="sd-barrow">
         <span className={"sd-pill " + pill.tone}><i />{pill.t}</span>
         <div className="sd-barmain">

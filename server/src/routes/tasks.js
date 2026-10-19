@@ -5,6 +5,7 @@ import { requireEditor } from "../resolve-workspace.js";
 import { requireActiveEod } from "./eod.js";
 import { hasActiveGrant, reviewAccess, scopeAllowsTask } from "../permissions.js";
 import { logActivity } from "../activity.js";
+import { canSeeTask, editorRanks, mayOpenTask, taskViewer } from "../hierarchy.js";
 
 export const tasksRouter = Router();
 
@@ -237,7 +238,10 @@ tasksRouter.get("/tasks", async (req, res, next) => {
        order by t.due_date asc nulls last, t.created_at desc`,
       params,
     );
-    res.json({ tasks: rows });
+    // Nobody sees the tasks of someone above them in the hierarchy (admins see all).
+    const viewer = await taskViewer(req);
+    const ranks = viewer.admin ? null : await editorRanks(req.orgId);
+    res.json({ tasks: viewer.admin ? rows : rows.filter((t) => canSeeTask(viewer, ranks, t)) });
   } catch (err) {
     next(err);
   }
@@ -1043,6 +1047,7 @@ async function taskOfSubtask(subtaskId, orgId) {
 tasksRouter.get("/tasks/:id/reviews", async (req, res, next) => {
   try {
     if (!(await ownsTask(req.params.id, req.orgId))) return res.status(404).json({ error: "Task not found" });
+    if (!(await mayOpenTask(req, req.params.id))) return res.status(404).json({ error: "Task not found" });
     const { rows } = await pool.query(
       `select l.id, l.revision, l.action, l.note, l.created_at,
               coalesce(u.name, u.email) as actor_name
@@ -1061,6 +1066,7 @@ tasksRouter.get("/tasks/:id/reviews", async (req, res, next) => {
 tasksRouter.get("/tasks/:id/subtasks", async (req, res, next) => {
   try {
     if (!(await ownsTask(req.params.id, req.orgId))) return res.status(404).json({ error: "Task not found" });
+    if (!(await mayOpenTask(req, req.params.id))) return res.status(404).json({ error: "Task not found" });
     const { rows } = await pool.query(
       "select id, title, done, sort_order from subtask where task_id = $1 order by sort_order, created_at",
       [req.params.id],
@@ -1135,6 +1141,7 @@ tasksRouter.delete("/subtasks/:id", requireEditor, requireActiveEod, async (req,
 tasksRouter.get("/tasks/:id/comments", async (req, res, next) => {
   try {
     if (!(await ownsTask(req.params.id, req.orgId))) return res.status(404).json({ error: "Task not found" });
+    if (!(await mayOpenTask(req, req.params.id))) return res.status(404).json({ error: "Task not found" });
     const { rows } = await pool.query(
       `select c.id, c.body, c.created_at, c.author_id,
               coalesce(u.name, u.email) as author_name

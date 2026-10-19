@@ -1,4 +1,7 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { useNavigate } from "react-router-dom";
+import { toast } from "sonner";
+import { ApiError } from "@/lib/api";
 import { useTasks } from "@/lib/use-tasks";
 import { useAuth } from "@/lib/auth-context";
 import { useWorkspaces } from "@/lib/workspaces-context";
@@ -138,13 +141,14 @@ function usePodiumSpots(ref: React.RefObject<HTMLDivElement | null>, on: boolean
 export function HomePage() {
   const { user } = useAuth();
   const { active, isAdmin, workspaces, hasPermission } = useWorkspaces();
-  const { session: eodSession } = useEodState();
+  const { session: eodSession, start: startDay, busy: dayBusy } = useEodState();
+  const navigate = useNavigate();
   const isEditor = active?.role === "editor";
   // My reports (your own SOD and EOD, today and past days), opened from the
   // Start of day bar.
   const [reportsOpen, setReportsOpen] = useState(false);
   // Attendance: your own day (the Start of day card) and your team's (Team today).
-  const { data: att, missing: attMissing } = useAttendanceToday(!!user);
+  const { data: att, missing: attMissing } = useAttendanceToday(!!user, user?.id ?? "");
   const { org } = useOrg();
   const { tasks, refetch: refetchTasks } = useTasks();
   // Tasks in Review that THIS person may resolve: all of them for an admin; for
@@ -461,7 +465,8 @@ export function HomePage() {
   const blocked: WidgetKey[] = seesTeam ? [] : ["attend"];
   // Start of day: team leads and editors who check in (an admin previewing
   // those roles sees it as a preview).
-  const showSod = role !== "manager" && (previewRole ? true : att ? att.checksIn : attMissing && isEditor && !!user?.editorId);
+  // Until attendance answers, go by the position so the bar shows at once.
+  const showSod = role !== "manager" && (previewRole ? true : att ? att.checksIn : !!user?.editorId && active?.role !== "viewer");
   const ctx: HomeCtx = {
     role, d: myDay, tasks: tasks ?? [], editors: editors ?? [], posts: posts ?? [],
     goalTotals: goalTotals?.totals ?? [], att: att ?? null, cal: org?.calendar ?? null,
@@ -488,6 +493,21 @@ export function HomePage() {
   const shortDate = now.toLocaleDateString("en-GB", { weekday: "short", day: "numeric", month: "short" });
   // A locked editor's first move is Start Work, in either banner size.
   const locked = isEditor && !eodSession;
+  // The banner's main button follows your day: Start day, then End day (which
+  // opens the wrap-up below), then nothing once it's closed; Task Board sits
+  // beside it. Managers, who don't check in, get Task Board.
+  const dayIn = !!eodSession || (!!att?.me?.checkInAt && !att?.me?.checkOutAt);
+  const dayClosed = !eodSession && !!att?.me?.checkOutAt;
+  const dayAction: "start" | "end" | null = !showSod || previewRole ? null : dayClosed ? null : dayIn ? "end" : "start";
+  async function bannerStart() {
+    try {
+      await startDay();
+      toast.success("Day started — add today's plan from the bar below if you like.");
+    } catch (e) {
+      toast.error(e instanceof ApiError ? e.message : "Couldn't start your day. Check your connection and try again.");
+    }
+  }
+  const bannerEnd = () => window.dispatchEvent(new Event("pulse:end-day"));
 
   // Team / Just me — only an admin has the team's numbers to switch to.
   const scopeToggle = isAdmin ? (
@@ -526,6 +546,17 @@ export function HomePage() {
               </div>
             )}
             {scopeToggle}
+            {dayAction === "start" && (
+              <button className="mhc-primary eod-live" onClick={bannerStart} disabled={dayBusy}>{HeroIcon.play}<span>{dayBusy ? "Starting…" : "Start day"}</span></button>
+            )}
+            {dayAction === "end" && (
+              <button className="mhc-primary" onClick={bannerEnd}>{HeroIcon.stop}<span className="mhc-label">End day</span></button>
+            )}
+            {dayAction ? (
+              <button className="mhc-ghost" onClick={() => navigate("/tasks")}>Task Board</button>
+            ) : (
+              <button className="mhc-primary" onClick={() => navigate("/tasks")}>{HeroIcon.play}<span className="mhc-label">Task Board</span></button>
+            )}
             <button className="mhc-icon" onClick={toggleCompact} title="Expand banner" aria-label="Expand banner">{HeroIcon.expand}</button>
           </div>
         ) : (
@@ -535,7 +566,20 @@ export function HomePage() {
                 <h1 className="mh-headline">Small Tasks<br /><span className="mh-headline-g">Big Wins</span></h1>
                 <p className="mh-tag">Create. Collaborate. Grow.<br />Level up every day.</p>
                 {/* Before Start day an editor's app is greyed out — say why. */}
-                {locked && <p className="mh-lockhint">Tap Start day below to begin. Pipeline, Posts, Leaderboard and Goals open once you do.</p>}
+                <div className="mh-cta-row">
+                  {dayAction === "start" && (
+                    <button className="btn btn-primary mh-cta eod-live" onClick={bannerStart} disabled={dayBusy}>{dayBusy ? "Starting…" : "▶ Start day"}</button>
+                  )}
+                  {dayAction === "end" && (
+                    <button className="btn btn-primary mh-cta" onClick={bannerEnd}>■ End day</button>
+                  )}
+                  {dayAction ? (
+                    <button className="btn mh-endeod" onClick={() => navigate("/tasks")}>Task Board</button>
+                  ) : (
+                    <button className="btn btn-primary mh-cta" onClick={() => navigate("/tasks")}>▶ Task Board</button>
+                  )}
+                </div>
+                {locked && <p className="mh-lockhint">Start your day to begin. Pipeline, Posts, Leaderboard and Goals open once you do.</p>}
               </div>
               <div className="mh-right">
                 <div className="mh-date">{dateStr}</div>

@@ -35,17 +35,31 @@ export type AttToday = {
   checksIn: boolean; me: AttRow | null; team: TeamPerson[] | null;
 };
 
-export function useAttendanceToday(enabled = true) {
-  const [data, setData] = useState<AttToday | null>(null);
+// The last answer is kept for this tab (today only), so Home shows your day
+// at once and refreshes it in the background instead of waiting on the server.
+const CACHE_KEY = "pulse-att-today";
+const localYmd = () => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`; };
+function readCache(who: string): AttToday | null {
+  try {
+    const c = JSON.parse(window.sessionStorage.getItem(`${CACHE_KEY}:${who}`) || "null") as AttToday | null;
+    return c && c.date === localYmd() ? c : null;
+  } catch { return null; }
+}
+
+// `who`: the signed-in user's id, so a different login never sees another's day.
+export function useAttendanceToday(enabled = true, who = "") {
+  const [data, setData] = useState<AttToday | null>(() => (who ? readCache(who) : null));
   const [missing, setMissing] = useState(false);
   const refresh = useCallback(async () => {
     try {
-      setData(await api<AttToday>("/attendance/today"));
+      const d = await api<AttToday>("/attendance/today");
+      setData(d);
+      if (who) { try { window.sessionStorage.setItem(`${CACHE_KEY}:${who}`, JSON.stringify(d)); } catch { /* not kept, still shown */ } }
       setMissing(false);
     } catch (e) {
       if (e instanceof ApiError && e.status === 409) setMissing(true);
     }
-  }, []);
+  }, [who]);
   useEffect(() => {
     if (!enabled) return;
     refresh();

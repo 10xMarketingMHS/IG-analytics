@@ -144,9 +144,14 @@ html[data-theme="dark"] .tb,html[data-theme="dark"] .tp2{
 .tb-pri.low{color:var(--tb-text3)}
 .tb .task-hold-badge{display:inline-flex;align-items:center;gap:3px;margin:0;padding:1px 7px 1px 5px;border:0;border-radius:6px;background:var(--tb-sunk);color:var(--tb-text2);
   font-size:11px;font-weight:700;letter-spacing:0;white-space:nowrap}
-.tb .task-x{opacity:0;transition:opacity .12s}
-.tb .task-card:hover .task-x,.tb .task-x:focus-visible{opacity:.6}
-.tb .task-x:hover{opacity:1}
+/* Delete: a small bin in a rounded square, shown on hover (always on touch
+   screens), red when pointed at. */
+.tb .task-x{flex:none;width:26px;height:26px;display:grid;place-items:center;padding:0;margin-left:2px;border:1px solid transparent;border-radius:8px;
+  background:transparent;color:var(--tb-text3,#85858f);opacity:0;cursor:pointer;transition:opacity .12s,background .12s,color .12s,border-color .12s}
+.tb .task-card:hover .task-x,.tb .task-x:focus-visible{opacity:1}
+.tb .task-x:hover{background:oklch(0.96 0.03 25);border-color:oklch(0.9 0.06 25);color:oklch(0.55 0.2 25)}
+html[data-theme="dark"] .tb .task-x:hover{background:oklch(0.28 0.06 25);border-color:oklch(0.36 0.08 25);color:oklch(0.75 0.15 25)}
+@media (hover:none){.tb .task-x{opacity:1}}
 .tb .task-title{margin:0;font-size:13.5px;font-weight:700;line-height:1.4;text-wrap:pretty}
 .tb-chips-row{display:flex;gap:6px;flex-wrap:wrap}
 .tb-tag{display:inline-flex;align-items:center;gap:5px;height:24px;padding:0 9px;border:1px solid var(--tb-line);border-radius:8px;font-size:11.5px;font-weight:600;color:var(--tb-text2);
