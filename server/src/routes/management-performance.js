@@ -2,6 +2,7 @@ import { Router } from "express";
 import { z } from "zod";
 import { pool } from "../db.js";
 import { requireAdmin } from "../resolve-workspace.js";
+import { monthPenalties } from "../attendance.js";
 
 // Management Performance (points-based). Admin-only board + config; a self view
 // for My Day. The performance measure is Overall Performance % — the Earned
@@ -53,7 +54,9 @@ function classify(pct, thr) {
 // Mirror of goal-points.ts goalBreakdown(). `rows`: [{ goalJC, actualJC, points }];
 // `ratings`: object keyed by the 5 CRITERIA (null = unreviewed → full 5).
 // Returns null when Total Goal Points is 0 (no goals — no score to band).
-function computeScore(rows, ratings) {
+// `penalty`: the month's attendance points lost (late, absent), taken off the
+// discipline points, never below 0.
+function computeScore(rows, ratings, penalty = 0) {
   const total = rows.reduce((s, r) => s + (r.goalJC ?? 0) * (r.points ?? 0), 0);
   if (total <= 0) return null;
   const earned = 0.8 * rows.reduce((s, r) => {
@@ -64,7 +67,7 @@ function computeScore(rows, ratings) {
   const ceiling = 0.2 * total;                 // Discipline bucket ceiling
   const ratingSum = CRITERIA.reduce((s, k) => s + (ratings?.[k] ?? 5), 0);
   const reviewed = CRITERIA.every((k) => ratings?.[k] != null);
-  const discipline = (ratingSum / MAX_RATING_SUM) * ceiling;
+  const discipline = Math.max(0, (ratingSum / MAX_RATING_SUM) * ceiling - (penalty || 0));
   const totalPoints = earned + discipline;
   const goalTarget = rows.reduce((s, r) => s + (r.goalJC ?? 0), 0);
   const achieved = rows.reduce((s, r) => s + (r.actualJC ?? 0), 0);
@@ -263,7 +266,8 @@ async function scoreForEditor(orgId, editorId, monthFirst) {
   const rows = goalRes.rows.map((r) => ({ goalJC: Number(r.goal), actualJC: Number(r.achieved), points: Number(r.points) }));
   const rr = ratingRes.rows[0];
   const ratings = rr ? Object.fromEntries(CRITERIA.map((k) => [k, rr[k] == null ? null : Number(rr[k])])) : null;
-  return computeScore(rows, ratings);
+  const pen = (await monthPenalties(orgId, String(monthFirst).slice(0, 7))).get(editorId) ?? 0;
+  return computeScore(rows, ratings, pen);
 }
 
 // ---------------------------------------------------------------------------
@@ -359,6 +363,7 @@ async function computeBoard(orgId, monthFirst, isCurrent) {
       : pool.query("select * from editor_monthly_performance where org_id = $1 and period_month = $2", [orgId, monthFirst]),
   ]);
   const { editors, thr } = edThr;
+  const penalties = await monthPenalties(orgId, String(monthFirst).slice(0, 7));
   const stored = new Map(storedRows.rows.map((s) => [s.editor_id, s]));
   const rows = [];
   const toSnapshot = [];
@@ -366,7 +371,7 @@ async function computeBoard(orgId, monthFirst, isCurrent) {
     if (!isCurrent && stored.has(e.id)) {
       rows.push(rowFromStored(e, stored.get(e.id)));
     } else {
-      const row = scoreToRow(e, computeScore(rowsFor(e.id, goalMap, actualsMap), ratingMap.get(e.id)), thr);
+      const row = scoreToRow(e, computeScore(rowsFor(e.id, goalMap, actualsMap), ratingMap.get(e.id), penalties.get(e.id) ?? 0), thr);
       rows.push(row);
       if (!isCurrent) toSnapshot.push(row); // freeze past months only
     }
@@ -524,7 +529,8 @@ async function computeDetail(orgId, editorId, monthFirst, isCurrent) {
         .map((b) => ({ goalJC: Number(b.goal), actualJC: Number(b.achieved), points: Number(b.points) }));
       const rr = ratingRes.rows[0];
       const ratings = rr ? Object.fromEntries(CRITERIA.map((k) => [k, rr[k] == null ? null : Number(rr[k])])) : null;
-      current = scoreToRow(editor, computeScore(scoreRows, ratings), thr);
+      const pen = (await monthPenalties(orgId, String(monthFirst).slice(0, 7))).get(editor.id) ?? 0;
+      current = scoreToRow(editor, computeScore(scoreRows, ratings, pen), thr);
       if (!isCurrent) bgSnapshot(orgId, monthFirst, [current], thr); // freeze past months only
     }
 

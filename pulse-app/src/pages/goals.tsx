@@ -321,7 +321,7 @@ function TeamGoals({ month, isCurrent, focusId, selfOnly }: { month: string; isC
   );
 }
 
-type DiscEditor = { editorId: string; editorName: string; rows: { goalJC: number; actualJC: number; points: number }[]; ratings: Ratings; note: string | null; updatedAt: string | null };
+type DiscEditor = { editorId: string; editorName: string; rows: { goalJC: number; actualJC: number; points: number }[]; ratings: Ratings; note: string | null; updatedAt: string | null; attendancePenalty?: number };
 
 function Discipline({ month }: { month: string }) {
   const { editors } = useEditors();
@@ -377,7 +377,7 @@ function Discipline({ month }: { month: string }) {
             {data.map((e) => {
               const r = ratingsOf(e);
               const ed = editors?.find((x) => x.id === e.editorId);
-              const bd = goalBreakdown(e.rows, r);
+              const bd = goalBreakdown(e.rows, r, e.attendancePenalty ?? 0);
               const rated = DISCIPLINE_CRITERIA.some((c) => r[c.key] != null);
               const disc = bd ? Math.round((bd.discipline / bd.total) * 100) : Math.round((DISCIPLINE_CRITERIA.reduce((s, c) => s + (r[c.key] ?? 5), 0) / 25) * 20);
               const overall = bd ? Math.round((bd.overall / bd.total) * 100) : null;
@@ -393,7 +393,7 @@ function Discipline({ month }: { month: string }) {
                       ))}
                     </span>
                   ))}
-                  <b className="num">{disc}/20</b>
+                  <b className="num" title={e.attendancePenalty ? `Includes −${e.attendancePenalty} attendance pt${e.attendancePenalty === 1 ? "" : "s"} (late, absent)` : undefined}>{disc}/20</b>
                   <b className="num lg">{overall ?? "–"}</b>
                   <span>{<span className={"gl-tag " + st.t}>{st.l}</span>}</span>
                 </div>

@@ -41,7 +41,10 @@ export type GoalBreakdown = {
   total: number; earned: number; ceiling: number;
   discipline: number; ratingSum: number; reviewed: boolean; overall: number;
 };
-export function goalBreakdown(rows: BreakdownRow[], ratings: Ratings): GoalBreakdown | null {
+// `penalty`: the month's attendance points lost (late, absent — Settings ›
+// Attendance), taken off the discipline points, never below 0. Mirrors
+// computeScore() in server/src/routes/management-performance.js.
+export function goalBreakdown(rows: BreakdownRow[], ratings: Ratings, penalty = 0): GoalBreakdown | null {
   const total = goalPointsTotal(rows.map((r) => ({ jc: r.goalJC, points: r.points })));
   if (total <= 0) return null;
   const earned = 0.8 * rows.reduce((s, r) => {
@@ -51,6 +54,6 @@ export function goalBreakdown(rows: BreakdownRow[], ratings: Ratings): GoalBreak
   const ceiling = 0.2 * total;
   const ratingSum = DISCIPLINE_CRITERIA.reduce((s, c) => s + (ratings[c.key] ?? 5), 0);
   const reviewed = DISCIPLINE_CRITERIA.every((c) => ratings[c.key] != null);
-  const discipline = (ratingSum / MAX_RATING_SUM) * ceiling;
+  const discipline = Math.max(0, (ratingSum / MAX_RATING_SUM) * ceiling - (penalty || 0));
   return { total, earned, ceiling, discipline, ratingSum, reviewed, overall: earned + discipline };
 }

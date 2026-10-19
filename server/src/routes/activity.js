@@ -1,5 +1,6 @@
 import { Router } from "express";
 import { pool } from "../db.js";
+import { hasColumn } from "../schema-flags.js";
 import { hasActiveGrant, reviewAccess } from "../permissions.js";
 
 export const activityRouter = Router();
@@ -23,6 +24,7 @@ activityRouter.get("/activity", async (req, res, next) => {
       where += ` and a.channel_id = $${params.length}`;
     }
     if (req.role !== "admin") {
+      const withLead = await hasColumn("editor", "lead_editor_id");
       const { rows: me } = await pool.query("select editor_id from app_user where id = $1", [req.user.sub]);
       const review = await reviewAccess(req.orgId, req.user.sub);
       // Unscoped grant → every review request. Scoped → only requests on the
@@ -38,6 +40,8 @@ activityRouter.get("/activity", async (req, res, next) => {
       where += ` and (
         a.actor_id = $${uid}
         or (a.verb = 'editor_added' and a.entity_id = $${eid}::uuid)
+        or (a.verb like 'attendance_%' and (a.entity_id = $${eid}::uuid${withLead ? ` or exists (
+              select 1 from editor le where le.id = a.entity_id and le.lead_editor_id = $${eid}::uuid)` : ""}))
         or (a.verb = 'deleted' and a.meta->>'editorId' = $${eid}::text)
         or (a.verb = 'assigned' and a.meta->>'fromEditorId' = $${eid}::text)
         or (a.entity_type = 'task' and exists (

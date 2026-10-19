@@ -7,6 +7,7 @@ import { requirePermission } from "../permissions.js";
 import { resolveBudgetHours } from "./tasks.js";
 import { hasColumn } from "../schema-flags.js";
 import { capacityFor } from "../work-calendar.js";
+import { monthPenalties } from "../attendance.js";
 
 export const goalsRouter = Router();
 
@@ -481,6 +482,8 @@ goalsRouter.get("/goals/discipline", requirePermission("discipline"), async (req
         points: Number(g.points),
       });
     }
+    // Attendance points lost this month (late, absent) come off discipline.
+    const penalties = await monthPenalties(req.orgId, String(month).slice(0, 7));
     res.json({
       month,
       editors: editors.map((e) => {
@@ -489,6 +492,7 @@ goalsRouter.get("/goals/discipline", requirePermission("discipline"), async (req
           editorId: e.id, editorName: e.name,
           rows: goalsByEd.get(e.id) ?? [],
           ratings: ratingsOf(d),
+          attendancePenalty: penalties.get(e.id) ?? 0,
           note: d?.note ?? null,
           updatedAt: d?.updated_at ?? null,
         };

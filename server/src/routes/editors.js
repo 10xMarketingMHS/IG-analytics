@@ -18,6 +18,8 @@ const EditorSchema = z.object({
   // Counts in the Task Points rankings: false when a Super Admin switched them
   // out (say a Team Lead); null or true counts.
   inTaskScore: z.boolean().nullable().optional(),
+  // The Team Lead this person reports to (Team › Roster); null for none.
+  leadEditorId: z.string().uuid().nullable().optional(),
 });
 
 const BASE_COLUMNS = "id, name, designation, image_url, active";
@@ -26,7 +28,8 @@ const BASE_COLUMNS = "id, name, designation, image_url, active";
 const editorColumns = async () =>
   BASE_COLUMNS +
   ((await hasColumn("editor", "employee_code")) ? ", employee_code" : ", null::text as employee_code") +
-  ((await hasColumn("editor", "in_task_score")) ? ", in_task_score" : ", null::boolean as in_task_score");
+  ((await hasColumn("editor", "in_task_score")) ? ", in_task_score" : ", null::boolean as in_task_score") +
+  ((await hasColumn("editor", "lead_editor_id")) ? ", lead_editor_id" : ", null::uuid as lead_editor_id");
 const codeOf = (v) => (v ? v.toUpperCase() : null);
 
 // Editors are the shared Media House team — scoped to the org, so every channel
@@ -115,6 +118,18 @@ editorsRouter.patch("/editors/:id", requireAdmin, async (req, res, next) => {
       }
       params.push(parsed.data.inTaskScore);
       sets.push(`in_task_score = $${params.length}`);
+    }
+    if (parsed.data.leadEditorId !== undefined) {
+      if (!(await hasColumn("editor", "lead_editor_id"))) {
+        return res.status(409).json({ error: "Team leads need a database update first — ask whoever runs the database to apply 20261025120000_attendance." });
+      }
+      if (parsed.data.leadEditorId === req.params.id) return res.status(400).json({ error: "Someone can't be their own team lead." });
+      if (parsed.data.leadEditorId) {
+        const { rows: l } = await pool.query("select 1 from editor where id = $1 and org_id = $2", [parsed.data.leadEditorId, req.orgId]);
+        if (!l.length) return res.status(400).json({ error: "That team lead isn't on the team." });
+      }
+      params.push(parsed.data.leadEditorId);
+      sets.push(`lead_editor_id = $${params.length}`);
     }
     if (!sets.length) return res.status(400).json({ error: "No fields to update" });
     const { rows } = await pool.query(
