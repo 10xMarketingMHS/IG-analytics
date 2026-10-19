@@ -78,7 +78,8 @@ async function answer(id, status, userId, note = null) {
 handoverRouter.get("/handovers", async (req, res, next) => {
   try {
     if (!(await handoverReady())) return res.json({ ready: false, people: [], items: [] });
-    await syncHandovers(req.orgId);
+    // the climb is checked at most once a minute, in the background (shows on the next look)
+    syncHandovers(req.orgId).catch(() => {});
     const who = await caller(req);
     const { rows } = await pool.query(
       `select h.id, h.task_id as "taskId", t.title as "taskTitle", t.status as "taskStatus",

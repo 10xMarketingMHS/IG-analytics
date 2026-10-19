@@ -80,7 +80,8 @@ export async function scoreMonthAll(orgId, monthFirst, editorId = null) {
   const one = editorId ? " and editor_id = $3" : "";
   const P = editorId ? [orgId, monthFirst, editorId] : [orgId, monthFirst];
   const covered = (await hasColumn("task", "covered_from_editor_id")) ? "t.covered_from_editor_id" : "null::uuid";
-  const [goalRes, jobRes, leaveRes, capRes] = await Promise.all([
+  const { effectiveCapacity } = await import("./routes/goals.js");
+  const [goalRes, jobRes, leaveRes, capRes, orgCap] = await Promise.all([
     pool.query(
       `select g.editor_id, g.content_format_id, g.jc::float as jc, cf.name, cf.icon,
               coalesce((to_jsonb(g)->>'points')::numeric, cf.points)::float as pts
@@ -111,10 +112,10 @@ export async function scoreMonthAll(orgId, monthFirst, editorId = null) {
         where org_id = $1 and period_month = $2::date and editor_id is not null${one}`,
       P,
     ),
+    // working days when a person has no capacity of their own: the org's
+    effectiveCapacity(orgId, NIL, monthFirst),
   ]);
-  // Working days when a person has no capacity of their own: the org's.
-  const { effectiveCapacity } = await import("./routes/goals.js");
-  const fallbackDays = Number((await effectiveCapacity(orgId, NIL, monthFirst)).working_days) || 0;
+  const fallbackDays = Number(orgCap.working_days) || 0;
 
   const goals = new Map(), jobs = new Map();
   for (const g of goalRes.rows) {

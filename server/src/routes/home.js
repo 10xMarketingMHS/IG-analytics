@@ -1,4 +1,5 @@
 import { Router } from "express";
+import { clearSettingsCache } from "../attendance.js";
 import { z } from "zod";
 import { pool } from "../db.js";
 import { hasColumn } from "../schema-flags.js";
@@ -77,6 +78,7 @@ homeRouter.put("/home/default", async (req, res, next) => {
          coalesce(settings->'homeDefaults', '{}'::jsonb) || jsonb_build_object($2::text, $3::jsonb)) where id = $1`,
       [req.orgId, parsed.data.role, JSON.stringify(parsed.data.layout)],
     );
+    clearSettingsCache(req.orgId);
     res.json({ defaults: await defaultsOf(req.orgId) });
   } catch (err) { next(err); }
 });

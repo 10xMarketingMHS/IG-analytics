@@ -18,8 +18,9 @@ export const activityRouter = Router();
 // left out. Hand-over notices go to the people they name (meta.notifyEditorIds).
 activityRouter.get("/activity", async (req, res, next) => {
   try {
-    // an unanswered hand-over climbs at each office close (../handover.js)
-    await syncHandovers(req.orgId);
+    // an unanswered hand-over climbs at each office close (../handover.js);
+    // checked at most once a minute, in the background (shows on the next look)
+    syncHandovers(req.orgId).catch(() => {});
     const params = [req.orgId];
     let where = "a.org_id = $1";
     if (req.query.channel && req.query.channel !== "all") {

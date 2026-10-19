@@ -212,6 +212,8 @@ authRouter.get("/me", async (req, res) => {
 });
 
 export function requireAuth(req, res, next) {
+  // mounted with every router (index.js): checked once per request
+  if (req.user) return next();
   const token = req.cookies?.[COOKIE_NAME];
   if (!token) return res.status(401).json({ error: "Not signed in" });
   try {

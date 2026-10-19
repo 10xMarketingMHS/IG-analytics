@@ -80,11 +80,23 @@ export function closingFor(cal, ymd) {
   return c.wdTo;
 }
 
+// The org's settings, kept for a few seconds: one page load reads them from
+// several requests (each a trip to the remote database). Saving them
+// (routes/org.js, routes/home.js) clears this at once.
+const settingsCache = new Map(); // orgId -> { v, exp }
+const SETTINGS_TTL_MS = 10_000;
+export function clearSettingsCache(orgId) {
+  if (orgId) settingsCache.delete(orgId); else settingsCache.clear();
+}
 export async function readSettings(orgId) {
   if (!(await hasColumn("org", "settings"))) return { cal: normalizeCalendar(null), att: normalizeAttendance(null), since: null, raw: {} };
+  const hit = settingsCache.get(orgId);
+  if (hit && hit.exp > Date.now()) return hit.v;
   const { rows } = await pool.query("select settings from org where id = $1", [orgId]);
   const s = rows[0]?.settings ?? {};
-  return { cal: normalizeCalendar(s.calendar), att: normalizeAttendance(s.attendance), since: s.attendance?.since ?? null, raw: s };
+  const v = { cal: normalizeCalendar(s.calendar), att: normalizeAttendance(s.attendance), since: s.attendance?.since ?? null, raw: s };
+  settingsCache.set(orgId, { v, exp: Date.now() + SETTINGS_TTL_MS });
+  return v;
 }
 
 export const attendanceReady = () => hasColumn("attendance", "id");

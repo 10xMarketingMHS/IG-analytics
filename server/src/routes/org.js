@@ -4,7 +4,8 @@ import { pool } from "../db.js";
 import { requirePermission } from "../permissions.js";
 import { hasColumn } from "../schema-flags.js";
 import { CALENDAR_DEFAULTS, normalizeCalendar } from "../work-calendar.js";
-import { ATTENDANCE_DEFAULTS, normalizeAttendance } from "../attendance.js";
+import { ATTENDANCE_DEFAULTS, clearSettingsCache, normalizeAttendance } from "../attendance.js";
+import { clearCapacityCache } from "./goals.js";
 import { superState, isSuperUser } from "../super-admin.js";
 
 // Settings › General: the organisation's name, the week start and the work
@@ -97,6 +98,9 @@ orgRouter.patch("/org", requirePermission("edit_goals"), async (req, res, next) 
           [req.orgId, JSON.stringify(d.attendance)],
         );
       }
+      // what's kept for a few seconds (settings, capacity from the calendar) is stale now
+      clearSettingsCache(req.orgId);
+      clearCapacityCache(req.orgId);
     }
     res.json({ org: await readOrg(req.orgId) });
   } catch (err) {

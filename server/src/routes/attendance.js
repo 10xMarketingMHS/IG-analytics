@@ -43,24 +43,31 @@ function shownStatus(row) {
 attendanceRouter.get("/attendance/today", async (req, res, next) => {
   try {
     if (!(await ready(res))) return;
-    await syncAttendance(req.orgId);
-    const caller = await callerScope(req);
-    const { cal, att } = await readSettings(req.orgId);
+    // Pulse's own marks (the no-SOD alert, auto-absent) are applied at most
+    // once a minute, in the background: the answer doesn't wait for them, and
+    // they show on the next look.
+    syncAttendance(req.orgId).catch(() => {});
+    // who's asking, the rules and who checks in don't depend on each other:
+    // read them together (each is a trip to the database)
+    const [caller, { cal, att }, people] = await Promise.all([
+      callerScope(req), readSettings(req.orgId), attendancePeople(req.orgId),
+    ]);
     const today = istNow();
     const open = openingFor(cal, today.ymd);
-    const people = await attendancePeople(req.orgId);
     const checksIn = !!caller.editorId && people.some((p) => p.id === caller.editorId);
-    const me = checksIn ? await rowFor(caller.editorId, today.ymd) : null;
+    // Everyone who checks in, apart from yourself (your own day is the bar above).
+    const mine = caller.scope !== "self" ? people.filter((p) => p.id !== caller.editorId) : [];
+    const ids = mine.map((p) => p.id);
+    const [me, teamRows] = await Promise.all([
+      checksIn ? rowFor(caller.editorId, today.ymd) : Promise.resolve(null),
+      ids.length
+        ? pool.query(`select ${ROW_COLS} from attendance where editor_id = any($1::uuid[]) and date = $2`, [ids, today.ymd])
+        : Promise.resolve({ rows: [] }),
+    ]);
 
     let team = null;
     if (caller.scope !== "self") {
-      // Everyone who checks in, apart from yourself (your own day is the bar above).
-      const mine = people.filter((p) => p.id !== caller.editorId);
-      const ids = mine.map((p) => p.id);
-      const { rows } = ids.length
-        ? await pool.query(`select ${ROW_COLS} from attendance where editor_id = any($1::uuid[]) and date = $2`, [ids, today.ymd])
-        : { rows: [] };
-      const byId = new Map(rows.map((r) => [r.editorId, r]));
+      const byId = new Map(teamRows.rows.map((r) => [r.editorId, r]));
       team = mine.map((p) => {
         const r = byId.get(p.id) ?? null;
         return {
@@ -369,7 +376,10 @@ attendanceRouter.post("/attendance/:editorId/correction", async (req, res, next)
 attendanceRouter.get("/attendance/month", async (req, res, next) => {
   try {
     if (!(await ready(res))) return;
-    await syncAttendance(req.orgId);
+    // Pulse's own marks (the no-SOD alert, auto-absent) are applied at most
+    // once a minute, in the background: the answer doesn't wait for them, and
+    // they show on the next look.
+    syncAttendance(req.orgId).catch(() => {});
     const today = istNow();
     const month = /^\d{4}-\d{2}$/.test(String(req.query.month || "")) ? String(req.query.month) : today.ymd.slice(0, 7);
     const caller = await callerScope(req);

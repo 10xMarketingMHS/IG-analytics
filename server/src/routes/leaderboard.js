@@ -46,20 +46,23 @@ leaderboardRouter.get("/leaderboard/house", async (req, res, next) => {
     const month = /^\d{4}-\d{2}$/.test(String(req.query.month ?? "")) ? String(req.query.month) : istNow().ymd.slice(0, 7);
     const first = `${month}-01`;
     const scoreCol = (await hasColumn("editor", "in_task_score")) ? "e.in_task_score" : "true";
-    const { rows: people } = await pool.query(
-      `select e.id, e.name, coalesce(${scoreCol}, true) as scored from editor e where e.org_id = $1 and e.active`,
-      [req.orgId],
-    );
-    const { rows: done } = await pool.query(
-      `select t.editor_id, t.content_format_id, t.due_date, t.completed_at, t.revision, t.review_wait_seconds,
-              coalesce((to_jsonb(t)->>'points_at_done')::numeric, cf.points) as base
-         from task t left join task_content_format cf on cf.id = t.content_format_id
-        where t.org_id = $1 and t.status = 'done' and t.task_type <> 'admin' and t.editor_id is not null
-          and t.completed_at >= ($2::date)::timestamp at time zone 'Asia/Kolkata'
-          and t.completed_at < ($2::date + interval '1 month')::timestamp at time zone 'Asia/Kolkata'`,
-      [req.orgId, first],
-    );
-    const scores = await scoreMonthAll(req.orgId, first);
+    // who's on the board, the month's completed tasks and the goal scores, read together
+    const [{ rows: people }, { rows: done }, scores] = await Promise.all([
+      pool.query(
+        `select e.id, e.name, coalesce(${scoreCol}, true) as scored from editor e where e.org_id = $1 and e.active`,
+        [req.orgId],
+      ),
+      pool.query(
+        `select t.editor_id, t.content_format_id, t.due_date, t.completed_at, t.revision, t.review_wait_seconds,
+                coalesce((to_jsonb(t)->>'points_at_done')::numeric, cf.points) as base
+           from task t left join task_content_format cf on cf.id = t.content_format_id
+          where t.org_id = $1 and t.status = 'done' and t.task_type <> 'admin' and t.editor_id is not null
+            and t.completed_at >= ($2::date)::timestamp at time zone 'Asia/Kolkata'
+            and t.completed_at < ($2::date + interval '1 month')::timestamp at time zone 'Asia/Kolkata'`,
+        [req.orgId, first],
+      ),
+      scoreMonthAll(req.orgId, first),
+    ]);
     const rows = people.filter((p) => p.scored).map((p) => {
       const mine = done.filter((t) => t.editor_id === p.id);
       const points = mine.reduce((s, t) => s + taskPoints(t), 0);
