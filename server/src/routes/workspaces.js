@@ -53,19 +53,19 @@ workspacesRouter.post("/workspaces", resolveWorkspace, requirePermission("channe
   const client = await pool.connect();
   try {
     await client.query("BEGIN");
-    // Resolve the caller's org + an existing channel to copy taxonomy from.
+    // The new channel goes in the org this request is for (where the Channels
+    // permission was checked), copying the taxonomy of one of its channels.
+    const orgId = req.orgId ?? (await client.query("select id from org order by created_at limit 1")).rows[0]?.id ?? null;
     const ctx = await client.query(
-      `select w.id as ws_id, w.org_id from workspace w
-       join membership m on m.workspace_id = w.id
-       where m.user_id = $1 and w.org_id is not null
-       order by w.created_at asc limit 1`,
-      [req.user.sub],
+      "select id from workspace where org_id = $1 order by created_at asc limit 1",
+      [orgId],
     );
-    let orgId = ctx.rows[0]?.org_id ?? null;
-    const sourceWorkspaceId = ctx.rows[0]?.ws_id ?? null;
-    if (!orgId) orgId = (await client.query("select id from org order by created_at limit 1")).rows[0]?.id ?? null;
+    const sourceWorkspaceId = ctx.rows[0]?.id ?? null;
+    // An admin makes it as its admin; someone with only the Channels grant joins
+    // it as an editor (admin of any channel would make them admin of the org).
+    const ownerRole = req.role === "admin" ? "admin" : "editor";
 
-    const workspace = await createWorkspace(client, parsed.data.name, req.user.sub, { orgId, sourceWorkspaceId });
+    const workspace = await createWorkspace(client, parsed.data.name, req.user.sub, { orgId, sourceWorkspaceId, ownerRole });
 
     // Enable Instagram by default so the new channel is immediately usable.
     if (orgId) {

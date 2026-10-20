@@ -3,13 +3,19 @@ import { hasColumn } from "./schema-flags.js";
 
 // Super Admin sits above Admin — a flag on the login (app_user.is_super_admin)
 // on top of the admin role, so every existing admin check still holds. Until
-// anyone here is a Super Admin (or before the database change is applied)
-// every admin counts as one, so nobody is locked out.
+// anyone in the organisation is a Super Admin (or before the database change is
+// applied) every admin counts as one, so nobody is locked out. Counted across
+// every channel of the org, never one channel: a channel an admin makes for
+// themselves has no Super Admin in it, and must not make them one.
 export async function superState(workspaceId) {
   if (!(await hasColumn("app_user", "is_super_admin"))) return { on: false, count: 0 };
   const { rows } = await pool.query(
-    `select count(*)::int c from membership m join app_user u on u.id = m.user_id
-      where m.workspace_id = $1 and m.role = 'admin' and u.is_super_admin`,
+    `select count(distinct u.id)::int c
+       from membership m
+       join workspace w on w.id = m.workspace_id
+       join app_user u on u.id = m.user_id
+      where m.role = 'admin' and u.is_super_admin
+        and (w.org_id = (select org_id from workspace where id = $1) or m.workspace_id = $1)`,
     [workspaceId],
   );
   return { on: true, count: rows[0].c };

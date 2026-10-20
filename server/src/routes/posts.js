@@ -2,9 +2,43 @@ import { Router } from "express";
 import { z } from "zod";
 import { pool } from "../db.js";
 import { requireEditor } from "../resolve-workspace.js";
-import { requirePermission } from "../permissions.js";
+import { assignLimits, requirePermission } from "../permissions.js";
 import { logActivity } from "../activity.js";
-import { resolveBudgetHours, nextTaskRef, nextBrandTaskRef } from "./tasks.js";
+import { resolveBudgetHours, nextTaskRef, nextBrandTaskRef, callerEditorId, canAssignTasks } from "./tasks.js";
+
+// The person on a post gets its editing task, so naming them is assigning work:
+// yourself is fine; anyone else (or taking someone else's) needs Assign tasks,
+// within its people limit, as on the Task Board. They must be on this team.
+async function personError(req, nextEditorId, priorEditorId = null, formatId = null) {
+  if (nextEditorId) {
+    const { rows } = await pool.query("select 1 from editor where id = $1 and org_id = $2", [nextEditorId, req.orgId]);
+    if (!rows.length) return { status: 400, error: "That team member wasn't found." };
+  }
+  const me = await callerEditorId(req);
+  const forOther = !!nextEditorId && nextEditorId !== me;
+  const fromOther = !!priorEditorId && priorEditorId !== me;
+  if (!forOther && !fromOther) return null;
+  if (req.role === "admin") return null;
+  if (!(await canAssignTasks(req))) return { status: 403, error: "Giving a post's editing to someone else needs Assign tasks access." };
+  const lim = await assignLimits(req.orgId, req.user.sub);
+  if (forOther && lim?.editors && !lim.editors.includes(nextEditorId)) {
+    return { status: 403, error: "You can't assign work to that person." };
+  }
+  // limited to some content types: the post's task must be one of them
+  if (forOther && lim?.formats && !(formatId && lim.formats.includes(formatId))) {
+    return { status: 403, error: "Your Assign tasks access doesn't cover this kind of task." };
+  }
+  return null;
+}
+// The content type a post's editing task gets (reel → Video, carousel → Image),
+// as syncPostTask picks it.
+async function postTaskFormat(orgId, postType) {
+  const { rows } = await pool.query(
+    "select id from task_content_format where org_id = $1 and active and lower(name) = $2 limit 1",
+    [orgId, postType === "carousel" ? "image" : "video"],
+  );
+  return rows[0]?.id ?? null;
+}
 
 export const postsRouter = Router();
 
@@ -82,11 +116,14 @@ async function syncPostTask(postId, orgId, callerUserId) {
     const defaultFormatId = fmtRows[0]?.id ?? null;
 
     const existing = await pool.query(
-      "select id, editor_id, accepted, content_format_id, sid from task where post_id = $1",
+      "select id, editor_id, accepted, content_format_id, sid, status from task where post_id = $1",
       [postId],
     );
     if (existing.rows.length) {
       const prior = existing.rows[0];
+      // Waiting for review or completed: its person, title and due date stay as
+      // they were reviewed (moving it would move the work's points).
+      if (prior.status === "review" || prior.status === "done") return;
       // Reassigning to a different editor re-opens acceptance for them.
       const nextAccepted = prior.editor_id === post.editor_id ? prior.accepted : accepted;
       // Never override a format the user already picked (manually or via an
@@ -213,6 +250,8 @@ postsRouter.post("/posts", requirePermission("create_post", { alsoAllow: ["edito
       const { rows: u } = await pool.query("select editor_id from app_user where id = $1", [req.user.sub]);
       p.editorId = u[0]?.editor_id ?? null;
     }
+    const who = await personError(req, p.editorId || null, null, await postTaskFormat(req.orgId, p.postType));
+    if (who) return res.status(who.status).json({ error: who.error });
     // Target channel: the chosen one (validated to belong to the org) or the
     // active channel. Prevents writing into a channel outside your org.
     let targetWs = req.workspaceId;
@@ -327,9 +366,20 @@ postsRouter.patch("/posts/:id", requireEditor, async (req, res, next) => {
   try {
     // Capture prior status/stage so we log only genuine transitions.
     const prior = (await pool.query(
-      "select status, edit_stage, workspace_id from post where id = $1 and workspace_id = $2 and deleted_at is null",
+      "select status, edit_stage, workspace_id, editor_id, post_type from post where id = $1 and workspace_id = $2 and deleted_at is null",
       [req.params.id, req.workspaceId],
     )).rows[0];
+    if (prior && p.editorId !== undefined && (p.editorId || null) !== (prior.editor_id ?? null)) {
+      const { rows: linked } = await pool.query("select status, content_format_id from task where post_id = $1", [req.params.id]);
+      if (linked[0] && (linked[0].status === "review" || linked[0].status === "done")) {
+        return res.status(409).json({ error: linked[0].status === "review"
+          ? "This post's task is waiting for review, so its person can't change now."
+          : "This post's task is completed, so its person can't change." });
+      }
+      const fmt = linked[0]?.content_format_id ?? await postTaskFormat(req.orgId, p.postType ?? prior.post_type);
+      const who = await personError(req, p.editorId || null, prior.editor_id ?? null, fmt);
+      if (who) return res.status(who.status).json({ error: who.error });
+    }
 
     const { rows } = await pool.query(
       `update post set ${sets.join(", ")}

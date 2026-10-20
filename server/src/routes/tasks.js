@@ -180,14 +180,14 @@ export async function resolveBudgetHours(orgId, editorId, contentFormatId) {
 }
 
 // Whichever editor the caller's own login is linked to (§ My Tasks / § Accept).
-async function callerEditorId(req) {
+export async function callerEditorId(req) {
   const { rows } = await pool.query("select editor_id from app_user where id = $1", [req.user.sub]);
   return rows[0]?.editor_id ?? null;
 }
 
 // Setting work up for other people — assigning it, re-planning it, removing it —
 // is for an admin or an assign_tasks grantee (Settings → Access).
-async function canAssignTasks(req) {
+export async function canAssignTasks(req) {
   return req.role === "admin" || (await hasActiveGrant(req.orgId, req.user.sub, "assign_tasks"));
 }
 // An Assign tasks grant limited to some content types or some people
@@ -456,6 +456,19 @@ tasksRouter.patch("/tasks/:id", requireEditor, requireActiveEod, async (req, res
       [req.params.id, req.orgId],
     )).rows[0];
     if (!prior) return res.status(404).json({ error: "Task not found" });
+
+    // A task waiting for review, or completed, keeps its person — for everyone,
+    // admins included. Moving it then (or approving and taking it in one go)
+    // would hand the work, and its points, to whoever moved it, and make them
+    // its reviewer. Send it back first; a completed task stays whose it was.
+    if (d.editorId !== undefined && (d.editorId ?? null) !== prior.editor_id
+        && (prior.status === "review" || prior.status === "done")) {
+      return res.status(409).json({
+        error: prior.status === "review"
+          ? "A task waiting for review can't change hands. Send it back first, then reassign it."
+          : "A completed task can't change hands.",
+      });
+    }
 
     // Who may change what (admins: anything):
     //  - a completed task is frozen as it was approved — work link included;

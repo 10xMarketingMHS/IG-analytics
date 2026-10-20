@@ -65,6 +65,20 @@ const CreateSchema = z.object({
   editorId: z.string().uuid().nullable().optional(),
 });
 
+// Whether a login belongs to an admin anywhere in this org, or the Super Admin.
+// Such a login is a Super Admin's to manage, whichever channel the change comes
+// from (an admin could otherwise add it to a channel of their own as an editor
+// and change it there).
+async function adminLogin(orgId, userId) {
+  const { rows } = await pool.query(
+    `select exists (select 1 from membership m join workspace w on w.id = m.workspace_id
+                     where m.user_id = $2 and m.role = 'admin' and w.org_id = $1)
+            ${(await hasColumn("app_user", "is_super_admin")) ? "or coalesce((select is_super_admin from app_user where id = $2), false)" : ""} as a`,
+    [orgId, userId],
+  );
+  return !!rows[0]?.a;
+}
+
 // Add a user to the workspace with a role. Creates the account if the email
 // is new (password required); otherwise just grants access to an existing one.
 usersRouter.post("/users", requireAdmin, async (req, res, next) => {
@@ -82,10 +96,15 @@ usersRouter.post("/users", requireAdmin, async (req, res, next) => {
   try {
     await client.query("BEGIN");
     let { rows } = await client.query(
-      "select id, email, name, active from app_user where lower(email) = lower($1)",
+      "select id, email, name, active, editor_id from app_user where lower(email) = lower($1)",
       [email],
     );
     let user = rows[0];
+    // An admin's existing login is added (and linked) only by the Super Admin.
+    if (user && (await adminLogin(req.orgId, user.id)) && !(await isSuperUser(req.user.sub, st))) {
+      await client.query("ROLLBACK");
+      return res.status(403).json({ error: "That email is an admin's login. Only a Super Admin can add it to a channel." });
+    }
 
     // Someone who already has a login here is changed through Edit, never through
     // this add form: it carries a role (defaulting to editor), so re-adding an
@@ -121,6 +140,11 @@ usersRouter.post("/users", requireAdmin, async (req, res, next) => {
       if (!erows.length) {
         await client.query("ROLLBACK");
         return res.status(400).json({ error: "That team member wasn't found." });
+      }
+      // Adding an existing login never moves it to a different team member.
+      if (user.editor_id && user.editor_id !== editorId) {
+        await client.query("ROLLBACK");
+        return res.status(409).json({ error: "That login is already linked to another team member. Change it on their row instead." });
       }
       const { rows: taken } = await client.query(
         "select 1 from app_user where editor_id = $1 and id != $2", [editorId, user.id],
@@ -301,8 +325,10 @@ usersRouter.patch("/users/:id", requireAdmin, async (req, res, next) => {
     const targetSuper = st.on
       ? !!(await pool.query("select is_super_admin from app_user where id = $1", [targetId])).rows[0]?.is_super_admin
       : false;
+    // An admin anywhere in the org counts, not only in this channel.
+    const targetAdmin = currentRole === "admin" || targetSuper || (await adminLogin(req.orgId, targetId));
     const touchesAdmin = (role === "admin" && currentRole !== "admin") || superAdmin === true || (superAdmin === false && targetSuper)
-      || (currentRole === "admin" && !isSelf && (role !== undefined || active !== undefined || password !== undefined
+      || (targetAdmin && !isSelf && (role !== undefined || active !== undefined || password !== undefined
         || name !== undefined || editorId !== undefined));
     if (touchesAdmin && !(await isSuperUser(req.user.sub, st))) {
       return res.status(403).json({ error: SUPER_ONLY });

@@ -21,7 +21,9 @@ const DEFAULT_SCORING_WEIGHTS = {
 // new channel is immediately usable and consistent with the rest; otherwise it
 // seeds the built-in defaults. Runs inside the caller's transaction.
 export async function createWorkspace(client, name, ownerId, opts = {}) {
-  const { orgId = null, sourceWorkspaceId = null } = opts;
+  // ownerRole: the maker's role in it — admin, unless they make channels through
+  // the Channels grant (an admin of any channel is an admin of the whole org).
+  const { orgId = null, sourceWorkspaceId = null, ownerRole = "admin" } = opts;
   const { rows } = await client.query(
     "insert into workspace (name, org_id) values ($1, $2) returning id, name, logo_url, brand_colors",
     [name, orgId],
@@ -30,9 +32,9 @@ export async function createWorkspace(client, name, ownerId, opts = {}) {
 
   await client.query(
     `insert into membership (workspace_id, user_id, role)
-     values ($1, $2, 'admin')
+     values ($1, $2, $3)
      on conflict (workspace_id, user_id) do nothing`,
-    [workspace.id, ownerId],
+    [workspace.id, ownerId, ownerRole === "admin" ? "admin" : "editor"],
   );
 
   for (const [postType, weights] of Object.entries(DEFAULT_SCORING_WEIGHTS)) {
