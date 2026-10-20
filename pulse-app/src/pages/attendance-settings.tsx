@@ -14,7 +14,7 @@ import { SI, Stepper, Toggle } from "@/pages/settings-ui";
 // Office hours come from General › Work calendar. Kept as a draft until Save.
 
 const DEFAULTS: AttSettings = {
-  requireSod: true, graceMinutes: 10, noSodAlertAt: "09:30", autoAbsentAt: "11:00", autoAbsentEnabled: true,
+  requireSod: true, graceMinutes: 10, noSodAlertAt: "09:30", halfDayAt: "11:30", autoAbsentAt: "13:30", autoAbsentEnabled: true, permissionsPerMonth: 2,
   requireEodNote: true, allowCorrections: true, latePenaltyPts: 1, absentPenaltyPts: 3, deductCapacity: true,
   teamView: { manager: true, asstManager: true, teamLead: true },
 };
@@ -50,8 +50,8 @@ export function AttendanceSection({ onDirty }: { onDirty: (d: boolean) => void }
     }
   }
 
-  const summary = `On time until ${clockTime(plus(cal?.wdFrom ?? "09:00", a.graceMinutes))}  ·  late after that  ·  alert at ${clockTime(at(a.noSodAlertAt))}`
-    + (a.autoAbsentEnabled ? `  ·  absent at ${clockTime(at(a.autoAbsentAt))}` : "  ·  no auto-absent");
+  const summary = `On time until ${clockTime(plus(cal?.wdFrom ?? "09:00", a.graceMinutes))}  ·  late after that (a permission covers it)  ·  alert at ${clockTime(at(a.noSodAlertAt))}`
+    + (a.autoAbsentEnabled ? `  ·  half day absent after ${clockTime(at(a.halfDayAt ?? "11:30"))}  ·  absent after ${clockTime(at(a.autoAbsentAt))}` : "  ·  no automatic absence");
 
   return (
     <>
@@ -71,11 +71,20 @@ export function AttendanceSection({ onDirty }: { onDirty: (d: boolean) => void }
           <input type="time" className="st-in st-time" value={a.noSodAlertAt} onChange={(e) => e.target.value && set("noSodAlertAt", e.target.value)} aria-label="No-SOD alert time" />
         </div>
         <div className="st-row">
-          <span className="st-label"><b>Auto-mark absent</b><small>No check-in by this time marks the day absent — a lead can undo it</small></span>
+          <span className="st-label"><b>Half day absent</b><small>Not in by this time: a half-day absence, half the absence penalty. A morning permission covers being late until then</small></span>
           <span className="st-inline">
-            <input type="time" className="st-in st-time" value={a.autoAbsentAt} onChange={(e) => e.target.value && set("autoAbsentAt", e.target.value)} aria-label="Auto-absent time" disabled={!a.autoAbsentEnabled} />
-            <Toggle on={a.autoAbsentEnabled} onChange={(v) => set("autoAbsentEnabled", v)} label="Auto-mark absent" />
+            <input type="time" className="st-in st-time" value={a.halfDayAt ?? "11:30"} onChange={(e) => e.target.value && set("halfDayAt", e.target.value)} aria-label="Half-day time" disabled={!a.autoAbsentEnabled} />
+            <Toggle on={a.autoAbsentEnabled} onChange={(v) => set("autoAbsentEnabled", v)} label="Mark half day and absent automatically" />
           </span>
+        </div>
+        <div className="st-row">
+          <span className="st-label"><b>Absent</b><small>Still not in by this time: absent for the day. A lead can undo either mark</small></span>
+          <input type="time" className="st-in st-time" value={a.autoAbsentAt} onChange={(e) => e.target.value && set("autoAbsentAt", e.target.value)} aria-label="Absent time" disabled={!a.autoAbsentEnabled} />
+        </div>
+        <div className="st-row">
+          <span className="st-label"><b>Permissions a month</b><small>Up to 2 hours each, morning (come in late) or evening (leave early). Asked ahead and approved by a lead, or used on the day while any are left</small></span>
+          <Stepper label="permissions a month" value={`${a.permissionsPerMonth ?? 2}`} onDec={() => set("permissionsPerMonth", Math.max(0, (a.permissionsPerMonth ?? 2) - 1))} onInc={() => set("permissionsPerMonth", Math.min(10, (a.permissionsPerMonth ?? 2) + 1))}
+            decDisabled={(a.permissionsPerMonth ?? 2) <= 0} incDisabled={(a.permissionsPerMonth ?? 2) >= 10} />
         </div>
         <div className="st-row">
           <span className="st-label"><b>End of day wrap-up</b><small>Ask for a short note before checking out</small></span>

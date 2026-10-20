@@ -4,7 +4,7 @@ import { api, ApiError } from "@/lib/api";
 import { useEodState } from "@/lib/eod-context";
 import { clockTime } from "@/lib/time-format";
 import { Icon } from "@/components/icon";
-import { minutesOf, type AttToday } from "@/lib/use-attendance";
+import { askPermission, minutesOf, type AttToday } from "@/lib/use-attendance";
 import type { Task } from "@/lib/types";
 
 // Start of day on Home (Pulse Redesign v7), for team leads and editors:
@@ -48,6 +48,7 @@ export function StartDaySection({
   const [ending, setEnding] = useState(false);
   const [wrap, setWrap] = useState("");
   const [sending, setSending] = useState(false);
+  const [permOpen, setPermOpen] = useState(false);
   const [nowMs, setNowMs] = useState(() => Date.now());
   // The banner's End day button opens the wrap-up here.
   const barRef = useRef<HTMLElement>(null);
@@ -68,6 +69,16 @@ export function StartDaySection({
   const me = att?.me ?? null;
   const open = att?.opening ?? null;
   const graceMin = s?.graceMinutes ?? 10;
+  // Permissions this month (null before the database has them).
+  const perms = att?.permissions ?? null;
+  const halfAt = s?.halfDayAt ?? "11:30";
+  const absentAt = s?.autoAbsentAt ?? "13:30";
+  const autoMarks = s?.autoAbsentEnabled ?? true;
+  const permLine = perms ? `${perms.left} of ${perms.perMonth} permission${perms.perMonth === 1 ? "" : "s"} left this month` : null;
+  const askLink = perms && !preview ? (
+    <button type="button" className="sd-link" onClick={() => setPermOpen((o) => !o)}>Ask for a permission</button>
+  ) : null;
+  const askForm = permOpen && perms ? <PermissionAsk today={today} left={perms.left} onDone={() => setPermOpen(false)} /> : null;
   const now = new Date(nowMs);
   const nowMin = now.getHours() * 60 + now.getMinutes();
   // A preview (an admin seeing another role's Home) always shows the card a
@@ -88,6 +99,9 @@ export function StartDaySection({
     const sub = !open ? { t: "The office is closed today", tone: "" }
       : late < 0 ? { t: `Office opens at ${clockTime(atToday(open))} · you're early`, tone: "good" }
       : late <= graceMin ? { t: `Office opened at ${clockTime(atToday(open))} · you're on time`, tone: "good" }
+      : autoMarks && nowMin >= minutesOf(absentAt) ? { t: `Starting now counts as absent (after ${clockTime(atToday(absentAt))})`, tone: "bad" }
+      : autoMarks && nowMin >= minutesOf(halfAt) ? { t: `Starting now counts as a half-day absence (after ${clockTime(atToday(halfAt))})`, tone: "bad" }
+      : perms && perms.left > 0 ? { t: `Starting now is ${lateText} late · a morning permission covers it (${perms.left} left this month)`, tone: "rev" }
       : { t: `Office opened at ${clockTime(atToday(open))} · starting now is ${lateText} late`, tone: "warn" };
     const marked = me && me.markedBy && (me.status === "leave" || me.status === "half_day")
       ? (me.status === "leave" ? "Your lead marked you on leave today." : "Your lead marked you on half-day leave.") : null;
@@ -97,7 +111,8 @@ export function StartDaySection({
       try {
         await start(plan.trim() || undefined);
         const lateNow = open ? nowMin - minutesOf(open) : 0;
-        toast.success(`Day started at ${clockTime(new Date())}${open && lateNow > graceMin ? " · marked late" : ""}`);
+        const covered = open && lateNow > graceMin && perms && perms.left > 0 && !(autoMarks && nowMin >= minutesOf(halfAt));
+        toast.success(`Day started at ${clockTime(new Date())}${covered ? " · morning permission used" : open && lateNow > graceMin ? " · marked late" : ""}`);
         setPlan("");
       } catch (e) {
         toast.error(e instanceof ApiError ? e.message : "Couldn't start your day. Check your connection and try again.");
@@ -141,7 +156,10 @@ export function StartDaySection({
                 Started earlier? Request a correction
               </button>
             )}
+            {askLink}
           </div>
+          {permLine && <p className="sd-faint">{permLine}</p>}
+          {askForm}
           {corrOpen && (
             <div className="sd-corr">
               <label>I started at <input type="time" value={corrTime} onChange={(e) => setCorrTime(e.target.value)} /></label>
@@ -196,10 +214,16 @@ export function StartDaySection({
   // ---- Checked in: the slim bar (and the End day panel) ----
   const inAt = me?.checkInAt ?? session?.startedAt ?? null;
   const late = me && me.status === "late" && !me.excused;
+  const byPermission = !!me && me.status === "late" && me.excused && me.reason === "permission";
   const pill = late ? { t: `Late +${me!.lateMinutes >= 60 ? `${Math.floor(me!.lateMinutes / 60)}h ${me!.lateMinutes % 60}m` : `${me!.lateMinutes}m`}`, tone: "warn" }
+    : byPermission ? { t: "Permission", tone: "rev" }
+    : me?.status === "half_absent" ? { t: "Half day absent", tone: "bad" }
+    : me?.status === "absent" ? { t: "Absent", tone: "bad" }
     : me?.status === "half_day" ? { t: "Half day", tone: "rev" }
     : { t: "On time", tone: "good" };
-  const penalty = late ? (s?.latePenaltyPts ?? 1) : 0;
+  const penalty = late ? (s?.latePenaltyPts ?? 1)
+    : me?.status === "half_absent" ? (s?.absentPenaltyPts ?? 3) / 2
+    : me?.status === "absent" ? (s?.absentPenaltyPts ?? 3) : 0;
   const canUndo = !!me?.checkInAt && nowMs - new Date(me.checkInAt).getTime() < 5 * 60_000 && !preview;
   const inOfficeMs = inAt ? nowMs - new Date(inAt).getTime() : 0;
   async function closeDay() {
@@ -229,18 +253,20 @@ export function StartDaySection({
         <div className="sd-barmain">
           <b>
             {inAt ? `Checked in ${clockTime(inAt)}` : "Checked in"}
-            {penalty ? ` · −${penalty} discipline pt${penalty === 1 ? "" : "s"}` : me?.excused ? " · late excused" : " · nice, on time"}
+            {penalty ? ` · −${penalty} discipline pt${penalty === 1 ? "" : "s"}` : byPermission ? " · morning permission used" : me?.excused ? " · late excused" : " · nice, on time"}
           </b>
-          <span>{me?.planNote ? `Plan: ${me.planNote}` : "No plan added"}{me?.correctionStatus === "pending" && me.correctionAt ? ` · correction to ${clockTime(me.correctionAt)} waiting on your lead` : ""}</span>
+          <span>{me?.planNote ? `Plan: ${me.planNote}` : "No plan added"}{me?.correctionStatus === "pending" && me.correctionAt ? ` · correction to ${clockTime(me.correctionAt)} waiting on your lead` : ""}{permLine ? ` · ${permLine}` : ""}</span>
         </div>
         <span className="sd-grow" />
         <button type="button" className="sd-link" onClick={openSod} title="Pick today's tasks and copy the Start of Day report for WhatsApp">Start of Day</button>
         <button type="button" className="sd-link" onClick={onOpenReports}>My reports</button>
+        {askLink}
         {canUndo && <button type="button" className="sd-link" onClick={undo} disabled={busy}>Undo</button>}
         {!ending && (
           <button type="button" className="sd-btn" onClick={() => setEnding(true)}><Icon name="logout" size={17} />End day</button>
         )}
       </div>
+      {askForm}
       {ending && (
         <div className="sd-end">
           <div className="sd-stats">
@@ -272,3 +298,36 @@ function atToday(hhmm: string) {
 
 // Has this person a check-in today (for the Home role's SOD rules)?
 export const checkedInToday = (att: AttToday | null, today: string) => !!att?.me?.checkInAt && sameDay(att.me.checkInAt, today);
+
+// Ask ahead for a permission: the day, morning (come in late) or evening
+// (leave early), and a note for the lead, who approves it.
+function PermissionAsk({ today, left, onDone }: { today: string; left: number; onDone: () => void }) {
+  const [date, setDate] = useState(today);
+  const [part, setPart] = useState<"morning" | "evening">("morning");
+  const [note, setNote] = useState("");
+  const [busy, setBusy] = useState(false);
+  async function send() {
+    setBusy(true);
+    try {
+      await askPermission(date, part, note.trim() || undefined);
+      toast.success(`Asked for a ${part} permission on ${new Date(`${date}T12:00:00`).toLocaleDateString("en-IN", { day: "numeric", month: "short" })}. Your lead approves it.`);
+      onDone();
+    } catch (e) {
+      toast.error(e instanceof ApiError ? e.message : "Couldn't send that request.");
+    } finally {
+      setBusy(false);
+    }
+  }
+  return (
+    <div className="sd-corr" role="group" aria-label="Ask for a permission">
+      <label>Day <input type="date" value={date} min={today} onChange={(e) => setDate(e.target.value)} /></label>
+      <select className="sd-perm-part" value={part} onChange={(e) => setPart(e.target.value as "morning" | "evening")} aria-label="Morning or evening">
+        <option value="morning">Morning: come in late</option>
+        <option value="evening">Evening: leave early</option>
+      </select>
+      <input type="text" className="sd-corr-note" value={note} onChange={(e) => setNote(e.target.value)} placeholder="Reason for your lead (optional)" maxLength={300} />
+      <button type="button" className="sd-btn" onClick={send} disabled={busy || !date || left <= 0}>{busy ? "Sending…" : "Ask my lead"}</button>
+      <span className="sd-faint">{left > 0 ? `Up to 2 hours. ${left} left this month.` : "None left this month."}</span>
+    </div>
+  );
+}

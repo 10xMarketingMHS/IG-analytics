@@ -16,8 +16,14 @@ export const ATTENDANCE_DEFAULTS = {
   requireSod: true,
   graceMinutes: 10,
   noSodAlertAt: "09:30",
-  autoAbsentAt: "11:00",
+  // Not in by halfDayAt: a half-day absence (half the absence penalty); still
+  // not in by autoAbsentAt: absent. A morning permission covers being late up
+  // to halfDayAt.
+  halfDayAt: "11:30",
+  autoAbsentAt: "13:30",
   autoAbsentEnabled: true,
+  // Permissions a month (morning: come in late; evening: leave early).
+  permissionsPerMonth: 2,
   requireEodNote: true,
   allowCorrections: true,
   latePenaltyPts: 1,
@@ -31,7 +37,11 @@ export const ATTENDANCE_DEFAULTS = {
 export function normalizeAttendance(a) {
   const src = a && typeof a === "object" ? a : {};
   const s = { ...ATTENDANCE_DEFAULTS, ...src, teamView: { ...ATTENDANCE_DEFAULTS.teamView, ...(src.teamView && typeof src.teamView === "object" ? src.teamView : {}) } };
+  // Saved before the half-day rule: its auto-absent time gives way to the new
+  // pair (half day at 11:30 AM, absent at 1:30 PM).
+  if (src.halfDayAt == null) { s.halfDayAt = ATTENDANCE_DEFAULTS.halfDayAt; s.autoAbsentAt = ATTENDANCE_DEFAULTS.autoAbsentAt; }
   delete s.since;
+  delete s.penaltyLog;
   return s;
 }
 
@@ -95,6 +105,9 @@ export async function readSettings(orgId) {
   const { rows } = await pool.query("select settings from org where id = $1", [orgId]);
   const s = rows[0]?.settings ?? {};
   const v = { cal: normalizeCalendar(s.calendar), att: normalizeAttendance(s.attendance), since: s.attendance?.since ?? null, raw: s };
+  // "Half day absent" needs the database change (20261029120000); until it's
+  // in, the old rule holds: late until the absent time.
+  v.att.halfDayReady = await permissionsReady();
   settingsCache.set(orgId, { v, exp: Date.now() + SETTINGS_TTL_MS });
   return v;
 }
@@ -158,12 +171,18 @@ export async function attendancePeople(orgId) {
   return rows.filter((r) => r.canWork && homeRoleOf(r.designation, r.isAdmin) !== "manager");
 }
 
-// on time / late for a check-in, against the day's opening and the grace.
+// A check-in, against the day's opening: on time within the grace, late until
+// the half-day time, a half-day absence until the absent time, absent after
+// (the last two only while automatic marks are on).
 export function classify(checkInAt, ymd, cal, att) {
   const open = openingFor(cal, ymd);
   if (!open) return { status: "on_time", lateMinutes: 0 };
   const late = Math.max(0, Math.round((new Date(checkInAt).getTime() - istAt(ymd, open).getTime()) / 60_000));
-  return late <= att.graceMinutes ? { status: "on_time", lateMinutes: 0 } : { status: "late", lateMinutes: late };
+  if (late <= att.graceMinutes) return { status: "on_time", lateMinutes: 0 };
+  const at = istMinutes(checkInAt);
+  if (att.autoAbsentEnabled && at >= minutesOf(att.autoAbsentAt)) return { status: "absent", lateMinutes: late };
+  if (att.autoAbsentEnabled && att.halfDayReady !== false && at >= minutesOf(att.halfDayAt)) return { status: "half_absent", lateMinutes: late };
+  return { status: "late", lateMinutes: late };
 }
 
 // Penalty points a day's row costs, under the current settings.
@@ -171,7 +190,68 @@ export function penaltyOf(row, att) {
   if (!row) return 0;
   if (row.status === "late" && !row.excused) return att.latePenaltyPts;
   if (row.status === "absent") return att.absentPenaltyPts;
+  if (row.status === "half_absent") return att.absentPenaltyPts / 2;
   return 0;
+}
+
+// ---- Permission (migration 20261029120000_attendance_permission) ----
+export async function permissionsReady() {
+  return hasColumn("attendance_permission", "id");
+}
+// Permissions counted against the month's allowance: asked for (waiting),
+// approved, or used. Declined ones don't count.
+export async function permissionsThisMonth(editorId, ymd) {
+  if (!(await permissionsReady())) return [];
+  const { rows } = await pool.query(
+    `select id, date::text as date, part, status, emergency, note from attendance_permission
+      where editor_id = $1 and date >= date_trunc('month', $2::date) and date < date_trunc('month', $2::date) + interval '1 month'
+        and status <> 'declined' order by date, part`,
+    [editorId, ymd],
+  );
+  return rows;
+}
+async function usePermission(orgId, editorId, ymd, part, att, actorId, verbWord) {
+  if (!(await permissionsReady())) return null;
+  const month = await permissionsThisMonth(editorId, ymd);
+  const own = month.find((p) => p.date === ymd && p.part === part);
+  if (own?.status === "used") return own;
+  // an approved (or waiting) one for this day is used now; otherwise one is
+  // taken from what's left, as an emergency
+  if (!own && month.length >= att.permissionsPerMonth) return null;
+  const { rows } = await pool.query(
+    `insert into attendance_permission (org_id, editor_id, date, part, status, emergency, asked_by)
+     values ($1, $2, $3, $4, 'used', true, $5)
+     on conflict (editor_id, date, part) do update set status = 'used'
+     returning id, status, emergency`,
+    [orgId, editorId, ymd, part, actorId],
+  );
+  const left = Math.max(0, att.permissionsPerMonth - (own ? month.length : month.length + 1));
+  const { rows: who } = await pool.query("select name from editor where id = $1", [editorId]);
+  await logActivity({
+    orgId, actorId, verb: "attendance_permission_used", entityType: "editor", entityId: editorId,
+    summary: `${who[0]?.name ?? "Someone"} ${verbWord} with a ${part} permission${own ? "" : " (not asked ahead)"} · ${left} left this month`,
+    meta: { date: ymd, part, left },
+  });
+  return rows[0];
+}
+// A late start before the half-day time: a permission covers it (no late mark)
+// while one is left this month, or if one was approved for the morning.
+export async function applyMorningPermission(orgId, editorId, ymd, att, actorId) {
+  const { rows } = await pool.query("select id, status, excused from attendance where editor_id = $1 and date = $2", [editorId, ymd]);
+  const row = rows[0];
+  if (!row || row.status !== "late" || row.excused) return false;
+  const used = await usePermission(orgId, editorId, ymd, "morning", att, actorId, "came in late");
+  if (!used) return false;
+  await pool.query("update attendance set excused = true, reason = 'permission', updated_at = now() where id = $1", [row.id]);
+  return true;
+}
+// Ending the day early (15 minutes or more before closing): recorded as an
+// evening permission while one is left, or if one was approved.
+export async function applyEveningPermission(orgId, editorId, ymd, cal, att, actorId) {
+  const close = closingFor(cal, ymd);
+  if (!close) return false;
+  if (istNow().minutes > minutesOf(close) - 15) return false;
+  return !!(await usePermission(orgId, editorId, ymd, "evening", att, actorId, "left early"));
 }
 
 // Points lost per person in a month ("YYYY-MM") — fed into the discipline
@@ -246,15 +326,16 @@ export async function syncAttendance(orgId) {
          on conflict (editor_id, date) do update set
            check_in_at = excluded.check_in_at,
            status = case when (attendance.marked_by is not null and attendance.status in ('on_time', 'half_day', 'absent'))
-                           or (attendance.auto_marked and attendance.status = 'absent')
+                           or (attendance.auto_marked and attendance.status in ('absent', 'half_absent'))
                          then attendance.status else excluded.status end,
            late_minutes = excluded.late_minutes,
-           auto_marked = attendance.auto_marked and attendance.status = 'absent',
+           auto_marked = attendance.auto_marked and attendance.status in ('absent', 'half_absent'),
            marked_by = case when attendance.status = 'leave' then null else attendance.marked_by end,
            updated_at = now()
          where attendance.check_in_at is null`,
         [orgId, s.editor_id, today.ymd, s.first, c.status, c.lateMinutes],
       );
+      await applyMorningPermission(orgId, s.editor_id, today.ymd, att, null);
     }
 
     const open = openingFor(cal, today.ymd);
@@ -278,14 +359,18 @@ export async function syncAttendance(orgId) {
           });
         }
       }
-      // Auto-absent.
-      if (att.autoAbsentEnabled && today.minutes >= minutesOf(att.autoAbsentAt)) {
+      // Not in by the half-day time: a half-day absence; still not in by the
+      // absent time: absent. Only rows Pulse made (or none), never a lead's mark.
+      const markFrom = att.halfDayReady !== false ? att.halfDayAt : att.autoAbsentAt;
+      if (att.autoAbsentEnabled && today.minutes >= minutesOf(markFrom)) {
+        const mark = today.minutes >= minutesOf(att.autoAbsentAt) ? "absent" : "half_absent";
         await pool.query(
           `insert into attendance (org_id, editor_id, date, status, auto_marked)
-           select $1, x, $3, 'absent', true from unnest($2::uuid[]) x
-           on conflict (editor_id, date) do update set status = 'absent', auto_marked = true, updated_at = now()
-           where attendance.check_in_at is null and attendance.status = 'no_sod' and attendance.marked_by is null`,
-          [orgId, ids, today.ymd],
+           select $1, x, $3, $4, true from unnest($2::uuid[]) x
+           on conflict (editor_id, date) do update set status = excluded.status, auto_marked = true, updated_at = now()
+           where attendance.check_in_at is null and attendance.marked_by is null
+             and attendance.status in ('no_sod', 'half_absent') and attendance.status <> excluded.status`,
+          [orgId, ids, today.ymd, mark],
         );
       }
     }

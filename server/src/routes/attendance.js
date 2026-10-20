@@ -6,8 +6,8 @@ import { logActivity } from "../activity.js";
 import { capacityFor, LUNCH_MIN, TEA_MIN, normalizeCalendar } from "../work-calendar.js";
 import { startSession, endSession, pauseDayTimers } from "./eod.js";
 import {
-  attendancePeople, attendanceReady, callerScope, canSee, classify, closingFor, istAt, istNow,
-  minutesOf, openingFor, penaltyOf, readSettings, syncAttendance, weekdayOf,
+  applyEveningPermission, applyMorningPermission, attendancePeople, attendanceReady, callerScope, canSee, classify, closingFor,
+  istAt, istNow, minutesOf, openingFor, penaltyOf, permissionsReady, permissionsThisMonth, readSettings, syncAttendance, weekdayOf,
 } from "../attendance.js";
 
 // Attendance — Start day / End day for team members, and Team today /
@@ -34,7 +34,7 @@ async function rowFor(editorId, ymd) {
 // only to remember a nudge isn't a no-SOD day yet.
 function shownStatus(row) {
   if (!row) return "waiting";
-  if (row.status === "late" && row.excused) return "on_time";
+  if (row.status === "late" && row.excused) return row.reason === "permission" ? "permission" : "on_time";
   if (row.status === "no_sod" && !row.alertSentAt && !row.checkInAt && !row.markedBy) return "waiting";
   return row.status;
 }
@@ -66,14 +66,29 @@ attendanceRouter.get("/attendance/today", async (req, res, next) => {
         : Promise.resolve({ rows: [] }),
     ]);
 
+    // Permissions: yours this month, and the requests waiting for a lead.
+    const permReady = await permissionsReady();
+    const [myPerms, waitingPerms] = await Promise.all([
+      checksIn && permReady ? permissionsThisMonth(caller.editorId, today.ymd) : Promise.resolve([]),
+      permReady && ids.length
+        ? pool.query(
+          `select id, editor_id as "editorId", date::text as date, part, note from attendance_permission
+            where editor_id = any($1::uuid[]) and status = 'requested' and date >= $2::date order by date`,
+          [ids, today.ymd],
+        )
+        : Promise.resolve({ rows: [] }),
+    ]);
     let team = null;
     if (caller.scope !== "self") {
       const byId = new Map(teamRows.rows.map((r) => [r.editorId, r]));
+      const askedBy = new Map();
+      for (const w of waitingPerms.rows) { if (!askedBy.has(w.editorId)) askedBy.set(w.editorId, []); askedBy.get(w.editorId).push(w); }
       team = mine.map((p) => {
         const r = byId.get(p.id) ?? null;
         return {
           editorId: p.id, name: p.name, imageUrl: p.imageUrl, designation: p.designation,
           status: shownStatus(r), row: r, penalty: penaltyOf(r, att),
+          permissionRequests: askedBy.get(p.id) ?? [],
         };
       });
     }
@@ -82,6 +97,7 @@ attendanceRouter.get("/attendance/today", async (req, res, next) => {
       opening: open, closing: closingFor(cal, today.ymd),
       settings: att, role: caller.role, scope: caller.scope,
       checksIn, me, team,
+      permissions: permReady ? { perMonth: att.permissionsPerMonth, mine: myPerms, left: Math.max(0, att.permissionsPerMonth - myPerms.length) } : null,
     });
   } catch (err) { next(err); }
 });
@@ -116,15 +132,16 @@ attendanceRouter.post("/attendance/check-in", async (req, res, next) => {
        on conflict (editor_id, date) do update set
          check_in_at = excluded.check_in_at,
          status = case when (attendance.marked_by is not null and attendance.status in ('on_time', 'half_day', 'absent'))
-                         or (attendance.auto_marked and attendance.status = 'absent')
+                         or (attendance.auto_marked and attendance.status in ('absent', 'half_absent'))
                        then attendance.status else excluded.status end,
          late_minutes = excluded.late_minutes,
-         auto_marked = attendance.auto_marked and attendance.status = 'absent',
+         auto_marked = attendance.auto_marked and attendance.status in ('absent', 'half_absent'),
          marked_by = case when attendance.status = 'leave' then null else attendance.marked_by end,
          plan_note = coalesce(excluded.plan_note, attendance.plan_note), updated_at = now()`,
       [req.orgId, caller.editorId, today.ymd, at, c.status, c.lateMinutes, plan],
     );
     if (existing?.status === "leave" && existing?.markedBy) await leaveWorked(req, caller.editorId, today.ymd);
+    await applyMorningPermission(req.orgId, caller.editorId, today.ymd, att, req.user.sub);
     const row = await rowFor(caller.editorId, today.ymd);
     await logActivity({
       orgId: req.orgId, actorId: req.user.sub, verb: "attendance_check_in", entityType: "editor", entityId: caller.editorId,
@@ -210,7 +227,9 @@ attendanceRouter.post("/attendance/check-out", async (req, res, next) => {
     }
     const ended = await endSession(req.orgId, caller.editorId);
     if (!ended) return res.status(400).json({ error: "You haven't started your day, so there's nothing to close." });
-    res.json({ ...ended, attendance: await rowFor(caller.editorId, today.ymd) });
+    const { cal: dayCal } = await readSettings(req.orgId);
+    const evening = await applyEveningPermission(req.orgId, caller.editorId, today.ymd, dayCal, att, req.user.sub);
+    res.json({ ...ended, attendance: await rowFor(caller.editorId, today.ymd), eveningPermission: evening });
   } catch (err) { next(err); }
 });
 
@@ -247,7 +266,7 @@ attendanceRouter.post("/attendance/correction-request", async (req, res, next) =
        on conflict (editor_id, date) do update set
          check_in_at = coalesce(attendance.check_in_at, excluded.check_in_at),
          status = case when attendance.check_in_at is not null then attendance.status else case when (attendance.marked_by is not null and attendance.status in ('on_time', 'half_day', 'absent'))
-                         or (attendance.auto_marked and attendance.status = 'absent')
+                         or (attendance.auto_marked and attendance.status in ('absent', 'half_absent'))
                        then attendance.status else excluded.status end end,
          late_minutes = case when attendance.check_in_at is not null then attendance.late_minutes else excluded.late_minutes end,
          auto_marked = false, correction_at = excluded.correction_at, correction_note = excluded.correction_note,
@@ -412,6 +431,67 @@ attendanceRouter.post("/attendance/:editorId/nudge", async (req, res, next) => {
   } catch (err) { next(err); }
 });
 
+// POST /attendance/permission { date, part, note } — ask ahead for a morning
+// (come in late) or evening (leave early) permission; a lead approves it.
+attendanceRouter.post("/attendance/permission", async (req, res, next) => {
+  const parsed = z.object({
+    date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+    part: z.enum(["morning", "evening"]),
+    note: z.string().trim().max(300).optional(),
+  }).safeParse(req.body ?? {});
+  if (!parsed.success) return res.status(400).json({ error: "Pick the day and morning or evening." });
+  try {
+    if (!(await ready(res))) return;
+    if (!(await permissionsReady())) return res.status(409).json({ error: "Permissions need a database update first — ask whoever runs the database to apply 20261029120000_attendance_permission." });
+    const caller = await callerScope(req);
+    if (!caller.editorId) return res.status(400).json({ error: "Your account isn't linked to a team member." });
+    const { cal, att } = await readSettings(req.orgId);
+    const today = istNow();
+    const { date, part } = parsed.data;
+    const until = new Date(new Date(`${today.ymd}T00:00:00Z`).getTime() + 60 * 86_400_000).toISOString().slice(0, 10);
+    if (date < today.ymd || date > until) return res.status(400).json({ error: "Pick a day from today to two months ahead." });
+    if (!openingFor(cal, date)) return res.status(400).json({ error: "That isn't a working day." });
+    const month = await permissionsThisMonth(caller.editorId, date);
+    if (month.some((p) => p.date === date && p.part === part)) return res.status(409).json({ error: "You've already asked for that one." });
+    if (month.length >= att.permissionsPerMonth) {
+      return res.status(409).json({ error: `You've used all ${att.permissionsPerMonth} permissions for that month.` });
+    }
+    await pool.query(
+      `insert into attendance_permission (org_id, editor_id, date, part, status, note, asked_by)
+       values ($1, $2, $3, $4, 'requested', $5, $6)
+       on conflict (editor_id, date, part) do update set status = 'requested', note = excluded.note, decided_by = null, decided_at = null`,
+      [req.orgId, caller.editorId, date, part, parsed.data.note || null, req.user.sub],
+    );
+    const { rows: who } = await pool.query("select name from editor where id = $1", [caller.editorId]);
+    await logActivity({
+      orgId: req.orgId, actorId: req.user.sub, verb: "attendance_permission_asked", entityType: "editor", entityId: caller.editorId,
+      summary: `${who[0]?.name ?? "Someone"} asked for a ${part} permission on ${date}`,
+      meta: { date, part },
+    });
+    res.status(201).json({ permissions: await permissionsThisMonth(caller.editorId, date) });
+  } catch (err) { next(err); }
+});
+
+// POST /attendance/:editorId/permission { id, approve } — a lead's answer.
+attendanceRouter.post("/attendance/:editorId/permission", async (req, res, next) => {
+  const parsed = z.object({ id: z.string().uuid(), approve: z.boolean() }).safeParse(req.body ?? {});
+  if (!parsed.success) return res.status(400).json({ error: "Approve or decline." });
+  try {
+    const t = await leadTarget(req, res);
+    if (!t) return;
+    if (!(await permissionsReady())) return res.status(409).json({ error: "Permissions need a database update first." });
+    const { rows } = await pool.query(
+      `update attendance_permission set status = $3, decided_by = $4, decided_at = now()
+        where id = $1 and editor_id = $2 and status = 'requested' returning date::text as date, part`,
+      [parsed.data.id, t.editorId, parsed.data.approve ? "approved" : "declined", req.user.sub],
+    );
+    if (!rows.length) return res.status(400).json({ error: "There's no request waiting." });
+    await audit(req, t, parsed.data.approve ? "attendance_permission_approved" : "attendance_permission_declined",
+      `${parsed.data.approve ? "Approved" : "Declined"} ${t.name}'s ${rows[0].part} permission on ${rows[0].date}`, rows[0]);
+    res.json({ ok: true });
+  } catch (err) { next(err); }
+});
+
 // POST /attendance/:editorId/correction { approve } — the lead's answer to a
 // correction request.
 attendanceRouter.post("/attendance/:editorId/correction", async (req, res, next) => {
@@ -496,6 +576,7 @@ attendanceRouter.get("/attendance/month", async (req, res, next) => {
           if (r.status === "late" && !r.excused) late++;
           else if (r.status === "on_time" || (r.status === "late" && r.excused)) onTime++;
           if (r.status === "absent") absent++;
+          if (r.status === "half_absent") absent += 0.5;
           if (r.status === "leave") leave += 1;
           if (r.status === "half_day") leave += 0.5;
           pts += penaltyOf(r, att);

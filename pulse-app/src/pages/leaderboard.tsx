@@ -265,7 +265,7 @@ function Laurel({ rank, variant }: { rank: number; variant: "gold" | "silver" | 
 // Media House Leaders Goal column: how much of the month's goal is reached,
 // by the one goal rule (server/src/goal-score.js): jobs per content type, each
 // up to 150% of its goal (cut for approved leave), plus covered work, weighed
-// by the goal's points. It can pass 100%. Hover for each type's count.
+// by the goal's points. It can pass 100%, up to 150% in all. Hover for each type's count.
 // No goal set: says so.
 function GoalCell({ goal, pct, byType, coveredJobs = 0, leaveDays = 0 }: { goal: number; pct: number | null; byType: GoalType[]; coveredJobs?: number; leaveDays?: number }) {
   if (pct == null || goal <= 0) return <span className="lb-goal-none">No goal set</span>;
@@ -530,7 +530,7 @@ export function LeaderboardPage() {
           <div className="lb-main">
             <div className="lb-statbar">
               <h3>Work performance</h3>
-              <div className="hint" style={{ margin: 0 }}>Ranked by how much of their own goal each person reached: jobs per type, up to 150% each, plus work covered for others, with goals cut for approved leave. Then by points. Resets on the 1st.</div>
+              <div className="hint" style={{ margin: 0 }}>Ranked by how much of their own goal each person reached: jobs per type, up to 150% each, plus work covered for others, up to 150% in all, with goals cut for approved leave. Then by points. Resets on the 1st.</div>
             </div>
 
             <div className="lb-table-wrap">

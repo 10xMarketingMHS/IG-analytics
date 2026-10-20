@@ -645,8 +645,9 @@ function PipelineW({ c }: { c: HomeCtx }) {
 const PILL: Record<string, { l: string; t: string }> = {
   on_time: { l: "On time", t: "good" }, late: { l: "Late", t: "warn" }, no_sod: { l: "No SOD", t: "bad" },
   waiting: { l: "Not in yet", t: "" }, absent: { l: "Absent", t: "bad" }, leave: { l: "On leave", t: "rev" }, half_day: { l: "Half day", t: "rev" },
+  half_absent: { l: "Half day absent", t: "bad" }, permission: { l: "Permission", t: "rev" },
 };
-const ORDER: Record<string, number> = { no_sod: 0, absent: 1, late: 2, waiting: 3, half_day: 4, leave: 5, on_time: 6 };
+const ORDER: Record<string, number> = { no_sod: 0, absent: 1, half_absent: 2, late: 3, waiting: 4, half_day: 5, leave: 6, permission: 7, on_time: 8 };
 
 function AttendW({ c }: { c: HomeCtx }) {
   const [busy, setBusy] = useState<string | null>(null);
@@ -676,7 +677,7 @@ function AttendW({ c }: { c: HomeCtx }) {
       case "leave": return r?.reason || "Approved leave";
     }
   };
-  async function run(p: TeamPerson, action: "excuse" | "undo" | "nudge" | "mark" | "correction", body: object | undefined, ok: string) {
+  async function run(p: TeamPerson, action: "excuse" | "undo" | "nudge" | "mark" | "correction" | "permission", body: object | undefined, ok: string) {
     setBusy(p.editorId);
     try {
       await attendanceAction(p.editorId, action, body);
@@ -707,6 +708,15 @@ function AttendW({ c }: { c: HomeCtx }) {
               <span className="hw-li-txt"><b>{p.name}</b><span>{meta(p)}</span></span>
               <span className={"hw-pill " + pill.t}>{pill.l}</span>
               <span className="hw-att-acts">
+                {(p.permissionRequests ?? []).map((q) => (
+                  <span key={q.id} className="hw-att-perm">
+                    <span className="hw-faint sm" title={q.note ?? undefined}>
+                      {q.part === "morning" ? "Morning" : "Evening"} permission · {new Date(`${q.date}T12:00:00`).toLocaleDateString("en-IN", { day: "numeric", month: "short" })}
+                    </span>
+                    <button type="button" className="hw-mini good" disabled={busy === p.editorId} onClick={() => run(p, "permission", { id: q.id, approve: true }, `${first(p.name)}'s ${q.part} permission approved`)}>Approve</button>
+                    <button type="button" className="hw-mini" disabled={busy === p.editorId} onClick={() => run(p, "permission", { id: q.id, approve: false }, "Permission declined")}>Decline</button>
+                  </span>
+                ))}
                 {r?.correctionStatus === "pending" && r.correctionAt && (
                   <>
                     <span className="hw-faint sm" title="The start they ask for, and when they really opened Pulse">Asks {clockTime(r.correctionAt)}{r.checkInAt ? ` · opened ${clockTime(r.checkInAt)}` : ""}</span>

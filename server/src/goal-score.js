@@ -19,9 +19,12 @@ import { openingFor, readSettings } from "./attendance.js";
 //  4. Approved leave (a lead's Leave or Half day in Attendance) shrinks the
 //     goal for scoring by days off ÷ working days; the goal as set stays. An
 //     unexcused absence doesn't shrink it (its penalty comes off discipline).
-//  5. So a score can pass 100%.
+//  5. So a score can pass 100%, up to 150% for the month as a whole.
 // A goal job is worth the points the goal was set with.
 export const TYPE_CAP = 1.5;
+// The whole month together (covered work included) is capped too: at most 150%
+// of the goal's points.
+export const TOTAL_CAP = 1.5;
 
 const NIL = "00000000-0000-0000-0000-000000000000";
 const IST_MONTH = (col) => `${col} >= ($2::date)::timestamp at time zone 'Asia/Kolkata'
@@ -66,11 +69,12 @@ export function scoreMonth({ goals, jobs, leaveDays = 0, workingDays = 0 }) {
     goalTarget += t.goal;
     achieved += t.done;
   }
-  const reached = jobsPoints + coveredPoints;
+  const uncapped = jobsPoints + coveredPoints;
+  const reached = goalPoints > 0 ? Math.min(uncapped, TOTAL_CAP * goalPoints) : uncapped;
   return {
     leaveDays, workingDays, leaveFactor,
     types: [...types.values()], coveredByType,
-    goalPoints, jobsPoints, coveredPoints, coveredJobs, reached,
+    goalPoints, jobsPoints, coveredPoints, coveredJobs, reached, uncapped,
     goalTarget, achieved,
     pct: goalPoints > 0 ? (reached / goalPoints) * 100 : null,
   };

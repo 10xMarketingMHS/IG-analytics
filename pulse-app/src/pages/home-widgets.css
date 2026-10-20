@@ -232,3 +232,6 @@ div.hw-timer-title{cursor:default}
 }
 
 .sd-loading{color:var(--md-text3)}
+/* Team today: a permission waiting for the lead's answer */
+.hw-att-perm{display:inline-flex;align-items:center;gap:6px}
+.sd-perm-part{height:32px;padding:0 8px;border:1px solid var(--md-line);border-radius:8px;background:var(--md-panel);color:var(--md-text);font:500 12.5px 'Plus Jakarta Sans',sans-serif}

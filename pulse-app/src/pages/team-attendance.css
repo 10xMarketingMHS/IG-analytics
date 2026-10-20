@@ -62,3 +62,6 @@ html[data-theme="dark"] .ta{--ta-text3:#8b8b96;--ta-line2:rgba(255,255,255,.055)
 .ta-plan button{height:32px;padding:0 14px;border:0;border-radius:9px;background:var(--ta-acText);color:#fff;font:inherit;font-weight:700;cursor:pointer}
 .ta-plan button:disabled{opacity:.45;cursor:default}
 @media (max-width:560px){.ta-plan{padding:10px 16px}.ta-plan select,.ta-plan input,.ta-plan button{flex:1 1 140px}}
+/* half-day absent (not in by the half-day time); a permission morning */
+.ta-cell.c-half_absent,.ta-legend .c-half_absent{background:linear-gradient(135deg,var(--ta-bad) 50%,var(--ta-sunk) 50%);box-shadow:none}
+.ta-cell.c-permission,.ta-legend .c-permission{background:color-mix(in srgb,var(--ta-good) 55%,var(--ta-rev));box-shadow:none}

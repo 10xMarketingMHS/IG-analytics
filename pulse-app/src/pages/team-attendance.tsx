@@ -26,8 +26,9 @@ type Month = {
 
 const LABEL: Record<ShownStatus, string> = {
   on_time: "On time", late: "Late", no_sod: "No SOD", waiting: "Not in yet", absent: "Absent", leave: "On leave", half_day: "Half day",
+  half_absent: "Half day absent", permission: "Permission",
 };
-const LEGEND: [string, string][] = [["On time", "on_time"], ["Late", "late"], ["Absent", "absent"], ["Leave", "leave"], ["No SOD", "no_sod"]];
+const LEGEND: [string, string][] = [["On time", "on_time"], ["Permission", "permission"], ["Late", "late"], ["Half day absent", "half_absent"], ["Absent", "absent"], ["Leave", "leave"], ["No SOD", "no_sod"]];
 const WD = ["S", "M", "T", "W", "T", "F", "S"];
 const monthOf = (d = new Date()) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
 const shift = (m: string, by: number) => { const [y, mo] = m.split("-").map(Number); return monthOf(new Date(y, mo - 1 + by, 1)); };
