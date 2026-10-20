@@ -68,14 +68,14 @@ export function weekdayOf(ymd) {
 export function openingFor(cal, ymd) {
   const c = normalizeCalendar(cal);
   const w = weekdayOf(ymd);
-  if (w === 0) return null;
+  if (w === 0 || c.holidays.includes(ymd)) return null;
   if (w === 6) return c.satOff ? null : c.satFrom;
   return c.wdFrom;
 }
 export function closingFor(cal, ymd) {
   const c = normalizeCalendar(cal);
   const w = weekdayOf(ymd);
-  if (w === 0) return null;
+  if (w === 0 || c.holidays.includes(ymd)) return null;
   if (w === 6) return c.satOff ? null : c.satTo;
   return c.wdTo;
 }
@@ -289,6 +289,15 @@ export async function syncAttendance(orgId) {
         if (days.length > 400) break;
       }
       if (days.length) {
+        // Each person only from the day they joined (their roster entry or
+        // login, whichever is later): never absent before they were here.
+        const { rows: joined } = await pool.query(
+          `select e.id, (greatest(e.created_at, coalesce(max(u.created_at), e.created_at)) at time zone 'Asia/Kolkata')::date::text as day
+             from editor e left join app_user u on u.editor_id = e.id
+            where e.id = any($1::uuid[]) group by e.id, e.created_at`,
+          [ids],
+        );
+        const joinedOn = new Map(joined.map((j) => [j.id, j.day]));
         const { rows: worked } = await pool.query(
           `select editor_id, (started_at at time zone 'Asia/Kolkata')::date::text as day, min(started_at) as first
              from eod_session where org_id = $1 and editor_id = any($2::uuid[])
@@ -306,6 +315,7 @@ export async function syncAttendance(orgId) {
           for (const id of ids) {
             const k = `${id}|${ymd}`;
             if (has.has(k)) continue;
+            if (ymd < (joinedOn.get(id) ?? ymd)) continue;
             const first = firstOf.get(k);
             if (first) {
               const c = classify(first, ymd, cal, att);

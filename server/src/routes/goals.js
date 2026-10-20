@@ -9,6 +9,7 @@ import { hasColumn } from "../schema-flags.js";
 import { capacityFor } from "../work-calendar.js";
 import { monthPenalties, readSettings } from "../attendance.js";
 import { isSuperHere } from "../super-admin.js";
+import { editorRanks, seesEditor, taskViewer } from "../hierarchy.js";
 import { scoreMonthAll } from "../goal-score.js";
 
 export const goalsRouter = Router();
@@ -104,6 +105,28 @@ const ratingsOf = (row) => Object.fromEntries(CRITERIA.map((k) => [k, row && row
 function monthStart(monthIn) {
   const m = /^(\d{4})-(\d{1,2})/.exec(String(monthIn ?? ""));
   return m ? `${m[1]}-${m[2].padStart(2, "0")}-01` : null;
+}
+// The first day of this month (or offset months away), on India time.
+function istMonthStart(offset = 0) {
+  const ist = new Date(Date.now() + 330 * 60_000);
+  return new Date(Date.UTC(ist.getUTCFullYear(), ist.getUTCMonth() + offset, 1)).toISOString().slice(0, 10);
+}
+// Goals, a person's capacity and discipline ratings are set for other people:
+// never for yourself, never for someone above you, and not for a month that is
+// over (ratings stay open for last month too, as they're given after it ends).
+// The Super Admin may do all of these. Null when fine, else what to say.
+async function goalWriteError(req, editorId, month, kind) {
+  if (await isSuperHere(req)) return null;
+  const { rows } = await pool.query("select editor_id from app_user where id = $1", [req.user.sub]);
+  if (editorId && editorId === rows[0]?.editor_id) {
+    return kind === "rating" ? "Only a Super Admin can rate you." : "Only a Super Admin can set your own goals.";
+  }
+  const [viewer, ranks] = await Promise.all([taskViewer(req), editorRanks(req.orgId)]);
+  if (!seesEditor(viewer, ranks, editorId)) return "You can't change this for someone above you.";
+  if (month < istMonthStart(kind === "rating" ? -1 : 0)) {
+    return kind === "rating" ? "Ratings for that month are closed." : "That month is over, so its goals are locked.";
+  }
+  return null;
 }
 const isProject = (f) => f.category === "project" && f.duration_days != null;
 const projectHours = (f, hoursPerDay) => Number(f.duration_days) * Number(hoursPerDay || 0);
@@ -368,6 +391,10 @@ goalsRouter.put("/goals/capacity", requirePermission("edit_goals"), async (req, 
     const month = monthStart(d.month);
     if (!month) return res.status(400).json({ error: "That month couldn't be read." });
     const editorId = d.scope === "editor" ? d.editorId : null;
+    if (editorId) {
+      const why = await goalWriteError(req, editorId, month, "goals");
+      if (why) return res.status(403).json({ error: why });
+    }
     // Upsert — the two scopes have separate partial unique indexes, so update-
     // else-insert keeps it simple across both.
     const upd = await pool.query(
@@ -408,6 +435,8 @@ goalsRouter.put("/goals", requirePermission("edit_goals"), async (req, res, next
   try {
     const month = monthStart(d.month);
     if (!month) return res.status(400).json({ error: "That month couldn't be read." });
+    const why = await goalWriteError(req, d.editorId, month, "goals");
+    if (why) return res.status(403).json({ error: why });
     for (const g of d.goals) {
       if (g.jc == null) {
         await pool.query(
@@ -693,11 +722,15 @@ goalsRouter.put("/goals/discipline", requirePermission("discipline"), async (req
     const month = monthStart(d.month);
     if (!month) return res.status(400).json({ error: "That month couldn't be read." });
     for (const e of d.entries) {
+      const why = await goalWriteError(req, e.editorId, month, "rating");
+      if (why) return res.status(403).json({ error: why });
+    }
+    for (const e of d.entries) {
       const vals = CRITERIA.map((k) => e.ratings[k] ?? null);
       await pool.query(
         `insert into editor_discipline_points
            (org_id, editor_id, period_month, ${RATINGS_SELECT}, note, updated_by, updated_at)
-         values ($1,$2,$3,$4,$5,$6,$7,$8,$9, now())
+         values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10, now())
          on conflict (org_id, editor_id, period_month) do update set
            punctuality = excluded.punctuality,
            quality_responsibility = excluded.quality_responsibility,

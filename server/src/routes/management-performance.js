@@ -28,9 +28,21 @@ const MAX_RATING_SUM = CRITERIA.length * 5; // 25
 const round1 = (n) => Math.round(n * 10) / 10;
 const round2 = (n) => Math.round(n * 100) / 100;
 
-function thisMonthFirst() {
-  const d = new Date();
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-01`;
+// This month, on India time (the server's own clock is UTC).
+function thisMonthFirst(offset = 0) {
+  const ist = new Date(Date.now() + 330 * 60_000);
+  return new Date(Date.UTC(ist.getUTCFullYear(), ist.getUTCMonth() + offset, 1)).toISOString().slice(0, 10);
+}
+// Days into a new month that last month stays live: ratings, leave and goal
+// fixes for it come in after it ends, so it's only stored (frozen) after this.
+const SETTLE_DAYS = 10;
+// Is a month still computed live (this month, a future one, or last month
+// while it settles)? Only months past that are served from what was stored.
+function liveMonth(monthFirst) {
+  const m = String(monthFirst).slice(0, 7);
+  if (m >= thisMonthFirst().slice(0, 7)) return true;
+  const istDay = new Date(Date.now() + 330 * 60_000).getUTCDate();
+  return m === thisMonthFirst(-1).slice(0, 7) && istDay <= SETTLE_DAYS;
 }
 
 // First-of-month as 'YYYY-MM-DD' — pure string math, no DB round-trip.
@@ -306,6 +318,11 @@ function invalidateOrg(orgId) {
 
 // Compute the board response for a month (no caching).
 async function computeBoard(orgId, monthFirst, isCurrent) {
+  // A past month still settling is live: anything stored for it too early is
+  // dropped, so it's stored afresh once it settles.
+  if (isCurrent && String(monthFirst).slice(0, 7) < thisMonthFirst().slice(0, 7)) {
+    pool.query("delete from editor_monthly_performance where org_id = $1 and period_month = $2", [orgId, monthFirst]).catch(() => {});
+  }
   const [edThr, scores, ratingMap, storedRows] = await Promise.all([
     activeEditorsWithThresholds(orgId),
     scoreMonthAll(orgId, monthFirst),
@@ -349,7 +366,8 @@ async function refreshBoard(orgId, monthFirst, isCurrent) {
 managementPerformanceRouter.get("/management-performance", requireAdmin, async (req, res, next) => {
   try {
     const monthFirst = firstOfMonth(req.query.month || thisMonthFirst());
-    const isCurrent = monthFirst.slice(0, 7) === thisMonthFirst().slice(0, 7);
+    // live (not frozen) while it's this month, a future one, or last month settling
+    const isCurrent = liveMonth(monthFirst);
     const key = `${req.orgId}:${monthFirst}`;
     if (isCurrent) hotBoards.set(key, req.orgId); // keep this board warm
 
@@ -524,7 +542,8 @@ managementPerformanceRouter.get("/management-performance/:editorId", requireAdmi
   try {
     const editorId = req.params.editorId;
     const monthFirst = firstOfMonth(req.query.month || thisMonthFirst());
-    const isCurrent = monthFirst.slice(0, 7) === thisMonthFirst().slice(0, 7);
+    // live (not frozen) while it's this month, a future one, or last month settling
+    const isCurrent = liveMonth(monthFirst);
     const key = `${req.orgId}:${editorId}:${monthFirst}`;
 
     const c = cacheLookup(detailCache, key, isCurrent ? CUR_TTL_MS : PAST_TTL_MS);

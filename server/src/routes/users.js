@@ -8,6 +8,7 @@ import { requirePermission } from "../permissions.js";
 import { logActivity } from "../activity.js";
 import { hasColumn } from "../schema-flags.js";
 import { superState, isSuperUser } from "../super-admin.js";
+import { forgetActive } from "../auth.js";
 
 export const usersRouter = Router();
 
@@ -355,6 +356,8 @@ usersRouter.patch("/users/:id", requireAdmin, async (req, res, next) => {
       vals.push(targetId);
       await pool.query(`update app_user set ${sets.join(", ")} where id = $${vals.length}`, vals);
     }
+    // switched off (or back on): takes effect on their very next request
+    if (active !== undefined) forgetActive(targetId);
     if (password) {
       const { rows: who } = await pool.query("select coalesce(name, email) as n from app_user where id = $1", [targetId]);
       await logActivity({

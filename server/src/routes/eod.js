@@ -25,13 +25,15 @@ let lastSweep = 0;
 export async function closeStaleSessions() {
   if (Date.now() - lastSweep < 60_000) return;
   lastSweep = Date.now();
-  // …and their task clocks stop where the day was closed (see pauseDayTimers).
+  // …and their task clocks stop where the day was closed (see pauseDayTimers);
+  // one started after the close stops too, with nothing banked. The day is
+  // India's: a session is stale once India's date has moved on.
   await pool.query(
     `with closed as (
        update eod_session
           set ended_at = greatest(started_at, (date + time '18:00') at time zone 'Asia/Kolkata'),
               auto_closed = true
-        where ended_at is null and date < current_date
+        where ended_at is null and date < (now() at time zone 'Asia/Kolkata')::date
         returning editor_id, ended_at, date
      )
      update task t
@@ -41,14 +43,14 @@ export async function closeStaleSessions() {
             budget_started_at = null
        from closed c join editor e on e.id = c.editor_id
       where t.editor_id = c.editor_id and t.status = 'in_progress' and t.accepted and not t.on_hold
-        and t.budget_hours is not null and t.budget_started_at is not null and t.budget_started_at <= c.ended_at`,
+        and t.budget_hours is not null and t.budget_started_at is not null`,
   );
 }
 
 // Today's break so far for the task's person, as the board nets it out of a
 // running clock (lib/task-timing.ts breakOffsetMs): what's banked plus the
 // break under way, capped at the day's 75 minutes.
-const BREAK_NOW = `(case when e.break_date = current_date
+const BREAK_NOW = `(case when e.break_date = (now() at time zone 'Asia/Kolkata')::date
     then coalesce(e.break_used_seconds, 0)
        + case when e.break_started_at is not null
               then least(greatest(0, extract(epoch from now() - e.break_started_at)), greatest(0, 4500 - coalesce(e.break_used_seconds, 0)))
@@ -139,7 +141,7 @@ export async function summaryFor(orgId, editorId, date) {
   const { rows: br } = await pool.query(
     "select break_used_seconds, break_started_at, break_date from editor where id = $1", [editorId],
   );
-  const sessionDays = new Set(sessions.map((s) => new Date(s.startedAt).toISOString().slice(0, 10)));
+  const sessionDays = new Set(sessions.map((s) => new Date(new Date(s.startedAt).getTime() + 330 * 60_000).toISOString().slice(0, 10)));
   let breakSeconds = null;
   if (br[0]?.break_date && sessionDays.has(String(br[0].break_date).slice(0, 10))) {
     const running = br[0].break_started_at ? Math.max(0, (Date.now() - new Date(br[0].break_started_at)) / 1000) : 0;
@@ -251,7 +253,7 @@ export async function startSession(orgId, eid) {
   try {
     const { rows } = await pool.query(
       `insert into eod_session (org_id, editor_id, date, started_at)
-       values ($1, $2, current_date, now())
+       values ($1, $2, (now() at time zone 'Asia/Kolkata')::date, now())
        returning id, date, started_at as "startedAt", ended_at as "endedAt"`,
       [orgId, eid],
     );
@@ -325,7 +327,7 @@ eodRouter.put("/eod/notes", async (req, res, next) => {
     const eid = await callerEditorId(req);
     if (!eid) return res.status(400).json({ error: "Your account isn't linked to a team member." });
     const { rows: s } = await pool.query(
-      "select date from eod_session where editor_id = $1 and org_id = $2 and date = current_date limit 1", [eid, req.orgId],
+      "select date from eod_session where editor_id = $1 and org_id = $2 and date = (now() at time zone 'Asia/Kolkata')::date limit 1", [eid, req.orgId],
     );
     if (!s.length) return res.status(400).json({ error: "Press Start Work first." });
     const date = s[0].date;
@@ -378,9 +380,9 @@ eodRouter.get("/eod/my-days", async (req, res, next) => {
     await closeStaleSessions();
     const { rows } = await pool.query(
       `with days as (
-         select date from eod_session where editor_id = $1 and date > current_date - $2::int
+         select date from eod_session where editor_id = $1 and date > (now() at time zone 'Asia/Kolkata')::date - $2::int
          union
-         select date from sod_plan where editor_id = $1 and date > current_date - $2::int
+         select date from sod_plan where editor_id = $1 and date > (now() at time zone 'Asia/Kolkata')::date - $2::int
        )
        select to_char(d.date, 'YYYY-MM-DD') as date,
               coalesce(sum(extract(epoch from coalesce(s.ended_at, now()) - s.started_at)), 0)::int as "workedSeconds",
@@ -416,7 +418,7 @@ eodRouter.get("/eod/my-days", async (req, res, next) => {
 // Admin oversight — every (non-admin) editor's EOD status for a date.
 eodRouter.get("/eod/team", requireAdmin, async (req, res, next) => {
   try {
-    const date = String(req.query.date || new Date().toISOString().slice(0, 10)).slice(0, 10);
+    const date = String(req.query.date || new Date(Date.now() + 330 * 60_000).toISOString().slice(0, 10)).slice(0, 10);
     if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) return res.status(400).json({ error: "A valid date is required." });
     await closeStaleSessions();
     const { rows } = await pool.query(

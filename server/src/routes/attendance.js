@@ -1,6 +1,7 @@
 import { Router } from "express";
 import { z } from "zod";
 import { pool } from "../db.js";
+import { editorRanks, taskViewer } from "../hierarchy.js";
 import { logActivity } from "../activity.js";
 import { capacityFor, LUNCH_MIN, TEA_MIN, normalizeCalendar } from "../work-calendar.js";
 import { startSession, endSession, pauseDayTimers } from "./eod.js";
@@ -183,6 +184,9 @@ attendanceRouter.post("/attendance/check-out", async (req, res, next) => {
     const note = parsed.data.note || "";
     if (att.requireEodNote && !note) return res.status(400).json({ error: "Add a short wrap-up note first." });
     const today = istNow();
+    // Nothing is saved for a day that wasn't started.
+    const { rowCount: open } = await pool.query("select 1 from eod_session where editor_id = $1 and ended_at is null limit 1", [caller.editorId]);
+    if (!open) return res.status(400).json({ error: "You haven't started your day, so there's nothing to close." });
     if (note) {
       await pool.query(
         `insert into attendance (org_id, editor_id, date, status, eod_note) values ($1, $2, $3, 'on_time', $4)
@@ -247,6 +251,12 @@ async function leadTarget(req, res) {
   }
   const { rows } = await pool.query("select name from editor where id = $1 and org_id = $2", [editorId, req.orgId]);
   if (!rows.length) { res.status(404).json({ error: "Team member not found." }); return null; }
+  // Only for people below you in position (the Super Admin: anyone).
+  const [viewer, ranks] = await Promise.all([taskViewer(req), editorRanks(req.orgId)]);
+  if (!viewer.seesAll && !((ranks.get(editorId) ?? 3) > viewer.rank)) {
+    res.status(403).json({ error: "You can do that only for people below you." });
+    return null;
+  }
   return { caller, editorId, name: rows[0].name, today: istNow() };
 }
 async function audit(req, t, verb, summary, meta = {}) {

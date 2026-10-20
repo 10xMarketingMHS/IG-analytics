@@ -6,7 +6,7 @@ import { requireActiveEod } from "./eod.js";
 import { assignLimits, hasActiveGrant } from "../permissions.js";
 import { reviewContext, routeReview, withReview } from "../review-route.js";
 import { logActivity } from "../activity.js";
-import { canSeeTask, editorRanks, mayOpenTask, taskViewer } from "../hierarchy.js";
+import { canSeeTask, editorRanks, mayOpenTask, seesEditor, taskViewer } from "../hierarchy.js";
 import { closePendingHandovers } from "../handover.js";
 import { hasColumn } from "../schema-flags.js";
 import { coverFrom } from "../goal-score.js";
@@ -146,8 +146,8 @@ const SELECT = `
          -- however long they've been (or are currently) on break — a break
          -- pauses every one of their running timers at once, computed here
          -- rather than by rewriting budget_started_at on each task.
-         case when e.break_date = current_date then e.break_started_at end as editor_break_started_at,
-         case when e.break_date = current_date then e.break_used_seconds else 0 end as editor_break_used_seconds,
+         case when e.break_date = (now() at time zone 'Asia/Kolkata')::date then e.break_started_at end as editor_break_started_at,
+         case when e.break_date = (now() at time zone 'Asia/Kolkata')::date then e.break_used_seconds else 0 end as editor_break_used_seconds,
          w.name as channel_name,
          p.title as post_title, p.permalink as post_permalink,
          pl.key as platform_key, pl.name as platform_name,
@@ -190,6 +190,21 @@ export async function callerEditorId(req) {
 export async function canAssignTasks(req) {
   return req.role === "admin" || (await hasActiveGrant(req.orgId, req.user.sub, "assign_tasks"));
 }
+// Someone else's task is in an assigner's hands only when they set it up: they
+// assigned it, or they made it and it's still unassigned. Assign tasks doesn't
+// reach work another person assigned.
+function setUpBy(task, userId) {
+  return task.assigned_by === userId || (!task.editor_id && task.created_by === userId);
+}
+// Giving work to someone: never to a person above you (only the Super Admin
+// sees, and assigns to, everyone). Null when fine, else what to say.
+async function aboveYouError(req, editorId) {
+  if (!editorId) return null;
+  if (editorId === (await callerEditorId(req))) return null;
+  const [viewer, ranks] = await Promise.all([taskViewer(req), editorRanks(req.orgId)]);
+  return seesEditor(viewer, ranks, editorId) ? null : "You can't give work to someone above you.";
+}
+
 // An Assign tasks grant limited to some content types or some people
 // (Settings › Access) covers only those tasks, given to those people. Null when
 // it's allowed (or for admins), else what to tell them.
@@ -299,7 +314,7 @@ tasksRouter.post("/tasks", requireEditor, requireActiveEod, async (req, res, nex
       return res.status(403).json({ error: "You can create tasks for yourself. Assigning work to someone else needs an admin." });
     }
     if (!isAdminTask && d.editorId && d.editorId !== callerEid) {
-      const limit = await assignLimitError(req, d.contentFormatId ?? null, d.editorId);
+      const limit = await assignLimitError(req, d.contentFormatId ?? null, d.editorId) ?? await aboveYouError(req, d.editorId);
       if (limit) return res.status(403).json({ error: limit });
     }
     const assigneeId = isAdminTask ? callerEid : (d.editorId ?? null);
@@ -513,6 +528,14 @@ tasksRouter.patch("/tasks/:id", requireEditor, requireActiveEod, async (req, res
       if (assigneeChanged && !claiming && !assigner) {
         return res.status(403).json({ error: "Only an admin can reassign a task." });
       }
+      // Moving work: an unassigned task, one you set up, or one you made for
+      // yourself. A task someone else gave you goes on by Hand over instead.
+      const mineMade = own && !prior.assigned_by && prior.created_by === req.user.sub;
+      if (assigneeChanged && !claiming && prior.editor_id && !mineMade && !setUpBy(prior, req.user.sub)) {
+        return res.status(403).json({ error: own
+          ? "This task was given to you. To pass it on, use Hand over."
+          : "You can move only tasks you assigned. Ask whoever assigned it, or an admin." });
+      }
       // A limited Assign tasks grant (say Carousel only) covers only those
       // types on other people's tasks: handing one over, or changing its brief
       // or its type.
@@ -521,16 +544,21 @@ tasksRouter.patch("/tasks/:id", requireEditor, requireActiveEod, async (req, res
         const limit = await assignLimitError(req, d.contentFormatId !== undefined ? d.contentFormatId : prior.content_format_id, ownerAfter);
         if (limit) return res.status(403).json({ error: limit });
       }
-      if (briefChanged && !(own ? prior.created_by === req.user.sub : assigner)) {
+      if (briefChanged && !(own ? prior.created_by === req.user.sub : assigner && setUpBy(prior, req.user.sub))) {
         return res.status(403).json({
           error: own
             ? "This task was assigned to you — only an admin can change its title, description, type, dates, priority or repeat."
             : "Only an admin can change someone else's task.",
         });
       }
-      if (workChanged && !own && !claiming && !assigner) {
+      if (workChanged && !own && !claiming && !(assigner && setUpBy(prior, req.user.sub))) {
         return res.status(403).json({ error: "Only an admin can change someone else's task." });
       }
+    }
+
+    if (d.editorId && d.editorId !== prior.editor_id) {
+      const up = await aboveYouError(req, d.editorId);
+      if (up) return res.status(403).json({ error: up });
     }
 
     // Project: keep the Due Date within [Start, Start + type's duration] on
@@ -847,8 +875,11 @@ tasksRouter.patch("/tasks/:id", requireEditor, requireActiveEod, async (req, res
         // Covered work: a task its person had accepted, now someone else's
         // (server/src/goal-score.js). Fixing an assignment nobody had taken on
         // yet isn't cover; going back to its first person ends it.
+        // Only work someone was given counts: moving a task its owner made for
+        // themselves is a fresh assignment, not cover.
         if (await hasColumn("task", "covered_from_editor_id")) {
-          push("covered_from_editor_id", coverFrom(prior.covered_from ?? null, prior.accepted ? prior.editor_id : null, nextEditorId));
+          const given = !!prior.covered_from || !!prior.assigned_by;
+          push("covered_from_editor_id", given ? coverFrom(prior.covered_from ?? null, prior.accepted ? prior.editor_id : null, nextEditorId) : null);
         }
       }
     }
@@ -1063,7 +1094,7 @@ async function spawnNextOccurrence(taskId, recurrence) {
     if (!t) return;
     const days = recurrence === "weekly" ? 7 : 1;
     // Advance from the current due date if set, else from today.
-    const nextDue = `(coalesce($7::date, current_date) + interval '${days} day')::date`;
+    const nextDue = `(coalesce($7::date, (now() at time zone 'Asia/Kolkata')::date) + interval '${days} day')::date`;
     // Fresh occurrence gets its own budget snapshot, resolved against
     // whatever rules apply right now (not copied from the completed one) —
     // and its own TID, being a distinct row (a recurring Social/Ad task also
@@ -1094,7 +1125,7 @@ async function spawnNextOccurrence(taskId, recurrence) {
 tasksRouter.delete("/tasks/:id", requireEditor, async (req, res, next) => {
   try {
     const t = (await pool.query(
-      "select title, tid, status, editor_id, channel_id, created_by from task where id = $1 and org_id = $2",
+      "select title, tid, status, editor_id, channel_id, created_by, assigned_by from task where id = $1 and org_id = $2",
       [req.params.id, req.orgId],
     )).rows[0];
     if (!t) return res.status(404).json({ error: "Task not found" });
@@ -1102,11 +1133,11 @@ tasksRouter.delete("/tasks/:id", requireEditor, async (req, res, next) => {
       if (t.status === "done") {
         return res.status(403).json({ error: "This task is completed — only an admin can delete it." });
       }
-      if (!(await hasActiveGrant(req.orgId, req.user.sub, "assign_tasks"))) {
-        const myEid = await callerEditorId(req);
-        const ownCreation = t.created_by === req.user.sub && !!myEid && t.editor_id === myEid;
-        if (!ownCreation) return res.status(403).json({ error: "Only an admin can delete this task." });
-      }
+      // Yours, made for yourself; or, with Assign tasks, one you set up.
+      const myEid = await callerEditorId(req);
+      const ownCreation = t.created_by === req.user.sub && !!myEid && t.editor_id === myEid;
+      const setUp = setUpBy(t, req.user.sub) && (await hasActiveGrant(req.orgId, req.user.sub, "assign_tasks"));
+      if (!ownCreation && !setUp) return res.status(403).json({ error: "You can delete only tasks you made for yourself or assigned." });
     }
     const { rowCount } = await pool.query(
       "delete from task where id = $1 and org_id = $2",
@@ -1142,12 +1173,12 @@ async function checklistRefusal(req, task) {
   if (task.status === "done") return { status: 403, error: "This task is completed — only an admin can change it." };
   const myEid = await callerEditorId(req);
   if (myEid && task.editor_id === myEid) return null;
-  if (await hasActiveGrant(req.orgId, req.user.sub, "assign_tasks")) return null;
+  if (task.assigned_by === req.user.sub && (await hasActiveGrant(req.orgId, req.user.sub, "assign_tasks"))) return null;
   return { status: 403, error: "Only an admin can change someone else's task." };
 }
 async function taskOfSubtask(subtaskId, orgId) {
   const { rows } = await pool.query(
-    `select t.id, t.status, t.editor_id from subtask s join task t on t.id = s.task_id
+    `select t.id, t.status, t.editor_id, t.assigned_by from subtask s join task t on t.id = s.task_id
       where s.id = $1 and t.org_id = $2`,
     [subtaskId, orgId],
   );
@@ -1194,7 +1225,7 @@ tasksRouter.post("/tasks/:id/subtasks", requireEditor, requireActiveEod, async (
   const title = typeof req.body?.title === "string" ? req.body.title.trim() : "";
   if (!title) return res.status(400).json({ error: "A checklist item needs a title." });
   try {
-    const parent = (await pool.query("select id, status, editor_id from task where id = $1 and org_id = $2", [req.params.id, req.orgId])).rows[0];
+    const parent = (await pool.query("select id, status, editor_id, assigned_by from task where id = $1 and org_id = $2", [req.params.id, req.orgId])).rows[0];
     const refusal = await checklistRefusal(req, parent);
     if (refusal) return res.status(refusal.status).json({ error: refusal.error });
     const { rows } = await pool.query(

@@ -336,3 +336,9 @@ html[data-theme="dark"] .st-box{border-color:rgba(255,255,255,.22)}
 .st-time:disabled{opacity:.5}
 .st-inline{flex:none;display:inline-flex;align-items:center;gap:12px}
 .st-summary{flex:1 1 260px;padding:10px 12px;border-radius:10px;background:var(--st-sunk,rgba(30,20,80,.035));color:var(--st-text2);font:500 12px/1.6 "Geist Mono",ui-monospace,monospace;white-space:pre-wrap}
+
+/* Work calendar › Holidays: the dates as chips, with a date box to add one */
+.st-holidays{display:flex;flex-wrap:wrap;align-items:center;justify-content:flex-end;gap:6px;max-width:60%}
+.st-chipx{border:0;background:none;padding:0 0 0 4px;font:inherit;line-height:1;cursor:pointer;color:inherit;opacity:.7}
+.st-chipx:hover{opacity:1}
+@media (max-width:640px){.st-holidays{max-width:none;justify-content:flex-start}}

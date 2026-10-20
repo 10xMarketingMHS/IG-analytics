@@ -193,6 +193,7 @@ authRouter.get("/me", async (req, res) => {
       [payload.sub],
     );
     const u = rows[0];
+    if (!u || !(await isActiveLogin(payload.sub))) return res.status(401).json({ error: SWITCHED_OFF });
     // Viewing as someone (Super Admin test mode): who is really signed in.
     const real = payload.actAs
       ? (await pool.query("select coalesce(name, email) as name from app_user where id = $1", [payload.actAs])).rows[0]
@@ -211,19 +212,44 @@ authRouter.get("/me", async (req, res) => {
   }
 });
 
-export function requireAuth(req, res, next) {
+// A switched-off login stops working at once, not when its cookie runs out:
+// every request checks, and the answer is kept a few seconds. Switching a login
+// off or on (routes/users.js) forgets it straight away.
+const activeCache = new Map(); // userId -> { ok, exp }
+const ACTIVE_TTL_MS = 15_000;
+export function forgetActive(userId) {
+  if (userId) activeCache.delete(userId); else activeCache.clear();
+}
+export async function isActiveLogin(userId) {
+  const hit = activeCache.get(userId);
+  if (hit && hit.exp > Date.now()) return hit.ok;
+  const { rows } = await pool.query("select active from app_user where id = $1", [userId]);
+  const ok = !!rows[0]?.active;
+  activeCache.set(userId, { ok, exp: Date.now() + ACTIVE_TTL_MS });
+  return ok;
+}
+const SWITCHED_OFF = "This login has been switched off. Ask an admin if that's a mistake.";
+
+export async function requireAuth(req, res, next) {
   // mounted with every router (index.js): checked once per request
   if (req.user) return next();
   const token = req.cookies?.[COOKIE_NAME];
   if (!token) return res.status(401).json({ error: "Not signed in" });
+  let user;
   try {
-    req.user = jwt.verify(token, config.JWT_SECRET);
-    // Viewing as someone is look-only: nothing may change under their name.
-    if (req.user.actAs && !["GET", "HEAD", "OPTIONS"].includes(req.method)) {
-      return res.status(403).json({ error: READ_ONLY, readOnly: true });
-    }
-    next();
+    user = jwt.verify(token, config.JWT_SECRET);
   } catch {
-    res.status(401).json({ error: "Session expired" });
+    return res.status(401).json({ error: "Session expired" });
   }
+  try {
+    if (!(await isActiveLogin(user.sub))) return res.status(401).json({ error: SWITCHED_OFF });
+  } catch (err) {
+    return next(err);
+  }
+  req.user = user;
+  // Viewing as someone is look-only: nothing may change under their name.
+  if (req.user.actAs && !["GET", "HEAD", "OPTIONS"].includes(req.method)) {
+    return res.status(403).json({ error: READ_ONLY, readOnly: true });
+  }
+  next();
 }

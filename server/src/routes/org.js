@@ -21,6 +21,7 @@ const CalendarSchema = z.object({
   satOff: z.boolean(), satBreaks: z.boolean(),
   sickDays: z.number().int().min(0).max(10),
   adjustHours: z.number().int().min(-100).max(100),
+  holidays: z.array(z.string().regex(/^\d{4}-\d{2}-\d{2}$/)).max(100).optional(),
 });
 const AttendanceSchema = z.object({
   requireSod: z.boolean(),
@@ -82,7 +83,7 @@ orgRouter.patch("/org", requirePermission("edit_goals"), async (req, res, next) 
     if (d.calendar || d.attendance) {
       const cur = await readOrg(req.orgId);
       const superOnly = [];
-      if (d.calendar && Object.keys(d.calendar).some((k) => cur.calendar[k] !== d.calendar[k])) superOnly.push("the work calendar");
+      if (d.calendar && Object.keys(d.calendar).some((k) => JSON.stringify(cur.calendar[k] ?? null) !== JSON.stringify(normalizeCalendar(d.calendar)[k] ?? null))) superOnly.push("the work calendar");
       if (d.attendance && ["latePenaltyPts", "absentPenaltyPts", "deductCapacity"].some((k) => cur.attendance[k] !== d.attendance[k])) superOnly.push("the attendance penalties");
       if (d.attendance?.teamView && ["manager", "asstManager", "teamLead"].some((k) => cur.attendance.teamView[k] !== d.attendance.teamView[k])) superOnly.push("who sees the team's attendance");
       if (superOnly.length && !(await isSuperHere(req))) {
@@ -96,7 +97,7 @@ orgRouter.patch("/org", requirePermission("edit_goals"), async (req, res, next) 
       }
       const patch = {};
       if (d.weekStart !== undefined) patch.weekStart = d.weekStart;
-      if (d.calendar !== undefined) patch.calendar = d.calendar;
+      if (d.calendar !== undefined) patch.calendar = normalizeCalendar(d.calendar);
       await pool.query("update org set settings = coalesce(settings, '{}'::jsonb) || $2::jsonb where id = $1", [req.orgId, JSON.stringify(patch)]);
       // Attendance merges, so the date attendance started (since) is kept.
       if (d.attendance !== undefined) {

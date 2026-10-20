@@ -50,10 +50,13 @@ async function giveTask(orgId, h, editorId, accepted, assignedBy) {
   const extra = [];
   if (assignedBy !== undefined) { params.push(assignedBy); extra.push(`assigned_by = $${params.length}`); }
   // It's covered work for its new person: taken over from its owner (or from
-  // whoever it first belonged to), unless it's going back to them.
+  // whoever it first belonged to), unless it's going back to them. Only work
+  // someone was given counts as covered: a task its owner made for themselves
+  // stays self-made for whoever takes it (counted up to the goal, never on top).
   if (await hasColumn("task", "covered_from_editor_id")) {
-    const cur = (await pool.query("select covered_from_editor_id from task where id = $1", [h.task_id])).rows[0]?.covered_from_editor_id ?? null;
-    params.push(coverFrom(cur, h.from_editor_id, editorId));
+    const cur = (await pool.query("select covered_from_editor_id, assigned_by from task where id = $1", [h.task_id])).rows[0] ?? {};
+    const given = !!cur.covered_from_editor_id || !!cur.assigned_by;
+    params.push(given ? coverFrom(cur.covered_from_editor_id ?? null, h.from_editor_id, editorId) : null);
     extra.push(`covered_from_editor_id = $${params.length}`);
   }
   await pool.query(

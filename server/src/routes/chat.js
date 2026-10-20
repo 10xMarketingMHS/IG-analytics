@@ -2,6 +2,7 @@ import { Router } from "express";
 import { z } from "zod";
 import { pool } from "../db.js";
 import { isOrgAdmin } from "../permissions.js";
+import { isActiveLogin } from "../auth.js";
 import { reviewContext, routeReview } from "../review-route.js";
 
 // Team chat — channels, direct messages, threads, reactions, @mentions and task
@@ -135,7 +136,14 @@ chatRouter.get("/chat/stream", (req, res) => {
   if (!wasOnline) sendToOrg(req.orgId, { type: "presence", userId: me, online: true });
 
   // Proxies drop a silent connection; a comment line every 25s keeps it open.
-  const ping = setInterval(() => res.write(": ping\n\n"), 25_000);
+  // Each ping also checks the login is still on: a switched-off person's open
+  // tab stops receiving messages.
+  const ping = setInterval(async () => {
+    try {
+      if (!(await isActiveLogin(me))) { clearInterval(ping); res.end(); return; }
+    } catch { /* the database blinked: keep the stream, check again next time */ }
+    res.write(": ping\n\n");
+  }, 25_000);
   req.on("close", () => {
     clearInterval(ping);
     const set = streams.get(me);

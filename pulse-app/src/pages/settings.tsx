@@ -136,6 +136,7 @@ function GeneralSection({ onDirty }: { onDirty: (dirty: boolean) => void }) {
   const [week, setWeek] = useState<"mon" | "sun" | null>(null);
   const [cal, setCal] = useState<WorkCalendar | null>(null);
   const [saving, setSaving] = useState(false);
+  const [newHoliday, setNewHoliday] = useState("");
 
   const savedCal = org?.calendar ?? CALENDAR_DEFAULTS;
   const c = cal ?? savedCal;
@@ -246,6 +247,28 @@ function GeneralSection({ onDirty }: { onDirty: (dirty: boolean) => void }) {
               <Toggle on={c.satBreaks} onChange={(v) => setC({ satBreaks: v })} label="Breaks on Saturday too" disabled={lockCal || c.satOff} />
             </div>
             <div className="st-row">
+              <span className="st-label"><b>Holidays</b><small>Days the office is shut: nobody is late or absent, and they come out of capacity</small></span>
+              <span className="st-holidays">
+                {(c.holidays ?? []).map((h) => (
+                  <span key={h} className="st-chip">
+                    {new Date(`${h}T12:00:00`).toLocaleDateString("en-IN", { day: "numeric", month: "short", year: "numeric" })}
+                    {!lockCal && (
+                      <button type="button" className="st-chipx" aria-label={`Remove ${h}`}
+                        onClick={() => setC({ holidays: (c.holidays ?? []).filter((x) => x !== h) })}>×</button>
+                    )}
+                  </span>
+                ))}
+                {!lockCal && (
+                  <span className="st-times">
+                    <input type="date" className="st-in" value={newHoliday} onChange={(e) => setNewHoliday(e.target.value)} aria-label="Holiday date" />
+                    <button type="button" className="st-btn" disabled={!newHoliday}
+                      onClick={() => { setC({ holidays: [...new Set([...(c.holidays ?? []), newHoliday])].sort() }); setNewHoliday(""); }}>Add</button>
+                  </span>
+                )}
+                {lockCal && !(c.holidays ?? []).length && <span className="st-value">None</span>}
+              </span>
+            </div>
+            <div className="st-row">
               <span className="st-label"><b>Sick-leave buffer</b><small>Days per month kept out of every editor's capacity</small></span>
               <Stepper label="sick-leave days" value={`${c.sickDays} day${c.sickDays === 1 ? "" : "s"}`} decDisabled={lockCal || c.sickDays <= 0} incDisabled={lockCal || c.sickDays >= 10}
                 onDec={() => setC({ sickDays: c.sickDays - 1 })} onInc={() => setC({ sickDays: c.sickDays + 1 })} />
@@ -261,7 +284,7 @@ function GeneralSection({ onDirty }: { onDirty: (dirty: boolean) => void }) {
                   <Seg label="Month" value={month} options={months.map((k) => [k, monthName(k, "short")] as [string, string])} onChange={setMonth} />
                   {monthName(month)} · per editor
                 </span>
-                <span>{cc.days} days − {cc.sundays} Sundays{c.satOff ? ` − ${cc.satCount} Saturdays` : ""} − {cc.sick} sick leave = {cc.workingDays} working days</span>
+                <span>{cc.days} days − {cc.sundays} Sundays{c.satOff ? ` − ${cc.satCount} Saturdays` : ""}{cc.holidays ? ` − ${cc.holidays} holiday${cc.holidays === 1 ? "" : "s"}` : ""} − {cc.sick} sick leave = {cc.workingDays} working days</span>
                 <span>
                   {cc.weekdays} weekdays × {fmtHours(cc.wdMin / 60)}
                   {!c.satOff && ` + ${cc.sats} Saturdays × ${fmtHours(cc.satMin / 60)}`}
