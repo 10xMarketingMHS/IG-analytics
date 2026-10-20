@@ -1,5 +1,6 @@
 import { pool } from "./db.js";
 import { hasColumn } from "./schema-flags.js";
+import { openingFor, readSettings } from "./attendance.js";
 
 // Goal scoring: one rule for the Leaderboard, Goals and Management
 // Performance. (pulse-app/src/lib/goal-points.ts takes the counted numbers
@@ -44,7 +45,8 @@ export function scoreMonth({ goals, jobs, leaveDays = 0, workingDays = 0 }) {
   for (const j of jobs) {
     const t = j.contentFormatId ? types.get(j.contentFormatId) : null;
     if (j.source === "covered") {
-      coveredPoints += j.points;
+      // at the goal's points for that type when there's a goal, like goal work
+      coveredPoints += t ? t.points : j.points;
       coveredJobs++;
       if (j.contentFormatId) coveredByType[j.contentFormatId] = (coveredByType[j.contentFormatId] ?? 0) + 1;
       if (!t) otherCovered++;
@@ -99,11 +101,10 @@ export async function scoreMonthAll(orgId, monthFirst, editorId = null) {
     ),
     (await hasColumn("attendance", "id"))
       ? pool.query(
-        `select editor_id, sum(case status when 'leave' then 1 else 0.5 end)::float as days
+        `select editor_id, date::text as day, status
            from attendance
           where org_id = $1 and date >= $2::date and date < ($2::date + interval '1 month')
-            and status in ('leave', 'half_day')${one}
-          group by editor_id`,
+            and status in ('leave', 'half_day')${one}`,
         P,
       )
       : Promise.resolve({ rows: [] }),
@@ -127,7 +128,13 @@ export async function scoreMonthAll(orgId, monthFirst, editorId = null) {
     const source = t.covered_from && t.covered_from !== t.editor_id ? "covered" : t.assigned_by ? "assigned" : "self";
     jobs.get(t.editor_id).push({ contentFormatId: t.content_format_id, source, points: Number(t.pts ?? 1) });
   }
-  const leave = new Map(leaveRes.rows.map((r) => [r.editor_id, Number(r.days)]));
+  // Leave shrinks the goal only on working days (not a Sunday, a Saturday off or a holiday).
+  const { cal } = await readSettings(orgId);
+  const leave = new Map();
+  for (const r of leaveRes.rows) {
+    if (!openingFor(cal, r.day)) continue;
+    leave.set(r.editor_id, (leave.get(r.editor_id) ?? 0) + (r.status === "leave" ? 1 : 0.5));
+  }
   const days = new Map(capRes.rows.map((r) => [r.editor_id, Number(r.working_days)]));
 
   const ids = new Set([...goals.keys(), ...jobs.keys()]);

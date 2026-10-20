@@ -90,6 +90,22 @@ orgRouter.patch("/org", requirePermission("edit_goals"), async (req, res, next) 
         return res.status(403).json({ error: `Only a Super Admin can change ${superOnly.join(" or ")}.` });
       }
     }
+    // Penalties changed: log them from this month on, so past months keep the
+    // points they were charged at (attendance.js penaltiesFor).
+    if (d.attendance && (await hasColumn("org", "settings"))) {
+      const { rows: o } = await pool.query("select settings->'attendance' as a from org where id = $1", [req.orgId]);
+      const rawAtt = o[0]?.a ?? {};
+      const old = normalizeAttendance(rawAtt);
+      if (old.latePenaltyPts !== d.attendance.latePenaltyPts || old.absentPenaltyPts !== d.attendance.absentPenaltyPts) {
+        const ist = new Date(Date.now() + 330 * 60_000);
+        const month = `${ist.getUTCFullYear()}-${String(ist.getUTCMonth() + 1).padStart(2, "0")}`;
+        const log = Array.isArray(rawAtt.penaltyLog) && rawAtt.penaltyLog.length
+          ? rawAtt.penaltyLog.filter((e) => String(e.from) < month)
+          : [{ from: "0000-00", late: old.latePenaltyPts, absent: old.absentPenaltyPts }];
+        log.push({ from: month, late: d.attendance.latePenaltyPts, absent: d.attendance.absentPenaltyPts });
+        d.attendance.penaltyLog = log;
+      }
+    }
     if (d.name !== undefined) await pool.query("update org set name = $2 where id = $1", [req.orgId, d.name]);
     if (d.weekStart !== undefined || d.calendar !== undefined || d.attendance !== undefined) {
       if (!(await hasColumn("org", "settings"))) {

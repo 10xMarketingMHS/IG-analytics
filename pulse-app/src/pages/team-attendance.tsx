@@ -1,8 +1,9 @@
 import { useEffect, useState } from "react";
+import { toast } from "sonner";
 import { api, ApiError } from "@/lib/api";
 import { Avatar } from "@/lib/editor-visuals";
 import { clockTime } from "@/lib/time-format";
-import type { AttSettings, ShownStatus } from "@/lib/use-attendance";
+import { attendanceAction, type AttSettings, type ShownStatus } from "@/lib/use-attendance";
 import type { Editor } from "@/lib/types";
 import "./team-attendance.css";
 
@@ -36,6 +37,7 @@ export function TeamAttendance({ editors, self = false }: { editors: Editor[] | 
   const [month, setMonth] = useState(monthOf());
   const [data, setData] = useState<Month | null>(null);
   const [err, setErr] = useState<string | null>(null);
+  const [reload, setReload] = useState(0);
   useEffect(() => {
     let cancel = false;
     setData(null); setErr(null);
@@ -43,7 +45,7 @@ export function TeamAttendance({ editors, self = false }: { editors: Editor[] | 
       .then((d) => { if (!cancel) setData(d); })
       .catch((e) => { if (!cancel) setErr(e instanceof ApiError ? e.message : "Couldn't load attendance."); });
     return () => { cancel = true; };
-  }, [month, self]);
+  }, [month, self, reload]);
 
   const [y, mo] = month.split("-").map(Number);
   const monthName = new Date(y, mo - 1, 1).toLocaleDateString("en-GB", { month: "long", year: "numeric" });
@@ -68,6 +70,9 @@ export function TeamAttendance({ editors, self = false }: { editors: Editor[] | 
           {LEGEND.map(([l, k]) => <span key={k}><i className={"c-" + k} />{l}</span>)}
         </span>
       </header>
+      {!self && data && data.scope !== "self" && data.rows.length > 0 && (
+        <PlanLeave people={data.rows} onSaved={() => setReload((n) => n + 1)} />
+      )}
       {err ? <div className="ta-empty">{err}</div> : !data ? <div className="ta-empty">Loading…</div> : data.rows.length === 0 ? (
         <div className="ta-empty">No one checks in yet.</div>
       ) : (
@@ -119,5 +124,45 @@ export function TeamAttendance({ editors, self = false }: { editors: Editor[] | 
         </>
       )}
     </section>
+  );
+}
+
+// Leave planned ahead, or a day put right afterwards: a lead marks leave or a
+// half day for one working day, from last month to three months ahead (the
+// server checks the day and who may mark whom).
+function PlanLeave({ people, onSaved }: { people: Row[]; onSaved: () => void }) {
+  const [who, setWho] = useState("");
+  const [day, setDay] = useState("");
+  const [kind, setKind] = useState<"leave" | "half_day">("leave");
+  const [busy, setBusy] = useState(false);
+  async function save() {
+    setBusy(true);
+    try {
+      await attendanceAction(who, "mark", { as: kind, date: day });
+      const name = people.find((p) => p.editorId === who)?.name ?? "They";
+      const when = new Date(`${day}T12:00:00`).toLocaleDateString("en-IN", { day: "numeric", month: "short" });
+      toast.success(`${name}: ${kind === "leave" ? "on leave" : "half-day leave"} on ${when}`);
+      setDay("");
+      onSaved();
+    } catch (e) {
+      toast.error(e instanceof ApiError ? e.message : "Couldn't mark that day.");
+    } finally {
+      setBusy(false);
+    }
+  }
+  return (
+    <div className="ta-plan" role="group" aria-label="Mark leave for a day">
+      <b>Leave for a day</b>
+      <select value={who} onChange={(e) => setWho(e.target.value)} aria-label="Person">
+        <option value="">Person…</option>
+        {people.map((p) => <option key={p.editorId} value={p.editorId}>{p.name}</option>)}
+      </select>
+      <input type="date" value={day} onChange={(e) => setDay(e.target.value)} aria-label="Day" />
+      <select value={kind} onChange={(e) => setKind(e.target.value as "leave" | "half_day")} aria-label="Leave or half day">
+        <option value="leave">On leave</option>
+        <option value="half_day">Half-day leave</option>
+      </select>
+      <button type="button" disabled={!who || !day || busy} onClick={save}>{busy ? "Saving…" : "Mark"}</button>
+    </div>
   );
 }

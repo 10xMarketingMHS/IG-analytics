@@ -709,7 +709,7 @@ function AttendW({ c }: { c: HomeCtx }) {
               <span className="hw-att-acts">
                 {r?.correctionStatus === "pending" && r.correctionAt && (
                   <>
-                    <span className="hw-faint sm">Asks {clockTime(r.correctionAt)}</span>
+                    <span className="hw-faint sm" title="The start they ask for, and when they really opened Pulse">Asks {clockTime(r.correctionAt)}{r.checkInAt ? ` · opened ${clockTime(r.checkInAt)}` : ""}</span>
                     <button type="button" className="hw-mini good" disabled={busy === p.editorId} onClick={() => run(p, "correction", { approve: true }, `${first(p.name)}'s start set to ${clockTime(r.correctionAt!)}`)}>Approve</button>
                     <button type="button" className="hw-mini" disabled={busy === p.editorId} onClick={() => run(p, "correction", { approve: false }, "Correction declined")}>Decline</button>
                   </>

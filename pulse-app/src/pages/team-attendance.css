@@ -55,3 +55,10 @@ html[data-theme="dark"] .ta{--ta-text3:#8b8b96;--ta-line2:rgba(255,255,255,.055)
 @media (max-width:768px){
   .ta-head,.ta-grid,.ta-foot{padding-left:14px;padding-right:14px}
 }
+/* Leave for a day (leads): person, day, leave or half day, Mark */
+.ta-plan{display:flex;align-items:center;flex-wrap:wrap;gap:8px;padding:10px 20px;border-bottom:1px solid var(--ta-line2);font-size:13px}
+.ta-plan b{font-weight:800;margin-right:4px}
+.ta-plan select,.ta-plan input{height:32px;padding:0 10px;border:1px solid var(--ta-line);border-radius:9px;background:var(--ta-panel);color:var(--ta-text);font:inherit}
+.ta-plan button{height:32px;padding:0 14px;border:0;border-radius:9px;background:var(--ta-acText);color:#fff;font:inherit;font-weight:700;cursor:pointer}
+.ta-plan button:disabled{opacity:.45;cursor:default}
+@media (max-width:560px){.ta-plan{padding:10px 16px}.ta-plan select,.ta-plan input,.ta-plan button{flex:1 1 140px}}

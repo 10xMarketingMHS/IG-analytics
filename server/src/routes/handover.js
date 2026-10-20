@@ -62,7 +62,11 @@ async function giveTask(orgId, h, editorId, accepted, assignedBy) {
   await pool.query(
     `update task
         set editor_id = $2, accepted = $3, on_hold = false, held_by = null, pending_note = null,
-            budget_hours = $4, budget_used_seconds = 0, budget_started_at = $5
+            budget_hours = $4,
+            -- the time already spent stays on the task: carried in the clock when it runs on, kept as banked time when it doesn't
+            budget_used_seconds = case when $5::timestamptz is null then coalesce(budget_used_seconds, 0) else 0 end,
+            budget_started_at = case when $5::timestamptz is null then null
+                                     else $5::timestamptz - make_interval(secs => coalesce(budget_used_seconds, 0)) end
             ${extra.length ? ", " + extra.join(", ") : ""}
       where id = $1`,
     params,

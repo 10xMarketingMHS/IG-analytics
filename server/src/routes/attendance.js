@@ -115,12 +115,16 @@ attendanceRouter.post("/attendance/check-in", async (req, res, next) => {
        values ($1, $2, $3, $4, $5, $6, $7)
        on conflict (editor_id, date) do update set
          check_in_at = excluded.check_in_at,
-         status = case when attendance.marked_by is not null and attendance.status in ('on_time', 'leave', 'half_day')
+         status = case when (attendance.marked_by is not null and attendance.status in ('on_time', 'half_day', 'absent'))
+                         or (attendance.auto_marked and attendance.status = 'absent')
                        then attendance.status else excluded.status end,
-         late_minutes = excluded.late_minutes, auto_marked = false,
+         late_minutes = excluded.late_minutes,
+         auto_marked = attendance.auto_marked and attendance.status = 'absent',
+         marked_by = case when attendance.status = 'leave' then null else attendance.marked_by end,
          plan_note = coalesce(excluded.plan_note, attendance.plan_note), updated_at = now()`,
       [req.orgId, caller.editorId, today.ymd, at, c.status, c.lateMinutes, plan],
     );
+    if (existing?.status === "leave" && existing?.markedBy) await leaveWorked(req, caller.editorId, today.ymd);
     const row = await rowFor(caller.editorId, today.ymd);
     await logActivity({
       orgId: req.orgId, actorId: req.user.sub, verb: "attendance_check_in", entityType: "editor", entityId: caller.editorId,
@@ -188,10 +192,20 @@ attendanceRouter.post("/attendance/check-out", async (req, res, next) => {
     const { rowCount: open } = await pool.query("select 1 from eod_session where editor_id = $1 and ended_at is null limit 1", [caller.editorId]);
     if (!open) return res.status(400).json({ error: "You haven't started your day, so there's nothing to close." });
     if (note) {
+      // A day with no record yet (started with Start Work) is recorded from its
+      // first start, late or on time as it was; End day only adds the note.
+      const { rows: first } = await pool.query(
+        `select min(started_at) as at from eod_session
+          where editor_id = $1 and (started_at at time zone 'Asia/Kolkata')::date = $2::date`,
+        [caller.editorId, today.ymd],
+      );
+      const { cal } = await readSettings(req.orgId);
+      const startedAt = first[0]?.at ?? new Date();
+      const c = classify(startedAt, today.ymd, cal, att);
       await pool.query(
-        `insert into attendance (org_id, editor_id, date, status, eod_note) values ($1, $2, $3, 'on_time', $4)
+        `insert into attendance (org_id, editor_id, date, check_in_at, status, late_minutes, eod_note) values ($1, $2, $3, $4, $5, $6, $7)
          on conflict (editor_id, date) do update set eod_note = excluded.eod_note, updated_at = now()`,
-        [req.orgId, caller.editorId, today.ymd, note],
+        [req.orgId, caller.editorId, today.ymd, startedAt, c.status, c.lateMinutes, note],
       );
     }
     const ended = await endSession(req.orgId, caller.editorId);
@@ -215,6 +229,15 @@ attendanceRouter.post("/attendance/correction-request", async (req, res, next) =
     const today = istNow();
     const asked = istAt(today.ymd, parsed.data.time);
     if (asked.getTime() > Date.now()) return res.status(400).json({ error: "That time hasn't happened yet." });
+    // Not before an hour ahead of opening, on a working day, and once a day.
+    const opens = openingFor(cal, today.ymd);
+    if (!opens) return res.status(400).json({ error: "Today isn't a working day." });
+    const earliest = istAt(today.ymd, opens).getTime() - 60 * 60_000;
+    if (asked.getTime() < earliest) {
+      return res.status(400).json({ error: `Pick a time from ${clockOf(new Date(earliest))} onwards.` });
+    }
+    const already = await rowFor(caller.editorId, today.ymd);
+    if (already?.correctionStatus) return res.status(409).json({ error: "You've already asked for a correction today." });
     const { session } = await startSession(req.orgId, caller.editorId);
     const now = session?.startedAt ?? new Date();
     const c = classify(now, today.ymd, cal, att);
@@ -223,8 +246,9 @@ attendanceRouter.post("/attendance/correction-request", async (req, res, next) =
        values ($1, $2, $3, $4, $5, $6, $7, $8, 'pending')
        on conflict (editor_id, date) do update set
          check_in_at = coalesce(attendance.check_in_at, excluded.check_in_at),
-         status = case when attendance.check_in_at is not null or (attendance.marked_by is not null and attendance.status in ('on_time', 'leave', 'half_day'))
-                       then attendance.status else excluded.status end,
+         status = case when attendance.check_in_at is not null then attendance.status else case when (attendance.marked_by is not null and attendance.status in ('on_time', 'half_day', 'absent'))
+                         or (attendance.auto_marked and attendance.status = 'absent')
+                       then attendance.status else excluded.status end end,
          late_minutes = case when attendance.check_in_at is not null then attendance.late_minutes else excluded.late_minutes end,
          auto_marked = false, correction_at = excluded.correction_at, correction_note = excluded.correction_note,
          correction_status = 'pending', updated_at = now()`,
@@ -240,6 +264,24 @@ attendanceRouter.post("/attendance/correction-request", async (req, res, next) =
 });
 
 // ---- Lead and manager actions on one person's day (today) ----
+
+// Someone a lead marked on leave checked in anyway: it's a working day now (the
+// check-in already counts it as one), and the lead is told, to mark leave
+// again if that's really right.
+async function leaveWorked(req, editorId, ymd) {
+  const { rows: who } = await pool.query("select name from editor where id = $1", [editorId]);
+  await logActivity({
+    orgId: req.orgId, actorId: req.user.sub, verb: "attendance_leave_worked", entityType: "editor", entityId: editorId,
+    summary: `${who[0]?.name ?? "Someone"} checked in on a day marked as leave, so it counts as a working day. Mark leave again if that's right.`,
+    meta: { date: ymd },
+  });
+}
+// A clock time on India time, 12-hour (for messages).
+function clockOf(d) {
+  const t = new Date(d.getTime() + 330 * 60_000);
+  const h = t.getUTCHours();
+  return `${h % 12 || 12}:${String(t.getUTCMinutes()).padStart(2, "0")} ${h >= 12 ? "PM" : "AM"}`;
+}
 
 async function leadTarget(req, res) {
   if (!(await ready(res))) return null;
@@ -286,21 +328,41 @@ attendanceRouter.post("/attendance/:editorId/excuse", async (req, res, next) => 
 const MARKS = { working: "on_time", half_day: "half_day", leave: "leave", absent: "absent" };
 const MARK_WORDS = { working: "working now", half_day: "on half-day leave", leave: "on leave", absent: "absent" };
 attendanceRouter.post("/attendance/:editorId/mark", async (req, res, next) => {
-  const parsed = z.object({ as: z.enum(["working", "half_day", "leave", "absent"]), reason: z.string().trim().max(300).optional() }).safeParse(req.body ?? {});
+  const parsed = z.object({
+    as: z.enum(["working", "half_day", "leave", "absent"]),
+    reason: z.string().trim().max(300).optional(),
+    // another day: leave or half day, planned ahead or fixed afterwards
+    date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
+  }).safeParse(req.body ?? {});
   if (!parsed.success) return res.status(400).json({ error: "Pick what to mark them as." });
   try {
     const t = await leadTarget(req, res);
     if (!t) return;
+    const day = parsed.data.date ?? t.today.ymd;
+    if (day !== t.today.ymd) {
+      if (parsed.data.as !== "leave" && parsed.data.as !== "half_day") {
+        return res.status(400).json({ error: "For another day, mark leave or half-day leave." });
+      }
+      const d0 = new Date(`${t.today.ymd}T00:00:00Z`);
+      const from = new Date(Date.UTC(d0.getUTCFullYear(), d0.getUTCMonth() - 1, 1)).toISOString().slice(0, 10);
+      const to = new Date(d0.getTime() + 90 * 86_400_000).toISOString().slice(0, 10);
+      if (day < from || day > to) return res.status(400).json({ error: "Pick a day from last month to three months ahead." });
+      const { rows: worked } = await pool.query("select 1 from attendance where editor_id = $1 and date = $2 and check_in_at is not null", [t.editorId, day]);
+      if (worked.length && parsed.data.as === "leave") return res.status(409).json({ error: "They checked in that day, so it can't be leave." });
+    }
+    // only working days (not Sundays, a Saturday off, or a holiday)
+    const { cal } = await readSettings(req.orgId);
+    if (!openingFor(cal, day)) return res.status(400).json({ error: "That isn't a working day." });
     const status = MARKS[parsed.data.as];
     await pool.query(
       `insert into attendance (org_id, editor_id, date, status, marked_by, reason, auto_marked)
        values ($1, $2, $3, $4, $5, $6, false)
        on conflict (editor_id, date) do update set status = excluded.status, marked_by = excluded.marked_by,
          reason = excluded.reason, auto_marked = false, excused = false, updated_at = now()`,
-      [req.orgId, t.editorId, t.today.ymd, status, req.user.sub, parsed.data.reason || null],
+      [req.orgId, t.editorId, day, status, req.user.sub, parsed.data.reason || null],
     );
-    await audit(req, t, "attendance_marked", `Marked ${t.name} as ${MARK_WORDS[parsed.data.as]}`, { as: parsed.data.as });
-    res.json({ attendance: await rowFor(t.editorId, t.today.ymd) });
+    await audit(req, t, "attendance_marked", `Marked ${t.name} as ${MARK_WORDS[parsed.data.as]}${day !== t.today.ymd ? ` on ${day}` : ""}`, { as: parsed.data.as, date: day });
+    res.json({ attendance: await rowFor(t.editorId, day) });
   } catch (err) { next(err); }
 });
 
@@ -358,20 +420,33 @@ attendanceRouter.post("/attendance/:editorId/correction", async (req, res, next)
   try {
     const t = await leadTarget(req, res);
     if (!t) return;
-    const row = await rowFor(t.editorId, t.today.ymd);
+    // the latest one waiting, from today or the few days before (asked late in the day, answered the next)
+    const { rows: waiting } = await pool.query(
+      `select date::text as day from attendance
+        where editor_id = $1 and correction_status = 'pending' and date >= $2::date - 3 and date <= $2::date
+        order by date desc limit 1`,
+      [t.editorId, t.today.ymd],
+    );
+    const day = waiting[0]?.day ?? t.today.ymd;
+    const row = await rowFor(t.editorId, day);
     if (!row || row.correctionStatus !== "pending") return res.status(400).json({ error: "There's no correction waiting." });
     if (parsed.data.approve) {
       const { cal, att } = await readSettings(req.orgId);
-      const c = classify(row.correctionAt, t.today.ymd, cal, att);
+      const c = classify(row.correctionAt, day, cal, att);
       const keep = row.markedBy && ["on_time", "leave", "half_day"].includes(row.status);
       await pool.query(
         `update attendance set check_in_at = correction_at, status = $2, late_minutes = $3,
            correction_status = 'approved', updated_at = now() where id = $1`,
         [row.id, keep ? row.status : c.status, c.lateMinutes],
       );
+      // Only the day's first session starts earlier; later ones (a reopened
+      // day) stay as they were, so no hours are counted twice.
       await pool.query(
-        "update eod_session set started_at = $2 where editor_id = $1 and (started_at at time zone 'Asia/Kolkata')::date = $3::date and started_at > $2",
-        [t.editorId, row.correctionAt, t.today.ymd],
+        `update eod_session set started_at = $2
+          where id = (select id from eod_session where editor_id = $1 and (started_at at time zone 'Asia/Kolkata')::date = $3::date
+                       order by started_at limit 1)
+            and started_at > $2`,
+        [t.editorId, row.correctionAt, day],
       );
     } else {
       await pool.query("update attendance set correction_status = 'declined', updated_at = now() where id = $1", [row.id]);

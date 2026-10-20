@@ -176,9 +176,18 @@ export function penaltyOf(row, att) {
 
 // Points lost per person in a month ("YYYY-MM") — fed into the discipline
 // score (Goals, Management Performance).
+// The penalty points a month is charged at: the settings it had, not today's.
+// Settings › Attendance keeps a log of changes (penaltyLog: [{ from: "YYYY-MM",
+// late, absent }]); a month uses the last entry from on or before it.
+export function penaltiesFor(att, raw, month) {
+  const log = Array.isArray(raw?.attendance?.penaltyLog) ? raw.attendance.penaltyLog : [];
+  const entry = log.filter((e) => e && String(e.from) <= month).sort((a, b) => String(a.from).localeCompare(String(b.from))).pop();
+  return entry ? { ...att, latePenaltyPts: Number(entry.late), absentPenaltyPts: Number(entry.absent) } : att;
+}
 export async function monthPenalties(orgId, month) {
   if (!(await attendanceReady())) return new Map();
-  const { att } = await readSettings(orgId);
+  const { att: now, raw } = await readSettings(orgId);
+  const att = penaltiesFor(now, raw, month);
   const { rows } = await pool.query(
     `select editor_id, status, excused from attendance
       where org_id = $1 and to_char(date, 'YYYY-MM') = $2`,
@@ -236,9 +245,13 @@ export async function syncAttendance(orgId) {
          values ($1, $2, $3, $4, $5, $6)
          on conflict (editor_id, date) do update set
            check_in_at = excluded.check_in_at,
-           status = case when attendance.marked_by is not null and attendance.status in ('on_time', 'leave', 'half_day')
+           status = case when (attendance.marked_by is not null and attendance.status in ('on_time', 'half_day', 'absent'))
+                           or (attendance.auto_marked and attendance.status = 'absent')
                          then attendance.status else excluded.status end,
-           late_minutes = excluded.late_minutes, auto_marked = false, updated_at = now()
+           late_minutes = excluded.late_minutes,
+           auto_marked = attendance.auto_marked and attendance.status = 'absent',
+           marked_by = case when attendance.status = 'leave' then null else attendance.marked_by end,
+           updated_at = now()
          where attendance.check_in_at is null`,
         [orgId, s.editor_id, today.ymd, s.first, c.status, c.lateMinutes],
       );
