@@ -134,15 +134,20 @@ export function TeamAttendance({ editors, self = false }: { editors: Editor[] | 
 function PlanLeave({ people, onSaved }: { people: Row[]; onSaved: () => void }) {
   const [who, setWho] = useState("");
   const [day, setDay] = useState("");
-  const [kind, setKind] = useState<"leave" | "half_day">("leave");
+  const [kind, setKind] = useState<"leave" | "half_day" | "remove">("leave");
   const [busy, setBusy] = useState(false);
   async function save() {
     setBusy(true);
     try {
-      await attendanceAction(who, "mark", { as: kind, date: day });
       const name = people.find((p) => p.editorId === who)?.name ?? "They";
       const when = new Date(`${day}T12:00:00`).toLocaleDateString("en-IN", { day: "numeric", month: "short" });
-      toast.success(`${name}: ${kind === "leave" ? "on leave" : "half-day leave"} on ${when}`);
+      if (kind === "remove") {
+        await attendanceAction(who, "undo", { date: day });
+        toast.success(`${name}: leave on ${when} taken off`);
+      } else {
+        await attendanceAction(who, "mark", { as: kind, date: day });
+        toast.success(`${name}: ${kind === "leave" ? "on leave" : "half-day leave"} on ${when}`);
+      }
       setDay("");
       onSaved();
     } catch (e) {
@@ -159,11 +164,12 @@ function PlanLeave({ people, onSaved }: { people: Row[]; onSaved: () => void }) 
         {people.map((p) => <option key={p.editorId} value={p.editorId}>{p.name}</option>)}
       </select>
       <input type="date" value={day} onChange={(e) => setDay(e.target.value)} aria-label="Day" />
-      <select value={kind} onChange={(e) => setKind(e.target.value as "leave" | "half_day")} aria-label="Leave or half day">
+      <select value={kind} onChange={(e) => setKind(e.target.value as "leave" | "half_day" | "remove")} aria-label="Leave, half day, or take it off">
         <option value="leave">On leave</option>
         <option value="half_day">Half-day leave</option>
+        <option value="remove">Take leave off</option>
       </select>
-      <button type="button" disabled={!who || !day || busy} onClick={save}>{busy ? "Saving…" : "Mark"}</button>
+      <button type="button" disabled={!who || !day || busy} onClick={save}>{busy ? "Saving…" : kind === "remove" ? "Take off" : "Mark"}</button>
     </div>
   );
 }

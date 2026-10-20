@@ -234,6 +234,13 @@ async function usePermission(orgId, editorId, ymd, part, att, actorId, verbWord)
   });
   return rows[0];
 }
+// Start day undone: a permission it used goes back (one taken on the day is
+// gone; one asked ahead is approved again).
+export async function giveBackPermission(editorId, ymd, part) {
+  if (!(await permissionsReady())) return;
+  await pool.query("delete from attendance_permission where editor_id = $1 and date = $2 and part = $3 and status = 'used' and emergency", [editorId, ymd, part]);
+  await pool.query("update attendance_permission set status = 'approved' where editor_id = $1 and date = $2 and part = $3 and status = 'used'", [editorId, ymd, part]);
+}
 // A late start before the half-day time: a permission covers it (no late mark)
 // while one is left this month, or if one was approved for the morning.
 export async function applyMorningPermission(orgId, editorId, ymd, att, actorId) {

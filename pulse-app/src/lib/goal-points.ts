@@ -30,7 +30,8 @@ const MAX_RATING_SUM = DISCIPLINE_CRITERIA.length * 5; // 25
 // covered work (taken over from someone) on top. Each row brings its goal after
 // leave (goalJC) and the jobs that count (countedJC); covered work comes as
 // points. This only splits that into the Overall Score:
-//   Earned Points     = 80% × (Σ countedJC × points + covered points)
+//   Earned Points     = 80% × (Σ countedJC × points + covered points), at most
+//                       150% of Total Goal Points
 //                       — never lateness-penalised (that lives in Task Points).
 //   Admin ceiling     = 20% × Total Goal Points.
 //   Discipline points = (Σ 5 criterion ratings ÷ 25) × ceiling, computed live;
@@ -40,6 +41,8 @@ const MAX_RATING_SUM = DISCIPLINE_CRITERIA.length * 5; // 25
 // Returns null when Total Goal Points is 0 (no goals) — nothing to split.
 // Mirrors computeScore() in server/src/routes/management-performance.js.
 export const TYPE_CAP = 1.5;
+// the month as a whole, covered work included (server/src/goal-score.js TOTAL_CAP)
+export const TOTAL_CAP = 1.5;
 export type BreakdownRow = { goalJC: number; actualJC: number; points: number; countedJC?: number };
 export type GoalBreakdown = {
   total: number; earned: number; ceiling: number;
@@ -53,7 +56,8 @@ export function goalBreakdown(rows: BreakdownRow[], ratings: Ratings, penalty = 
   if (total <= 0) return null;
   // countedJC from the server; without it, the per-type limit alone
   const counted = (r: BreakdownRow) => (r.goalJC > 0 ? r.countedJC ?? Math.min(TYPE_CAP * r.goalJC, r.actualJC) : 0);
-  const earned = 0.8 * (rows.reduce((s, r) => s + counted(r) * r.points, 0) + coveredPoints);
+  const reached = Math.min(rows.reduce((s, r) => s + counted(r) * r.points, 0) + coveredPoints, TOTAL_CAP * total);
+  const earned = 0.8 * reached;
   const ceiling = 0.2 * total;
   const ratingSum = DISCIPLINE_CRITERIA.reduce((s, c) => s + (ratings[c.key] ?? 5), 0);
   const reviewed = DISCIPLINE_CRITERIA.every((c) => ratings[c.key] != null);

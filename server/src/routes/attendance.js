@@ -6,7 +6,7 @@ import { logActivity } from "../activity.js";
 import { capacityFor, LUNCH_MIN, TEA_MIN, normalizeCalendar } from "../work-calendar.js";
 import { startSession, endSession, pauseDayTimers } from "./eod.js";
 import {
-  applyEveningPermission, applyMorningPermission, attendancePeople, attendanceReady, callerScope, canSee, classify, closingFor,
+  applyEveningPermission, applyMorningPermission, attendancePeople, giveBackPermission, attendanceReady, callerScope, canSee, classify, closingFor,
   istAt, istNow, minutesOf, openingFor, penaltyOf, permissionsReady, permissionsThisMonth, readSettings, syncAttendance, weekdayOf,
 } from "../attendance.js";
 
@@ -170,19 +170,23 @@ attendanceRouter.post("/attendance/undo-check-in", async (req, res, next) => {
     );
     // Not started after all: the task clocks Start day set going stop again.
     await pauseDayTimers(caller.editorId);
-    // A lead's mark (working now, leave, half day) stays; otherwise the day goes
-    // back to what the clock says — and an excuse goes with the late start.
+    // A lead's mark (working now, leave, half day, absent) stays; otherwise the
+    // day goes back to what the clock says — and an excuse goes with the late
+    // start (a morning permission it used is given back).
     const { cal, att } = await readSettings(req.orgId);
-    const leadMark = !!row.markedBy && !row.excused && ["on_time", "leave", "half_day"].includes(row.status);
-    const absent = att.autoAbsentEnabled && !!openingFor(cal, today.ymd) && today.minutes >= minutesOf(att.autoAbsentAt);
+    const leadMark = !!row.markedBy && !row.excused && ["on_time", "leave", "half_day", "absent", "half_absent"].includes(row.status);
+    if (row.excused && row.reason === "permission") await giveBackPermission(caller.editorId, today.ymd, "morning");
+    const opens = !!openingFor(cal, today.ymd);
+    const absent = att.autoAbsentEnabled && opens && today.minutes >= minutesOf(att.autoAbsentAt);
+    const halfAbsent = !absent && att.autoAbsentEnabled && att.halfDayReady !== false && opens && today.minutes >= minutesOf(att.halfDayAt);
     const alerted = today.minutes >= minutesOf(att.noSodAlertAt);
     if (leadMark) {
       await pool.query("update attendance set check_in_at = null, late_minutes = 0, updated_at = now() where id = $1", [row.id]);
-    } else if (absent || alerted || row.planNote || row.correctionStatus) {
+    } else if (absent || halfAbsent || alerted || row.planNote || row.correctionStatus) {
       await pool.query(
-        `update attendance set check_in_at = null, late_minutes = 0, excused = false, marked_by = null,
+        `update attendance set check_in_at = null, late_minutes = 0, excused = false, reason = null, marked_by = null,
            status = $2, auto_marked = $3, updated_at = now() where id = $1`,
-        [row.id, absent ? "absent" : "no_sod", absent],
+        [row.id, absent ? "absent" : halfAbsent ? "half_absent" : "no_sod", absent || halfAbsent],
       );
     } else {
       await pool.query("delete from attendance where id = $1", [row.id]);
@@ -391,6 +395,31 @@ attendanceRouter.post("/attendance/:editorId/undo", async (req, res, next) => {
   try {
     const t = await leadTarget(req, res);
     if (!t) return;
+    const day = /^\d{4}-\d{2}-\d{2}$/.test(String(req.body?.date ?? "")) ? req.body.date : t.today.ymd;
+    if (day !== t.today.ymd) {
+      // another day: only a leave or half day a lead marked, in the same window as marking
+      const d0 = new Date(`${t.today.ymd}T00:00:00Z`);
+      const from = new Date(Date.UTC(d0.getUTCFullYear(), d0.getUTCMonth() - 1, 1)).toISOString().slice(0, 10);
+      const to = new Date(d0.getTime() + 90 * 86_400_000).toISOString().slice(0, 10);
+      if (day < from || day > to) return res.status(400).json({ error: "Pick a day from last month to three months ahead." });
+      const other = await rowFor(t.editorId, day);
+      if (!other?.markedBy || !["leave", "half_day"].includes(other.status)) {
+        return res.status(400).json({ error: "There's no leave a lead marked on that day." });
+      }
+      const { cal: dayCal, att: dayAtt } = await readSettings(req.orgId);
+      if (other.checkInAt) {
+        const c = classify(other.checkInAt, day, dayCal, dayAtt);
+        await pool.query(
+          "update attendance set status = $2, late_minutes = $3, excused = false, marked_by = null, reason = null, updated_at = now() where id = $1",
+          [other.id, c.status, c.lateMinutes],
+        );
+      } else {
+        // a day ahead goes back to nothing; a past one is filled in by the usual rules
+        await pool.query("delete from attendance where id = $1", [other.id]);
+      }
+      await audit(req, t, "attendance_undone", `Undid the leave mark for ${t.name} on ${day}`, { date: day });
+      return res.json({ attendance: await rowFor(t.editorId, day) });
+    }
     const row = await rowFor(t.editorId, t.today.ymd);
     if (!row?.markedBy) return res.status(400).json({ error: "There's nothing a lead marked to undo." });
     const { cal, att } = await readSettings(req.orgId);
@@ -401,13 +430,15 @@ attendanceRouter.post("/attendance/:editorId/undo", async (req, res, next) => {
         [row.id, c.status, c.lateMinutes],
       );
     } else {
-      const absent = att.autoAbsentEnabled && t.today.minutes >= minutesOf(att.autoAbsentAt) && !!openingFor(cal, t.today.ymd);
+      const opens = !!openingFor(cal, t.today.ymd);
+      const absent = att.autoAbsentEnabled && t.today.minutes >= minutesOf(att.autoAbsentAt) && opens;
+      const halfAbsent = !absent && att.autoAbsentEnabled && att.halfDayReady !== false && t.today.minutes >= minutesOf(att.halfDayAt) && opens;
       const alerted = t.today.minutes >= minutesOf(att.noSodAlertAt);
-      if (!absent && !alerted) await pool.query("delete from attendance where id = $1", [row.id]);
+      if (!absent && !halfAbsent && !alerted) await pool.query("delete from attendance where id = $1", [row.id]);
       else {
         await pool.query(
           "update attendance set status = $2, auto_marked = $3, excused = false, marked_by = null, reason = null, updated_at = now() where id = $1",
-          [row.id, absent ? "absent" : "no_sod", absent],
+          [row.id, absent ? "absent" : halfAbsent ? "half_absent" : "no_sod", absent || halfAbsent],
         );
       }
     }
@@ -513,7 +544,7 @@ attendanceRouter.post("/attendance/:editorId/correction", async (req, res, next)
     if (parsed.data.approve) {
       const { cal, att } = await readSettings(req.orgId);
       const c = classify(row.correctionAt, day, cal, att);
-      const keep = row.markedBy && ["on_time", "leave", "half_day"].includes(row.status);
+      const keep = row.markedBy && ["on_time", "leave", "half_day", "absent", "half_absent"].includes(row.status);
       await pool.query(
         `update attendance set check_in_at = correction_at, status = $2, late_minutes = $3,
            correction_status = 'approved', updated_at = now() where id = $1`,
