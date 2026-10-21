@@ -197,6 +197,25 @@ html[data-theme="dark"] .tb .task-x:hover{background:oklch(0.28 0.06 25);border-
 .tb-act.mute{background:var(--tb-sunk);color:var(--tb-text3);cursor:default;font-weight:600}
 .tb-act.good{background:var(--tb-goodSoft);color:var(--tb-good)}
 .tb-act.pill:hover,.tb-act.mute:hover{filter:none}
+/* Hold pauses (amber), Resume starts the clock again (green). */
+.tb-act.hold{background:var(--tb-warnSoft);color:var(--tb-warn)}
+.tb-act.resume{background:var(--tb-goodSoft);color:var(--tb-good);box-shadow:inset 0 0 0 1px color-mix(in srgb,var(--tb-good) 45%,transparent)}
+/* A task being worked on: a green edge and a clock whose hand ticks each
+   second; on hold the edge is amber. */
+.tb .task-card.is-live{border-left:3px solid var(--tb-good);padding-left:12px}
+.tb .task-card.is-held{border-left:3px solid var(--tb-warn);padding-left:12px}
+.tb .task-card.is-held .task-hold-badge{background:var(--tb-warnSoft);color:var(--tb-warn)}
+.tb-live{display:inline-flex;align-items:center;gap:5px;height:28px;padding:0 9px;border-radius:8px;
+  background:var(--tb-goodSoft);color:var(--tb-good);font:800 12px 'Plus Jakarta Sans',sans-serif;white-space:nowrap}
+.tb-live.waiting{background:var(--tb-warnSoft);color:var(--tb-warn)}
+.tb-clock{width:15px;height:15px;flex:none}
+.tb-clock-face{fill:none;stroke:currentColor;stroke-width:1.8}
+.tb-clock-hand{stroke:currentColor;stroke-width:1.8;stroke-linecap:round}
+.tb-clock-sec{stroke:currentColor;stroke-width:1.3;stroke-linecap:round;transform-box:view-box;transform-origin:10px 10px;animation:tb-tick 12s steps(12) infinite}
+.tb-clock-pin{fill:currentColor}
+.tb-clock.still .tb-clock-sec{animation:none}
+@keyframes tb-tick{to{transform:rotate(360deg)}}
+@media (prefers-reduced-motion:reduce){.tb-clock-sec{animation:none}}
 .tb .task-card.dnd-overlay{width:280px;padding-bottom:14px}
 
 /* ---- list view: grouped by status ---- */

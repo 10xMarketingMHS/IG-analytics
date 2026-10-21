@@ -388,6 +388,28 @@ function TaskClock({ t, nowMs }: { t: Task; nowMs: number }) {
   );
 }
 
+// An in-progress task's state, at a glance: live (its clock is running) shows a
+// green clock whose hand ticks; on a break or with the day closed the clock
+// stands still in amber. (On hold says so at the top, and Resume is green.)
+function liveState(t: Task, nowMs: number): "live" | "held" | "waiting" | null {
+  if (t.status !== "in_progress") return null;
+  if (t.on_hold) return "held";
+  // its timer starts later (the card says when)
+  if (t.budget_started_at && new Date(t.budget_started_at).getTime() > nowMs) return null;
+  if (isDayPaused(t) || t.editor_break_started_at) return "waiting";
+  return "live";
+}
+function TickClock({ still = false }: { still?: boolean }) {
+  return (
+    <svg className={"tb-clock" + (still ? " still" : "")} viewBox="0 0 20 20" aria-hidden="true">
+      <circle cx="10" cy="10" r="8" className="tb-clock-face" />
+      <line x1="10" y1="10" x2="13" y2="12" className="tb-clock-hand" />
+      <line x1="10" y1="11" x2="10" y2="4" className="tb-clock-sec" />
+      <circle cx="10" cy="10" r="1.2" className="tb-clock-pin" />
+    </svg>
+  );
+}
+
 // Wraps a card so it can be dragged. The drag listeners live on this wrapper;
 // the inner card keeps its own onClick (tap → open) because the sensors only
 // start a drag past a movement/hold threshold, so a plain tap still clicks.
@@ -1108,10 +1130,10 @@ export function TasksPage() {
                             ⏸ Held by {t.held_by_name ?? "an admin"}
                           </span>
                         ) : (
-                          <button className="tb-act ghost" onClick={() => toggleHold(t, false)}>▶ Resume</button>
+                          <button className="tb-act resume" title="Start its clock again" onClick={() => toggleHold(t, false)}>▶ Resume</button>
                         )
                       ) : (
-                        <button className="tb-act ghost" onClick={() => toggleHold(t, true)}>⏸ Hold</button>
+                        <button className="tb-act hold" title="Pause its clock" onClick={() => toggleHold(t, true)}>⏸ Hold</button>
                       )
                     ) : null;
                     if (!canPrev && !canNext && !holdCtrl) {
@@ -1138,9 +1160,15 @@ export function TasksPage() {
                       </>
                     );
                   })();
+                  const live = liveState(t, nowMs);
+                  const liveSlot = !acceptSlot && live === "live" ? (
+                    <span className="tb-live" title="Being worked on: its clock is running"><TickClock /> Live</span>
+                  ) : !acceptSlot && live === "waiting" ? (
+                    <span className="tb-live waiting" title={t.editor_break_started_at ? "Paused: the assignee is on a break" : "Paused: the day is closed"}><TickClock still /> Paused</span>
+                  ) : null;
                   const cardInner = (
                     <div
-                      className={"task-card pri-" + t.priority + " st-" + t.status + (overdue ? " is-over" : "") + (selectedId === t.id ? " selected" : "")}
+                      className={"task-card pri-" + t.priority + " st-" + t.status + (overdue ? " is-over" : "") + (live === "live" ? " is-live" : live === "held" ? " is-held" : "") + (selectedId === t.id ? " selected" : "")}
                       key={t.id}
                       onClick={() => openTask(t)}
                     >
@@ -1221,9 +1249,10 @@ export function TasksPage() {
                         {subtaskSlot}
                         {!acceptSlot && <TaskClock t={t} nowMs={nowMs} />}
                       </div>
-                      {(acceptSlot || actions) && (
+                      {(acceptSlot || liveSlot || actions) && (
                         <div className="task-actions" onClick={(e) => e.stopPropagation()}>
                           {acceptSlot}
+                          {liveSlot}
                           {actions}
                         </div>
                       )}
