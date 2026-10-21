@@ -1320,6 +1320,29 @@ img.lb-ava{object-fit:cover}
 .bell-dot{position:absolute;top:-5px;right:-5px;min-width:17px;height:17px;padding:0 4px;border-radius:9px;
   background:var(--rose,#f43f5e);color:#fff;font-size:10.5px;font-weight:800;line-height:17px;text-align:center;
   box-shadow:0 0 0 2px var(--bg);pointer-events:none}
+/* the bell's box: latest notices, See all opens Activity */
+.nt-wrap{position:relative}
+.nt-pop{position:absolute;top:calc(100% + 8px);right:0;z-index:60;width:360px;max-width:calc(100vw - 24px);
+  display:flex;flex-direction:column;border:1px solid var(--border);border-radius:14px;background:var(--glass-solid);
+  box-shadow:0 18px 44px -12px rgba(0,0,0,.35);overflow:hidden}
+.nt-head{display:flex;align-items:center;justify-content:space-between;padding:12px 14px 8px}
+.nt-head b{font-size:15px}
+.nt-all{border:0;background:none;color:var(--accent-ink);font-size:13px;font-weight:700;cursor:pointer;padding:2px 4px}
+.nt-list{list-style:none;margin:0;padding:0 6px 4px;max-height:min(420px,60vh);overflow:auto}
+.nt-row{display:flex;gap:10px;align-items:flex-start;width:100%;padding:9px 8px;border:0;border-radius:10px;
+  background:none;text-align:left;font:inherit;color:inherit}
+button.nt-row{cursor:pointer}
+button.nt-row:hover,button.nt-row:focus-visible{background:var(--panel2)}
+.nt-row.unread{background:color-mix(in srgb,var(--accent) 7%,transparent)}
+.nt-icon.act-icon{width:32px;height:32px;border-radius:9px;font-size:15px}
+.nt-main{flex:1;min-width:0;display:flex;flex-direction:column;gap:2px}
+.nt-text{font-size:13px;line-height:1.4;color:var(--text);display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+.nt-time{font-size:11.5px;color:var(--muted)}
+.nt-dot{flex:none;width:8px;height:8px;margin-top:6px;border-radius:50%;background:var(--accent)}
+.nt-empty{padding:14px 16px 18px;font-size:13px;color:var(--muted)}
+.nt-more{border:0;border-top:1px solid var(--border);background:none;padding:11px;font:inherit;font-size:13px;font-weight:700;
+  color:var(--accent-ink);cursor:pointer}
+.nt-more:hover{background:var(--panel2)}
 .act-toolbar{display:flex;align-items:center;margin-bottom:4px}
 .act-feed{display:flex;flex-direction:column;gap:20px}
 .act-group{display:flex;flex-direction:column;gap:10px}
@@ -1719,6 +1742,11 @@ img.lb-ava{object-fit:cover}
 .eod-lock .content > .screen.eod-open{pointer-events:auto}
 /* (The others a locked editor may open — Team Chat, the Task Board,
    Analytics, Settings — lift the lock for the whole page: .lock-page-open.) */
+/* The Task Board stays usable before Start day but in grey, like the rest of a
+   closed day, so it's plain the day hasn't started (the top bar's Start day
+   stays in colour). Its children, not the board itself: a filter on the board
+   would pin the task drawer inside it instead of over the page. */
+.eod-lock.lock-page-open .content > .screen.tb > *{filter:grayscale(100%);opacity:.92}
 /* My Day header button row (unlocked: New Task + End EOD + status) */
 .mh-cta-row{display:flex;align-items:center;gap:12px;flex-wrap:wrap}
 .mh-endeod{background:rgba(255,255,255,.14);border-color:rgba(255,255,255,.28);color:#fff;font-weight:700;

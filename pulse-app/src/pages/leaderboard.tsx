@@ -317,7 +317,9 @@ export function LeaderboardPage() {
     const scoped = posts.filter(
       (p) => p.status === "published" && inRange(p.date, bounds.from, bounds.to),
     );
+    // People a Super Admin made exempt (Team › Roster) aren't on the leaderboard.
     return editors
+      .filter((e) => e.active !== false && countsInTaskScore(e))
       .map((editor) => {
         const own = scoped.filter((p) => p.editor_id === editor.id);
         return {
@@ -369,11 +371,11 @@ export function LeaderboardPage() {
   // dropped from the ranked lines entirely (a task counts if its due date OR its
   // completion falls in the month — the same rule that lists the month). Editors
   // WITH tasks but zero completed stay (flat at 0 = genuinely behind). Content
-  // mode is untouched: every editor is shown, nobody excluded. People out of the
-  // task score never get a task line.
+  // mode shows everyone but those exempt. People out of the task score never get
+  // a line.
   const pathShown = useMemo(() => {
     if (!editors) return { shown: [] as Editor[], excluded: [] as Editor[] };
-    if (pathMode !== "task" || !effectiveMonth) return { shown: editors, excluded: [] as Editor[] };
+    if (pathMode !== "task" || !effectiveMonth) return { shown: editors.filter(countsInTaskScore), excluded: [] as Editor[] };
     const scored = editors.filter(countsInTaskScore);
     const assignedInMonth = (e: Editor) =>
       (tasks ?? []).some(
@@ -475,6 +477,11 @@ export function LeaderboardPage() {
             {socialRanked.length === 0 && (
               <div className="hint" style={{ marginTop: 14 }}>
                 No editor has published posts {period === "month" ? "this month" : "yet"}.
+              </div>
+            )}
+            {notScored.length > 0 && (
+              <div className="hint" style={{ marginTop: 10 }}>
+                Not on the leaderboard (exempt): {notScored.map((e) => e.name).join(", ")}. A Super Admin can change this on Team › Roster.
               </div>
             )}
           </div>

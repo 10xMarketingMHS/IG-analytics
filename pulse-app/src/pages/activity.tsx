@@ -6,56 +6,8 @@ import { useTasks } from "@/lib/use-tasks";
 import { useEditors } from "@/lib/use-editors";
 import { useWorkspaces } from "@/lib/workspaces-context";
 import { TaskPanel } from "@/pages/tasks";
-import type { Activity, ActivityVerb } from "@/lib/types";
-
-// Icon + tone per event kind, so the feed reads at a glance.
-const VERB_META: Record<ActivityVerb, { icon: string; cls: string }> = {
-  created: { icon: "✅", cls: "v-task" },
-  completed: { icon: "🎉", cls: "v-done" },
-  assigned: { icon: "👤", cls: "v-task" },
-  commented: { icon: "💬", cls: "v-comment" },
-  published: { icon: "🚀", cls: "v-post" },
-  stage_completed: { icon: "🎬", cls: "v-post" },
-  channel_added: { icon: "🌐", cls: "v-channel" },
-  editor_added: { icon: "🧑‍🎨", cls: "v-editor" },
-  review_requested: { icon: "👀", cls: "v-task" },
-  review_copied: { icon: "⏰", cls: "v-task" },
-  sent_back: { icon: "↩️", cls: "v-task" },
-  reopened: { icon: "🔄", cls: "v-task" },
-  deleted: { icon: "🗑️", cls: "v-task" },
-  held: { icon: "⏸️", cls: "v-task" },
-  resumed: { icon: "▶️", cls: "v-task" },
-  password_reset_requested: { icon: "🔑", cls: "v-editor" },
-  password_reset: { icon: "🔑", cls: "v-editor" },
-  sod_submitted: { icon: "📝", cls: "v-editor" },
-  attendance_check_in: { icon: "☀️", cls: "v-editor" },
-  attendance_no_sod: { icon: "⏰", cls: "v-editor" },
-  attendance_nudge: { icon: "👋", cls: "v-editor" },
-  attendance_marked: { icon: "📋", cls: "v-editor" },
-  attendance_excused: { icon: "✅", cls: "v-editor" },
-  attendance_undone: { icon: "↩️", cls: "v-editor" },
-  attendance_correction: { icon: "🕘", cls: "v-editor" },
-  attendance_correction_answered: { icon: "🕘", cls: "v-editor" },
-  accepted: { icon: "👍", cls: "v-task" },
-  handover_offered: { icon: "🔁", cls: "v-task" },
-  handover_accepted: { icon: "🤝", cls: "v-done" },
-  handover_declined: { icon: "↩️", cls: "v-task" },
-  handover_cancelled: { icon: "↩️", cls: "v-task" },
-  handover_escalated: { icon: "⚠️", cls: "v-task" },
-  handover_moved: { icon: "🔁", cls: "v-task" },
-};
-
-function relTime(iso: string) {
-  const then = new Date(iso).getTime();
-  const s = Math.round((Date.now() - then) / 1000);
-  if (s < 60) return "just now";
-  const m = Math.round(s / 60);
-  if (m < 60) return `${m}m ago`;
-  const h = Math.round(m / 60);
-  if (h < 24) return `${h}h ago`;
-  const d = Math.round(h / 24);
-  return d === 1 ? "yesterday" : `${d}d ago`;
-}
+import { VERB_META, relTime } from "@/lib/activity-meta";
+import type { Activity } from "@/lib/types";
 
 // Human day bucket for grouping headers.
 function dayLabel(iso: string) {

@@ -11,8 +11,9 @@ import type { Task } from "@/lib/types";
 //   before check-in  — the "Start your day" card: today's plan, Start day,
 //                      "Started earlier? Request a correction", and what's on
 //                      your list today;
-//   checked in       — a slim bar: on time / late, the check-in time and any
-//                      penalty, the plan, Undo (first 5 minutes) and End day,
+//   checked in       — a slim bar: on time / late, the check-in time, the
+//                      plan, Undo (first 5 minutes) and End day (no discipline
+//                      points: those are for leads),
 //                      which opens the wrap-up panel;
 //   checked out      — one line: the day closed and the hours in office.
 // Start day is the check-in and opens the work day (it replaced Start Work).
@@ -221,9 +222,9 @@ export function StartDaySection({
     : me?.status === "absent" ? { t: "Absent", tone: "bad" }
     : me?.status === "half_day" ? { t: "Half day", tone: "rev" }
     : { t: "On time", tone: "good" };
-  const penalty = late ? (s?.latePenaltyPts ?? 1)
-    : me?.status === "half_absent" ? (s?.absentPenaltyPts ?? 3) / 2
-    : me?.status === "absent" ? (s?.absentPenaltyPts ?? 3) : 0;
+  // Discipline points aren't shown to the person themselves (only leads see
+  // them, on Team today and Team › Attendance): the pill says how the day went.
+  const missed = me?.status === "absent" || me?.status === "half_absent";
   const canUndo = !!me?.checkInAt && nowMs - new Date(me.checkInAt).getTime() < 5 * 60_000 && !preview;
   const inOfficeMs = inAt ? nowMs - new Date(inAt).getTime() : 0;
   async function closeDay() {
@@ -253,7 +254,7 @@ export function StartDaySection({
         <div className="sd-barmain">
           <b>
             {inAt ? `Checked in ${clockTime(inAt)}` : "Checked in"}
-            {penalty ? ` · −${penalty} discipline pt${penalty === 1 ? "" : "s"}` : byPermission ? " · morning permission used" : me?.excused ? " · late excused" : " · nice, on time"}
+            {late ? " · late start" : missed ? "" : byPermission ? " · morning permission used" : me?.excused ? " · late excused" : " · nice, on time"}
           </b>
           <span>{me?.planNote ? `Plan: ${me.planNote}` : "No plan added"}{me?.correctionStatus === "pending" && me.correctionAt ? ` · correction to ${clockTime(me.correctionAt)} waiting on your lead` : ""}{permLine ? ` · ${permLine}` : ""}</span>
         </div>

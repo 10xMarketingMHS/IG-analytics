@@ -79,14 +79,15 @@ export function TeamAttendance({ editors, self = false }: { editors: Editor[] | 
       ) : (
         <>
           <div className="ta-scroll">
-            <div className="ta-grid" style={{ gridTemplateColumns: `minmax(150px, 180px) repeat(${data.days.length}, minmax(18px, 1fr)) repeat(5, 58px)` }}>
+            {/* your own row (self) leaves out the points lost: those are for leads */}
+            <div className="ta-grid" style={{ gridTemplateColumns: `minmax(150px, 180px) repeat(${data.days.length}, minmax(18px, 1fr)) repeat(${self ? 4 : 5}, 58px)` }}>
               <span className="ta-h ta-member">Member</span>
               {data.days.map((d) => (
                 <span key={d.date} className={"ta-h ta-day" + (d.today ? " today" : !d.working || d.future ? " off" : "")}>
                   <em>{WD[d.weekday]}</em><b>{Number(d.date.slice(8))}</b>
                 </span>
               ))}
-              {["Late", "Absent", "Leave", "On time", "Pts lost"].map((h) => <span key={h} className="ta-h ta-num">{h}</span>)}
+              {(self ? ["Late", "Absent", "Leave", "On time"] : ["Late", "Absent", "Leave", "On time", "Pts lost"]).map((h) => <span key={h} className="ta-h ta-num">{h}</span>)}
               {data.rows.map((r) => {
                 const ed = editors?.find((e) => e.id === r.editorId) ?? null;
                 const t = r.totals;
@@ -109,7 +110,7 @@ export function TeamAttendance({ editors, self = false }: { editors: Editor[] | 
                     <b className={"ta-num" + (t.absent > 0 ? " bad" : "")}>{t.absent}</b>
                     <b className="ta-num">{t.leave}</b>
                     <b className={"ta-num " + (t.onTimePct == null ? "" : t.onTimePct >= 90 ? "good" : t.onTimePct >= 75 ? "warn" : "bad")}>{t.onTimePct == null ? "–" : `${t.onTimePct}%`}</b>
-                    <b className={"ta-num" + (t.ptsLost > 0 ? " bad" : " faint")}>{t.ptsLost > 0 ? `−${t.ptsLost}` : "0"}</b>
+                    {!self && <b className={"ta-num" + (t.ptsLost > 0 ? " bad" : " faint")}>{t.ptsLost > 0 ? `−${t.ptsLost}` : "0"}</b>}
                   </div>
                 );
               })}

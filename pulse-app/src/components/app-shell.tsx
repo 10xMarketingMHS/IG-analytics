@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 import { NavLink, Outlet, useLocation, useNavigate } from "react-router-dom";
 import { NAV_ITEMS, PAGE_META, type NavItem } from "@/lib/nav";
@@ -8,7 +8,8 @@ import { useEditors } from "@/lib/use-editors";
 import { usePosts } from "@/lib/use-posts";
 import { useResource } from "@/lib/use-resource";
 import { useAutoSync } from "@/lib/auto-sync";
-import { getActivitySeen, onActivitySeenChange } from "@/lib/activity-seen";
+import { getActivitySeen, markActivitySeen, onActivitySeenChange } from "@/lib/activity-seen";
+import { NotifyPanel } from "@/components/notify-panel";
 import { hasSeenTask, useTaskAssignNotify } from "@/lib/use-task-notify";
 import { useDueOverdueNotify, useOverdueTaskNotify, useReviewWaitingNotify } from "@/lib/use-overdue-notify";
 import { useReviewAccess } from "@/lib/use-review-access";
@@ -299,6 +300,18 @@ function AppShellInner() {
   const { posts } = usePosts();
   const postCount = posts?.length ?? null;
   const { unread, items: activityItems } = useUnreadActivity();
+  // The bell opens a small box of the latest notices (See all opens Activity).
+  // What was read before it opened stays marked as read; the rest show as new.
+  const [notifyOpen, setNotifyOpen] = useState(false);
+  const [seenAtOpen, setSeenAtOpen] = useState("");
+  const bellRef = useRef<HTMLButtonElement>(null);
+  const closeNotify = useCallback(() => setNotifyOpen(false), []);
+  const toggleNotify = () => {
+    if (notifyOpen) return setNotifyOpen(false);
+    setSeenAtOpen(getActivitySeen());
+    if (activityItems?.length) markActivitySeen(activityItems[0].created_at);
+    setNotifyOpen(true);
+  };
   useLiveNotices(activityItems, user?.id, user?.editorId);
   useTaskAssignNotify();
   useOverdueTaskNotify();
@@ -645,18 +658,29 @@ function AppShellInner() {
               <button className="btn" onClick={() => navigate("/home")}>← My Day</button>
             </>
           )}
-          {/* The bell is a toggle: it opens Activity, and pressed again there it
-              returns to My Day — the Activity page has no other way back. */}
-          <button
-            className={"btn icon bell-btn" + (location.pathname === "/activity" ? " on" : "")}
-            title={location.pathname === "/activity" ? "Back to My Day" : "Activity"}
-            aria-label={location.pathname === "/activity" ? "Back to My Day" : "Activity"}
-            aria-pressed={location.pathname === "/activity"}
-            onClick={() => navigate(location.pathname === "/activity" ? "/home" : "/activity")}
-          >
-            🔔
-            {unread > 0 && <span className="bell-dot">{unread > 9 ? "9+" : unread}</span>}
-          </button>
+          <div className="nt-wrap">
+            <button
+              ref={bellRef}
+              className={"btn icon bell-btn" + (notifyOpen || location.pathname === "/activity" ? " on" : "")}
+              title="Notifications"
+              aria-label={unread > 0 ? `Notifications, ${unread} new` : "Notifications"}
+              aria-expanded={notifyOpen}
+              onClick={toggleNotify}
+            >
+              🔔
+              {unread > 0 && <span className="bell-dot">{unread > 9 ? "9+" : unread}</span>}
+            </button>
+            {notifyOpen && (
+              <NotifyPanel
+                items={activityItems}
+                seenBefore={seenAtOpen}
+                anchor={bellRef}
+                onClose={closeNotify}
+                onSeeAll={() => { setNotifyOpen(false); navigate("/activity"); }}
+                onOpenTask={(id) => { setNotifyOpen(false); navigate("/tasks", { state: { openTask: id } }); }}
+              />
+            )}
+          </div>
           <AccentPicker />
           <button className="btn icon" title="Theme" onClick={toggle}>
             {theme === "dark" ? "☀️" : "🌙"}
