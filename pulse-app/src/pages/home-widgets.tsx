@@ -735,19 +735,22 @@ function AttendW({ c }: { c: HomeCtx }) {
                 {canMark && (
                   <select className="hw-mark" value="" disabled={busy === p.editorId} aria-label={`Mark ${p.name} as`}
                     onChange={(e) => {
-                      // "leave:CL" — a manager's leave mark uses CL or SL from the person's balance
-                      const [v, type] = e.target.value.split(":") as ["working" | "half_day" | "leave" | "absent", "CL" | "SL" | undefined];
+                      // "leave:CL" — a manager's leave mark uses CL or SL from the person's balance;
+                      // "leave:CL:told" — they told us in time, so no short-notice cut
+                      const [v, type, told] = e.target.value.split(":") as ["working" | "half_day" | "leave" | "absent", "CL" | "SL" | undefined, "told" | undefined];
                       if (!v) return;
                       const word = { working: "working now", half_day: "half-day leave", leave: "on leave", absent: "absent" }[v];
-                      run(p, "mark", { as: v, type }, `${p.name} marked as ${word}${type ? ` (${type})` : ""}`);
+                      run(p, "mark", { as: v, type, ...(told ? { toldInTime: true } : {}) }, `${p.name} marked as ${word}${type ? ` (${type}${told ? ", told us in time" : ""})` : ""}`);
                     }}>
                     <option value="">Mark as…</option>
                     <option value="working">Working now</option>
                     {att.leave?.canApprove && <>
                       <option value="leave:SL">On leave · SL (sick)</option>
                       <option value="leave:CL">On leave · CL (short notice)</option>
+                      <option value="leave:CL:told">On leave · CL (they told us in time)</option>
                       <option value="half_day:SL">Half day · SL</option>
                       <option value="half_day:CL">Half day · CL (short notice)</option>
+                      <option value="half_day:CL:told">Half day · CL (they told us in time)</option>
                     </>}
                     <option value="absent">Absent</option>
                   </select>

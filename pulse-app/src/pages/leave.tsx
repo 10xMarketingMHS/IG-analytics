@@ -13,7 +13,7 @@ import { useWorkspaces } from "@/lib/workspaces-context";
 import { homeRoleOf, seesTeamAttendance } from "@/lib/home-role";
 import { TeamAttendance } from "@/pages/team-attendance";
 import {
-  HALF_WORDS, addDays, askLeave, cancelLeave, cancelPermission, dayWord, decideLeave, decidePermission, detailOf, fmtDates, fmtDay, n1,
+  HALF_WORDS, addDays, askLeave, cancelLeave, cancelPermission, dayWord, decideByWords, decideLeave, decidePermission, detailOf, fmtDates, fmtDay, n1,
   previewLeave, saveLeaveRules, savePermissionsPerMonth, setAllowance, startCounting, topUp, useLeaveData,
   type LeaveHalf, type LeaveMine, type LeavePreview, type LeaveRequest, type LeaveTeam, type LeaveType, type PermissionMine,
   type PermissionPart, type PermissionRow,
@@ -304,7 +304,7 @@ function AskTab({ mine, goSettings }: { mine: LeaveMine; goSettings: (() => void
           {mineList.map((r) => (
             <div key={r.id} className="lv-req">
               <TypeChip type={r.type} />
-              <span className="lv-req-main"><b>{fmtDates(r)}</b><span>{detailOf(r)}</span></span>
+              <span className="lv-req-main"><b>{fmtDates(r)}</b><span>{detailOf(r)}{r.status === "pending" && r.decideBy ? <em className="lv-due"> · {decideByWords(r, "mine")}</em> : null}</span></span>
               <Status s={r.status} />
               {(r.status === "pending" || (r.status === "approved" && r.from > today)) && (
                 <button type="button" className="lv-ghost" title="Cancel this request" onClick={() => cancel(r)}>Cancel</button>
@@ -468,6 +468,9 @@ function ApproveTab({ team }: { team: LeaveTeam }) {
           if (r.short) flags.push({ t: `Short notice · −${n1(r.shortPts ?? r.pts - r.unpaid * team.rules.unpaidPts)} pts`, icon: "schedule", cls: "warn" });
           if (r.unpaid) flags.push({ t: `${dayWord(r.unpaid)} unpaid`, icon: "money_off", cls: "bad" });
           if (r.from < today) flags.push({ t: "After the day", icon: "history", cls: "rev" });
+          // last month's: decide it before Management Performance closes the month
+          const due = decideByWords(r, "manager");
+          if (due) flags.unshift({ t: due, icon: "event_busy", cls: r.decideBy === "closed" ? "bad" : "warn" });
           if (!flags.length) flags.push({ t: "Within the rules", icon: "check", cls: "good" });
           const own = r.editorId === team.me;
           return (
@@ -482,7 +485,7 @@ function ApproveTab({ team }: { team: LeaveTeam }) {
                 {own ? <span className="lv-faint">Yours: another manager decides</span> : (
                   <>
                     <button type="button" className="lv-btn line" disabled={busy === r.id} onClick={() => decide(r, false)}>Decline</button>
-                    <button type="button" className="lv-btn pri sm" disabled={busy === r.id} onClick={() => decide(r, true)}><Icon name="check" size={16} />Approve</button>
+                    <button type="button" className="lv-btn pri sm" disabled={busy === r.id || r.decideBy === "closed"} title={r.decideBy === "closed" ? "Its month is closed in Management Performance" : undefined} onClick={() => decide(r, true)}><Icon name="check" size={16} />Approve</button>
                   </>
                 )}
               </span>

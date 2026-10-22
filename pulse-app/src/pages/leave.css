@@ -143,6 +143,7 @@ html[data-theme="dark"] .lv{--lv-text:#ededf0;--lv-text2:#a1a1aa;--lv-text3:#717
 .lv-flag.bad{background:var(--lv-badSoft);color:var(--lv-bad)}
 .lv-flag.rev{background:var(--lv-revSoft);color:var(--lv-rev)}
 .lv-flag.good{background:var(--lv-goodSoft);color:var(--lv-good)}
+.lv-due{font-style:normal;font-weight:700;color:var(--lv-warn)}
 .lv-acts{flex:none;display:flex;gap:6px;align-items:center}
 
 /* tables: team balance, starting allowance, totals */

@@ -246,6 +246,8 @@ function PlanLeave({ people, onSaved }: { people: Row[]; onSaved: () => void }) 
   const [kind, setKind] = useState<"leave" | "half_day" | "remove">("leave");
   const [type, setType] = useState<"CL" | "SL">("CL");
   const [half, setHalf] = useState<"first" | "second">("first");
+  // a CL they told us about in time: no short-notice cut (it's in the log)
+  const [told, setTold] = useState(false);
   const [busy, setBusy] = useState(false);
   async function save() {
     setBusy(true);
@@ -256,10 +258,11 @@ function PlanLeave({ people, onSaved }: { people: Row[]; onSaved: () => void }) 
         await attendanceAction(who, "undo", { date: day });
         toast.success(`${name}: leave on ${when} taken off`);
       } else {
-        await attendanceAction(who, "mark", { as: kind, type, date: day, ...(kind === "half_day" ? { half } : {}) });
+        await attendanceAction(who, "mark", { as: kind, type, date: day, ...(kind === "half_day" ? { half } : {}), ...(type === "CL" && told ? { toldInTime: true } : {}) });
         toast.success(`${name}: ${type}, ${kind === "leave" ? "on leave" : `half-day leave (${half} half)`} on ${when}`);
       }
       setDay("");
+      setTold(false);
       onSaved();
     } catch (e) {
       toast.error(e instanceof ApiError ? e.message : "Couldn't mark that day.");
@@ -291,6 +294,11 @@ function PlanLeave({ people, onSaved }: { people: Row[]; onSaved: () => void }) 
           <option value="first">First half</option>
           <option value="second">Second half</option>
         </select>
+      )}
+      {kind !== "remove" && type === "CL" && (
+        <label className="ta-told" title="No short-notice cut: they asked in time, it just wasn't entered">
+          <input type="checkbox" checked={told} onChange={(e) => setTold(e.target.checked)} />They told us in time
+        </label>
       )}
       <button type="button" disabled={!who || !day || busy} onClick={save}>{busy ? "Saving…" : kind === "remove" ? "Take off" : "Mark"}</button>
     </div>

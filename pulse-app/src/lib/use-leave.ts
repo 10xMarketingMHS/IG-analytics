@@ -14,6 +14,9 @@ export type LeaveRequest = {
   days: number; paid: number; unpaid: number; notice: number | null; short: boolean; pts: number; shortPts?: number;
   status: LeaveStatus; reason: string | null; createdAt: string; decidedAt: string | null;
   decidedByName?: string | null; name?: string; imageUrl?: string | null;
+  // waiting, from last month: the last day it can be approved before that month
+  // closes in Management Performance, or "closed" (then only declined or cancelled)
+  decideBy?: string | null;
 };
 export type TypeBalance = { start: number; topups: number; total: number; taken: number; waiting: number; left: number };
 export type LeaveBalance = { CL: TypeBalance; SL: TypeBalance; unpaid: number; unpaidWaiting: number; pts: number };
@@ -126,6 +129,17 @@ export function fmtDay(ymd: string) {
   const d = new Date(`${ymd}T00:00:00Z`);
   return `${DOW[d.getUTCDay()]} ${d.getUTCDate()} ${MON[d.getUTCMonth()]}`;
 }
+// "Decide by Tue 10 Nov — October closes then", for a manager ("manager") or
+// the person who asked ("mine"); null when its month isn't closing.
+export function decideByWords(r: Pick<LeaveRequest, "from" | "decideBy">, who: "manager" | "mine") {
+  if (!r.decideBy) return null;
+  const month = MONTHS[Number(r.from.slice(5, 7)) - 1];
+  if (r.decideBy === "closed") {
+    return who === "manager" ? `${month} is closed, so it can only be declined` : `${month} is closed, so it can't be approved now. Cancel it`;
+  }
+  return who === "manager" ? `Decide by ${fmtDay(r.decideBy)}: ${month} closes then` : `A manager must decide by ${fmtDay(r.decideBy)}: ${month} closes then`;
+}
+const MONTHS = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
 export const fmtDates = (r: Pick<LeaveRequest, "from" | "to">) => (r.from === r.to ? fmtDay(r.from) : `${fmtDay(r.from)} – ${fmtDay(r.to)}`);
 export const n1 = (x: number) => String(Math.round(x * 10) / 10);
 export const dayWord = (x: number) => `${n1(x)} day${x === 1 ? "" : "s"}`;

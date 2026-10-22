@@ -53,6 +53,7 @@ html[data-theme="dark"] .ib{--ib-text:#ededf0;--ib-text2:#b4b4bc;--ib-text3:#8b8
 .ib-ref{margin-right:6px;padding:2px 7px;border-radius:6px;background:var(--ib-acSoft);color:var(--ib-acText);font:600 11px 'Geist Mono',ui-monospace,monospace;vertical-align:1px}
 .ib-tag{display:inline-block;margin-left:8px;padding:1px 8px;border-radius:999px;font-size:11px;font-weight:800;vertical-align:1px}
 .ib-tag.warn{background:color-mix(in srgb,var(--ib-warn) 16%,transparent);color:var(--ib-warn)}
+.ib-due{color:var(--ib-warn);font-weight:700}
 .ib-person{display:flex;align-items:center;gap:8px;min-width:0}
 .ib-person b{font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .ib-face{flex:none;width:28px;height:28px;border-radius:50%;overflow:hidden;display:inline-grid}

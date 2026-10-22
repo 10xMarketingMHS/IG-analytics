@@ -8,7 +8,7 @@ import { relTime } from "@/lib/activity-meta";
 import { clockTime } from "@/lib/time-format";
 import { notifyTasksChanged } from "@/lib/task-events";
 import { attendanceAction } from "@/lib/use-attendance";
-import { cancelLeave, decideLeave, detailOf, fmtDates } from "@/lib/use-leave";
+import { cancelLeave, decideByWords, decideLeave, detailOf, fmtDates } from "@/lib/use-leave";
 import { useInbox, type InboxItem } from "@/lib/use-inbox";
 import type { Editor } from "@/lib/types";
 import "./inbox.css";
@@ -92,13 +92,15 @@ export function InboxPage() {
       case "leave": {
         const l = i.leave;
         what = <>{l.type} · {fmtDates(l)}{l.short && <span className="ib-tag warn">short notice</span>}</>;
+        // last month's: it must be decided before Management Performance closes the month
+        const due = decideByWords(l, sent ? "mine" : "manager");
         who = sent ? <Person name="A manager" kind="leave" /> : <Person name={i.name} imageUrl={i.imageUrl} kind="leave" />;
         const b = i.balance;
-        details = <>{l.reason ? <span>“{l.reason}”</span> : null}<span className="ib-faint">{detailOf(l)}{!sent && b ? ` · ${n1(b.left)} of ${n1(b.total)} ${l.type} left` : ""}</span></>;
+        details = <>{l.reason ? <span>“{l.reason}”</span> : null}{due ? <span className="ib-due">{due}</span> : null}<span className="ib-faint">{detailOf(l)}{!sent && b ? ` · ${n1(b.left)} of ${n1(b.total)} ${l.type} left` : ""}</span></>;
         acts = sent
           ? btn("Cancel", () => act(i.key, () => cancelLeave(l.id), "Request cancelled · balance given back."), "ghost")
           : <>{btn("Decline", () => act(i.key, () => decideLeave(l.id, false), "Leave declined · balance given back."), "ghost")}
-             {btn("Approve", () => act(i.key, () => decideLeave(l.id, true), `${i.name?.split(" ")[0]}'s ${l.type} approved.`), "good")}</>;
+             {l.decideBy !== "closed" && btn("Approve", () => act(i.key, () => decideLeave(l.id, true), `${i.name?.split(" ")[0]}'s ${l.type} approved.`), "good")}</>;
         break;
       }
       case "permission":

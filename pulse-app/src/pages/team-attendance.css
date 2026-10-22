@@ -60,6 +60,8 @@ html[data-theme="dark"] .ta{--ta-text3:#8b8b96;--ta-line2:rgba(255,255,255,.055)
 .ta-plan select,.ta-plan input{height:32px;padding:0 10px;border:1px solid var(--ta-line);border-radius:9px;background:var(--ta-panel);color:var(--ta-text);font:inherit}
 .ta-plan button{height:32px;padding:0 14px;border:0;border-radius:9px;background:var(--ta-acText);color:#fff;font:inherit;font-weight:700;cursor:pointer}
 .ta-plan button:disabled{opacity:.45;cursor:default}
+.ta-plan .ta-told{display:inline-flex;align-items:center;gap:6px;color:var(--ta-text);cursor:pointer;white-space:nowrap}
+.ta-plan .ta-told input{width:15px;height:15px;padding:0;margin:0;accent-color:var(--ta-acText)}
 @media (max-width:560px){.ta-plan{padding:10px 16px}.ta-plan select,.ta-plan input,.ta-plan button{flex:1 1 140px}}
 /* half-day absent (not in by the half-day time); a permission morning */
 .ta-cell.c-half_absent,.ta-legend .c-half_absent{background:linear-gradient(135deg,var(--ta-bad) 50%,var(--ta-sunk) 50%);box-shadow:none}
