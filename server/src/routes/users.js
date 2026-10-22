@@ -8,7 +8,7 @@ import { requirePermission } from "../permissions.js";
 import { logActivity } from "../activity.js";
 import { hasColumn } from "../schema-flags.js";
 import { superState, isSuperUser } from "../super-admin.js";
-import { forgetActive } from "../auth.js";
+import { forgetActive, issueSession } from "../auth.js";
 
 export const usersRouter = Router();
 
@@ -240,7 +240,11 @@ usersRouter.post("/users/me/password", async (req, res, next) => {
     if (currentPassword === newPassword) {
       return res.status(400).json({ error: "Choose a password different from your current one." });
     }
-    await pool.query("update app_user set password_hash = $2 where id = $1", [req.user.sub, await bcrypt.hash(newPassword, 10)]);
+    const hash = await bcrypt.hash(newPassword, 10);
+    await pool.query("update app_user set password_hash = $2 where id = $1", [req.user.sub, hash]);
+    // sessions signed in with the old password end; this one carries on
+    forgetActive(req.user.sub);
+    issueSession(res, { id: req.user.sub, email: req.user.email, password_hash: hash });
     res.status(204).end();
   } catch (err) {
     next(err);
@@ -330,7 +334,9 @@ usersRouter.patch("/users/:id", requireAdmin, async (req, res, next) => {
     const targetAdmin = currentRole === "admin" || targetSuper || (await adminLogin(req.orgId, targetId));
     const touchesAdmin = (role === "admin" && currentRole !== "admin") || superAdmin === true || (superAdmin === false && targetSuper)
       || (targetAdmin && !isSelf && (role !== undefined || active !== undefined || password !== undefined
-        || name !== undefined || editorId !== undefined));
+        || name !== undefined || editorId !== undefined))
+      // your own login's team member decides your position (your rank): not yours to change
+      || (isSelf && targetAdmin && editorId !== undefined);
     if (touchesAdmin && !(await isSuperUser(req.user.sub, st))) {
       return res.status(403).json({ error: SUPER_ONLY });
     }
@@ -350,14 +356,17 @@ usersRouter.patch("/users/:id", requireAdmin, async (req, res, next) => {
     const vals = [];
     if (active !== undefined) { vals.push(active); sets.push(`active = $${vals.length}`); }
     if (name !== undefined) { vals.push(name); sets.push(`name = $${vals.length}`); }
-    if (password) { vals.push(await bcrypt.hash(password, 10)); sets.push(`password_hash = $${vals.length}`); }
+    const newHash = password ? await bcrypt.hash(password, 10) : null;
+    if (newHash) { vals.push(newHash); sets.push(`password_hash = $${vals.length}`); }
     if (editorId !== undefined) { vals.push(editorId || null); sets.push(`editor_id = $${vals.length}`); }
     if (sets.length) {
       vals.push(targetId);
       await pool.query(`update app_user set ${sets.join(", ")} where id = $${vals.length}`, vals);
     }
-    // switched off (or back on): takes effect on their very next request
-    if (active !== undefined) forgetActive(targetId);
+    // switched off (or back on), or a new password: takes effect on their very
+    // next request (sessions signed in with the old password end)
+    if (active !== undefined || newHash) forgetActive(targetId);
+    if (newHash && isSelf) issueSession(res, { id: targetId, email: req.user.email, password_hash: newHash });
     if (password) {
       const { rows: who } = await pool.query("select coalesce(name, email) as n from app_user where id = $1", [targetId]);
       await logActivity({

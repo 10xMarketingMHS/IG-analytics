@@ -1,4 +1,5 @@
 import { Router } from "express";
+import crypto from "node:crypto";
 import jwt from "jsonwebtoken";
 import bcrypt from "bcryptjs";
 import { z } from "zod";
@@ -75,12 +76,7 @@ authRouter.post("/login", async (req, res, next) => {
       return res.status(403).json({ error: "This account has been deactivated." });
     }
 
-    const token = jwt.sign(
-      { sub: user.id, email: user.email },
-      config.JWT_SECRET,
-      { expiresIn: SESSION_TTL },
-    );
-    res.cookie(COOKIE_NAME, token, cookieOpts(7 * 24 * 60 * 60 * 1000));
+    issueSession(res, user);
     res.clearCookie(REAL_COOKIE);
     res.json({
       user: { id: user.id, email: user.email, editorId: user.editor_id, name: user.name, imageUrl: user.image_url, color: user.color },
@@ -237,23 +233,41 @@ authRouter.get("/me", async (req, res) => {
   }
 });
 
+// A session carries a fingerprint of the password it was signed in with (pv),
+// never the password or its hash: once the password changes, every session
+// made with the old one stops working. Sessions from before this have none and
+// run out as they did (7 days).
+const passPrint = (hash) => crypto.createHash("sha256").update(String(hash ?? "")).digest("base64url").slice(0, 16);
+export function issueSession(res, user) {
+  const token = jwt.sign(
+    { sub: user.id, email: user.email, pv: passPrint(user.password_hash) },
+    config.JWT_SECRET,
+    { expiresIn: SESSION_TTL },
+  );
+  res.cookie(COOKIE_NAME, token, cookieOpts(7 * 24 * 60 * 60 * 1000));
+}
+
 // A switched-off login stops working at once, not when its cookie runs out:
 // every request checks, and the answer is kept a few seconds. Switching a login
-// off or on (routes/users.js) forgets it straight away.
-const activeCache = new Map(); // userId -> { ok, exp }
+// off or on, or a new password (routes/users.js), forgets it straight away.
+const activeCache = new Map(); // userId -> { ok, pv, exp }
 const ACTIVE_TTL_MS = 15_000;
 export function forgetActive(userId) {
   if (userId) activeCache.delete(userId); else activeCache.clear();
 }
-export async function isActiveLogin(userId) {
+async function loginState(userId) {
   const hit = activeCache.get(userId);
-  if (hit && hit.exp > Date.now()) return hit.ok;
-  const { rows } = await pool.query("select active from app_user where id = $1", [userId]);
-  const ok = !!rows[0]?.active;
-  activeCache.set(userId, { ok, exp: Date.now() + ACTIVE_TTL_MS });
-  return ok;
+  if (hit && hit.exp > Date.now()) return hit;
+  const { rows } = await pool.query("select active, password_hash from app_user where id = $1", [userId]);
+  const st = { ok: !!rows[0]?.active, pv: passPrint(rows[0]?.password_hash), exp: Date.now() + ACTIVE_TTL_MS };
+  activeCache.set(userId, st);
+  return st;
+}
+export async function isActiveLogin(userId) {
+  return (await loginState(userId)).ok;
 }
 const SWITCHED_OFF = "This login has been switched off. Ask an admin if that's a mistake.";
+const VIEW_AS_CLOSED = /^\/api\/(chat(\/|\?|$)|integrations\/instagram\/(connect|callback))/;
 // The login behind a "view as" session: still switched on and still a Super Admin.
 async function stillSuper(userId) {
   const { rows } = await pool.query("select active, is_super_admin from app_user where id = $1", [userId]);
@@ -272,7 +286,9 @@ export async function requireAuth(req, res, next) {
     return res.status(401).json({ error: "Session expired" });
   }
   try {
-    if (!(await isActiveLogin(user.sub))) return res.status(401).json({ error: SWITCHED_OFF });
+    const st = await loginState(user.sub);
+    if (!st.ok) return res.status(401).json({ error: SWITCHED_OFF });
+    if (user.pv && user.pv !== st.pv) return res.status(401).json({ error: "Your password was changed. Sign in again." });
     // viewing as someone: only while the Super Admin who started it still is one
     if (user.actAs && !(await stillSuper(user.actAs))) return res.status(401).json({ error: "View as has ended. Sign in again." });
   } catch (err) {
@@ -282,6 +298,11 @@ export async function requireAuth(req, res, next) {
   // Viewing as someone is look-only: nothing may change under their name.
   if (req.user.actAs && !["GET", "HEAD", "OPTIONS"].includes(req.method)) {
     return res.status(403).json({ error: READ_ONLY, readOnly: true });
+  }
+  // …and their chat (DMs, private channels — whose reads also change things:
+  // joining #general, showing online) and connecting Instagram stay theirs.
+  if (req.user.actAs && VIEW_AS_CLOSED.test(req.originalUrl)) {
+    return res.status(403).json({ error: "Chat and connecting accounts are closed while you view as someone.", readOnly: true });
   }
   next();
 }
