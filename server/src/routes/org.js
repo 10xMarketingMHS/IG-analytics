@@ -80,12 +80,19 @@ orgRouter.patch("/org", requirePermission("edit_goals"), async (req, res, next) 
   }
   try {
     // The work calendar, the attendance penalties and who sees the team's
-    // attendance are the Super Admin's call. A save sends the whole card, so
-    // only what actually changes counts.
+    // attendance are the Super Admin's call. Only what actually changes
+    // counts. The calendar sent is laid over the saved one: a part left out
+    // (the holidays, say) stays as it is, never reset to the default.
+    let nextCal;
     if (d.calendar || d.attendance) {
       const cur = await readOrg(req.orgId);
       const superOnly = [];
-      if (d.calendar && Object.keys(d.calendar).some((k) => JSON.stringify(cur.calendar[k] ?? null) !== JSON.stringify(normalizeCalendar(d.calendar)[k] ?? null))) superOnly.push("the work calendar");
+      if (d.calendar) {
+        const was = normalizeCalendar(cur.calendar);
+        nextCal = normalizeCalendar({ ...was, ...d.calendar });
+        const keys = new Set([...Object.keys(was), ...Object.keys(nextCal)]);
+        if ([...keys].some((k) => JSON.stringify(was[k] ?? null) !== JSON.stringify(nextCal[k] ?? null))) superOnly.push("the work calendar");
+      }
       if (d.attendance && ["latePenaltyPts", "absentPenaltyPts", "deductCapacity"].some((k) => cur.attendance[k] !== d.attendance[k])) superOnly.push("the attendance penalties");
       if (d.attendance?.teamView && ["manager", "asstManager", "teamLead"].some((k) => cur.attendance.teamView[k] !== d.attendance.teamView[k])) superOnly.push("who sees the team's attendance");
       if (superOnly.length && !(await isSuperHere(req))) {
@@ -115,7 +122,7 @@ orgRouter.patch("/org", requirePermission("edit_goals"), async (req, res, next) 
       }
       const patch = {};
       if (d.weekStart !== undefined) patch.weekStart = d.weekStart;
-      if (d.calendar !== undefined) patch.calendar = normalizeCalendar(d.calendar);
+      if (d.calendar !== undefined) patch.calendar = nextCal;
       await pool.query("update org set settings = coalesce(settings, '{}'::jsonb) || $2::jsonb where id = $1", [req.orgId, JSON.stringify(patch)]);
       // Attendance merges, so the date attendance started (since) is kept.
       if (d.attendance !== undefined) {

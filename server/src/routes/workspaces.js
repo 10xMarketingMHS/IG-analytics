@@ -1,6 +1,7 @@
 import { Router } from "express";
 import { z } from "zod";
 import { pool } from "../db.js";
+import { hasColumn } from "../schema-flags.js";
 import { createWorkspace } from "../bootstrap.js";
 import { logActivity } from "../activity.js";
 import { requirePermission } from "../permissions.js";
@@ -144,6 +145,23 @@ workspacesRouter.delete("/workspaces/:id", resolveWorkspace, requirePermission("
     if (!other) {
       await client.query("ROLLBACK");
       return res.status(409).json({ error: "This is your only channel — you can't delete it." });
+    }
+    // The Super Admin's only admin role must not go with it (they'd lose the
+    // Super Admin settings).
+    if (await hasColumn("app_user", "is_super_admin")) {
+      const { rows: only } = await client.query(
+        `select 1 from app_user u
+          where u.is_super_admin
+            and exists (select 1 from membership m where m.user_id = u.id and m.workspace_id = $1 and m.role = 'admin')
+            and not exists (select 1 from membership m join workspace w on w.id = m.workspace_id
+                             where m.user_id = u.id and m.role = 'admin' and w.org_id = $2 and m.workspace_id <> $1)
+          limit 1`,
+        [ws.id, ws.org_id],
+      );
+      if (only.length) {
+        await client.query("ROLLBACK");
+        return res.status(409).json({ error: "This channel holds the Super Admin's admin role. Make them an admin of another channel first." });
+      }
     }
     // Editors are the org's shared team (NOT NULL workspace_id cascades) — move
     // them to another channel so they survive.

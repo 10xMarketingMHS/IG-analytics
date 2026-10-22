@@ -78,6 +78,9 @@ accessRouter.put("/access/grants", manageAccess, async (req, res, next) => {
   const parsed = SaveSchema.safeParse(req.body);
   if (!parsed.success) return res.status(400).json({ error: "Invalid grant payload." });
   const { userId, permissions, assignScope } = parsed.data;
+  // never your own: someone given Access management could otherwise give
+  // themselves every other grant
+  if (userId === req.user.sub) return res.status(403).json({ error: "You can't change your own access. The Super Admin does." });
   try {
     // Target must be a member of this workspace, and not an admin — grants are
     // meaningless for admins (they already have everything).

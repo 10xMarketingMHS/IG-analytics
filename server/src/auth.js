@@ -6,6 +6,7 @@ import { config } from "./config.js";
 import { pool } from "./db.js";
 import { logActivity } from "./activity.js";
 import { hasColumn } from "./schema-flags.js";
+import { attemptLimiter } from "./attempts.js";
 
 const COOKIE_NAME = "pulse_session";
 const SESSION_TTL = "7d";
@@ -27,8 +28,21 @@ const readToken = (token) => { try { return jwt.verify(token, config.JWT_SECRET)
 
 const LoginSchema = z.object({
   email: z.string().email(),
-  password: z.string().min(1),
+  password: z.string().min(1).max(200),
 });
+
+// Wrong passwords: 8 for one email from one address, or 40 from one address,
+// within 15 minutes, then a wait. Forgot password: 3 asks for one email, or 10
+// from one address, an hour.
+const logins = attemptLimiter({ windowMs: 15 * 60_000, perEmail: 8, perAddress: 40 });
+const forgots = attemptLimiter({ windowMs: 60 * 60_000, perEmail: 3, perAddress: 10 });
+const addressOf = (req) => req.ip || req.socket?.remoteAddress || "?";
+const tooMany = (res, minutes, what) =>
+  res.status(429).json({ error: `Too many ${what}. Try again in ${minutes} minute${minutes === 1 ? "" : "s"}.` });
+// A real bcrypt hash (same cost as stored ones) to check a password against
+// when the email has no login, so the answer takes as long either way and
+// doesn't show which emails exist.
+const NO_LOGIN_HASH = bcrypt.hashSync("pulse-no-such-login", 10);
 
 export const authRouter = Router();
 
@@ -38,6 +52,9 @@ authRouter.post("/login", async (req, res, next) => {
     return res.status(400).json({ error: "Enter a valid email and password." });
   }
   const { email, password } = parsed.data;
+  const ip = addressOf(req);
+  const wait = logins.wait(ip, email);
+  if (wait) return tooMany(res, wait, "sign-in attempts");
 
   try {
     const { rows } = await pool.query(
@@ -45,14 +62,15 @@ authRouter.post("/login", async (req, res, next) => {
       [email],
     );
     const user = rows[0];
-    // Compare against a dummy hash when the user is missing so timing doesn't
-    // reveal whether the email exists.
-    const hash = user?.password_hash ?? "$2a$10$invalidinvalidinvalidinvalidinvalidinvalidinva";
-    const ok = await bcrypt.compare(password, hash);
+    // No login with that email: still a full password check, so the answer
+    // takes as long and doesn't reveal whether the email exists.
+    const ok = await bcrypt.compare(password, user?.password_hash ?? NO_LOGIN_HASH);
 
     if (!user || !ok) {
+      logins.count(ip, email);
       return res.status(401).json({ error: "Invalid login credentials" });
     }
+    logins.clear(ip, email);
     if (!user.active) {
       return res.status(403).json({ error: "This account has been deactivated." });
     }
@@ -82,6 +100,10 @@ authRouter.post("/forgot", async (req, res, next) => {
   if (!z.string().email().safeParse(email).success) {
     return res.status(400).json({ error: "Enter the email you sign in with." });
   }
+  const ip = addressOf(req);
+  const wait = forgots.wait(ip, email);
+  if (wait) return tooMany(res, wait, "requests");
+  forgots.count(ip, email);
   try {
     const { rows } = await pool.query(
       "select id, email, active from app_user where lower(email) = lower($1)",
@@ -151,7 +173,8 @@ authRouter.post("/view-as", async (req, res, next) => {
     if (!who.active) return res.status(409).json({ error: `${who.name}'s login is deactivated.` });
 
     const borrowed = jwt.sign({ sub: who.id, email: who.email, actAs: me.sub }, config.JWT_SECRET, { expiresIn: VIEW_AS_TTL_MS / 1000 });
-    res.cookie(REAL_COOKIE, req.cookies[COOKIE_NAME], cookieOpts(7 * 24 * 60 * 60 * 1000));
+    // your own session is kept only as long as the borrowed one lasts
+    res.cookie(REAL_COOKIE, req.cookies[COOKIE_NAME], cookieOpts(VIEW_AS_TTL_MS));
     res.cookie(COOKIE_NAME, borrowed, cookieOpts(VIEW_AS_TTL_MS));
     await logActivity({
       orgId: who.org_id, actorId: me.sub, verb: "view_as",
@@ -164,13 +187,15 @@ authRouter.post("/view-as", async (req, res, next) => {
   }
 });
 
-// Back to yourself: your own session returns; the borrowed one ends. If yours
-// has expired meanwhile, both go and you sign in again.
+// Back to yourself: your own session returns; the borrowed one ends. Only from
+// a borrowed session that's still live and was started from that same session:
+// once it has expired (someone else at that browser later), or with anyone
+// else's sign-in, both go and you sign in again.
 authRouter.post("/view-as/stop", (req, res) => {
   const cur = readToken(req.cookies?.[COOKIE_NAME]);
   const real = readToken(req.cookies?.[REAL_COOKIE]);
   res.clearCookie(REAL_COOKIE);
-  if (real && (!cur || !cur.actAs || cur.actAs === real.sub)) {
+  if (real && cur?.actAs && cur.actAs === real.sub) {
     res.cookie(COOKIE_NAME, req.cookies[REAL_COOKIE], cookieOpts(7 * 24 * 60 * 60 * 1000));
     return res.json({ ok: true });
   }
@@ -229,6 +254,11 @@ export async function isActiveLogin(userId) {
   return ok;
 }
 const SWITCHED_OFF = "This login has been switched off. Ask an admin if that's a mistake.";
+// The login behind a "view as" session: still switched on and still a Super Admin.
+async function stillSuper(userId) {
+  const { rows } = await pool.query("select active, is_super_admin from app_user where id = $1", [userId]);
+  return !!rows[0]?.active && !!rows[0]?.is_super_admin;
+}
 
 export async function requireAuth(req, res, next) {
   // mounted with every router (index.js): checked once per request
@@ -243,6 +273,8 @@ export async function requireAuth(req, res, next) {
   }
   try {
     if (!(await isActiveLogin(user.sub))) return res.status(401).json({ error: SWITCHED_OFF });
+    // viewing as someone: only while the Super Admin who started it still is one
+    if (user.actAs && !(await stillSuper(user.actAs))) return res.status(401).json({ error: "View as has ended. Sign in again." });
   } catch (err) {
     return next(err);
   }
