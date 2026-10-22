@@ -934,6 +934,11 @@ tasksRouter.patch("/tasks/:id", requireEditor, requireActiveEod, async (req, res
         sets.push("points_at_done = coalesce(task.points_at_done, (select cf.points from task_content_format cf where cf.id = task.content_format_id))");
       }
     }
+    // the status it already has (a second tap, or someone else got there first)
+    if (!sets.length && d.status !== undefined && d.status === prior.status) {
+      const words = { todo: "to do", in_progress: "in progress", review: "in review", done: "done" };
+      return res.status(409).json({ error: `This task is already ${words[prior.status] ?? prior.status}.` });
+    }
     if (!sets.length) return res.status(400).json({ error: "No fields to update" });
 
     // A status change counts only from the status it was read in: two people
