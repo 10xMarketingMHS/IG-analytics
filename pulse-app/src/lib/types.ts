@@ -311,7 +311,9 @@ export type ActivityVerb =
   | "attendance_check_in" | "attendance_no_sod" | "attendance_nudge" | "attendance_marked" | "attendance_excused"
   | "attendance_undone" | "attendance_correction" | "attendance_correction_answered"
   // Hand over (components/handover.tsx)
-  | "handover_offered" | "handover_accepted" | "handover_declined" | "handover_cancelled" | "handover_escalated" | "handover_moved";
+  | "handover_offered" | "handover_accepted" | "handover_declined" | "handover_cancelled" | "handover_escalated" | "handover_moved"
+  // Leave: CL and SL (components/leave-ask.tsx)
+  | "leave_asked" | "leave_approved" | "leave_declined" | "leave_cancelled" | "leave_cl_set";
 
 export type Activity = {
   id: string;

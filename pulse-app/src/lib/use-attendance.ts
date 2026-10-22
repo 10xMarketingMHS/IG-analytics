@@ -16,6 +16,8 @@ export type AttRow = {
   markedBy: string | null; autoMarked: boolean; reason: string | null;
   alertSentAt: string | null; nudgedAt: string | null;
   correctionAt: string | null; correctionNote: string | null; correctionStatus: "pending" | "approved" | "declined" | null;
+  // a day of approved leave: which leave, CL or SL, and whether it was short notice
+  leaveId?: string | null; leaveKind?: LeaveKind | null; shortNotice?: boolean;
 };
 export type AttSettings = {
   requireSod: boolean; graceMinutes: number; noSodAlertAt: string; autoAbsentAt: string; autoAbsentEnabled: boolean;
@@ -23,6 +25,8 @@ export type AttSettings = {
   halfDayAt?: string;
   // permissions a month (morning: come in late; evening: leave early)
   permissionsPerMonth?: number;
+  // CL applied for fewer days ahead is short notice
+  clNoticeDays?: number;
   requireEodNote: boolean; allowCorrections: boolean; latePenaltyPts: number; absentPenaltyPts: number; deductCapacity: boolean;
   // Who besides admins sees the whole team's attendance, by position.
   teamView?: TeamView;
@@ -39,6 +43,8 @@ export type TeamPerson = {
   status: ShownStatus; row: AttRow | null; penalty: number;
   // permission requests waiting for a lead
   permissionRequests?: PermissionRequest[];
+  // leave waiting for a lead
+  leaveRequests?: Leave[];
 };
 export type AttToday = {
   date: string; now: string; opening: string | null; closing: string | null;
@@ -46,7 +52,21 @@ export type AttToday = {
   checksIn: boolean; me: AttRow | null; team: TeamPerson[] | null;
   // yours this month (null before the database has permissions)
   permissions?: { perMonth: number; left: number; mine: Permission[] } | null;
+  // yours this year (null before the database has leave)
+  leave?: MyLeave | null;
 };
+
+// Leave (server/src/leave.js): CL, casual leave — each person has their own
+// number a calendar year, applied for ahead (short notice otherwise), unpaid
+// past the year's number — and SL, sick leave, any time, no limit.
+export type LeaveKind = "cl" | "sl";
+export type Leave = {
+  id: string; editorId: string; kind: LeaveKind; dates: string[]; half: boolean; shortNotice: boolean;
+  status: "requested" | "approved" | "declined" | "cancelled"; note: string | null;
+};
+// perYear: null when no number was set (counts as 0)
+export type LeaveYear = { perYear: number | null; cl: number; unpaid: number; sl: number; waitingCl: number; waitingSl: number };
+export type MyLeave = LeaveYear & { year: number; noticeDays: number; mine: Leave[] };
 
 // The last answer is kept for this tab (today only), so Home shows your day
 // at once and refreshes it in the background instead of waiting on the server.
@@ -101,6 +121,30 @@ export const minutesOf = (hhmm: string) => {
   const [h, m] = hhmm.split(":").map(Number);
   return (h || 0) * 60 + (m || 0);
 };
+
+// Apply for leave; your lead approves it.
+export async function applyLeave(body: { kind: LeaveKind; from: string; to?: string; half?: boolean; note?: string }) {
+  const d = await api<{ leave: Leave }>("/attendance/leave", { method: "POST", body: JSON.stringify(body) });
+  window.dispatchEvent(new Event("pulse:attendance-changed"));
+  return d.leave;
+}
+// Take back your own leave (still waiting, or approved and not started).
+export async function cancelMyLeave(id: string) {
+  await api(`/attendance/leave/${id}/cancel`, { method: "POST" });
+  window.dispatchEvent(new Event("pulse:attendance-changed"));
+}
+// A lead's answer to a leave request, or taking a leave back.
+export async function leaveAction(editorId: string, id: string, action: "approve" | "decline" | "cancel") {
+  await api(`/attendance/${editorId}/leave/${id}`, { method: "POST", body: JSON.stringify({ action }) });
+  window.dispatchEvent(new Event("pulse:attendance-changed"));
+}
+// "CL · 24 Oct" or "SL · 24 – 26 Oct (3 days)", "· half day".
+export function leaveWords(l: Pick<Leave, "kind" | "dates" | "half">) {
+  const f = (d: string) => new Date(`${d}T12:00:00`).toLocaleDateString("en-IN", { day: "numeric", month: "short" });
+  const n = l.dates.length;
+  const span = n === 1 ? f(l.dates[0]) : `${f(l.dates[0])} – ${f(l.dates[n - 1])} (${n} days)`;
+  return `${l.kind === "cl" ? "CL" : "SL"} · ${span}${l.half ? " · half day" : ""}`;
+}
 
 // Ask ahead for a morning (come in late) or evening (leave early) permission.
 export async function askPermission(date: string, part: "morning" | "evening", note?: string) {

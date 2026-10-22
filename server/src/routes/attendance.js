@@ -9,6 +9,11 @@ import {
   applyEveningPermission, applyMorningPermission, attendancePeople, giveBackPermission, attendanceReady, callerScope, canSee, classify, closingFor,
   istAt, istNow, minutesOf, openingFor, penaltyOf, permissionsReady, permissionsThisMonth, readSettings, syncAttendance, weekdayOf,
 } from "../attendance.js";
+import {
+  addDays, clashingLeave, clearLeaveDays, daysBetween, dropLeaveDay, isShortNotice, leaveById, leaveOf, leaveReady,
+  leaveWords, leaveYear, waitingLeave, workingDays, writeLeaveDays,
+} from "../leave.js";
+import { isSuperHere } from "../super-admin.js";
 
 // Attendance — Start day / End day for team members, and Team today /
 // Team › Attendance for their leads and managers. Rules: attendance.js.
@@ -20,13 +25,19 @@ const ROW_COLS = `id, editor_id as "editorId", date::text as date, check_in_at a
   marked_by as "markedBy", auto_marked as "autoMarked", reason, alert_sent_at as "alertSentAt", nudged_at as "nudgedAt",
   correction_at as "correctionAt", correction_note as "correctionNote", correction_status as "correctionStatus"`;
 
+// with the leave columns once the database has them (20261030120000_leave)
+const LEAVE_ROW_COLS = `, leave_id as "leaveId", leave_kind as "leaveKind", short_notice as "shortNotice"`;
+const rowCols = async () => ROW_COLS + ((await leaveReady()) ? LEAVE_ROW_COLS : "");
+const LEAVE_DB = "Leave needs a database update first — ask whoever runs the database to apply 20261030120000_leave.";
+const fmtDay = (d) => new Date(`${d}T12:00:00Z`).toLocaleDateString("en-IN", { day: "numeric", month: "short", timeZone: "UTC" });
+
 async function ready(res) {
   if (await attendanceReady()) return true;
   res.status(409).json({ error: NEEDS_DB });
   return false;
 }
 async function rowFor(editorId, ymd) {
-  const { rows } = await pool.query(`select ${ROW_COLS} from attendance where editor_id = $1 and date = $2`, [editorId, ymd]);
+  const { rows } = await pool.query(`select ${await rowCols()} from attendance where editor_id = $1 and date = $2`, [editorId, ymd]);
   return rows[0] ?? null;
 }
 // What a row (or its absence) shows as right now: the stored status, or
@@ -62,7 +73,7 @@ attendanceRouter.get("/attendance/today", async (req, res, next) => {
     const [me, teamRows] = await Promise.all([
       checksIn ? rowFor(caller.editorId, today.ymd) : Promise.resolve(null),
       ids.length
-        ? pool.query(`select ${ROW_COLS} from attendance where editor_id = any($1::uuid[]) and date = $2`, [ids, today.ymd])
+        ? pool.query(`select ${await rowCols()} from attendance where editor_id = any($1::uuid[]) and date = $2`, [ids, today.ymd])
         : Promise.resolve({ rows: [] }),
     ]);
 
@@ -78,17 +89,30 @@ attendanceRouter.get("/attendance/today", async (req, res, next) => {
         )
         : Promise.resolve({ rows: [] }),
     ]);
+    // Leave: yours (this year's CL, what's booked) and requests waiting for a lead.
+    const leaveOn = await leaveReady();
+    const year = Number(today.ymd.slice(0, 4));
+    const [myLeave, myYear, waitingLv] = leaveOn
+      ? await Promise.all([
+        checksIn ? leaveOf(caller.editorId, today.ymd) : [],
+        checksIn ? leaveYear([caller.editorId], year) : new Map(),
+        caller.scope !== "self" ? waitingLeave(ids) : [],
+      ])
+      : [[], new Map(), []];
     let team = null;
     if (caller.scope !== "self") {
       const byId = new Map(teamRows.rows.map((r) => [r.editorId, r]));
       const askedBy = new Map();
       for (const w of waitingPerms.rows) { if (!askedBy.has(w.editorId)) askedBy.set(w.editorId, []); askedBy.get(w.editorId).push(w); }
+      const leaveBy = new Map();
+      for (const l of waitingLv) { if (!leaveBy.has(l.editorId)) leaveBy.set(l.editorId, []); leaveBy.get(l.editorId).push(l); }
       team = mine.map((p) => {
         const r = byId.get(p.id) ?? null;
         return {
           editorId: p.id, name: p.name, imageUrl: p.imageUrl, designation: p.designation,
           status: shownStatus(r), row: r, penalty: penaltyOf(r, att),
           permissionRequests: askedBy.get(p.id) ?? [],
+          leaveRequests: leaveBy.get(p.id) ?? [],
         };
       });
     }
@@ -98,6 +122,7 @@ attendanceRouter.get("/attendance/today", async (req, res, next) => {
       settings: att, role: caller.role, scope: caller.scope,
       checksIn, me, team,
       permissions: permReady ? { perMonth: att.permissionsPerMonth, mine: myPerms, left: Math.max(0, att.permissionsPerMonth - myPerms.length) } : null,
+      leave: leaveOn && checksIn ? { year, noticeDays: att.clNoticeDays, ...myYear.get(caller.editorId), mine: myLeave } : null,
     });
   } catch (err) { next(err); }
 });
@@ -353,6 +378,8 @@ const MARK_WORDS = { working: "working now", half_day: "on half-day leave", leav
 attendanceRouter.post("/attendance/:editorId/mark", async (req, res, next) => {
   const parsed = z.object({
     as: z.enum(["working", "half_day", "leave", "absent"]),
+    // leave or a half day: CL or SL (leave.js)
+    kind: z.enum(["cl", "sl"]).optional(),
     reason: z.string().trim().max(300).optional(),
     // another day: leave or half day, planned ahead or fixed afterwards
     date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
@@ -374,8 +401,26 @@ attendanceRouter.post("/attendance/:editorId/mark", async (req, res, next) => {
       if (worked.length && parsed.data.as === "leave") return res.status(409).json({ error: "They checked in that day, so it can't be leave." });
     }
     // only working days (not Sundays, a Saturday off, or a holiday)
-    const { cal } = await readSettings(req.orgId);
+    const { cal, att } = await readSettings(req.orgId);
     if (!openingFor(cal, day)) return res.status(400).json({ error: "That isn't a working day." });
+    const kind = parsed.data.kind;
+    if (kind && (parsed.data.as === "leave" || parsed.data.as === "half_day") && (await leaveReady())) {
+      // Booked as an approved leave; a lead's mark is the asking, so CL marked
+      // fewer than the notice days ahead is short notice.
+      const clash = await clashingLeave(t.editorId, [day]);
+      if (clash) return res.status(409).json({ error: `${t.name} already has leave on ${fmtDay(clash)} — take it off first.` });
+      const half = parsed.data.as === "half_day";
+      const shortNotice = isShortNotice(kind, day, t.today.ymd, att.clNoticeDays);
+      const { rows: made } = await pool.query(
+        `insert into leave_request (org_id, editor_id, kind, dates, half, short_notice, status, note, asked_by, decided_by, decided_at)
+         values ($1, $2, $3, $4::date[], $5, $6, 'approved', $7, $8, $8, now()) returning id`,
+        [req.orgId, t.editorId, kind, [day], half, shortNotice, parsed.data.reason || null, req.user.sub],
+      );
+      const leave = await leaveById(made[0].id);
+      await writeLeaveDays(req.orgId, leave, req.user.sub);
+      await audit(req, t, "attendance_marked", `Marked ${t.name}: ${leaveWords(leave)}${shortNotice ? " · short notice" : ""}`, { as: parsed.data.as, kind, date: day });
+      return res.json({ attendance: await rowFor(t.editorId, day) });
+    }
     const status = MARKS[parsed.data.as];
     await pool.query(
       `insert into attendance (org_id, editor_id, date, status, marked_by, reason, auto_marked)
@@ -388,6 +433,13 @@ attendanceRouter.post("/attendance/:editorId/mark", async (req, res, next) => {
     res.json({ attendance: await rowFor(t.editorId, day) });
   } catch (err) { next(err); }
 });
+
+// One day of a leave undone: the leave keeps its other days, and the row is
+// no longer a leave day (the undo below then sets it right).
+async function takeOffLeaveDay(row, ymd) {
+  await dropLeaveDay(row.leaveId, ymd);
+  await pool.query("update attendance set leave_id = null, leave_kind = null, short_notice = false where id = $1", [row.id]);
+}
 
 // POST /attendance/:editorId/undo — takes back a lead's mark or excuse; the day
 // goes back to what the rules say.
@@ -406,6 +458,7 @@ attendanceRouter.post("/attendance/:editorId/undo", async (req, res, next) => {
       if (!other?.markedBy || !["leave", "half_day"].includes(other.status)) {
         return res.status(400).json({ error: "There's no leave a lead marked on that day." });
       }
+      if (other.leaveId) await takeOffLeaveDay(other, day);
       const { cal: dayCal, att: dayAtt } = await readSettings(req.orgId);
       if (other.checkInAt) {
         const c = classify(other.checkInAt, day, dayCal, dayAtt);
@@ -422,6 +475,7 @@ attendanceRouter.post("/attendance/:editorId/undo", async (req, res, next) => {
     }
     const row = await rowFor(t.editorId, t.today.ymd);
     if (!row?.markedBy) return res.status(400).json({ error: "There's nothing a lead marked to undo." });
+    if (row.leaveId) await takeOffLeaveDay(row, t.today.ymd);
     const { cal, att } = await readSettings(req.orgId);
     if (row.checkInAt) {
       const c = classify(row.checkInAt, t.today.ymd, cal, att);
@@ -523,6 +577,168 @@ attendanceRouter.post("/attendance/:editorId/permission", async (req, res, next)
   } catch (err) { next(err); }
 });
 
+// ---- Leave: CL and SL (leave.js) ----
+
+// POST /attendance/leave { kind, from, to, half, note } — apply for leave; a
+// lead approves it. CL from today on (short notice when fewer than the notice
+// days ahead); SL any time, up to a week back.
+attendanceRouter.post("/attendance/leave", async (req, res, next) => {
+  const YMD = z.string().regex(/^\d{4}-\d{2}-\d{2}$/);
+  const parsed = z.object({
+    kind: z.enum(["cl", "sl"]), from: YMD, to: YMD.optional(), half: z.boolean().optional(),
+    note: z.string().trim().max(300).optional(),
+  }).safeParse(req.body ?? {});
+  if (!parsed.success) return res.status(400).json({ error: "Pick CL or SL and the days." });
+  try {
+    if (!(await ready(res))) return;
+    if (!(await leaveReady())) return res.status(409).json({ error: LEAVE_DB });
+    const caller = await callerScope(req);
+    if (!caller.editorId) return res.status(400).json({ error: "Your account isn't linked to a team member." });
+    const { kind, from } = parsed.data;
+    const to = parsed.data.to ?? from;
+    const half = !!parsed.data.half;
+    const today = istNow().ymd;
+    if (to < from) return res.status(400).json({ error: "The last day is before the first." });
+    if (half && from !== to) return res.status(400).json({ error: "A half day is one day." });
+    if (daysBetween(from, to) > 30) return res.status(400).json({ error: "Apply for up to a month at a time." });
+    if (from < (kind === "sl" ? addDays(today, -7) : today)) {
+      return res.status(400).json({ error: kind === "sl" ? "SL can go back a week at most." : "CL can't be for a day that's gone." });
+    }
+    if (to > addDays(today, 120)) return res.status(400).json({ error: "Pick days within the next four months." });
+    const { cal, att } = await readSettings(req.orgId);
+    const dates = workingDays(cal, from, to);
+    if (!dates.length) return res.status(400).json({ error: "There are no working days in that range." });
+    const clash = await clashingLeave(caller.editorId, dates);
+    if (clash) return res.status(409).json({ error: `You already have leave on ${fmtDay(clash)}.` });
+    if (!half) {
+      const { rows: worked } = await pool.query(
+        "select date::text as date from attendance where editor_id = $1 and date = any($2::date[]) and check_in_at is not null order by date limit 1",
+        [caller.editorId, dates],
+      );
+      if (worked.length) return res.status(409).json({ error: `You worked on ${fmtDay(worked[0].date)}, so it can't be a full day of leave.` });
+    }
+    const shortNotice = isShortNotice(kind, dates[0], today, att.clNoticeDays);
+    const { rows } = await pool.query(
+      `insert into leave_request (org_id, editor_id, kind, dates, half, short_notice, status, note, asked_by)
+       values ($1, $2, $3, $4::date[], $5, $6, 'requested', $7, $8) returning id`,
+      [req.orgId, caller.editorId, kind, dates, half, shortNotice, parsed.data.note || null, req.user.sub],
+    );
+    const leave = await leaveById(rows[0].id);
+    const { rows: who } = await pool.query("select name from editor where id = $1", [caller.editorId]);
+    await logActivity({
+      orgId: req.orgId, actorId: req.user.sub, verb: "leave_asked", entityType: "editor", entityId: caller.editorId,
+      summary: `${who[0]?.name ?? "Someone"} applied for ${leaveWords(leave)}${shortNotice ? " · short notice" : ""}`,
+      meta: { leaveId: leave.id, kind, dates },
+    });
+    res.status(201).json({ leave });
+  } catch (err) { next(err); }
+});
+
+// POST /attendance/leave/:id/cancel — take back your own leave: one still
+// waiting, or an approved one that hasn't started.
+attendanceRouter.post("/attendance/leave/:id/cancel", async (req, res, next) => {
+  try {
+    if (!(await ready(res))) return;
+    if (!(await leaveReady())) return res.status(409).json({ error: LEAVE_DB });
+    const caller = await callerScope(req);
+    const leave = z.string().uuid().safeParse(req.params.id).success ? await leaveById(req.params.id) : null;
+    if (!leave || leave.orgId !== req.orgId || !caller.editorId || leave.editorId !== caller.editorId) {
+      return res.status(404).json({ error: "Leave not found." });
+    }
+    if (leave.status !== "requested" && leave.status !== "approved") return res.status(409).json({ error: "That leave is already closed." });
+    if (leave.status === "approved" && leave.dates[0] <= istNow().ymd) {
+      return res.status(409).json({ error: "It has started — ask your lead to change it." });
+    }
+    await pool.query("update leave_request set status = 'cancelled' where id = $1", [leave.id]);
+    if (leave.status === "approved") {
+      const { cal, att } = await readSettings(req.orgId);
+      await clearLeaveDays(leave.id, cal, att);
+    }
+    const { rows: who } = await pool.query("select name from editor where id = $1", [caller.editorId]);
+    await logActivity({
+      orgId: req.orgId, actorId: req.user.sub, verb: "leave_cancelled", entityType: "editor", entityId: caller.editorId,
+      summary: `${who[0]?.name ?? "Someone"} cancelled their ${leaveWords(leave)}`, meta: { leaveId: leave.id },
+    });
+    res.json({ ok: true });
+  } catch (err) { next(err); }
+});
+
+// POST /attendance/:editorId/leave/:id { action } — a lead's answer to a
+// request (approve / decline), or taking a leave back (cancel).
+attendanceRouter.post("/attendance/:editorId/leave/:id", async (req, res, next) => {
+  const parsed = z.object({ action: z.enum(["approve", "decline", "cancel"]) }).safeParse(req.body ?? {});
+  if (!parsed.success || !z.string().uuid().safeParse(req.params.id).success) return res.status(400).json({ error: "Approve, decline or cancel." });
+  try {
+    const t = await leadTarget(req, res);
+    if (!t) return;
+    if (!(await leaveReady())) return res.status(409).json({ error: LEAVE_DB });
+    const leave = await leaveById(req.params.id);
+    if (!leave || leave.editorId !== t.editorId) return res.status(404).json({ error: "Leave not found." });
+    const { action } = parsed.data;
+    const { cal, att } = await readSettings(req.orgId);
+    if (action === "cancel") {
+      const { rowCount } = await pool.query(
+        "update leave_request set status = 'cancelled' where id = $1 and status in ('requested', 'approved')", [leave.id],
+      );
+      if (!rowCount) return res.status(409).json({ error: "That leave is already closed." });
+      if (leave.status === "approved") await clearLeaveDays(leave.id, cal, att);
+      await audit(req, t, "leave_cancelled", `Took back ${t.name}'s ${leaveWords(leave)}`, { leaveId: leave.id });
+      return res.json({ ok: true });
+    }
+    const { rowCount } = await pool.query(
+      "update leave_request set status = $2, decided_by = $3, decided_at = now() where id = $1 and status = 'requested'",
+      [leave.id, action === "approve" ? "approved" : "declined", req.user.sub],
+    );
+    if (!rowCount) return res.status(400).json({ error: "There's no request waiting." });
+    if (action === "approve") await writeLeaveDays(req.orgId, leave, req.user.sub);
+    await audit(req, t, action === "approve" ? "leave_approved" : "leave_declined",
+      `${action === "approve" ? "Approved" : "Declined"} ${t.name}'s ${leaveWords(leave)}${leave.shortNotice ? " · short notice" : ""}`, { leaveId: leave.id });
+    res.json({ ok: true });
+  } catch (err) { next(err); }
+});
+
+// GET /attendance/leave-balances?year= — each person's leave for the year:
+// their CL, CL taken, unpaid days, SL taken and what's waiting. Leads and
+// managers see everyone; anyone else their own.
+attendanceRouter.get("/attendance/leave-balances", async (req, res, next) => {
+  try {
+    if (!(await ready(res))) return;
+    const today = istNow();
+    const year = /^\d{4}$/.test(String(req.query.year || "")) ? Number(req.query.year) : Number(today.ymd.slice(0, 4));
+    const [caller, { att }, people, superHere, on] = await Promise.all([
+      callerScope(req), readSettings(req.orgId), attendancePeople(req.orgId), isSuperHere(req), leaveReady(),
+    ]);
+    // ?self=1 (My profile): just your own row, whatever you can see.
+    const shown = req.query.self === "1" || caller.scope === "self" ? people.filter((p) => p.id === caller.editorId) : people;
+    const byId = await leaveYear(shown.map((p) => p.id), year);
+    res.json({
+      ready: on, year, noticeDays: att.clNoticeDays, canSetCl: superHere && on,
+      rows: shown.map((p) => ({ editorId: p.id, name: p.name, imageUrl: p.imageUrl, designation: p.designation, ...byId.get(p.id) })),
+    });
+  } catch (err) { next(err); }
+});
+
+// PUT /attendance/:editorId/cl { perYear } — someone's CL a year: any number
+// (halves allowed), or null for none set. A Super Admin only.
+attendanceRouter.put("/attendance/:editorId/cl", async (req, res, next) => {
+  const parsed = z.object({ perYear: z.number().min(0).max(60).multipleOf(0.5).nullable() }).safeParse(req.body ?? {});
+  if (!parsed.success) return res.status(400).json({ error: "CL a year is a number from 0 to 60 (halves allowed)." });
+  try {
+    if (!(await isSuperHere(req))) return res.status(403).json({ error: "Only a Super Admin can set someone's CL." });
+    if (!(await leaveReady())) return res.status(409).json({ error: LEAVE_DB });
+    const { rows } = await pool.query(
+      "update editor set cl_per_year = $3 where id = $1 and org_id = $2 returning name", [req.params.editorId, req.orgId, parsed.data.perYear],
+    );
+    if (!rows.length) return res.status(404).json({ error: "Team member not found." });
+    await logActivity({
+      orgId: req.orgId, actorId: req.user.sub, verb: "leave_cl_set", entityType: "editor", entityId: req.params.editorId,
+      summary: parsed.data.perYear == null ? `Cleared ${rows[0].name}'s CL a year` : `Set ${rows[0].name}'s CL to ${parsed.data.perYear} a year`,
+      meta: { perYear: parsed.data.perYear },
+    });
+    res.json({ ok: true });
+  } catch (err) { next(err); }
+});
+
 // POST /attendance/:editorId/correction { approve } — the lead's answer to a
 // correction request.
 attendanceRouter.post("/attendance/:editorId/correction", async (req, res, next) => {
@@ -591,9 +807,10 @@ attendanceRouter.get("/attendance/month", async (req, res, next) => {
     });
     const ids = shown.map((p) => p.id);
     const { rows } = ids.length
-      ? await pool.query(`select ${ROW_COLS} from attendance where editor_id = any($1::uuid[]) and to_char(date, 'YYYY-MM') = $2`, [ids, month])
+      ? await pool.query(`select ${await rowCols()} from attendance where editor_id = any($1::uuid[]) and to_char(date, 'YYYY-MM') = $2`, [ids, month])
       : { rows: [] };
     const byKey = new Map(rows.map((r) => [`${r.editorId}|${r.date}`, r]));
+    const leaveThisYear = await leaveYear(ids, y);
     const c = normalizeCalendar(cal);
     const dayMin = Math.max(0, minutesOf(c.wdTo) - minutesOf(c.wdFrom) - LUNCH_MIN - TEA_MIN);
     let absences = 0;
@@ -612,7 +829,13 @@ attendanceRouter.get("/attendance/month", async (req, res, next) => {
           if (r.status === "half_day") leave += 0.5;
           pts += penaltyOf(r, att);
         }
-        return { status: s, row: r ? { checkInAt: r.checkInAt, lateMinutes: r.lateMinutes, excused: r.excused, reason: r.reason } : null };
+        return {
+          status: s,
+          row: r ? {
+            checkInAt: r.checkInAt, lateMinutes: r.lateMinutes, excused: r.excused, reason: r.reason,
+            leaveKind: r.leaveKind ?? null, shortNotice: !!r.shortNotice, unpaid: !!leaveThisYear.get(p.id)?.unpaidDates.includes(d.date),
+          } : null,
+        };
       });
       absences += absent;
       const present = onTime + late;
@@ -637,7 +860,7 @@ attendanceRouter.get("/attendance/mine", async (req, res, next) => {
     const caller = await callerScope(req);
     if (!caller.editorId) return res.json({ rows: [] });
     const { rows } = await pool.query(
-      `select ${ROW_COLS} from attendance where editor_id = $1 order by date desc limit 62`, [caller.editorId],
+      `select ${await rowCols()} from attendance where editor_id = $1 order by date desc limit 62`, [caller.editorId],
     );
     res.json({ rows });
   } catch (err) { next(err); }

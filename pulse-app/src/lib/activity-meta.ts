@@ -36,6 +36,11 @@ export const VERB_META: Record<ActivityVerb, { icon: string; cls: string }> = {
   handover_cancelled: { icon: "↩️", cls: "v-task" },
   handover_escalated: { icon: "⚠️", cls: "v-task" },
   handover_moved: { icon: "🔁", cls: "v-task" },
+  leave_asked: { icon: "🌴", cls: "v-editor" },
+  leave_approved: { icon: "🌴", cls: "v-done" },
+  leave_declined: { icon: "↩️", cls: "v-editor" },
+  leave_cancelled: { icon: "↩️", cls: "v-editor" },
+  leave_cl_set: { icon: "🗓️", cls: "v-editor" },
 };
 
 export function relTime(iso: string) {

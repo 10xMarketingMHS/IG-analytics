@@ -12,7 +12,14 @@ import "./team-attendance.css";
 // team leads see everyone; anyone else only their own row (used on My profile
 // with `self`). Data: GET /attendance/month.
 
-type Cell = { status: ShownStatus | null; row: { checkInAt: string | null; lateMinutes: number; excused: boolean; reason: string | null } | null };
+type Cell = {
+  status: ShownStatus | null;
+  row: {
+    checkInAt: string | null; lateMinutes: number; excused: boolean; reason: string | null;
+    // a leave day: CL or SL, told at short notice, past the year's CL (unpaid)
+    leaveKind?: "cl" | "sl" | null; shortNotice?: boolean; unpaid?: boolean;
+  } | null;
+};
 type Row = {
   editorId: string; name: string; imageUrl: string | null; designation: string | null; cells: Cell[];
   totals: { late: number; absent: number; leave: number; onTimePct: number | null; ptsLost: number };
@@ -102,7 +109,7 @@ export function TeamAttendance({ editors, self = false }: { editors: Editor[] | 
                       const day = `${Number(d.date.slice(8))} ${shortMon}`;
                       const off = !d.working ? (d.weekday === 0 ? "Sunday" : "Office closed") : d.future ? "upcoming" : null;
                       const tip = off ? `${day} · ${off}`
-                        : c.status ? `${day} · ${c.row?.excused ? "On time (late excused)" : LABEL[c.status]}${c.row?.checkInAt ? ` · in ${clockTime(c.row.checkInAt)}` : ""}${c.status === "late" && c.row?.lateMinutes ? ` · +${c.row.lateMinutes}m` : ""}${c.row?.reason ? ` · ${c.row.reason}` : ""}`
+                        : c.status ? `${day} · ${c.row?.excused ? "On time (late excused)" : LABEL[c.status]}${c.row?.checkInAt ? ` · in ${clockTime(c.row.checkInAt)}` : ""}${c.status === "late" && c.row?.lateMinutes ? ` · +${c.row.lateMinutes}m` : ""}${c.row?.reason ? ` · ${c.row.reason}` : ""}${c.row?.unpaid ? " · unpaid" : ""}${c.row?.shortNotice ? " · short notice" : ""}`
                         : `${day} · no record`;
                       return <span key={d.date} className={"ta-cell" + (c.status ? " c-" + c.status : "") + (off ? " off" : "") + (d.today ? " today" : "")} title={tip} />;
                     })}
@@ -125,6 +132,7 @@ export function TeamAttendance({ editors, self = false }: { editors: Editor[] | 
           )}
         </>
       )}
+      <LeaveBalances self={self} reload={reload} />
     </section>
   );
 }
@@ -136,6 +144,7 @@ function PlanLeave({ people, onSaved }: { people: Row[]; onSaved: () => void }) 
   const [who, setWho] = useState("");
   const [day, setDay] = useState("");
   const [kind, setKind] = useState<"leave" | "half_day" | "remove">("leave");
+  const [type, setType] = useState<"cl" | "sl">("cl");
   const [busy, setBusy] = useState(false);
   async function save() {
     setBusy(true);
@@ -146,8 +155,8 @@ function PlanLeave({ people, onSaved }: { people: Row[]; onSaved: () => void }) 
         await attendanceAction(who, "undo", { date: day });
         toast.success(`${name}: leave on ${when} taken off`);
       } else {
-        await attendanceAction(who, "mark", { as: kind, date: day });
-        toast.success(`${name}: ${kind === "leave" ? "on leave" : "half-day leave"} on ${when}`);
+        const r = await attendanceAction(who, "mark", { as: kind, kind: type, date: day });
+        toast.success(`${name}: ${type.toUpperCase()}, ${kind === "leave" ? "on leave" : "half-day leave"} on ${when}${r.attendance?.shortNotice ? " (short notice)" : ""}`);
       }
       setDay("");
       onSaved();
@@ -170,7 +179,96 @@ function PlanLeave({ people, onSaved }: { people: Row[]; onSaved: () => void }) 
         <option value="half_day">Half-day leave</option>
         <option value="remove">Take leave off</option>
       </select>
+      {kind !== "remove" && (
+        <select value={type} onChange={(e) => setType(e.target.value as "cl" | "sl")} aria-label="CL or SL">
+          <option value="cl">CL (casual)</option>
+          <option value="sl">SL (sick)</option>
+        </select>
+      )}
       <button type="button" disabled={!who || !day || busy} onClick={save}>{busy ? "Saving…" : kind === "remove" ? "Take off" : "Mark"}</button>
+    </div>
+  );
+}
+
+// Leave this year: each person's CL (any number each — a Super Admin sets it
+// here), CL taken and left, unpaid days (CL past their number), SL taken and
+// what's waiting for a lead. On My profile: your own row. Data:
+// GET /attendance/leave-balances.
+type Balance = {
+  editorId: string; name: string; perYear: number | null; cl: number; unpaid: number; sl: number; waitingCl: number; waitingSl: number;
+};
+type Balances = { ready: boolean; year: number; noticeDays: number; canSetCl: boolean; rows: Balance[] };
+const n1 = (n: number) => (Number.isInteger(n) ? String(n) : n.toFixed(1));
+
+function LeaveBalances({ self, reload }: { self: boolean; reload: number }) {
+  const year = new Date().getFullYear();
+  const [data, setData] = useState<Balances | null>(null);
+  const [saved, setSaved] = useState(0);
+  useEffect(() => {
+    let cancel = false;
+    api<Balances>(`/attendance/leave-balances?year=${year}${self ? "&self=1" : ""}`)
+      .then((d) => { if (!cancel) setData(d); })
+      .catch(() => { /* the table just doesn't show */ });
+    return () => { cancel = true; };
+  }, [year, self, reload, saved]);
+  if (!data?.ready || data.rows.length === 0) return null;
+
+  async function setCl(r: Balance, value: string) {
+    const v = value.trim() === "" ? null : Number(value);
+    if (v === r.perYear) return;
+    if (v != null && (!Number.isFinite(v) || v < 0 || v > 60 || Math.round(v * 2) !== v * 2)) {
+      toast.error("CL a year is a number from 0 to 60 (halves allowed).");
+      return;
+    }
+    try {
+      await api(`/attendance/${r.editorId}/cl`, { method: "PUT", body: JSON.stringify({ perYear: v }) });
+      toast.success(v == null ? `${r.name}: CL cleared` : `${r.name}: ${n1(v)} CL a year`);
+      setSaved((n) => n + 1);
+    } catch (e) {
+      toast.error(e instanceof ApiError ? e.message : "Couldn't save that.");
+    }
+  }
+  return (
+    <div className="ta-leave">
+      <div className="ta-leave-head">
+        <b>{self ? "Your leave" : "Leave"} in {data.year}</b>
+        <span>
+          CL needs {data.noticeDays} days' notice; days past someone's CL are unpaid. SL has no limit.
+          {data.canSetCl ? " Type each person's CL a year below." : ""}
+        </span>
+      </div>
+      <div className="ta-scroll">
+        <div className="ta-leave-grid" role="table" aria-label={`Leave in ${data.year}`}>
+          {["Member", "CL a year", "CL taken", "CL left", "Unpaid", "SL taken", "Waiting"].map((h, i) => (
+            <span key={h} className={"ta-h" + (i ? " ta-num" : " ta-member")} role="columnheader">{h}</span>
+          ))}
+          {data.rows.map((r) => {
+            const left = Math.max(0, (r.perYear ?? 0) - r.cl);
+            const waiting = r.waitingCl + r.waitingSl;
+            return (
+              <div key={r.editorId} className="ta-leave-row" role="row">
+                <span className="ta-who"><b>{r.name}</b></span>
+                {data.canSetCl ? (
+                  <input
+                    key={`${r.editorId}-${r.perYear}`}
+                    className="ta-cl-in" type="number" min={0} max={60} step={0.5}
+                    defaultValue={r.perYear ?? ""} placeholder="—" aria-label={`${r.name}'s CL a year`}
+                    onBlur={(e) => setCl(r, e.target.value)}
+                    onKeyDown={(e) => { if (e.key === "Enter") (e.target as HTMLInputElement).blur(); }}
+                  />
+                ) : (
+                  <b className="ta-num">{r.perYear == null ? "—" : n1(r.perYear)}</b>
+                )}
+                <b className="ta-num">{n1(r.cl)}</b>
+                <b className={"ta-num" + (r.perYear != null && left === 0 ? " warn" : "")}>{r.perYear == null ? "—" : n1(left)}</b>
+                <b className={"ta-num" + (r.unpaid > 0 ? " bad" : " faint")}>{n1(r.unpaid)}</b>
+                <b className="ta-num">{n1(r.sl)}</b>
+                <b className={"ta-num" + (waiting > 0 ? " warn" : " faint")}>{n1(waiting)}</b>
+              </div>
+            );
+          })}
+        </div>
+      </div>
     </div>
   );
 }

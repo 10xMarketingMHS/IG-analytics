@@ -5,6 +5,7 @@ import { useEodState } from "@/lib/eod-context";
 import { clockTime } from "@/lib/time-format";
 import { Icon } from "@/components/icon";
 import { askPermission, minutesOf, type AttToday } from "@/lib/use-attendance";
+import { LeaveAsk, leaveLine } from "@/components/leave-ask";
 import type { Task } from "@/lib/types";
 
 // Start of day on Home (Pulse Redesign v7), for team leads and editors:
@@ -50,6 +51,7 @@ export function StartDaySection({
   const [wrap, setWrap] = useState("");
   const [sending, setSending] = useState(false);
   const [permOpen, setPermOpen] = useState(false);
+  const [leaveOpen, setLeaveOpen] = useState(false);
   const [nowMs, setNowMs] = useState(() => Date.now());
   // The banner's End day button opens the wrap-up here.
   const barRef = useRef<HTMLElement>(null);
@@ -80,6 +82,12 @@ export function StartDaySection({
     <button type="button" className="sd-link" onClick={() => setPermOpen((o) => !o)}>Ask for a permission</button>
   ) : null;
   const askForm = permOpen && perms ? <PermissionAsk today={today} left={perms.left} onDone={() => setPermOpen(false)} /> : null;
+  // Leave this year: CL and SL (null before the database has it).
+  const leave = att?.leave ?? null;
+  const leaveLink = leave && !preview ? (
+    <button type="button" className="sd-link" onClick={() => setLeaveOpen((o) => !o)}>Apply for leave</button>
+  ) : null;
+  const leaveForm = leaveOpen && leave ? <LeaveAsk today={today} leave={leave} onDone={() => setLeaveOpen(false)} /> : null;
   const now = new Date(nowMs);
   const nowMin = now.getHours() * 60 + now.getMinutes();
   // A preview (an admin seeing another role's Home) always shows the card a
@@ -158,9 +166,12 @@ export function StartDaySection({
               </button>
             )}
             {askLink}
+            {leaveLink}
           </div>
           {permLine && <p className="sd-faint">{permLine}</p>}
+          {leave && <p className="sd-faint">{leaveLine(leave)}</p>}
           {askForm}
+          {leaveForm}
           {corrOpen && (
             <div className="sd-corr">
               <label>I started at <input type="time" value={corrTime} onChange={(e) => setCorrTime(e.target.value)} /></label>
@@ -262,12 +273,14 @@ export function StartDaySection({
         <button type="button" className="sd-link" onClick={openSod} title="Pick today's tasks and copy the Start of Day report for WhatsApp">Start of Day</button>
         <button type="button" className="sd-link" onClick={onOpenReports}>My reports</button>
         {askLink}
+        {leaveLink}
         {canUndo && <button type="button" className="sd-link" onClick={undo} disabled={busy}>Undo</button>}
         {!ending && (
           <button type="button" className="sd-btn" onClick={() => setEnding(true)}><Icon name="logout" size={17} />End day</button>
         )}
       </div>
       {askForm}
+      {leaveForm}
       {ending && (
         <div className="sd-end">
           <div className="sd-stats">

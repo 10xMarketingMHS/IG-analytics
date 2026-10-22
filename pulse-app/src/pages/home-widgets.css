@@ -235,3 +235,17 @@ div.hw-timer-title{cursor:default}
 /* Team today: a permission waiting for the lead's answer */
 .hw-att-perm{display:inline-flex;align-items:center;gap:6px}
 .sd-perm-part{height:32px;padding:0 8px;border:1px solid var(--md-line);border-radius:8px;background:var(--md-panel);color:var(--md-text);font:500 12.5px 'Plus Jakarta Sans',sans-serif}
+/* Apply for leave (components/leave-ask.tsx): CL or SL, the days, what's booked */
+.lv-kinds{display:inline-flex;gap:2px;padding:2px;border-radius:9px;background:var(--md-panel);border:1px solid var(--md-line)}
+.lv-kinds button{height:28px;padding:0 10px;border:0;border-radius:7px;background:transparent;color:var(--md-text2);font:700 12px 'Plus Jakarta Sans',sans-serif;cursor:pointer}
+.lv-kinds button.on{background:var(--md-acText);color:#fff}
+.lv-half{display:inline-flex;align-items:center;gap:5px}
+.lv-half input{height:auto}
+.lv-hint{flex:1 1 100%}
+.lv-hint.warn{color:var(--md-warn,#b45309);font-weight:600}
+.lv-mine{flex:1 1 100%;list-style:none;margin:2px 0 0;padding:8px 0 0;border-top:1px solid var(--md-line);display:flex;flex-direction:column;gap:6px}
+.lv-mine li{display:flex;align-items:center;flex-wrap:wrap;gap:6px 10px}
+.lv-mine b{font-weight:700}
+.lv-state{font-size:11.5px;font-weight:700;padding:1px 8px;border-radius:999px;background:var(--md-panel);color:var(--md-text2)}
+.lv-state.approved{color:var(--md-good,#15803d)}
+.hw-faint.warn{color:var(--md-warn);font-weight:700}

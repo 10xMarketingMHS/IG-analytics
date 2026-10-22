@@ -12,7 +12,7 @@ import { ymd, taskPoints, isScorableTask, topEditorsInRange } from "@/lib/task-p
 import { bankedMs, breakOffsetMs, DAILY_BREAK_CAP_SEC, isDayPaused } from "@/lib/task-timing";
 import { HOME_ROLE_LABEL, type HomeRole } from "@/lib/home-role";
 import { DEFAULT_LAYOUT, WIDGETS, WIDGET_ORDER, allowed, cleanLayout, type LayoutItem, type Size, type WidgetKey } from "@/lib/home-widgets";
-import { attendanceAction, type AttToday, type TeamPerson } from "@/lib/use-attendance";
+import { attendanceAction, leaveAction, leaveWords, type AttToday, type TeamPerson } from "@/lib/use-attendance";
 import { Bar, ReviewList, UpNext, monthName, taskRef, type MyDayData, type useMyGoal, type useStartFlow } from "@/pages/my-day-layouts";
 import type { Editor, Post, Task } from "@/lib/types";
 import "./home-widgets.css";
@@ -673,8 +673,8 @@ function AttendW({ c }: { c: HomeCtx }) {
       case "no_sod": return `${r?.alertSentAt ? `Alert sent ${clockTime(r.alertSentAt)}` : `Office opened ${att.opening ? at(att.opening) : ""}`}${s.autoAbsentEnabled ? ` · absent at ${at(s.autoAbsentAt)}` : ""}`;
       case "waiting": return att.opening ? `Grace until ${at(minutesToHHMM(toMin(att.opening) + s.graceMinutes))}` : "Office closed today";
       case "absent": return `${r?.reason ? r.reason : r?.markedBy ? "Marked by lead" : `Auto-marked at ${at(s.autoAbsentAt)}`}${p.penalty ? ` · −${p.penalty} pts` : ""}`;
-      case "half_day": return r?.reason || "Half-day leave";
-      case "leave": return r?.reason || "Approved leave";
+      case "half_day": return `${r?.reason || "Half-day leave"}${r?.shortNotice ? ` · short notice · −${p.penalty} pts` : ""}`;
+      case "leave": return `${r?.reason || "Approved leave"}${r?.shortNotice ? ` · short notice · −${p.penalty} pts` : ""}`;
     }
   };
   async function run(p: TeamPerson, action: "excuse" | "undo" | "nudge" | "mark" | "correction" | "permission", body: object | undefined, ok: string) {
@@ -685,6 +685,18 @@ function AttendW({ c }: { c: HomeCtx }) {
       toast.success(ok);
     } catch (e) {
       toast.error(e instanceof ApiError ? e.message : "Couldn't update attendance.");
+    } finally {
+      setBusy(null);
+    }
+  }
+  // a leave request: approve or decline
+  async function answerLeave(p: TeamPerson, id: string, action: "approve" | "decline", ok: string) {
+    setBusy(p.editorId);
+    try {
+      await leaveAction(p.editorId, id, action);
+      toast.success(ok);
+    } catch (e) {
+      toast.error(e instanceof ApiError ? e.message : "Couldn't answer that request.");
     } finally {
       setBusy(null);
     }
@@ -717,6 +729,15 @@ function AttendW({ c }: { c: HomeCtx }) {
                     <button type="button" className="hw-mini" disabled={busy === p.editorId} onClick={() => run(p, "permission", { id: q.id, approve: false }, "Permission declined")}>Decline</button>
                   </span>
                 ))}
+                {(p.leaveRequests ?? []).map((l) => (
+                  <span key={l.id} className="hw-att-perm">
+                    <span className={"hw-faint sm" + (l.shortNotice ? " warn" : "")} title={l.note ?? undefined}>
+                      {leaveWords(l)}{l.shortNotice ? " · short notice" : ""}
+                    </span>
+                    <button type="button" className="hw-mini good" disabled={busy === p.editorId} onClick={() => answerLeave(p, l.id, "approve", `${first(p.name)}'s leave approved`)}>Approve</button>
+                    <button type="button" className="hw-mini" disabled={busy === p.editorId} onClick={() => answerLeave(p, l.id, "decline", "Leave declined")}>Decline</button>
+                  </span>
+                ))}
                 {r?.correctionStatus === "pending" && r.correctionAt && (
                   <>
                     <span className="hw-faint sm" title="The start they ask for, and when they really opened Pulse">Asks {clockTime(r.correctionAt)}{r.checkInAt ? ` · opened ${clockTime(r.checkInAt)}` : ""}</span>
@@ -738,15 +759,18 @@ function AttendW({ c }: { c: HomeCtx }) {
                 {canMark && (
                   <select className="hw-mark" value="" disabled={busy === p.editorId} aria-label={`Mark ${p.name} as`}
                     onChange={(e) => {
-                      const v = e.target.value as "working" | "half_day" | "leave" | "absent";
+                      // "leave:cl" — leave or a half day is CL or SL
+                      const [v, kind] = e.target.value.split(":") as ["working" | "half_day" | "leave" | "absent", "cl" | "sl" | undefined];
                       if (!v) return;
                       const word = { working: "working now", half_day: "half-day leave", leave: "on leave", absent: "absent" }[v];
-                      run(p, "mark", { as: v }, `${p.name} marked as ${word}`);
+                      run(p, "mark", { as: v, kind }, `${p.name} marked as ${word}${kind ? ` (${kind.toUpperCase()})` : ""}`);
                     }}>
                     <option value="">Mark as…</option>
                     <option value="working">Working now</option>
-                    <option value="half_day">Half-day leave</option>
-                    <option value="leave">On leave</option>
+                    <option value="leave:sl">On leave · SL (sick)</option>
+                    <option value="leave:cl">On leave · CL (short notice)</option>
+                    <option value="half_day:sl">Half day · SL</option>
+                    <option value="half_day:cl">Half day · CL (short notice)</option>
                     <option value="absent">Absent</option>
                   </select>
                 )}

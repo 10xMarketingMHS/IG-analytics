@@ -24,6 +24,9 @@ export const ATTENDANCE_DEFAULTS = {
   autoAbsentEnabled: true,
   // Permissions a month (morning: come in late; evening: leave early).
   permissionsPerMonth: 2,
+  // CL applied for fewer days ahead than this is short notice: each day costs
+  // the absence penalty (leave.js).
+  clNoticeDays: 2,
   requireEodNote: true,
   allowCorrections: true,
   latePenaltyPts: 1,
@@ -191,6 +194,11 @@ export function penaltyOf(row, att) {
   if (row.status === "late" && !row.excused) return att.latePenaltyPts;
   if (row.status === "absent") return att.absentPenaltyPts;
   if (row.status === "half_absent") return att.absentPenaltyPts / 2;
+  // CL at short notice (leave.js): like an absence, half for a half day
+  if (row.shortNotice || row.short_notice) {
+    if (row.status === "leave") return att.absentPenaltyPts;
+    if (row.status === "half_day") return att.absentPenaltyPts / 2;
+  }
   return 0;
 }
 
@@ -275,8 +283,9 @@ export async function monthPenalties(orgId, month) {
   if (!(await attendanceReady())) return new Map();
   const { att: now, raw } = await readSettings(orgId);
   const att = penaltiesFor(now, raw, month);
+  const shortNotice = (await hasColumn("attendance", "short_notice")) ? ", short_notice" : "";
   const { rows } = await pool.query(
-    `select editor_id, status, excused from attendance
+    `select editor_id, status, excused${shortNotice} from attendance
       where org_id = $1 and to_char(date, 'YYYY-MM') = $2`,
     [orgId, month],
   );
