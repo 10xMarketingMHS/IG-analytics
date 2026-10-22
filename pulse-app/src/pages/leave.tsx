@@ -565,6 +565,20 @@ function SettingsTab({ team }: { team: LeaveTeam }) {
   const [editStart, setEditStart] = useState(false);
   // one person's starting days, edited on their row (a Super Admin)
   const [editRow, setEditRow] = useState<string | null>(null);
+  // that row's numbers while they're changed, saved once with Save: a manager
+  // sets a new joiner's first allowance once (after that it's the Super Admin's)
+  const [rowDraft, setRowDraft] = useState<{ cl: number; sl: number }>({ cl: 0, sl: 0 });
+  const openRow = (id: string) => { setEditRow(id); setRowDraft(startOf(id)); setTopFor(null); };
+  const stepDraft = (k: "cl" | "sl", delta: number) => setRowDraft((d) => ({ ...d, [k]: Math.max(0, Math.min(30, d[k] + delta)) }));
+  async function saveRow(id: string) {
+    setBusy(true);
+    try {
+      await setAllowance(id, team.year, rowDraft.cl, rowDraft.sl);
+      setStart((s) => ({ ...s, [id]: rowDraft }));
+      setEditRow(null);
+      toast.success(team.canEditRules ? "Starting allowance saved" : "Starting allowance saved. Only the Super Admin can change it now.");
+    } catch (e) { fail(e, "Couldn't save that."); } finally { setBusy(false); }
+  }
   const [topFor, setTopFor] = useState<string | null>(null);
   const [topType, setTopType] = useState<LeaveType>("CL");
   const [topDays, setTopDays] = useState(1);
@@ -689,7 +703,7 @@ function SettingsTab({ team }: { team: LeaveTeam }) {
                       const tb = k === "cl" ? b.CL : b.SL;
                       return (
                         <span key={k} className="lv-tot edit">
-                          <Stepper value={n1(startOf(p.id)[k])} onDec={() => changeStart(p.id, k, -1)} onInc={() => changeStart(p.id, k, 1)} />
+                          <Stepper value={n1(rowDraft[k])} onDec={() => stepDraft(k, -1)} onInc={() => stepDraft(k, 1)} />
                           <span className="t-mute">starting{tb.topups ? ` + ${n1(tb.topups)} top-up` : ""}</span>
                         </span>
                       );
@@ -701,12 +715,18 @@ function SettingsTab({ team }: { team: LeaveTeam }) {
                     )}
                     <span className="lv-topcell">
                       {editRow === p.id ? (
-                        <button type="button" className="lv-btn line" onClick={() => setEditRow(null)}>Done</button>
+                        <>
+                          <button type="button" className="lv-btn line" onClick={() => setEditRow(null)}>Cancel</button>
+                          <button type="button" className="lv-btn pri sm" disabled={busy} onClick={() => saveRow(p.id)}
+                            title={team.canEditRules ? undefined : "Saved once: after that only the Super Admin changes it"}>
+                            <Icon name="check" size={16} />Save
+                          </button>
+                        </>
                       ) : (
                         <>
                           {(p.canEditStart ?? team.canEditRules) && (
                             <button type="button" className="lv-iconbtn" title="Edit the starting days" aria-label={`Edit ${p.name}'s starting days`}
-                              onClick={() => { setEditRow(p.id); setTopFor(null); }}>
+                              onClick={() => openRow(p.id)}>
                               <Icon name="edit" size={16} />
                             </button>
                           )}
