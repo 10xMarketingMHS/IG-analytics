@@ -18,8 +18,9 @@ import "./leave.css";
 // Leave.dc.html": Ask for leave (everyone), Approvals and Allowances & rules
 // (managers and admins). One screen, three ways in:
 //   mode "team" — My Team › Leave: Approvals and Allowances & rules;
-//   mode "mine" — My profile › My leave: your balance, requests and the form;
-//   mode "all"  — the Home side panel (LeavePanel) and /leave: all three tabs.
+//   mode "all"  — the side panel (LeavePanel: the top bar's Leave, and Ask
+//                 for leave on the Start your day card) and /leave: all tabs;
+//   mode "mine" — just your balance, requests and the form (no tabs).
 // Rules: server/src/leave-math.js.
 
 type Tab = "apply" | "approve" | "settings";
