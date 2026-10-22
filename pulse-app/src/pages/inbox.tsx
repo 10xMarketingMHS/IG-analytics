@@ -17,25 +17,32 @@ import "./inbox.css";
 // (Approve / Decline), hand-overs (Accept / Decline, or open to move it on),
 // work to review and tasks to accept (open them), password resets (admins).
 // "Sent by you" is what you asked for that's still waiting on someone.
-// Data: lib/use-inbox.ts (GET /inbox).
+// Laid out like the Social & Ads Pipeline table: one panel, a row per item
+// with its kind's colour down the left edge. Data: lib/use-inbox.ts.
 
 type Kind = InboxItem["kind"];
-const WAITING_GROUPS: [Kind, string][] = [
-  ["leave", "Leave requests"], ["permission", "Permission requests"], ["correction", "Start-time corrections"],
-  ["handover", "Hand-overs"], ["review", "Waiting for your review"], ["accept", "Tasks to accept"], ["reset", "Password resets"],
+// kinds in the order they're listed and filtered, with their words
+const KINDS: { k: Kind; label: string; tag: string }[] = [
+  { k: "leave", label: "Leave", tag: "LEAVE" },
+  { k: "permission", label: "Permissions", tag: "PERMISSION" },
+  { k: "correction", label: "Corrections", tag: "CORRECTION" },
+  { k: "handover", label: "Hand-overs", tag: "HAND-OVER" },
+  { k: "review", label: "Reviews", tag: "REVIEW" },
+  { k: "accept", label: "To accept", tag: "TO ACCEPT" },
+  { k: "reset", label: "Password resets", tag: "PASSWORD" },
 ];
-const SENT_GROUPS: [Kind, string][] = [
-  ["leave", "Your leave"], ["permission", "Your permissions"], ["handover", "Your hand-overs"], ["review", "Your work in review"],
-];
+const ORDER = new Map(KINDS.map((x, i) => [x.k, i]));
+const TAG = new Map(KINDS.map((x) => [x.k, x.tag]));
 const ICON: Record<Kind, string> = { leave: "🌴", permission: "⏱️", correction: "🕘", handover: "🔁", review: "👀", accept: "📥", reset: "🔑" };
 const day = (ymd: string) => new Date(`${ymd}T12:00:00`).toLocaleDateString("en-IN", { day: "numeric", month: "short" });
 const n1 = (n: number) => (Number.isInteger(n) ? String(n) : n.toFixed(1));
 
-function Face({ name, imageUrl, kind }: { name?: string | null; imageUrl?: string | null; kind: Kind }) {
-  if (!name) return <span className="ib-ic" aria-hidden="true">{ICON[kind]}</span>;
+function Person({ name, imageUrl, kind }: { name?: string | null; imageUrl?: string | null; kind: Kind }) {
+  if (!name) return <span className="ib-person"><span className="ib-ic" aria-hidden="true">{ICON[kind]}</span><span className="ib-faint">—</span></span>;
   return (
-    <span className="ib-face">
-      <Avatar editor={{ id: name, name, designation: "", image_url: imageUrl ?? null, active: true } as Editor} />
+    <span className="ib-person">
+      <span className="ib-face"><Avatar editor={{ id: name, name, designation: "", image_url: imageUrl ?? null, active: true } as Editor} /></span>
+      <b>{name}</b>
     </span>
   );
 }
@@ -45,6 +52,7 @@ export function InboxPage() {
   const navigate = useNavigate();
   const { data, refresh } = useInbox(user?.id ?? "");
   const [tab, setTab] = useState<"waiting" | "sent">("waiting");
+  const [kind, setKind] = useState<Kind | "all">("all");
   const [busy, setBusy] = useState<string | null>(null);
   const openTask = (taskId: string) => navigate("/tasks", { state: { openTask: taskId } });
 
@@ -63,25 +71,27 @@ export function InboxPage() {
   }
   const handoverPost = async (path: string) => { await api(path, { method: "POST" }); notifyTasksChanged(); };
 
+  // a row: what it is, who, the details, when, and the answer
   function row(i: InboxItem, sent: boolean): ReactNode {
     const off = busy === i.key;
     const btn = (label: string, onClick: () => void, cls = "") => (
-      <button type="button" className={"ib-btn " + cls} disabled={off} onClick={onClick}>{label}</button>
+      <button type="button" className={"ib-btn " + cls} disabled={off} onClick={(e) => { e.stopPropagation(); onClick(); }}>{label}</button>
     );
-    let face: ReactNode = <Face kind={i.kind} />;
-    let title: ReactNode = null;
-    let sub: ReactNode = null;
+    let what: ReactNode = null;
+    let who: ReactNode = <Person kind={i.kind} />;
+    let details: ReactNode = null;
     let acts: ReactNode = null;
+    let open: (() => void) | null = null;
     switch (i.kind) {
       case "leave": {
         const l = i.leave;
-        face = sent ? <Face kind="leave" /> : <Face name={i.name} imageUrl={i.imageUrl} kind="leave" />;
-        title = <>{sent ? "" : <b>{i.name} </b>}{leaveWords(l)}{l.shortNotice && <span className="ib-tag warn">short notice</span>}</>;
+        what = <>{leaveWords(l)}{l.shortNotice && <span className="ib-tag warn">short notice</span>}</>;
+        who = sent ? <Person name="Your lead" kind="leave" /> : <Person name={i.name} imageUrl={i.imageUrl} kind="leave" />;
         const b = i.balance;
         const bal = !sent && l.kind === "cl" && b
-          ? b.perYear ? ` · ${n1(Math.max(0, b.perYear - b.cl))} of ${n1(b.perYear)} CL left${b.unpaid ? `, ${n1(b.unpaid)} unpaid` : ""}` : " · no CL set (unpaid)"
-          : "";
-        sub = <>{l.note ? `“${l.note}” · ` : ""}asked {relTime(i.at)}{bal}{sent ? " · waiting on your lead" : ""}</>;
+          ? b.perYear ? `${n1(Math.max(0, b.perYear - b.cl))} of ${n1(b.perYear)} CL left${b.unpaid ? `, ${n1(b.unpaid)} unpaid` : ""}` : "No CL set (unpaid)"
+          : null;
+        details = <>{l.note ? <span>“{l.note}”</span> : null}{bal ? <span className="ib-faint">{bal}</span> : null}{!l.note && !bal ? <span className="ib-faint">{sent ? "Waiting for your lead" : "—"}</span> : null}</>;
         acts = sent
           ? btn("Cancel", () => act(i.key, () => cancelMyLeave(l.id), "Leave cancelled."), "ghost")
           : <>{btn("Decline", () => act(i.key, () => leaveAction(i.editorId!, l.id, "decline"), "Leave declined."), "ghost")}
@@ -89,92 +99,115 @@ export function InboxPage() {
         break;
       }
       case "permission":
-        face = sent ? <Face kind="permission" /> : <Face name={i.name} imageUrl={i.imageUrl} kind="permission" />;
-        title = <>{sent ? "" : <b>{i.name} </b>}{i.part === "morning" ? "Morning permission (come in late)" : "Evening permission (leave early)"} · {day(i.date)}</>;
-        sub = <>{i.note ? `“${i.note}” · ` : ""}asked {relTime(i.at)}{sent ? " · waiting on your lead" : ""}</>;
-        acts = sent ? null
+        what = <>{i.part === "morning" ? "Morning permission" : "Evening permission"} · {day(i.date)}</>;
+        who = sent ? <Person name="Your lead" kind="permission" /> : <Person name={i.name} imageUrl={i.imageUrl} kind="permission" />;
+        details = <>{i.note ? <span>“{i.note}”</span> : null}<span className="ib-faint">{i.part === "morning" ? "Come in late, up to 2 hours" : "Leave early, up to 2 hours"}</span></>;
+        acts = sent ? <span className="ib-faint">Waiting</span>
           : <>{btn("Decline", () => act(i.key, () => attendanceAction(i.editorId!, "permission", { id: i.id, approve: false }), "Permission declined."), "ghost")}
              {btn("Approve", () => act(i.key, () => attendanceAction(i.editorId!, "permission", { id: i.id, approve: true }), "Permission approved."), "good")}</>;
         break;
       case "correction":
-        face = <Face name={i.name} imageUrl={i.imageUrl} kind="correction" />;
-        title = <><b>{i.name} </b>asks to start at {clockTime(i.correctionAt)}{i.date !== new Date().toLocaleDateString("en-CA") ? ` on ${day(i.date)}` : ""}</>;
-        sub = <>{i.checkInAt ? `Opened Pulse at ${clockTime(i.checkInAt)}` : "Not opened yet"}{i.note ? ` · “${i.note}”` : ""} · {relTime(i.at)}</>;
+        what = <>Start at {clockTime(i.correctionAt)}{i.date !== new Date().toLocaleDateString("en-CA") ? ` on ${day(i.date)}` : ""}</>;
+        who = <Person name={i.name} imageUrl={i.imageUrl} kind="correction" />;
+        details = <>{i.note ? <span>“{i.note}”</span> : null}<span className="ib-faint">{i.checkInAt ? `Opened Pulse at ${clockTime(i.checkInAt)}` : "Not opened yet"}</span></>;
         acts = <>{btn("Decline", () => act(i.key, () => attendanceAction(i.editorId, "correction", { approve: false }), "Correction declined."), "ghost")}
           {btn("Approve", () => act(i.key, () => attendanceAction(i.editorId, "correction", { approve: true }), "Start time corrected."), "good")}</>;
         break;
       case "handover": {
         const h = i.handover;
-        face = <Face name={sent ? h.toName : h.fromName} imageUrl={sent ? h.toImage : h.fromImage} kind="handover" />;
-        title = <>{h.taskRef && <span className="ib-ref">{h.taskRef}</span>}{h.taskTitle}</>;
-        sub = sent
-          ? <>Offered to {h.toName ?? "a teammate"} {relTime(h.createdAt)}{h.level > 0 && h.reachedLabel ? ` · now with ${h.reachedLabel}` : ""}</>
+        what = <>{h.taskRef && <span className="ib-ref">{h.taskRef}</span>}{h.taskTitle}</>;
+        who = <Person name={sent ? h.toName : h.mine === "to" ? h.fromName : h.toName} imageUrl={sent ? h.toImage : h.mine === "to" ? h.fromImage : h.toImage} kind="handover" />;
+        details = sent
+          ? <span className="ib-faint">Offered to {h.toName ?? "a teammate"}{h.level > 0 && h.reachedLabel ? ` · now with ${h.reachedLabel}` : ""}</span>
           : h.mine === "to"
-            ? <>From {h.fromName ?? "a teammate"}{h.note ? `: “${h.note}”` : ""} · {relTime(h.createdAt)}</>
-            : <>{h.toName ?? "A teammate"} hasn't accepted it from {h.fromName ?? "its owner"} · open it to move it on</>;
+            ? <>{h.note ? <span>“{h.note}”</span> : null}<span className="ib-faint">From {h.fromName ?? "a teammate"}</span></>
+            : <span className="ib-faint">{h.toName ?? "A teammate"} hasn't accepted it from {h.fromName ?? "its owner"}. Open it to move it on.</span>;
+        open = () => openTask(h.taskId);
         acts = sent
           ? btn("Take back", () => act(i.key, () => handoverPost(`/handovers/${h.id}/cancel`), "Hand-over taken back."), "ghost")
           : h.mine === "to"
             ? <>{btn("Decline", () => act(i.key, () => handoverPost(`/handovers/${h.id}/decline`), `Declined. It stays with ${h.fromName ?? "its owner"}.`), "ghost")}
                {btn("Accept", () => act(i.key, () => handoverPost(`/handovers/${h.id}/accept`), "It's yours now."), "good")}</>
-            : btn("Open", () => openTask(h.taskId));
+            : btn("Open", () => openTask(h.taskId), "pri");
         break;
       }
       case "review":
-        face = <Face name={sent ? null : i.name} imageUrl={i.imageUrl} kind="review" />;
-        title = <>{i.ref && <span className="ib-ref">{i.ref}</span>}{i.title}</>;
-        sub = sent ? <>Sent for review {relTime(i.at)}{i.reviewBy ? ` · waiting for ${i.reviewBy}` : ""}</> : <>From {i.name ?? "a teammate"} · waiting {relTime(i.at).replace(" ago", "")}</>;
+        what = <>{i.ref && <span className="ib-ref">{i.ref}</span>}{i.title}</>;
+        who = <Person name={sent ? i.reviewBy : i.name} imageUrl={sent ? null : i.imageUrl} kind="review" />;
+        details = <span className="ib-faint">{sent ? `Waiting for ${i.reviewBy ?? "a reviewer"}` : "Waiting for your review"}</span>;
+        open = () => openTask(i.taskId);
         acts = btn("Open", () => openTask(i.taskId), sent ? "ghost" : "pri");
         break;
       case "accept":
-        title = <>{i.ref && <span className="ib-ref">{i.ref}</span>}{i.title}</>;
-        sub = <>From {i.name ?? "your lead"}{i.due ? ` · due ${day(i.due)}` : ""} · {relTime(i.at)}</>;
+        what = <>{i.ref && <span className="ib-ref">{i.ref}</span>}{i.title}</>;
+        who = <Person name={i.name} kind="accept" />;
+        details = <span className="ib-faint">{i.due ? `Due ${day(i.due)}` : "No due date"}</span>;
+        open = () => openTask(i.taskId);
         acts = btn("Open", () => openTask(i.taskId), "pri");
         break;
       case "reset":
-        face = <Face name={i.name} kind="reset" />;
-        title = <><b>{i.name}</b> forgot their password</>;
-        sub = <>Asked {relTime(i.at)} · set a new one on Team › Roster</>;
+        what = <>Forgot their password</>;
+        who = <Person name={i.name} kind="reset" />;
+        details = <span className="ib-faint">Set a new one on Team › Roster</span>;
         acts = btn("Open Roster", () => navigate("/my-team?tab=roster"), "pri");
         break;
     }
     return (
-      <li key={i.key} className="ib-row">
-        {face}
-        <span className="ib-main"><span className="ib-title">{title}</span><span className="ib-sub">{sub}</span></span>
-        {acts && <span className="ib-acts">{acts}</span>}
-      </li>
+      <div key={i.key} className={"ib-tr k-" + i.kind + (open ? " link" : "")} role={open ? "button" : undefined} tabIndex={open ? 0 : undefined}
+        onClick={open ?? undefined} onKeyDown={open ? (e) => { if (e.key === "Enter") open!(); } : undefined}>
+        <span className="ib-what"><b>{what}</b><span><em className="ib-type">{TAG.get(i.kind)}</em></span></span>
+        {who}
+        <span className="ib-details">{details}</span>
+        <span className="ib-when">{relTime(i.at)}</span>
+        <span className="ib-acts">{acts}</span>
+      </div>
     );
   }
 
-  const list = tab === "waiting" ? data?.waiting ?? [] : data?.sent ?? [];
-  const groups = (tab === "waiting" ? WAITING_GROUPS : SENT_GROUPS)
-    .map(([k, label]) => ({ k, label, items: list.filter((i) => i.kind === k) }))
-    .filter((g) => g.items.length > 0);
+  const all = tab === "waiting" ? data?.waiting ?? [] : data?.sent ?? [];
+  const counts = KINDS.map((x) => ({ ...x, n: all.filter((i) => i.kind === x.k).length })).filter((x) => x.n > 0);
+  const shown = kind === "all" ? all : all.filter((i) => i.kind === kind);
+  // grouped by kind, newest first within each
+  const rows = [...shown].sort((a, b) => (ORDER.get(a.kind)! - ORDER.get(b.kind)!) || new Date(b.at).getTime() - new Date(a.at).getTime());
+  const pickTab = (t: "waiting" | "sent") => { setTab(t); setKind("all"); };
   return (
     <section className="screen ib">
-      <div className="ib-tabs seg" role="tablist" aria-label="Inbox">
-        <button type="button" role="tab" aria-selected={tab === "waiting"} className={"seg-btn" + (tab === "waiting" ? " on" : "")} onClick={() => setTab("waiting")}>
-          Waiting on you{data ? <span className="ib-n">{data.waiting.length}</span> : null}
-        </button>
-        <button type="button" role="tab" aria-selected={tab === "sent"} className={"seg-btn" + (tab === "sent" ? " on" : "")} onClick={() => setTab("sent")}>
-          Sent by you{data ? <span className="ib-n soft">{data.sent.length}</span> : null}
-        </button>
-      </div>
-      {!data ? (
-        <div className="card pad ib-empty">Loading your Inbox…</div>
-      ) : groups.length === 0 ? (
-        <div className="card pad ib-empty">
-          {tab === "waiting" ? "Nothing is waiting on you. Requests, hand-overs and reviews land here." : "Nothing you sent is waiting on anyone."}
+      <div className="ib-bar">
+        <div className="ib-seg" role="tablist" aria-label="Inbox">
+          <button type="button" role="tab" aria-selected={tab === "waiting"} className={tab === "waiting" ? "on" : ""} onClick={() => pickTab("waiting")}>
+            Waiting on you{data ? <span className={"ib-n" + (data.waiting.length ? " hot" : "")}>{data.waiting.length}</span> : null}
+          </button>
+          <button type="button" role="tab" aria-selected={tab === "sent"} className={tab === "sent" ? "on" : ""} onClick={() => pickTab("sent")}>
+            Sent by you{data ? <span className="ib-n">{data.sent.length}</span> : null}
+          </button>
         </div>
-      ) : (
-        groups.map((g) => (
-          <div key={g.k} className="card ib-group">
-            <div className="ib-ghead"><span aria-hidden="true">{ICON[g.k]}</span><b>{g.label}</b><span className="ib-n soft">{g.items.length}</span></div>
-            <ul className="ib-list">{g.items.map((i) => row(i, tab === "sent"))}</ul>
+        {counts.length > 1 && (
+          <div className="ib-seg" role="group" aria-label="Show">
+            <button type="button" className={kind === "all" ? "on" : ""} onClick={() => setKind("all")}>All<span className="ib-n">{all.length}</span></button>
+            {counts.map((x) => (
+              <button key={x.k} type="button" className={kind === x.k ? "on" : ""} onClick={() => setKind(x.k)}>{x.label}<span className="ib-n">{x.n}</span></button>
+            ))}
           </div>
-        ))
-      )}
+        )}
+        <span className="ib-grow" />
+        {data && <span className="ib-showing">Showing <b>{rows.length}</b></span>}
+      </div>
+      <div className="ib-panel">
+        {!data ? (
+          <div className="ib-none">Loading your Inbox…</div>
+        ) : rows.length === 0 ? (
+          <div className="ib-none">
+            {tab === "waiting" ? "Nothing is waiting on you. Requests, hand-overs and reviews land here." : "Nothing you sent is waiting on anyone."}
+          </div>
+        ) : (
+          <div className="ib-scroll">
+            <div className="ib-grid">
+              <div className="ib-th"><span>Request</span><span>{tab === "waiting" ? "From" : "Waiting on"}</span><span>Details</span><span>When</span><span className="r">{tab === "waiting" ? "Answer" : ""}</span></div>
+              {rows.map((i) => row(i, tab === "sent"))}
+            </div>
+          </div>
+        )}
+      </div>
     </section>
   );
 }
@@ -189,8 +222,8 @@ export function InboxCard() {
   const { user } = useAuth();
   const { data } = useInbox(user?.id ?? "");
   if (!data || data.count === 0) return null;
-  const parts = WAITING_GROUPS
-    .map(([k]) => [k, data.waiting.filter((i) => i.kind === k).length] as const)
+  const parts = KINDS
+    .map(({ k }) => [k, data.waiting.filter((i) => i.kind === k).length] as const)
     .filter(([, n]) => n > 0)
     .map(([k, n]) => `${n} ${WORDS[k][n === 1 ? 0 : 1]}`);
   return (
