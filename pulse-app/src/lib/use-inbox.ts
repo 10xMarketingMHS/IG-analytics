@@ -25,11 +25,18 @@ export type InboxData = { waiting: InboxItem[]; sent: InboxItem[]; count: number
 
 let current: { who: string; data: InboxData } | null = null;
 let inflight: Promise<void> | null = null;
+let queued: Promise<void> | null = null;
 const subs = new Set<() => void>();
 const tell = () => subs.forEach((f) => f());
 
-export function refreshInbox(who: string) {
+// `fresh`: after you changed something — a look already on its way may have
+// left before the change, so another one follows it.
+export function refreshInbox(who: string, fresh = false): Promise<void> {
   if (!who) return Promise.resolve();
+  if (inflight && fresh) {
+    queued ??= inflight.then(() => { queued = null; return refreshInbox(who); });
+    return queued;
+  }
   if (!inflight) {
     inflight = api<InboxData>("/inbox")
       .then((data) => { current = { who, data }; tell(); })
@@ -60,5 +67,5 @@ export function useInbox(who: string, poll = false) {
     };
   }, [who, poll]);
   const data = current && current.who === who ? current.data : null;
-  return { data, refresh: () => refreshInbox(who) };
+  return { data, refresh: () => refreshInbox(who, true) };
 }

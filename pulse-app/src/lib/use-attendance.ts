@@ -42,6 +42,8 @@ export type TeamPerson = {
   status: ShownStatus; row: AttRow | null; penalty: number;
   // permission requests waiting for a lead
   permissionRequests?: PermissionRequest[];
+  // you can mark, excuse and answer for them (people below you)
+  canAct?: boolean;
 };
 export type AttToday = {
   date: string; now: string; opening: string | null; closing: string | null;

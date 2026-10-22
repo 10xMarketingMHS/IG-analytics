@@ -706,7 +706,9 @@ function AttendW({ c }: { c: HomeCtx }) {
           const pill = PILL[p.status];
           const r = p.row;
           const ed = c.editors.find((e) => e.id === p.editorId) ?? null;
-          const canMark = p.status === "no_sod" || p.status === "waiting" || (p.status === "absent" && !r?.markedBy);
+          // marks, excuses and requests: only for people below you
+          const can = p.canAct !== false;
+          const canMark = can && (p.status === "no_sod" || p.status === "waiting" || (p.status === "absent" && !r?.markedBy));
           return (
             <div key={p.editorId} className="hw-att-row">
               <Face editor={ed} name={p.name} size={30} />
@@ -714,20 +716,20 @@ function AttendW({ c }: { c: HomeCtx }) {
               <span className={"hw-pill " + pill.t}>{pill.l}</span>
               <span className="hw-att-acts">
                 {/* requests (permissions, corrections) are answered in the Inbox */}
-                {((p.permissionRequests?.length ?? 0) + (r?.correctionStatus === "pending" ? 1 : 0)) > 0 && (
+                {can && ((p.permissionRequests?.length ?? 0) + (r?.correctionStatus === "pending" ? 1 : 0)) > 0 && (
                   <Link to="/inbox" className="hw-faint sm hw-inbox-link">
                     {(p.permissionRequests?.length ?? 0) + (r?.correctionStatus === "pending" ? 1 : 0)} in Inbox →
                   </Link>
                 )}
-                {(p.status === "no_sod" || p.status === "waiting") && (
+                {can && (p.status === "no_sod" || p.status === "waiting") && (
                   nudged.has(p.editorId) || r?.nudgedAt
                     ? <span className="hw-faint sm">Nudged</span>
                     : <button type="button" className="hw-mini" disabled={busy === p.editorId} onClick={() => run(p, "nudge", undefined, `${first(p.name)} nudged to start their day`)}>Nudge</button>
                 )}
-                {p.status === "late" && (
+                {can && p.status === "late" && (
                   <button type="button" className="hw-mini" title="Remove the late mark and penalty" disabled={busy === p.editorId} onClick={() => run(p, "excuse", undefined, `Late mark excused for ${p.name}`)}>Excuse</button>
                 )}
-                {r?.markedBy && (
+                {can && r?.markedBy && (
                   <button type="button" className="hw-mini" disabled={busy === p.editorId} onClick={() => run(p, "undo", undefined, `Undone for ${p.name}`)}>Undo</button>
                 )}
                 {canMark && (

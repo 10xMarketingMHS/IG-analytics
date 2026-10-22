@@ -22,7 +22,12 @@ export type LeaveMine = {
   ready: boolean; linked?: boolean; year: number; today: string; rules: LeaveRules; counting: boolean; countingSince: string | null;
   canApprove: boolean; name?: string | null; balance: LeaveBalance | null; requests: LeaveRequest[];
 };
-export type LeavePerson = { id: string; name: string; designation: string | null; imageUrl: string | null; balance?: LeaveBalance; permissionsUsed?: number };
+export type LeavePerson = {
+  id: string; name: string; designation: string | null; imageUrl: string | null; balance?: LeaveBalance; permissionsUsed?: number;
+  // what you may change for them — never your own (another manager or the
+  // Super Admin does); a new joiner's first allowance, any manager
+  canEditStart?: boolean; canTopUp?: boolean;
+};
 export type LeaveGrant = { id: string; editorId: string; type: LeaveType; days: number; note: string; at: string; name: string; byName: string | null };
 export type LeaveTeam = {
   year: number; today: string; rules: LeaveRules; counting: boolean; countingSince: string | null; me: string | null;
@@ -82,6 +87,11 @@ export async function cancelPermission(id: string) {
 }
 // a lead's answer to a permission request
 export const decidePermission = (editorId: string, id: string, approve: boolean) => attendanceAction(editorId, "permission", { id, approve });
+// permissions a month, for everyone (an admin)
+export async function savePermissionsPerMonth(perMonth: number) {
+  await post("/leave/permissions", { perMonth }, "PUT");
+  changed();
+}
 export async function saveLeaveRules(rules: LeaveRules) {
   await post("/leave/rules", rules, "PUT");
   changed();

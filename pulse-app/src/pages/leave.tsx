@@ -1,8 +1,8 @@
-import { useEffect, useMemo, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { toast } from "sonner";
-import { api, ApiError } from "@/lib/api";
+import { ApiError } from "@/lib/api";
 import { askPermission } from "@/lib/use-attendance";
 import { Icon } from "@/components/icon";
 import { Avatar } from "@/lib/editor-visuals";
@@ -14,7 +14,7 @@ import { homeRoleOf, seesTeamAttendance } from "@/lib/home-role";
 import { TeamAttendance } from "@/pages/team-attendance";
 import {
   HALF_WORDS, addDays, askLeave, cancelLeave, cancelPermission, dayWord, decideLeave, decidePermission, detailOf, fmtDates, fmtDay, n1,
-  previewLeave, saveLeaveRules, setAllowance, startCounting, topUp, useLeaveData,
+  previewLeave, saveLeaveRules, savePermissionsPerMonth, setAllowance, startCounting, topUp, useLeaveData,
   type LeaveHalf, type LeaveMine, type LeavePreview, type LeaveRequest, type LeaveTeam, type LeaveType, type PermissionMine,
   type PermissionPart, type PermissionRow,
 } from "@/lib/use-leave";
@@ -49,6 +49,33 @@ function Face({ name, imageUrl, size = 34 }: { name: string; imageUrl?: string |
 }
 const TypeChip = ({ type }: { type: LeaveType }) => <span className={"lv-type " + type.toLowerCase()}>{type}</span>;
 const Status = ({ s }: { s: LeaveRequest["status"] }) => <span className={"lv-st " + ST[s].cls}>{ST[s].t}</span>;
+// Saves that end on the last value asked for: fast clicks add up from it, one
+// save at a time per key, so an older save never lands after a newer one.
+function useLastSave<T>(save: (key: string, v: T) => Promise<unknown>, undo: (key: string, e: unknown) => void) {
+  const want = useRef(new Map<string, T>());
+  const busy = useRef(new Set<string>());
+  return {
+    latest: (key: string) => want.current.get(key),
+    saving: (key: string) => busy.current.has(key),
+    forget: (key: string) => { want.current.delete(key); },
+    push: async (key: string, v: T) => {
+      want.current.set(key, v);
+      if (busy.current.has(key)) return;
+      busy.current.add(key);
+      try {
+        let sent = v;
+        await save(key, sent);
+        while (want.current.get(key) !== sent) { sent = want.current.get(key)!; await save(key, sent); }
+      } catch (e) {
+        want.current.delete(key);
+        undo(key, e);
+      } finally {
+        busy.current.delete(key);
+      }
+    },
+  };
+}
+
 function Stepper({ value, onDec, onInc, disabled, wide }: { value: string; onDec: () => void; onInc: () => void; disabled?: boolean; wide?: boolean }) {
   return (
     <span className={"lv-step" + (disabled ? " off" : "")}>
@@ -525,7 +552,13 @@ function ApproveTab({ team }: { team: LeaveTeam }) {
 function SettingsTab({ team }: { team: LeaveTeam }) {
   const { org, refetch: refetchOrg } = useOrg();
   const [rules, setRules] = useState(team.rules);
-  useEffect(() => setRules(team.rules), [team.rules]);
+  const rulesSave = useLastSave<LeaveTeam["rules"]>((_, v) => saveLeaveRules(v), (_, e) => { setRules(team.rules); fail(e, "Couldn't save the rules."); });
+  // the server's rules, unless a change is still being saved
+  useEffect(() => {
+    if (rulesSave.saving("rules")) return;
+    rulesSave.forget("rules");
+    setRules(team.rules);
+  }, [team.rules]); // eslint-disable-line react-hooks/exhaustive-deps
   const [editStart, setEditStart] = useState(false);
   // one person's starting days, edited on their row (a Super Admin)
   const [editRow, setEditRow] = useState<string | null>(null);
@@ -543,16 +576,21 @@ function SettingsTab({ team }: { team: LeaveTeam }) {
   const setup = !team.counting || editStart;
   const satWorking = org ? !org.calendar.satOff : true;
 
-  async function changeRule(key: keyof typeof rules, delta: number, min: number, max: number) {
-    const next = { ...rules, [key]: Math.max(min, Math.min(max, Math.round((rules[key] + delta) * 2) / 2)) };
+  function changeRule(key: keyof typeof rules, delta: number, min: number, max: number) {
+    const cur = rulesSave.latest("rules") ?? rules;
+    const next = { ...cur, [key]: Math.max(min, Math.min(max, Math.round((cur[key] + delta) * 2) / 2)) };
     setRules(next);
-    try { await saveLeaveRules(next); } catch (e) { setRules(team.rules); fail(e, "Couldn't save the rules."); }
+    void rulesSave.push("rules", next);
   }
-  async function changeStart(id: string, key: "cl" | "sl", delta: number) {
-    const cur = startOf(id);
+  const startSave = useLastSave<{ cl: number; sl: number }>(
+    (id, v) => setAllowance(id, team.year, v.cl, v.sl),
+    (id, e) => { setStart((s) => { const n = { ...s }; delete n[id]; return n; }); fail(e, "Couldn't save that."); },
+  );
+  function changeStart(id: string, key: "cl" | "sl", delta: number) {
+    const cur = startSave.latest(id) ?? startOf(id);
     const next = { ...cur, [key]: Math.max(0, Math.min(30, cur[key] + delta)) };
     setStart((s) => ({ ...s, [id]: next }));
-    try { await setAllowance(id, team.year, next.cl, next.sl); } catch (e) { setStart((s) => ({ ...s, [id]: cur })); fail(e, "Couldn't save that."); }
+    void startSave.push(id, next);
   }
   async function begin() {
     setBusy(true);
@@ -569,15 +607,17 @@ function SettingsTab({ team }: { team: LeaveTeam }) {
   }
   const topPerson = team.people.find((p) => p.id === topFor) ?? null;
   const { isAdmin } = useWorkspaces();
-  const perMonth = org?.attendance?.permissionsPerMonth ?? 2;
-  async function changePerMonth(delta: number) {
-    if (!org?.attendance) return;
-    const next = Math.max(0, Math.min(10, perMonth + delta));
-    try {
-      await api("/org", { method: "PATCH", body: JSON.stringify({ attendance: { ...org.attendance, permissionsPerMonth: next } }) });
-      await refetchOrg();
-      window.dispatchEvent(new Event("pulse:attendance-changed"));
-    } catch (e) { fail(e, "Couldn't save that."); }
+  // permissions a month: only that number is saved (not a copy of every attendance setting)
+  const [perLocal, setPerLocal] = useState<number | null>(null);
+  const perMonth = perLocal ?? org?.attendance?.permissionsPerMonth ?? 2;
+  const perSave = useLastSave<number>(
+    async (_, v) => { await savePermissionsPerMonth(v); await refetchOrg(); },
+    (_, e) => { setPerLocal(null); fail(e, "Couldn't save that."); },
+  );
+  function changePerMonth(delta: number) {
+    const next = Math.max(0, Math.min(10, (perSave.latest("per") ?? perMonth) + delta));
+    setPerLocal(next);
+    void perSave.push("per", next);
   }
   const ruleRows = [
     { k: "noticeDays" as const, label: "CL notice", sub: "Working days ahead a casual leave must be asked for", value: String(rules.noticeDays), step: 1 },
@@ -610,8 +650,8 @@ function SettingsTab({ team }: { team: LeaveTeam }) {
                 return (
                   <div key={p.id} className="lv-tr">
                     <span className="lv-who"><Face name={p.name} imageUrl={p.imageUrl} size={26} /><b>{p.name}</b></span>
-                    <span><Stepper value={n1(v.cl)} disabled={!team.canEditStart} onDec={() => changeStart(p.id, "cl", -1)} onInc={() => changeStart(p.id, "cl", 1)} /></span>
-                    <span><Stepper value={n1(v.sl)} disabled={!team.canEditStart} onDec={() => changeStart(p.id, "sl", -1)} onInc={() => changeStart(p.id, "sl", 1)} /></span>
+                    <span><Stepper value={n1(v.cl)} disabled={!(p.canEditStart ?? team.canEditStart)} onDec={() => changeStart(p.id, "cl", -1)} onInc={() => changeStart(p.id, "cl", 1)} /></span>
+                    <span><Stepper value={n1(v.sl)} disabled={!(p.canEditStart ?? team.canEditStart)} onDec={() => changeStart(p.id, "sl", -1)} onInc={() => changeStart(p.id, "sl", 1)} /></span>
                   </div>
                 );
               })}
@@ -661,15 +701,19 @@ function SettingsTab({ team }: { team: LeaveTeam }) {
                         <button type="button" className="lv-btn line" onClick={() => setEditRow(null)}>Done</button>
                       ) : (
                         <>
-                          {team.canEditRules && (
+                          {(p.canEditStart ?? team.canEditRules) && (
                             <button type="button" className="lv-iconbtn" title="Edit the starting days" aria-label={`Edit ${p.name}'s starting days`}
                               onClick={() => { setEditRow(p.id); setTopFor(null); }}>
                               <Icon name="edit" size={16} />
                             </button>
                           )}
-                          <button type="button" className={"lv-btn top" + (topFor === p.id ? " on" : "")} onClick={() => { setTopFor(p.id); setEditRow(null); setTopType("CL"); setTopDays(1); setTopNote(""); }}>
-                            <Icon name="add_circle" size={16} />Top up
-                          </button>
+                          {(p.canTopUp ?? true) ? (
+                            <button type="button" className={"lv-btn top" + (topFor === p.id ? " on" : "")} onClick={() => { setTopFor(p.id); setEditRow(null); setTopType("CL"); setTopDays(1); setTopNote(""); }}>
+                              <Icon name="add_circle" size={16} />Top up
+                            </button>
+                          ) : (
+                            <span className="lv-faint" title="Another manager or the Super Admin adds days to your own leave">Your own</span>
+                          )}
                         </>
                       )}
                     </span>
@@ -710,7 +754,7 @@ function SettingsTab({ team }: { team: LeaveTeam }) {
         ))}
         <div className="lv-rule">
           <span className="lv-rule-l"><b>Permissions a month</b><span>Up to 2 hours each: morning (come in late) or evening (leave early). Admins change this</span></span>
-          <Stepper value={String(perMonth)} disabled={!isAdmin || !org?.attendance} onDec={() => changePerMonth(-1)} onInc={() => changePerMonth(1)} />
+          <Stepper value={String(perMonth)} disabled={!isAdmin} onDec={() => changePerMonth(-1)} onInc={() => changePerMonth(1)} />
         </div>
         <div className="lv-rule">
           <span className="lv-rule-l"><b>Saturdays are working days</b><span>From the work calendar (Settings › General). Off days and holidays never use leave.</span></span>

@@ -55,6 +55,9 @@ export function InboxPage() {
   const [tab, setTab] = useState<"waiting" | "sent">("waiting");
   const [kind, setKind] = useState<Kind | "all">("all");
   const [busy, setBusy] = useState<string | null>(null);
+  // answered just now: hidden until the Inbox has re-read (no live buttons on a done row)
+  const [done, setDone] = useState<ReadonlySet<string>>(new Set());
+  const mark = (key: string, on: boolean) => setDone((d) => { const n = new Set(d); if (on) n.add(key); else n.delete(key); return n; });
   const openTask = (taskId: string) => navigate("/tasks", { state: { openTask: taskId } });
 
   // one answer at a time per item; the Inbox reloads after it
@@ -63,7 +66,9 @@ export function InboxPage() {
     try {
       await run();
       toast.success(ok);
+      mark(key, true);
       await refresh();
+      mark(key, false);
     } catch (e) {
       toast.error(e instanceof ApiError ? e.message : "That didn't go through. Check your connection and try again.");
     } finally {
@@ -108,8 +113,8 @@ export function InboxPage() {
         what = <>Start at {clockTime(i.correctionAt)}{i.date !== new Date().toLocaleDateString("en-CA") ? ` on ${day(i.date)}` : ""}</>;
         who = <Person name={i.name} imageUrl={i.imageUrl} kind="correction" />;
         details = <>{i.note ? <span>“{i.note}”</span> : null}<span className="ib-faint">{i.checkInAt ? `Opened Pulse at ${clockTime(i.checkInAt)}` : "Not opened yet"}</span></>;
-        acts = <>{btn("Decline", () => act(i.key, () => attendanceAction(i.editorId, "correction", { approve: false }), "Correction declined."), "ghost")}
-          {btn("Approve", () => act(i.key, () => attendanceAction(i.editorId, "correction", { approve: true }), "Start time corrected."), "good")}</>;
+        acts = <>{btn("Decline", () => act(i.key, () => attendanceAction(i.editorId, "correction", { approve: false, date: i.date }), "Correction declined."), "ghost")}
+          {btn("Approve", () => act(i.key, () => attendanceAction(i.editorId, "correction", { approve: true, date: i.date }), "Start time corrected."), "good")}</>;
         break;
       case "handover": {
         const h = i.handover;
@@ -162,9 +167,11 @@ export function InboxPage() {
     );
   }
 
-  const all = tab === "waiting" ? data?.waiting ?? [] : data?.sent ?? [];
+  const all = (tab === "waiting" ? data?.waiting ?? [] : data?.sent ?? []).filter((i) => !done.has(i.key));
   const counts = KINDS.map((x) => ({ ...x, n: all.filter((i) => i.kind === x.k).length })).filter((x) => x.n > 0);
-  const shown = kind === "all" ? all : all.filter((i) => i.kind === kind);
+  // a kind with nothing left (its last one answered) shows everything again
+  const kindOn = kind !== "all" && counts.some((x) => x.k === kind) ? kind : "all";
+  const shown = kindOn === "all" ? all : all.filter((i) => i.kind === kindOn);
   // grouped by kind, newest first within each
   const rows = [...shown].sort((a, b) => (ORDER.get(a.kind)! - ORDER.get(b.kind)!) || new Date(b.at).getTime() - new Date(a.at).getTime());
   const pickTab = (t: "waiting" | "sent") => { setTab(t); setKind("all"); };
@@ -181,9 +188,9 @@ export function InboxPage() {
         </div>
         {counts.length > 1 && (
           <div className="ib-seg" role="group" aria-label="Show">
-            <button type="button" className={kind === "all" ? "on" : ""} onClick={() => setKind("all")}>All<span className="ib-n">{all.length}</span></button>
+            <button type="button" className={kindOn === "all" ? "on" : ""} onClick={() => setKind("all")}>All<span className="ib-n">{all.length}</span></button>
             {counts.map((x) => (
-              <button key={x.k} type="button" className={kind === x.k ? "on" : ""} onClick={() => setKind(x.k)}>{x.label}<span className="ib-n">{x.n}</span></button>
+              <button key={x.k} type="button" className={kindOn === x.k ? "on" : ""} onClick={() => setKind(x.k)}>{x.label}<span className="ib-n">{x.n}</span></button>
             ))}
           </div>
         )}
