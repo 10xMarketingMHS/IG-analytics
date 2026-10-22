@@ -64,5 +64,22 @@ check("August is frozen on 5 Oct", M.monthFrozen("2026-08", "2026-10-05"));
 check("This month is never frozen", !M.monthFrozen("2026-10", today));
 check("A range touching September is frozen on 22 Oct", M.rangeFrozen("2026-09-30", "2026-10-02", today) === "2026-09");
 
+console.log("-- Dates that aren't real, and long ranges");
+check("22 Oct 2026 is a real date", M.validYmd("2026-10-22"));
+check("Month 13, 30 Feb and year 9999 aren't", !M.validYmd("2026-13-01") && !M.validYmd("2026-02-30") && !M.validYmd("9999-12-31"));
+let t0 = Date.now();
+let bad9999 = M.checkRequest({ type: "SL", from: today, to: "9999-12-31", today, isWorking: satWorking });
+check("A request to 31 Dec 9999 is refused at once", bad9999 === "Pick real dates." && Date.now() - t0 < 200, `${bad9999} in ${Date.now() - t0} ms`);
+t0 = Date.now();
+bad9999 = M.checkRequest({ type: "SL", from: today, to: "2100-12-31", today, isWorking: satWorking });
+check("…and one to 2100 before counting its days", /Up to 30/.test(bad9999 ?? "") && Date.now() - t0 < 200, `${bad9999} in ${Date.now() - t0} ms`);
+check("Working days are never counted past a year and a bit", M.workingDates(satWorking, "2026-01-01", "2099-12-31").length <= 400);
+
+console.log("-- A leave with every day worked costs nothing");
+const s0 = M.resplit({ days: 0, total: 2, usedByOthers: 0, shortPts: 2, unpaidRate: 3 });
+check("1-day short-notice CL, worked after all: 0 days, 0 pts", s0.paid === 0 && s0.unpaid === 0 && s0.pts === 0, JSON.stringify(s0));
+const s1 = M.resplit({ days: 1, total: 2, usedByOthers: 0, shortPts: 2, unpaidRate: 3 });
+check("…put back (Undo Start day): the short-notice cut again", s1.pts === 2, JSON.stringify(s1));
+
 console.log(`\n${ok} passed, ${bad} failed.`);
 process.exit(bad ? 1 : 0);

@@ -16,11 +16,21 @@ export const HALF_WORDS = { full: "Full day", first: "First half", second: "Seco
 
 const DAY_MS = 86_400_000;
 export const addDays = (ymd, n) => new Date(Date.parse(`${ymd}T00:00:00Z`) + n * DAY_MS).toISOString().slice(0, 10);
+export const daysBetween = (a, b) => Math.round((Date.parse(`${b}T00:00:00Z`) - Date.parse(`${a}T00:00:00Z`)) / DAY_MS);
+// A real calendar day, between 2000 and 2100 (not 2026-13-01 or 2026-02-30,
+// and not a far-off year that would send a day-by-day loop on for ever).
+export function validYmd(s) {
+  if (typeof s !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(s) || s < "2000-01-01" || s > "2100-12-31") return false;
+  const t = Date.parse(`${s}T00:00:00Z`);
+  return !Number.isNaN(t) && new Date(t).toISOString().slice(0, 10) === s;
+}
 
-// Working days a..b, both included.
+// Working days a..b, both included (at most a year and a bit of days are looked
+// at, whatever the dates).
 export function workingDates(isWorking, a, b) {
   const out = [];
-  for (let d = a; d <= b; d = addDays(d, 1)) if (isWorking(d)) out.push(d);
+  if (!validYmd(a) || !validYmd(b)) return out;
+  for (let d = a, n = 0; d <= b && n < 400; d = addDays(d, 1), n++) if (isWorking(d)) out.push(d);
   return out;
 }
 export const workingDays = (isWorking, a, b) => workingDates(isWorking, a, b).length;
@@ -54,7 +64,10 @@ export function splitByYear(from, to) {
 // Is the request itself sound? An error message, or null.
 export function checkRequest({ type, from, to, half = "full", today, isWorking }) {
   if (!from || !to) return "Pick the days.";
+  if (!validYmd(from) || !validYmd(to)) return "Pick real dates.";
   if (to < from) return "“To” is before “From”.";
+  // a long range is refused before its days are counted
+  if (daysBetween(from, to) > 62) return "Up to 30 working days in one request.";
   if (half !== "full" && from !== to) return "A half day is one day.";
   if (type === "CL" && from < today) return "Casual leave can’t be for a past day. If you were ill, choose sick leave.";
   if (type === "SL" && from < addDays(today, -SL_BACK_DAYS)) return "Sick leave can go back 7 days at most. Older days need a manager.";
@@ -80,11 +93,13 @@ export function priceRequest({ type, days, from, today, isWorking, rules, total,
 }
 
 // Re-split at approval (another request may have used the balance, or freed
-// it): the same days and rates, against what's left now.
+// it): the same days and rates, against what's left now. A leave with no days
+// left (every day of it worked after all) costs nothing — not even the
+// short-notice cut.
 export function resplit({ days, total, usedByOthers, shortPts, unpaidRate }) {
   const paid = Math.min(days, Math.max(0, total - usedByOthers));
   const unpaid = days - paid;
-  return { paid, unpaid, pts: shortPts + unpaid * unpaidRate };
+  return { paid, unpaid, pts: days > 0 ? shortPts + unpaid * unpaidRate : 0 };
 }
 
 // Has Management Performance frozen this month ('YYYY-MM')? Months before last
