@@ -10,6 +10,7 @@ import { achievement, currentPeriod, doneByType, goalLines, monthName, pctText, 
 import type { Editor, Task } from "@/lib/types";
 import { exportReport, rankTeam } from "@/pages/team-panel";
 import { clockTime } from "@/lib/time-format";
+import { whileVisible } from "@/lib/visible-poll";
 
 // My Team › Today (Pulse Redesign v5): who is working, on a break, not started
 // or wrapped up right now, what each person is on and for how long, and — for
@@ -52,7 +53,7 @@ export function TeamToday({ tasks, editors, onOpenTask, focusId }: {
   const { data: eod, refetch } = useResource<{ editors: TeamRow[] }>(`/eod/team?date=${today}`);
   const [fetchedAt, setFetchedAt] = useState(() => Date.now());
   useEffect(() => { setFetchedAt(Date.now()); }, [eod]);
-  useEffect(() => { const t = window.setInterval(() => { refetch().catch(() => {}); }, 60_000); return () => window.clearInterval(t); }, [refetch]);
+  useEffect(() => whileVisible(() => { refetch().catch(() => {}); }, 60_000), [refetch]);
   const [filter, setFilter] = useState<"all" | Tone>("all");
   const [selId, setSelId] = useState<string | null>(focusId ?? null);
   const [exporting, setExporting] = useState(false);

@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { api } from "@/lib/api";
 import { onTasksChanged } from "@/lib/task-events";
+import { whileVisible } from "@/lib/visible-poll";
 import type { HandoverItem } from "@/components/handover";
 import type { LeaveRequest } from "@/lib/use-leave";
 
@@ -47,7 +48,8 @@ export function refreshInbox(who: string, fresh = false): Promise<void> {
 }
 
 // `who`: the signed-in user's id, so another login never sees this one's Inbox.
-// `poll`: re-read every minute (the app shell does; pages just follow along).
+// `poll`: re-read every minute while the tab is in view (the app shell does;
+// pages just follow along).
 export function useInbox(who: string, poll = false) {
   const [, setTick] = useState(0);
   useEffect(() => {
@@ -58,12 +60,12 @@ export function useInbox(who: string, poll = false) {
     const again = () => { refreshInbox(who); };
     window.addEventListener("pulse:attendance-changed", again);
     const offTasks = onTasksChanged(again);
-    const id = poll ? window.setInterval(again, 60_000) : 0;
+    const stop = poll ? whileVisible(again, 60_000) : null;
     return () => {
       subs.delete(f);
       window.removeEventListener("pulse:attendance-changed", again);
       offTasks();
-      if (id) window.clearInterval(id);
+      stop?.();
     };
   }, [who, poll]);
   const data = current && current.who === who ? current.data : null;

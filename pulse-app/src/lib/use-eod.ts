@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { api, ApiError } from "@/lib/api";
+import { whileVisible } from "@/lib/visible-poll";
 import { notifyTasksChanged } from "@/lib/task-events";
 
 // 7h 40m / 45m — a length of time, not a clock time.
@@ -116,12 +117,12 @@ export function useEod() {
   // automatic close, the server refusing work: re-check every minute, when the
   // tab comes back into view, and right after such a refusal.
   useEffect(() => {
-    const id = setInterval(refresh, 60_000);
+    const stop = whileVisible(refresh, 60_000);
     const onVisible = () => { if (!document.hidden) refresh(); };
     document.addEventListener("visibilitychange", onVisible);
     window.addEventListener("pulse:workday-changed", refresh);
     return () => {
-      clearInterval(id);
+      stop();
       document.removeEventListener("visibilitychange", onVisible);
       window.removeEventListener("pulse:workday-changed", refresh);
     };

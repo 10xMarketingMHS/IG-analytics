@@ -5,8 +5,10 @@ import { NAV_ITEMS, PAGE_META, type NavItem } from "@/lib/nav";
 import { useAuth } from "@/lib/auth-context";
 import { useWorkspaces } from "@/lib/workspaces-context";
 import { useEditors } from "@/lib/use-editors";
-import { usePosts } from "@/lib/use-posts";
 import { useResource } from "@/lib/use-resource";
+import { api } from "@/lib/api";
+import { whileVisible } from "@/lib/visible-poll";
+import { useTaskAlertList } from "@/lib/use-task-alerts";
 import { useAutoSync } from "@/lib/auto-sync";
 import { getActivitySeen, markActivitySeen, onActivitySeenChange } from "@/lib/activity-seen";
 import { NotifyPanel } from "@/components/notify-panel";
@@ -95,16 +97,26 @@ function SidebarBreak() {
 }
 
 // Unread = activity newer than the last timestamp the user saw on /activity.
-// Polls lightly so the badge stays fresh while the shell stays mounted.
+// Every half minute while the tab is in view, it asks only whether anything is
+// newer than the latest notice it has (a tiny answer, nearly always "no"); the
+// 40 latest are re-read only when something is.
 function useUnreadActivity() {
   const { data, refetch } = useResource<{ activity: Activity[] }>("/activity?limit=40");
   const [seen, setSeen] = useState(getActivitySeen());
+  const latest = useRef<Activity | undefined>(undefined);
+  latest.current = data?.activity?.[0];
 
   useEffect(() => onActivitySeenChange(() => setSeen(getActivitySeen())), []);
-  useEffect(() => {
-    const id = setInterval(() => refetch().catch(() => {}), 20_000);
-    return () => clearInterval(id);
-  }, [refetch]);
+  useEffect(() => whileVisible(async () => {
+    try {
+      const top = latest.current;
+      if (top) {
+        const { activity } = await api<{ activity: Activity[] }>(`/activity?limit=1&after=${encodeURIComponent(top.created_at)}`);
+        if (!activity.length || activity[0].id === top.id) return; // nothing new
+      }
+      await refetch();
+    } catch { /* the next look tries again */ }
+  }, 30_000), [refetch]);
 
   const unread = useMemo(() => {
     const items = data?.activity ?? [];
@@ -317,8 +329,10 @@ function AppShellInner() {
   const { editors } = useEditors();
   const location = useLocation();
   const navigate = useNavigate();
-  const { posts } = usePosts();
-  const postCount = posts?.length ?? null;
+  // the sidebar's posts number: just the count (not every post), re-read on moving between pages
+  const { data: postCountData, refetch: refetchPostCount } = useResource<{ count: number }>("/posts/count");
+  useEffect(() => { refetchPostCount().catch(() => {}); }, [location.pathname]); // eslint-disable-line react-hooks/exhaustive-deps
+  const postCount = postCountData?.count ?? null;
   const { unread, items: activityItems } = useUnreadActivity();
   // the Inbox's count, re-read every minute for the sidebar badge
   useInbox(user?.id ?? "", true);
@@ -337,13 +351,16 @@ function AppShellInner() {
     setNotifyOpen(true);
   };
   useLiveNotices(activityItems, user?.id, user?.editorId);
-  useTaskAssignNotify();
-  useOverdueTaskNotify();
-  useDueOverdueNotify();
   // Anyone who reviews hears when work lands in review for them (or reaches
   // them after 24 hours) — each task says can_review.
   const review = useReviewAccess();
-  useReviewWaitingNotify(review.reviewer, (t) => !!t.can_review);
+  // the alerts' one shared list of open tasks: the team's for admins and
+  // reviewers, otherwise just your own (lib/use-task-alerts.ts)
+  const alertTasks = useTaskAlertList(isAdmin || review.reviewer ? "team" : user?.editorId ? "mine" : null);
+  useTaskAssignNotify(alertTasks);
+  useOverdueTaskNotify(alertTasks);
+  useDueOverdueNotify(alertTasks);
+  useReviewWaitingNotify(review.reviewer, (t) => !!t.can_review, alertTasks);
   // The organisation's name (sidebar) and week start (date ranges).
   const { org } = useOrg();
   useEffect(() => { if (org) setWeekStart(org.weekStart); }, [org?.weekStart]); // eslint-disable-line react-hooks/exhaustive-deps

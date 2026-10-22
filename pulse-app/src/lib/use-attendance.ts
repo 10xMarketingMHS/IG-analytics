@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { api, ApiError } from "@/lib/api";
+import { whileVisible } from "@/lib/visible-poll";
 import type { HomeRole } from "@/lib/home-role";
 import type { LeaveBalance } from "@/lib/use-leave";
 
@@ -85,12 +86,13 @@ export function useAttendanceToday(enabled = true, who = "") {
   useEffect(() => {
     if (!enabled) return;
     refresh();
-    const id = setInterval(refresh, 60_000);
+    // every minute while the tab is in view
+    const stop = whileVisible(refresh, 60_000);
     const on = () => refresh();
     window.addEventListener("pulse:attendance-changed", on);
     window.addEventListener("pulse:workday-changed", on);
     return () => {
-      clearInterval(id);
+      stop();
       window.removeEventListener("pulse:attendance-changed", on);
       window.removeEventListener("pulse:workday-changed", on);
     };
