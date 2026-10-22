@@ -276,7 +276,7 @@ export async function decideLeave({ orgId, id, approve, deciderUserId, deciderEd
         where id = $1`,
       [id, s.paid, s.unpaid, s.pts, deciderUserId],
     );
-    const out = { ...r, status: "approved", paid: s.paid, unpaid: s.unpaid, pts: s.pts };
+    const out = { ...r, status: "approved", paid: s.paid, unpaid: s.unpaid, pts: s.pts, decidedBy: deciderUserId };
     await writeDays(client, orgId, out, deciderUserId, isWorking);
     return out;
   });
