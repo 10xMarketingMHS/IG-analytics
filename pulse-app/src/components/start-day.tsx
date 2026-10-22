@@ -98,7 +98,7 @@ export function StartDaySection({
       {leave.waiting > 0 && <span>· {leave.waiting} request{leave.waiting === 1 ? "" : "s"} waiting</span>}
     </button>
   ) : null;
-  const leaveForm = leaveOpen ? <LeavePanel onClose={() => setLeaveOpen(false)} /> : null;
+  const leaveForm = leaveOpen ? <LeavePanel startTab="apply" onClose={() => setLeaveOpen(false)} /> : null;
   const now = new Date(nowMs);
   const nowMin = now.getHours() * 60 + now.getMinutes();
   // A preview (an admin seeing another role's Home) always shows the card a

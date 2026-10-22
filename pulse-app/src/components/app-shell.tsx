@@ -325,7 +325,7 @@ function AppShellInner() {
   // The bell opens a small box of the latest notices (See all opens Activity).
   // What was read before it opened stays marked as read; the rest show as new.
   const [notifyOpen, setNotifyOpen] = useState(false);
-  // the top bar's Leave: the leave side panel (pages/leave.tsx)
+  // the top bar's Attendance: the attendance month and leave, in the side panel (pages/leave.tsx)
   const [leaveOpen, setLeaveOpen] = useState(false);
   const [seenAtOpen, setSeenAtOpen] = useState("");
   const bellRef = useRef<HTMLButtonElement>(null);
@@ -684,8 +684,8 @@ function AppShellInner() {
             </>
           )}
           {(user?.editorId || isAdmin) && (
-            <button type="button" className="btn top-leave" onClick={() => setLeaveOpen(true)} title="Ask for leave, see your balance" aria-label="Leave">
-              <Icon name="event_available" size={18} /><span className="top-leave-l">Leave</span>
+            <button type="button" className="btn top-leave" onClick={() => setLeaveOpen(true)} title="Attendance and leave" aria-label="Attendance">
+              <Icon name="event_available" size={18} /><span className="top-leave-l">Attendance</span>
             </button>
           )}
           <div className="nt-wrap">

@@ -6,6 +6,11 @@ import { ApiError } from "@/lib/api";
 import { Icon } from "@/components/icon";
 import { Avatar } from "@/lib/editor-visuals";
 import { useOrg } from "@/lib/use-org";
+import { useAuth } from "@/lib/auth-context";
+import { useEditors } from "@/lib/use-editors";
+import { useWorkspaces } from "@/lib/workspaces-context";
+import { homeRoleOf, seesTeamAttendance } from "@/lib/home-role";
+import { TeamAttendance } from "@/pages/team-attendance";
 import {
   HALF_WORDS, addDays, askLeave, cancelLeave, dayWord, decideLeave, detailOf, fmtDates, fmtDay, n1, previewLeave, saveLeaveRules,
   setAllowance, startCounting, topUp, useLeaveData,
@@ -18,12 +23,14 @@ import "./leave.css";
 // Leave.dc.html": Ask for leave (everyone), Approvals and Allowances & rules
 // (managers and admins). One screen, three ways in:
 //   mode "team" — My Team › Leave: Approvals and Allowances & rules;
-//   mode "all"  — the side panel (LeavePanel: the top bar's Leave, and Ask
-//                 for leave on the Start your day card) and /leave: all tabs;
+//   mode "all"  — the side panel (LeavePanel: the top bar's Attendance, and
+//                 Ask for leave on the Start your day card) and /leave: the
+//                 attendance month first (the team's for leads, managers and
+//                 admins; your own row for everyone else), then the leave tabs;
 //   mode "mine" — just your balance, requests and the form (no tabs).
 // Rules: server/src/leave-math.js.
 
-type Tab = "apply" | "approve" | "settings";
+type Tab = "attendance" | "apply" | "approve" | "settings";
 const ST: Record<LeaveRequest["status"], { t: string; cls: string }> = {
   pending: { t: "Waiting", cls: "warn" }, approved: { t: "Approved", cls: "good" },
   declined: { t: "Declined", cls: "bad" }, cancelled: { t: "Cancelled", cls: "mute" },
@@ -53,18 +60,32 @@ function Stepper({ value, onDec, onInc, disabled, wide }: { value: string; onDec
 export function LeaveScreen({ startTab = "apply", onTab, mode = "all" }: { startTab?: Tab; onTab?: (t: Tab) => void; mode?: "all" | "team" | "mine" }) {
   const navigate = useNavigate();
   const mine = useLeaveData<LeaveMine>("/leave/mine");
+  // the attendance month: the whole team for whoever sees it (as on My Team),
+  // otherwise your own row
+  const { user } = useAuth();
+  const { isAdmin } = useWorkspaces();
+  const { editors } = useEditors();
+  const { org } = useOrg();
+  const myEd = (editors ?? []).find((e) => e.id === user?.editorId) ?? null;
+  const seesTeam = isAdmin || (homeRoleOf(myEd?.designation, false) !== "editor" && seesTeamAttendance(myEd?.designation, false, org?.attendance?.teamView));
   const canApprove = !!mine.data?.canApprove;
   const team = useLeaveData<LeaveTeam>(canApprove && mode !== "mine" ? "/leave/team" : null);
   const [tab, setTabState] = useState<Tab>(startTab);
   useEffect(() => setTabState(startTab), [startTab]);
   const setTab = (t: Tab) => { setTabState(t); onTab?.(t); };
-  const shown: Tab = mode === "mine" || !canApprove ? "apply" : mode === "team" && tab === "apply" ? "approve" : tab;
+  const shown: Tab = mode === "mine" ? "apply"
+    : mode === "team" ? (tab === "settings" ? "settings" : "approve")
+    : tab === "attendance" ? "attendance"
+    : !canApprove ? "apply" : tab;
   // where the allowances are set (from the form, before counting starts)
   const goSettings = !canApprove ? null : mode === "all" ? () => setTab("settings") : () => navigate("/my-team?tab=leave&view=settings");
   const waiting = team.data ? team.data.pending.filter((r) => r.editorId !== team.data!.me).length : 0;
   const today = mine.data?.today;
   const tabs: { id: Tab; label: string; icon: string; count?: number }[] = mode === "mine" ? [] : [
-    ...(mode === "all" ? [{ id: "apply" as Tab, label: "Ask for leave", icon: "edit_calendar" }] : []),
+    ...(mode === "all" ? [
+      { id: "attendance" as Tab, label: seesTeam ? "Team attendance" : "My attendance", icon: "how_to_reg" },
+      { id: "apply" as Tab, label: "Ask for leave", icon: "edit_calendar" },
+    ] : []),
     ...(canApprove ? [
       { id: "approve" as Tab, label: "Approvals", icon: "fact_check", count: waiting },
       { id: "settings" as Tab, label: "Allowances & rules", icon: "tune" },
@@ -79,8 +100,13 @@ export function LeaveScreen({ startTab = "apply", onTab, mode = "all" }: { start
         <div className="lv-title">
           <span className="lv-tile"><Icon name="event_available" size={22} /></span>
           <div>
-            <b>Leave</b>
-            <span>{mode === "team" ? "Approvals, balances and allowances" : "Casual leave (CL) and sick leave (SL)"}{today ? ` · today is ${fmtDay(today)} ${today.slice(0, 4)}` : ""}</span>
+            <b>{mode === "all" ? "Attendance" : "Leave"}</b>
+            <span>
+              {mode === "team" ? "Approvals, balances and allowances"
+                : mode === "all" ? `${seesTeam ? "The team's" : "Your"} attendance, casual leave (CL) and sick leave (SL)`
+                : "Casual leave (CL) and sick leave (SL)"}
+              {today ? ` · today is ${fmtDay(today)} ${today.slice(0, 4)}` : ""}
+            </span>
           </div>
         </div>
         {tabs.length > 1 && (
@@ -94,7 +120,8 @@ export function LeaveScreen({ startTab = "apply", onTab, mode = "all" }: { start
           </div>
         )}
       </header>}
-      {mine.error ? <div className="lv-card lv-empty">{mine.error}</div>
+      {shown === "attendance" ? <TeamAttendance editors={editors} self={!seesTeam} />
+        : mine.error ? <div className="lv-card lv-empty">{mine.error}</div>
         : !mine.data ? <div className="lv-card lv-empty">Loading leave…</div>
         : !mine.data.ready ? <div className="lv-card lv-empty">Leave needs a database update first — ask whoever runs the database to apply 20261030120000_leave.</div>
         : shown === "apply" ? <AskTab mine={mine.data} goSettings={goSettings} />
@@ -533,7 +560,7 @@ export function LeavePage() {
 // Home: the same screen in a side panel (Ask for leave, the balance line, the
 // bar's Leave button). Put on the page itself (a portal): the day bar it's
 // opened from blurs its background, which would hold a fixed panel inside it.
-export function LeavePanel({ onClose }: { onClose: () => void }) {
+export function LeavePanel({ onClose, startTab = "attendance" }: { onClose: () => void; startTab?: Tab }) {
   useEffect(() => {
     const esc = (e: KeyboardEvent) => { if (e.key === "Escape") onClose(); };
     window.addEventListener("keydown", esc);
@@ -542,9 +569,9 @@ export function LeavePanel({ onClose }: { onClose: () => void }) {
   return createPortal(
     <>
       <div className="lv-scrim" onClick={onClose} aria-hidden="true" />
-      <aside className="lv-panel" aria-label="Leave" role="dialog">
+      <aside className="lv-panel" aria-label="Attendance and leave" role="dialog">
         <button type="button" className="lv-close" onClick={onClose} title="Close" aria-label="Close"><Icon name="close" size={20} /></button>
-        <LeaveScreen startTab="apply" />
+        <LeaveScreen startTab={startTab} />
       </aside>
     </>,
     document.body,
