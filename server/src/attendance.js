@@ -3,6 +3,7 @@ import { hasColumn } from "./schema-flags.js";
 import { isOrgAdmin } from "./permissions.js";
 import { logActivity } from "./activity.js";
 import { normalizeCalendar } from "./work-calendar.js";
+import { LEAVE_DEFAULTS } from "./leave-math.js";
 
 // Attendance — Start of day check-in and the late / no-SOD / absent rules.
 // Office hours come from the work calendar (Settings › General); the rules
@@ -24,9 +25,6 @@ export const ATTENDANCE_DEFAULTS = {
   autoAbsentEnabled: true,
   // Permissions a month (morning: come in late; evening: leave early).
   permissionsPerMonth: 2,
-  // CL applied for fewer days ahead than this is short notice: each day costs
-  // the absence penalty (leave.js).
-  clNoticeDays: 2,
   requireEodNote: true,
   allowCorrections: true,
   latePenaltyPts: 1,
@@ -35,11 +33,17 @@ export const ATTENDANCE_DEFAULTS = {
   // Who besides admins sees the whole team's attendance (Team today, Team ›
   // Attendance, the lead actions), by position. Only a Super Admin changes it.
   teamView: { manager: true, asstManager: true, teamLead: true },
+  // Leave (leave-math.js): CL notice in working days, the short-notice cut a
+  // request, the cut a day for unpaid leave, and when counting started (a
+  // manager presses Start counting once the starting allowances are set).
+  leave: LEAVE_DEFAULTS,
 };
 
 export function normalizeAttendance(a) {
   const src = a && typeof a === "object" ? a : {};
   const s = { ...ATTENDANCE_DEFAULTS, ...src, teamView: { ...ATTENDANCE_DEFAULTS.teamView, ...(src.teamView && typeof src.teamView === "object" ? src.teamView : {}) } };
+  s.leave = { ...LEAVE_DEFAULTS, ...(src.leave && typeof src.leave === "object" ? src.leave : {}) };
+  delete s.leaveLog;
   // Saved before the half-day rule: its auto-absent time gives way to the new
   // pair (half day at 11:30 AM, absent at 1:30 PM).
   if (src.halfDayAt == null) { s.halfDayAt = ATTENDANCE_DEFAULTS.halfDayAt; s.autoAbsentAt = ATTENDANCE_DEFAULTS.autoAbsentAt; }
@@ -194,11 +198,6 @@ export function penaltyOf(row, att) {
   if (row.status === "late" && !row.excused) return att.latePenaltyPts;
   if (row.status === "absent") return att.absentPenaltyPts;
   if (row.status === "half_absent") return att.absentPenaltyPts / 2;
-  // CL at short notice (leave.js): like an absence, half for a half day
-  if (row.shortNotice || row.short_notice) {
-    if (row.status === "leave") return att.absentPenaltyPts;
-    if (row.status === "half_day") return att.absentPenaltyPts / 2;
-  }
   return 0;
 }
 
@@ -283,14 +282,29 @@ export async function monthPenalties(orgId, month) {
   if (!(await attendanceReady())) return new Map();
   const { att: now, raw } = await readSettings(orgId);
   const att = penaltiesFor(now, raw, month);
-  const shortNotice = (await hasColumn("attendance", "short_notice")) ? ", short_notice" : "";
+  const [{ rows }, leave] = await Promise.all([
+    pool.query(
+      `select editor_id, status, excused from attendance
+        where org_id = $1 and to_char(date, 'YYYY-MM') = $2`,
+      [orgId, month],
+    ),
+    leavePenalties(orgId, month),
+  ]);
+  const m = new Map(leave);
+  for (const r of rows) m.set(r.editor_id, (m.get(r.editor_id) ?? 0) + penaltyOf(r, att));
+  return m;
+}
+// Approved leave's points (short notice, unpaid days), in the month it starts —
+// fixed when it was asked for (leave-math.js).
+export async function leavePenalties(orgId, month) {
+  const m = new Map();
+  if (!(await hasColumn("leave_request", "penalty_pts"))) return m;
   const { rows } = await pool.query(
-    `select editor_id, status, excused${shortNotice} from attendance
-      where org_id = $1 and to_char(date, 'YYYY-MM') = $2`,
+    `select editor_id, sum(penalty_pts)::float as pts from leave_request
+      where org_id = $1 and status = 'approved' and to_char(date_from, 'YYYY-MM') = $2 group by editor_id`,
     [orgId, month],
   );
-  const m = new Map();
-  for (const r of rows) m.set(r.editor_id, (m.get(r.editor_id) ?? 0) + penaltyOf(r, att));
+  for (const r of rows) if (r.pts) m.set(r.editor_id, r.pts);
   return m;
 }
 

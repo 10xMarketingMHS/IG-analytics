@@ -32,6 +32,7 @@ import { chatRouter } from "./routes/chat.js";
 import { orgRouter } from "./routes/org.js";
 import { attendanceRouter } from "./routes/attendance.js";
 import { inboxRouter } from "./routes/inbox.js";
+import { leaveRouter } from "./routes/leave.js";
 import { homeRouter } from "./routes/home.js";
 
 const app = express();
@@ -80,6 +81,7 @@ app.use("/api", requireAuth, resolveWorkspace, chatRouter);
 app.use("/api", requireAuth, resolveWorkspace, orgRouter);
 app.use("/api", requireAuth, resolveWorkspace, attendanceRouter);
 app.use("/api", requireAuth, resolveWorkspace, inboxRouter);
+app.use("/api", requireAuth, resolveWorkspace, leaveRouter);
 app.use("/api", requireAuth, resolveWorkspace, homeRouter);
 
 // In production this one service also serves the built React app, so the whole

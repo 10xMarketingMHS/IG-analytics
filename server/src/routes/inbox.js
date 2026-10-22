@@ -1,7 +1,7 @@
 import { Router } from "express";
 import { pool } from "../db.js";
 import { attendancePeople, attendanceReady, callerScope, istNow, permissionsReady } from "../attendance.js";
-import { leaveReady, leaveYear, waitingLeave } from "../leave.js";
+import { LEAVE_COLS, balances, isApprover, leaveReady } from "../leave.js";
 import { editorRanks, taskViewer } from "../hierarchy.js";
 import { isOrgAdmin } from "../permissions.js";
 import { withReview } from "../review-route.js";
@@ -9,8 +9,9 @@ import { handoverFeed } from "./handover.js";
 
 // The Inbox: everything waiting on you, in one place, and what you sent that's
 // still waiting on someone else.
-//   waiting — leave, permission and start-time correction requests from people
-//     below you (leads and managers); hand-overs offered to you or climbed to
+//   waiting — leave requests (managers and admins: everyone's but their own),
+//     permission and start-time correction requests from people below you
+//     (leads and managers); hand-overs offered to you or climbed to
 //     you; work waiting for your review; tasks given to you to accept; for
 //     admins, forgotten-password requests.
 //   sent — your leave and permissions waiting for a lead, hand-overs you
@@ -22,6 +23,11 @@ export const inboxRouter = Router();
 // the number the board shows (pages/tasks.tsx taskRef)
 const REF = "coalesce(t.sid, regexp_replace(t.ad_id, '^AdID', 'AID', 'i'), t.svid, t.pid, t.tid)";
 const none = Promise.resolve({ rows: [] });
+async function namesOf(ids) {
+  if (!ids.length) return new Map();
+  const { rows } = await pool.query("select id, name, image_url as \"imageUrl\" from editor where id = any($1::uuid[])", [ids]);
+  return new Map(rows.map((r) => [r.id, r]));
+}
 
 inboxRouter.get("/inbox", async (req, res, next) => {
   try {
@@ -41,7 +47,9 @@ inboxRouter.get("/inbox", async (req, res, next) => {
     const person = (id) => ({ editorId: id, name: who.get(id)?.name ?? "Someone", imageUrl: who.get(id)?.imageUrl ?? null });
 
     const [leaves, perms, corrections, review, toAccept, myLeave, myPerms, resets] = await Promise.all([
-      leaveOn ? waitingLeave(ids) : [],
+      leaveOn && isApprover(caller)
+        ? pool.query(`select ${LEAVE_COLS} from leave_request where org_id = $1 and status = 'pending' and editor_id is distinct from $2 order by date_from`, [req.orgId, me])
+        : none,
       permOn && ids.length
         ? pool.query(
           `select id, editor_id as "editorId", date::text as date, part, note, created_at as "at" from attendance_permission
@@ -76,8 +84,7 @@ inboxRouter.get("/inbox", async (req, res, next) => {
         : none,
       leaveOn && me
         ? pool.query(
-          `select id, editor_id as "editorId", kind, dates::text[] as dates, half, short_notice as "shortNotice", status, note,
-                  created_at as "createdAt" from leave_request where editor_id = $1 and status = 'requested'`,
+          `select ${LEAVE_COLS} from leave_request where editor_id = $1 and status = 'pending'`,
           [me],
         )
         : none,
@@ -105,16 +112,21 @@ inboxRouter.get("/inbox", async (req, res, next) => {
         )
         : none,
     ]);
-    // each asker's CL this year, beside their request
-    const [reviewed, balances] = await Promise.all([
+    // each asker's balance this year, beside their request
+    const [reviewed, bal] = await Promise.all([
       withReview(req, review.rows),
-      leaves.length ? leaveYear(leaves.map((l) => l.editorId), Number(today.slice(0, 4))) : new Map(),
+      leaves.rows.length ? balances(leaves.rows.map((l) => l.editorId), Number(today.slice(0, 4))) : new Map(),
     ]);
+    const askers = await namesOf(leaves.rows.map((l) => l.editorId).filter((id) => !who.has(id)));
 
     const waiting = [
-      ...leaves.map((l) => {
-        const b = balances.get(l.editorId);
-        return { kind: "leave", key: `leave:${l.id}`, at: l.createdAt, ...person(l.editorId), leave: l, balance: b ? { perYear: b.perYear, cl: b.cl, unpaid: b.unpaid } : null };
+      ...leaves.rows.map((l) => {
+        const b = bal.get(l.editorId)?.[l.type];
+        const p = who.get(l.editorId) ?? askers.get(l.editorId);
+        return {
+          kind: "leave", key: `leave:${l.id}`, at: l.createdAt, editorId: l.editorId, name: p?.name ?? "Someone", imageUrl: p?.imageUrl ?? null,
+          leave: l, balance: b ? { left: b.left, total: b.total } : null,
+        };
       }),
       ...perms.rows.map((p) => ({ kind: "permission", key: `permission:${p.id}`, ...p, ...person(p.editorId) })),
       ...corrections.rows.map((c) => ({ kind: "correction", key: `correction:${c.editorId}:${c.date}`, ...c, ...person(c.editorId) })),

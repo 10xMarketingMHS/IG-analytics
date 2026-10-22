@@ -31,8 +31,6 @@ const AttendanceSchema = z.object({
   halfDayAt: HHMM.optional(),
   autoAbsentEnabled: z.boolean(),
   permissionsPerMonth: z.number().int().min(0).max(10).optional(),
-  // CL applied for fewer days ahead is short notice (leave.js)
-  clNoticeDays: z.number().int().min(0).max(14).optional(),
   requireEodNote: z.boolean(),
   allowCorrections: z.boolean(),
   latePenaltyPts: z.number().int().min(0).max(10),
@@ -89,7 +87,6 @@ orgRouter.patch("/org", requirePermission("edit_goals"), async (req, res, next) 
       const superOnly = [];
       if (d.calendar && Object.keys(d.calendar).some((k) => JSON.stringify(cur.calendar[k] ?? null) !== JSON.stringify(normalizeCalendar(d.calendar)[k] ?? null))) superOnly.push("the work calendar");
       if (d.attendance && ["latePenaltyPts", "absentPenaltyPts", "deductCapacity"].some((k) => cur.attendance[k] !== d.attendance[k])) superOnly.push("the attendance penalties");
-      if (d.attendance?.clNoticeDays != null && cur.attendance.clNoticeDays !== d.attendance.clNoticeDays) superOnly.push("the CL notice");
       if (d.attendance?.teamView && ["manager", "asstManager", "teamLead"].some((k) => cur.attendance.teamView[k] !== d.attendance.teamView[k])) superOnly.push("who sees the team's attendance");
       if (superOnly.length && !(await isSuperHere(req))) {
         return res.status(403).json({ error: `Only a Super Admin can change ${superOnly.join(" or ")}.` });
