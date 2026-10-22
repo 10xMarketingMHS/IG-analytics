@@ -1,0 +1,42 @@
+/* The Inbox (pages/inbox.tsx): a group per kind, a row per request with its
+   answer on the right; Home's card links here. */
+.ib{display:flex;flex-direction:column;gap:14px;max-width:920px}
+.ib-tabs{align-self:flex-start;margin-bottom:0}
+.ib-n{display:inline-grid;place-items:center;min-width:20px;height:20px;margin-left:7px;padding:0 6px;border-radius:999px;
+  background:var(--rose,#f43f5e);color:#fff;font-size:11px;font-weight:800;box-sizing:border-box}
+.ib-n.soft{background:var(--panel2);color:var(--muted);border:1px solid var(--border)}
+.ib-empty{color:var(--muted);font-size:14px}
+.ib-group{padding:6px 6px 4px;overflow:hidden}
+.ib-ghead{display:flex;align-items:center;gap:8px;padding:10px 12px 6px;font-size:14px}
+.ib-ghead b{font-weight:800}
+.ib-list{list-style:none;margin:0;padding:0}
+.ib-row{display:flex;align-items:center;gap:12px;padding:11px 12px;border-radius:12px}
+.ib-row + .ib-row{border-top:1px solid var(--border)}
+.ib-row:hover{background:var(--panel2)}
+.ib-face{flex:none;width:34px;height:34px;border-radius:50%;overflow:hidden;display:inline-grid}
+.ib-face>*{width:100% !important;height:100% !important}
+.ib-ic{flex:none;width:34px;height:34px;border-radius:10px;display:grid;place-items:center;font-size:16px;background:var(--panel2);border:1px solid var(--border)}
+.ib-main{flex:1;min-width:0;display:flex;flex-direction:column;gap:3px}
+.ib-title{font-size:14px;color:var(--text);line-height:1.4}
+.ib-title b{font-weight:800}
+.ib-sub{font-size:12.5px;color:var(--muted);line-height:1.4}
+.ib-ref{margin-right:6px;font:600 12px 'Geist Mono',ui-monospace,monospace;color:var(--faint)}
+.ib-tag{display:inline-block;margin-left:8px;padding:1px 8px;border-radius:999px;font-size:11px;font-weight:800;vertical-align:1px}
+.ib-tag.warn{background:color-mix(in srgb,var(--amber) 16%,transparent);color:var(--amber)}
+.ib-acts{flex:none;display:flex;gap:6px}
+.ib-btn{height:32px;padding:0 13px;border:1px solid var(--border);border-radius:9px;background:var(--panel2);color:var(--text);
+  font:700 12.5px 'Plus Jakarta Sans',sans-serif;cursor:pointer;white-space:nowrap}
+.ib-btn:hover:not(:disabled){filter:brightness(.97)}
+.ib-btn:disabled{opacity:.5;cursor:default}
+.ib-btn.ghost{background:transparent}
+.ib-btn.good{background:var(--good);border-color:var(--good);color:#fff}
+.ib-btn.pri{background:var(--accent);border-color:var(--accent);color:#fff}
+@media (max-width:640px){
+  .ib-row{flex-wrap:wrap}
+  .ib-acts{width:100%;justify-content:flex-end}
+}
+/* Home: how much waits in the Inbox */
+.ib-card{display:flex;align-items:center;gap:12px;margin:0 0 14px;padding:12px 16px;border:1px solid color-mix(in srgb,var(--accent) 35%,var(--border));
+  border-radius:14px;background:color-mix(in srgb,var(--accent) 7%,var(--glass-solid,var(--panel2)));color:var(--text);text-decoration:none}
+.ib-card:hover{border-color:var(--accent)}
+.ib-go{flex:none;font-size:13px;font-weight:800;color:var(--accent-ink);white-space:nowrap}

@@ -10,6 +10,7 @@ import { useResource } from "@/lib/use-resource";
 import { useAutoSync } from "@/lib/auto-sync";
 import { getActivitySeen, markActivitySeen, onActivitySeenChange } from "@/lib/activity-seen";
 import { NotifyPanel } from "@/components/notify-panel";
+import { useInbox } from "@/lib/use-inbox";
 import { hasSeenTask, useTaskAssignNotify } from "@/lib/use-task-notify";
 import { useDueOverdueNotify, useOverdueTaskNotify, useReviewWaitingNotify } from "@/lib/use-overdue-notify";
 import { useReviewAccess } from "@/lib/use-review-access";
@@ -41,7 +42,7 @@ import type { Account, Activity } from "@/lib/types";
 // Add Post on the top bar, so neither is listed. Anything new in NAV_ITEMS
 // that isn't placed here lands at the end of Operations.
 const SIDEBAR_GROUPS: { label: string; hrefs: string[] }[] = [
-  { label: "Workspace", hrefs: ["/home", "/chat", "/tasks", "/analytics"] },
+  { label: "Workspace", hrefs: ["/home", "/inbox", "/chat", "/tasks", "/analytics"] },
   { label: "Operations", hrefs: ["/metrics", "/posts", "/leaderboard", "/goals-board", "/my-team"] },
 ];
 const OFF_SIDEBAR = new Set(["/settings", "/posts/new"]);
@@ -49,8 +50,8 @@ const OFF_SIDEBAR = new Set(["/settings", "/posts/new"]);
 // Activity and Settings (which shows only what their permissions allow). The
 // Operations group (Pipeline, Posts, Leaderboard, Goals) waits for it: those
 // links stay greyed, and clicking one asks them to start work.
-const OPEN_WHEN_LOCKED = new Set(["/home", "/activity", "/chat", "/tasks", "/analytics", "/settings", "/channels", "/task-rules"]);
-const LIVE_WHEN_LOCKED = new Set(["/home", "/chat", "/tasks", "/analytics"]);
+const OPEN_WHEN_LOCKED = new Set(["/home", "/inbox", "/activity", "/chat", "/tasks", "/analytics", "/settings", "/channels", "/task-rules"]);
+const LIVE_WHEN_LOCKED = new Set(["/home", "/inbox", "/chat", "/tasks", "/analytics"]);
 const openWhenLocked = (path: string) => OPEN_WHEN_LOCKED.has(path) || path.startsWith("/analytics/");
 const RAIL_KEY = "pulse-sidebar-rail";
 // The phone tab bar has ~54px a tab: two names go short there (the sidebar and
@@ -250,6 +251,14 @@ function AccentRow() {
   );
 }
 
+// How many requests wait on you (lib/use-inbox.ts; the shell keeps it fresh).
+function InboxBadge() {
+  const { user } = useAuth();
+  const { data } = useInbox(user?.id ?? "");
+  const n = data?.count ?? 0;
+  return n > 0 ? <span className="badge alert" aria-label={`${n} waiting`}>{n > 99 ? "99+" : n}</span> : null;
+}
+
 function ChatBadge() {
   const { totals } = useChat();
   if (totals.alerts > 0) return <span className="badge alert">{totals.alerts > 99 ? "99+" : totals.alerts}</span>;
@@ -300,6 +309,8 @@ function AppShellInner() {
   const { posts } = usePosts();
   const postCount = posts?.length ?? null;
   const { unread, items: activityItems } = useUnreadActivity();
+  // the Inbox's count, re-read every minute for the sidebar badge
+  useInbox(user?.id ?? "", true);
   // The bell opens a small box of the latest notices (See all opens Activity).
   // What was read before it opened stays marked as read; the rest show as new.
   const [notifyOpen, setNotifyOpen] = useState(false);
@@ -548,6 +559,7 @@ function AppShellInner() {
                     <span className="badge">{postCount}</span>
                   )}
                   {item.chatBadge && <ChatBadge />}
+                  {item.inboxBadge && <InboxBadge />}
                 </NavLink>
               ))}
               </div>
@@ -705,7 +717,7 @@ function AppShellInner() {
       <nav className={"tabbar" + (canWrite ? " has-fab" : "")} aria-label="Main">
         {tabItems.map((item) => (
           <NavLink key={item.href} to={item.href} aria-label={item.title} className={({ isActive }) => "tab" + (isActive && !menuOpen ? " on" : "") + (eodLocked && LIVE_WHEN_LOCKED.has(item.href) ? " eod-live" : "")} onClick={() => setMenuOpen(false)}>
-            <span className="tab-ic">{navIcon(item.href) ?? item.icon}{item.chatBadge && <ChatBadge />}</span>
+            <span className="tab-ic">{navIcon(item.href) ?? item.icon}{item.chatBadge && <ChatBadge />}{item.inboxBadge && <InboxBadge />}</span>
             <span className="tab-l" aria-hidden="true">{TAB_SHORT[item.href] ?? item.title}</span>
           </NavLink>
         ))}

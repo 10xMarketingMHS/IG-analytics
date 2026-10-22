@@ -12,7 +12,7 @@ import { ymd, taskPoints, isScorableTask, topEditorsInRange } from "@/lib/task-p
 import { bankedMs, breakOffsetMs, DAILY_BREAK_CAP_SEC, isDayPaused } from "@/lib/task-timing";
 import { HOME_ROLE_LABEL, type HomeRole } from "@/lib/home-role";
 import { DEFAULT_LAYOUT, WIDGETS, WIDGET_ORDER, allowed, cleanLayout, type LayoutItem, type Size, type WidgetKey } from "@/lib/home-widgets";
-import { attendanceAction, leaveAction, leaveWords, type AttToday, type TeamPerson } from "@/lib/use-attendance";
+import { attendanceAction, type AttToday, type TeamPerson } from "@/lib/use-attendance";
 import { Bar, ReviewList, UpNext, monthName, taskRef, type MyDayData, type useMyGoal, type useStartFlow } from "@/pages/my-day-layouts";
 import type { Editor, Post, Task } from "@/lib/types";
 import "./home-widgets.css";
@@ -689,18 +689,6 @@ function AttendW({ c }: { c: HomeCtx }) {
       setBusy(null);
     }
   }
-  // a leave request: approve or decline
-  async function answerLeave(p: TeamPerson, id: string, action: "approve" | "decline", ok: string) {
-    setBusy(p.editorId);
-    try {
-      await leaveAction(p.editorId, id, action);
-      toast.success(ok);
-    } catch (e) {
-      toast.error(e instanceof ApiError ? e.message : "Couldn't answer that request.");
-    } finally {
-      setBusy(null);
-    }
-  }
   const first = (n: string) => n.split(" ")[0];
   const rows = team.slice(0, 7);
   return (
@@ -720,30 +708,11 @@ function AttendW({ c }: { c: HomeCtx }) {
               <span className="hw-li-txt"><b>{p.name}</b><span>{meta(p)}</span></span>
               <span className={"hw-pill " + pill.t}>{pill.l}</span>
               <span className="hw-att-acts">
-                {(p.permissionRequests ?? []).map((q) => (
-                  <span key={q.id} className="hw-att-perm">
-                    <span className="hw-faint sm" title={q.note ?? undefined}>
-                      {q.part === "morning" ? "Morning" : "Evening"} permission · {new Date(`${q.date}T12:00:00`).toLocaleDateString("en-IN", { day: "numeric", month: "short" })}
-                    </span>
-                    <button type="button" className="hw-mini good" disabled={busy === p.editorId} onClick={() => run(p, "permission", { id: q.id, approve: true }, `${first(p.name)}'s ${q.part} permission approved`)}>Approve</button>
-                    <button type="button" className="hw-mini" disabled={busy === p.editorId} onClick={() => run(p, "permission", { id: q.id, approve: false }, "Permission declined")}>Decline</button>
-                  </span>
-                ))}
-                {(p.leaveRequests ?? []).map((l) => (
-                  <span key={l.id} className="hw-att-perm">
-                    <span className={"hw-faint sm" + (l.shortNotice ? " warn" : "")} title={l.note ?? undefined}>
-                      {leaveWords(l)}{l.shortNotice ? " · short notice" : ""}
-                    </span>
-                    <button type="button" className="hw-mini good" disabled={busy === p.editorId} onClick={() => answerLeave(p, l.id, "approve", `${first(p.name)}'s leave approved`)}>Approve</button>
-                    <button type="button" className="hw-mini" disabled={busy === p.editorId} onClick={() => answerLeave(p, l.id, "decline", "Leave declined")}>Decline</button>
-                  </span>
-                ))}
-                {r?.correctionStatus === "pending" && r.correctionAt && (
-                  <>
-                    <span className="hw-faint sm" title="The start they ask for, and when they really opened Pulse">Asks {clockTime(r.correctionAt)}{r.checkInAt ? ` · opened ${clockTime(r.checkInAt)}` : ""}</span>
-                    <button type="button" className="hw-mini good" disabled={busy === p.editorId} onClick={() => run(p, "correction", { approve: true }, `${first(p.name)}'s start set to ${clockTime(r.correctionAt!)}`)}>Approve</button>
-                    <button type="button" className="hw-mini" disabled={busy === p.editorId} onClick={() => run(p, "correction", { approve: false }, "Correction declined")}>Decline</button>
-                  </>
+                {/* requests (leave, permissions, corrections) are answered in the Inbox */}
+                {((p.leaveRequests?.length ?? 0) + (p.permissionRequests?.length ?? 0) + (r?.correctionStatus === "pending" ? 1 : 0)) > 0 && (
+                  <Link to="/inbox" className="hw-faint sm hw-inbox-link">
+                    {(p.leaveRequests?.length ?? 0) + (p.permissionRequests?.length ?? 0) + (r?.correctionStatus === "pending" ? 1 : 0)} in Inbox →
+                  </Link>
                 )}
                 {(p.status === "no_sod" || p.status === "waiting") && (
                   nudged.has(p.editorId) || r?.nudgedAt

@@ -11,6 +11,7 @@ const svg = (children: ReactNode) => (
 
 const NAV_ICONS: Record<string, ReactNode> = {
   "/home": svg(<><path d="M3 10.5 12 3l9 7.5" /><path d="M5 9.5V20h5v-6h4v6h5V9.5" /></>),
+  "/inbox": svg(<><path d="M3 13h5l1.5 3h5L16 13h5" /><path d="M5.5 5h13L21 13v5a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-5Z" /></>),
   "/chat": svg(<><path d="M21 12a8 8 0 0 1-11.6 7.1L4 20l1-4.6A8 8 0 1 1 21 12Z" /><path d="M8.5 12h.01M12 12h.01M15.5 12h.01" /></>),
   "/tasks": svg(<><rect x="3" y="4" width="18" height="16" rx="2.5" /><path d="M9 4v16M15 4v10" /></>),
   "/my-team": svg(<><circle cx="9" cy="8" r="3.5" /><path d="M2.5 20a6.5 6.5 0 0 1 13 0" /><path d="M16 4.6a3.5 3.5 0 0 1 0 6.8M18 14.6a6.5 6.5 0 0 1 3.5 5.4" /></>),

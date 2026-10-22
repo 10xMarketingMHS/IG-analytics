@@ -83,42 +83,46 @@ async function answer(id, status, userId, note = null) {
 // What's waiting that concerns you: hand-overs you offered, ones offered to
 // you, and ones that have climbed to you (admins also see the rest, from people
 // at their level or below; the Super Admin all), plus who you could hand a task to.
+// (Also read by the Inbox, routes/inbox.js.)
+export async function handoverFeed(req) {
+  if (!(await handoverReady())) return { ready: false, people: [], items: [] };
+  // the climb is checked at most once a minute, in the background (shows on the next look)
+  syncHandovers(req.orgId).catch(() => {});
+  const [who, viewer, ranks] = await Promise.all([caller(req), taskViewer(req), editorRanks(req.orgId)]);
+  const { rows: found } = await pool.query(
+    `select h.id, h.task_id as "taskId", t.title as "taskTitle", t.status as "taskStatus",
+            -- the number the board shows (pages/tasks.tsx taskRef)
+            coalesce(t.sid, regexp_replace(t.ad_id, '^AdID', 'AID', 'i'), t.svid, t.pid, t.tid) as "taskRef",
+            h.from_editor_id as "fromEditorId", ef.name as "fromName", ef.image_url as "fromImage",
+            h.to_editor_id as "toEditorId", et.name as "toName", et.image_url as "toImage",
+            h.note, h.level, h.reached, h.created_at as "createdAt", h.escalated_at as "escalatedAt"
+       from task_handover h
+       join task t on t.id = h.task_id
+       left join editor ef on ef.id = h.from_editor_id
+       left join editor et on et.id = h.to_editor_id
+      where h.org_id = $1 and h.status = 'pending'
+        and ($2::boolean or h.from_editor_id = $3::uuid or h.to_editor_id = $3::uuid or $3::uuid = any(h.reached))
+      order by h.created_at`,
+    [req.orgId, who.admin, who.editorId],
+  );
+  // an admin's wider view stops at people above them
+  const rows = found.filter((r) => r.fromEditorId === who.editorId || r.toEditorId === who.editorId
+    || (r.reached ?? []).includes(who.editorId) || seesEditor(viewer, ranks, r.fromEditorId));
+  const items = rows.map(({ reached, ...r }) => ({
+    ...r,
+    mine: r.fromEditorId && r.fromEditorId === who.editorId ? "from" : r.toEditorId && r.toEditorId === who.editorId ? "to" : "reached",
+    canMove: who.admin || (!!who.editorId && (reached ?? []).includes(who.editorId)),
+    reachedLabel: LEVEL_LABEL[r.level] ?? null,
+  }));
+  // who you can hand to or move to: never people above you (the Super Admin: anyone)
+  const people = (await handoverPeople(req.orgId))
+    .filter((p) => p.id !== who.editorId && seesEditor(viewer, ranks, p.id))
+    .map(({ id, name, designation, imageUrl }) => ({ id, name, designation, imageUrl }));
+  return { ready: true, people, items };
+}
 handoverRouter.get("/handovers", async (req, res, next) => {
   try {
-    if (!(await handoverReady())) return res.json({ ready: false, people: [], items: [] });
-    // the climb is checked at most once a minute, in the background (shows on the next look)
-    syncHandovers(req.orgId).catch(() => {});
-    const [who, viewer, ranks] = await Promise.all([caller(req), taskViewer(req), editorRanks(req.orgId)]);
-    const { rows: found } = await pool.query(
-      `select h.id, h.task_id as "taskId", t.title as "taskTitle", t.status as "taskStatus",
-              -- the number the board shows (pages/tasks.tsx taskRef)
-              coalesce(t.sid, regexp_replace(t.ad_id, '^AdID', 'AID', 'i'), t.svid, t.pid, t.tid) as "taskRef",
-              h.from_editor_id as "fromEditorId", ef.name as "fromName", ef.image_url as "fromImage",
-              h.to_editor_id as "toEditorId", et.name as "toName", et.image_url as "toImage",
-              h.note, h.level, h.reached, h.created_at as "createdAt", h.escalated_at as "escalatedAt"
-         from task_handover h
-         join task t on t.id = h.task_id
-         left join editor ef on ef.id = h.from_editor_id
-         left join editor et on et.id = h.to_editor_id
-        where h.org_id = $1 and h.status = 'pending'
-          and ($2::boolean or h.from_editor_id = $3::uuid or h.to_editor_id = $3::uuid or $3::uuid = any(h.reached))
-        order by h.created_at`,
-      [req.orgId, who.admin, who.editorId],
-    );
-    // an admin's wider view stops at people above them
-    const rows = found.filter((r) => r.fromEditorId === who.editorId || r.toEditorId === who.editorId
-      || (r.reached ?? []).includes(who.editorId) || seesEditor(viewer, ranks, r.fromEditorId));
-    const items = rows.map(({ reached, ...r }) => ({
-      ...r,
-      mine: r.fromEditorId && r.fromEditorId === who.editorId ? "from" : r.toEditorId && r.toEditorId === who.editorId ? "to" : "reached",
-      canMove: who.admin || (!!who.editorId && (reached ?? []).includes(who.editorId)),
-      reachedLabel: LEVEL_LABEL[r.level] ?? null,
-    }));
-    // who you can hand to or move to: never people above you (the Super Admin: anyone)
-    const people = (await handoverPeople(req.orgId))
-      .filter((p) => p.id !== who.editorId && seesEditor(viewer, ranks, p.id))
-      .map(({ id, name, designation, imageUrl }) => ({ id, name, designation, imageUrl }));
-    res.json({ ready: true, people, items });
+    res.json(await handoverFeed(req));
   } catch (err) {
     next(err);
   }

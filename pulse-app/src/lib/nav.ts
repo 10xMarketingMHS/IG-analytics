@@ -24,6 +24,8 @@ export type NavItem = {
   // Team Chat: carries the unread/mention badge, and is hidden from anyone
   // chat isn't for (viewers).
   chatBadge?: boolean;
+  // Inbox: carries how many requests wait on you
+  inboxBadge?: boolean;
 };
 
 export const NAV_ITEMS: NavItem[] = [
@@ -31,6 +33,9 @@ export const NAV_ITEMS: NavItem[] = [
   // distinct from Dashboard, which shows the same org-wide analytics to
   // everyone. Shown as "My Day" until 2026-10-17; the route was always /home.
   { title: "Home", href: "/home", icon: "🏠", section: "Home" },
+  // Inbox — everything waiting on you (leave, permissions, corrections,
+  // hand-overs, reviews, tasks to accept, password resets) and what you sent.
+  { title: "Inbox", href: "/inbox", icon: "📥", section: "Home", inboxBadge: true },
   { title: "Team Chat", href: "/chat", icon: "💬", section: "Home", chatBadge: true },
   // Analytics — the Dashboard and Top Performers merged into one page with an
   // Overview tab and a Top performers tab (/dashboard and /top redirect here).
@@ -57,6 +62,7 @@ export const NAV_ITEMS: NavItem[] = [
 // Page title + subtitle shown in the topbar, keyed by pathname.
 export const PAGE_META: Record<string, [string, string]> = {
   "/home": ["Home", "What needs your attention today"],
+  "/inbox": ["Inbox", "Everything waiting on you, and what you sent"],
   "/chat": ["Team Chat", "Channels for the team, direct messages for one-to-one"],
   "/analytics/": ["Format analytics", "Total performance across all posts of one format"],
   "/analytics": ["Analytics", "Content performance across your channels and platforms"],

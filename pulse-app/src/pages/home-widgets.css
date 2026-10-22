@@ -250,3 +250,4 @@ div.hw-timer-title{cursor:default}
 .lv-state.approved{color:var(--md-good,#15803d)}
 .hw-faint.warn{color:var(--md-warn);font-weight:700}
 .sd-bar.closed .lv-ask{flex:1 1 100%}
+.hw-inbox-link{text-decoration:none;font-weight:700;color:var(--md-acText)}
