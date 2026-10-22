@@ -2,7 +2,8 @@ import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { toast } from "sonner";
-import { ApiError } from "@/lib/api";
+import { api, ApiError } from "@/lib/api";
+import { askPermission } from "@/lib/use-attendance";
 import { Icon } from "@/components/icon";
 import { Avatar } from "@/lib/editor-visuals";
 import { useOrg } from "@/lib/use-org";
@@ -12,9 +13,10 @@ import { useWorkspaces } from "@/lib/workspaces-context";
 import { homeRoleOf, seesTeamAttendance } from "@/lib/home-role";
 import { TeamAttendance } from "@/pages/team-attendance";
 import {
-  HALF_WORDS, addDays, askLeave, cancelLeave, dayWord, decideLeave, detailOf, fmtDates, fmtDay, n1, previewLeave, saveLeaveRules,
-  setAllowance, startCounting, topUp, useLeaveData,
-  type LeaveHalf, type LeaveMine, type LeavePreview, type LeaveRequest, type LeaveTeam, type LeaveType,
+  HALF_WORDS, addDays, askLeave, cancelLeave, cancelPermission, dayWord, decideLeave, decidePermission, detailOf, fmtDates, fmtDay, n1,
+  previewLeave, saveLeaveRules, setAllowance, startCounting, topUp, useLeaveData,
+  type LeaveHalf, type LeaveMine, type LeavePreview, type LeaveRequest, type LeaveTeam, type LeaveType, type PermissionMine,
+  type PermissionPart, type PermissionRow,
 } from "@/lib/use-leave";
 import type { Editor } from "@/lib/types";
 import "./leave.css";
@@ -30,7 +32,7 @@ import "./leave.css";
 //   mode "mine" — just your balance, requests and the form (no tabs).
 // Rules: server/src/leave-math.js.
 
-type Tab = "attendance" | "apply" | "approve" | "settings";
+type Tab = "attendance" | "apply" | "permission" | "approve" | "settings";
 const ST: Record<LeaveRequest["status"], { t: string; cls: string }> = {
   pending: { t: "Waiting", cls: "warn" }, approved: { t: "Approved", cls: "good" },
   declined: { t: "Declined", cls: "bad" }, cancelled: { t: "Cancelled", cls: "mute" },
@@ -75,7 +77,7 @@ export function LeaveScreen({ startTab = "apply", onTab, mode = "all" }: { start
   const setTab = (t: Tab) => { setTabState(t); onTab?.(t); };
   const shown: Tab = mode === "mine" ? "apply"
     : mode === "team" ? (tab === "settings" ? "settings" : "approve")
-    : tab === "attendance" ? "attendance"
+    : tab === "attendance" || tab === "permission" ? tab
     : !canApprove ? "apply" : tab;
   // where the allowances are set (from the form, before counting starts)
   const goSettings = !canApprove ? null : mode === "all" ? () => setTab("settings") : () => navigate("/my-team?tab=leave&view=settings");
@@ -85,6 +87,7 @@ export function LeaveScreen({ startTab = "apply", onTab, mode = "all" }: { start
     ...(mode === "all" ? [
       { id: "attendance" as Tab, label: seesTeam ? "Team attendance" : "My attendance", icon: "how_to_reg" },
       { id: "apply" as Tab, label: "Ask for leave", icon: "edit_calendar" },
+      { id: "permission" as Tab, label: "Permission", icon: "more_time" },
     ] : []),
     ...(canApprove ? [
       { id: "approve" as Tab, label: "Approvals", icon: "fact_check", count: waiting },
@@ -121,6 +124,7 @@ export function LeaveScreen({ startTab = "apply", onTab, mode = "all" }: { start
         )}
       </header>}
       {shown === "attendance" ? <TeamAttendance editors={editors} self={!seesTeam} />
+        : shown === "permission" ? <PermissionTab />
         : mine.error ? <div className="lv-card lv-empty">{mine.error}</div>
         : !mine.data ? <div className="lv-card lv-empty">Loading leave…</div>
         : !mine.data.ready ? <div className="lv-card lv-empty">Leave needs a database update first — ask whoever runs the database to apply 20261030120000_leave.</div>
@@ -286,6 +290,115 @@ function AskTab({ mine, goSettings }: { mine: LeaveMine; goSettings: (() => void
   );
 }
 
+// ---- Permission ----
+
+const PERM_ST: Record<PermissionRow["status"], { t: string; cls: string }> = {
+  requested: { t: "Waiting", cls: "warn" }, approved: { t: "Approved", cls: "good" }, used: { t: "Used", cls: "mute" }, declined: { t: "Declined", cls: "bad" },
+};
+// "11:30" → "11:30 AM"
+const hm12 = (hhmm: string) => { const [h, m] = hhmm.split(":").map(Number); return `${h % 12 || 12}:${String(m).padStart(2, "0")} ${h >= 12 ? "PM" : "AM"}`; };
+
+// Ask for a permission (morning: come in late; evening: leave early — up to 2
+// hours), what's left this month, and your permissions. A lead approves it;
+// a late morning without asking uses one on the day while any are left.
+function PermissionTab() {
+  const { data } = useLeaveData<PermissionMine>("/attendance/permissions/mine");
+  const [date, setDate] = useState("");
+  const [part, setPart] = useState<PermissionPart>("morning");
+  const [note, setNote] = useState("");
+  const [busy, setBusy] = useState(false);
+  useEffect(() => { if (data?.today && !date) setDate(data.today); }, [data, date]);
+  if (!data) return <div className="lv-card lv-empty">Loading…</div>;
+  if (!data.ready) return <div className="lv-card lv-empty">Permissions need a database update first.</div>;
+  const monthName = new Date(`${data.today}T00:00:00Z`).toLocaleDateString("en-GB", { month: "long", timeZone: "UTC" });
+  const used = data.perMonth - data.left;
+  // what's left is this month's: another month is checked when it's sent
+  const thisMonth = date.slice(0, 7) === data.today.slice(0, 7);
+  const none = thisMonth && data.left === 0;
+  async function send() {
+    setBusy(true);
+    try {
+      await askPermission(date, part, note.trim() || undefined);
+      toast.success(`Asked for a ${part} permission on ${fmtDay(date)}. Your lead approves it.`);
+      setNote("");
+    } catch (e) {
+      fail(e, "Couldn't send that request.");
+    } finally {
+      setBusy(false);
+    }
+  }
+  async function cancel(p: PermissionRow) {
+    try { await cancelPermission(p.id); toast.success("Permission cancelled · it counts again"); } catch (e) { fail(e, "Couldn't cancel it."); }
+  }
+  return (
+    <section className="lv-grid2">
+      <div className="lv-card lv-form">
+        <b className="lv-h">Ask for a permission</b>
+        {!data.linked ? (
+          <p className="lv-faint">Your login isn't linked to a team member, so there's no permission to ask for.</p>
+        ) : (
+          <>
+            <div className="lv-types">
+              {([["morning", "Morning", "wb_twilight", `Come in late · up to 2 hours${data.halfDayAt ? ` (till ${hm12(data.halfDayAt)})` : ""}`], ["evening", "Evening", "nights_stay", "Leave early · up to 2 hours"]] as const).map(([k, label, icon, sub]) => (
+                <button key={k} type="button" className={"lv-typeopt" + (part === k ? " on" : "")} onClick={() => setPart(k)} aria-pressed={part === k}>
+                  <span className="lv-typeopt-l"><Icon name={icon} size={18} />{label}</span>
+                  <span className="lv-typeopt-s">{sub}</span>
+                </button>
+              ))}
+            </div>
+            <div className="lv-dates">
+              <label>Day<input type="date" value={date} min={data.today} max={addDays(data.today, 60)} onChange={(e) => setDate(e.target.value)} /></label>
+            </div>
+            <textarea value={note} onChange={(e) => setNote(e.target.value)} rows={2} maxLength={300} placeholder="Reason for your lead (optional)" />
+            {none ? (
+              <div className="lv-error"><Icon name="error" size={17} />No permissions left this month. A day next month can still be asked for.</div>
+            ) : date && (
+              <div className="lv-summary">
+                <div><span>When</span><b>{part === "morning" ? "Come in late" : "Leave early"} on {fmtDay(date)}, up to 2 hours</b></div>
+                <div><span>{thisMonth ? "This month" : "That month"}</span><b>{thisMonth ? `${data.left} of ${data.perMonth} left · ${Math.max(0, data.left - 1)} after this` : `Up to ${data.perMonth} a month`}</b></div>
+              </div>
+            )}
+            <div className="lv-send">
+              <button type="button" className="lv-btn pri" onClick={send} disabled={busy || !date || none}><Icon name="send" size={18} />{busy ? "Sending…" : "Send to my lead"}</button>
+              <span className="lv-faint">Your lead approves it. Late without asking? One is used on the day while any are left.</span>
+            </div>
+          </>
+        )}
+      </div>
+      <div className="lv-col">
+        <div className="lv-card">
+          <div className="lv-hrow"><b className="lv-h">Permissions · {monthName}</b><span className="lv-faint">resets each month</span></div>
+          <div className="lv-bal">
+            <div className="lv-bal-top">
+              <b>This month</b>
+              <span><b className={data.left === 0 ? "t-bad" : ""}>{data.left}</b> of {data.perMonth} left</span>
+            </div>
+            <div className="lv-bar"><span style={{ width: pct(used, data.perMonth) }} /></div>
+            <span className="lv-faint">Up to 2 hours each · morning (come in late) or evening (leave early)</span>
+          </div>
+        </div>
+        <div className="lv-card lv-list">
+          <b className="lv-h">Your permissions</b>
+          {data.mine.length === 0 && <span className="lv-faint">None this month yet.</span>}
+          {data.mine.map((p) => (
+            <div key={p.id} className="lv-req">
+              <span className={"lv-type " + (p.part === "morning" ? "cl" : "sl")}>{p.part === "morning" ? "AM" : "PM"}</span>
+              <span className="lv-req-main">
+                <b>{fmtDay(p.date)}</b>
+                <span>{p.part === "morning" ? "Come in late" : "Leave early"}{p.emergency ? " · used on the day" : ""}{p.note ? ` · “${p.note}”` : ""}</span>
+              </span>
+              <span className={"lv-st " + PERM_ST[p.status].cls}>{PERM_ST[p.status].t}</span>
+              {(p.status === "requested" || (p.status === "approved" && p.date > data.today)) && (
+                <button type="button" className="lv-ghost" onClick={() => cancel(p)}>Cancel</button>
+              )}
+            </div>
+          ))}
+        </div>
+      </div>
+    </section>
+  );
+}
+
 // ---- Approvals ----
 
 function ApproveTab({ team }: { team: LeaveTeam }) {
@@ -302,10 +415,22 @@ function ApproveTab({ team }: { team: LeaveTeam }) {
       setBusy(null);
     }
   }
-  const asked = (r: LeaveRequest) => {
+  const asked = (r: { createdAt: string }) => {
     const day = new Date(new Date(r.createdAt).getTime() + 330 * 60_000).toISOString().slice(0, 10);
     return day === today ? "today" : fmtDay(day);
   };
+  async function answerPermission(p: { id: string; editorId: string; name: string; part: PermissionPart }, approve: boolean) {
+    setBusy(p.id);
+    try {
+      await decidePermission(p.editorId, p.id, approve);
+      toast.success(`${p.name}’s ${p.part} permission ${approve ? "approved" : "declined"}`);
+    } catch (e) {
+      fail(e, "Couldn't answer that request.");
+    } finally {
+      setBusy(null);
+    }
+  }
+  const permsWaiting = team.permissions?.pending ?? [];
   return (
     <section className="lv-stack">
       <div className="lv-card lv-list">
@@ -339,10 +464,29 @@ function ApproveTab({ team }: { team: LeaveTeam }) {
         })}
       </div>
 
+      {permsWaiting.length > 0 && (
+        <div className="lv-card lv-list">
+          <div className="lv-hrow"><b className="lv-h">Permissions waiting</b><span className="lv-faint">Up to 2 hours: come in late, or leave early</span></div>
+          {permsWaiting.map((p) => (
+            <div key={p.id} className="lv-pend">
+              <Face name={p.name} imageUrl={p.imageUrl} />
+              <span className="lv-pend-main">
+                <span className="lv-pend-top"><b>{p.name}</b><span className={"lv-type " + (p.part === "morning" ? "cl" : "sl")}>{p.part === "morning" ? "AM" : "PM"}</span><span>{fmtDay(p.date)} · {p.part === "morning" ? "come in late" : "leave early"}</span></span>
+                <span className="lv-faint">{p.note ? `“${p.note}” · ` : ""}asked {asked(p)}</span>
+              </span>
+              <span className="lv-acts">
+                <button type="button" className="lv-btn line" disabled={busy === p.id} onClick={() => answerPermission(p, false)}>Decline</button>
+                <button type="button" className="lv-btn pri sm" disabled={busy === p.id} onClick={() => answerPermission(p, true)}><Icon name="check" size={16} />Approve</button>
+              </span>
+            </div>
+          ))}
+        </div>
+      )}
+
       <div className="lv-card lv-scroll">
-        <div className="lv-hrow"><b className="lv-h">Team balance · {team.year}</b><span className="lv-faint">Used includes waiting requests</span></div>
+        <div className="lv-hrow"><b className="lv-h">Team balance · {team.year}</b><span className="lv-faint">Used includes waiting requests · permissions this month</span></div>
         <div className="lv-tbl bal">
-          <span className="lv-th">Member</span><span className="lv-th">Casual</span><span className="lv-th">Sick</span><span className="lv-th r">Unpaid</span><span className="lv-th r">Pts cut</span>
+          <span className="lv-th">Member</span><span className="lv-th">Casual</span><span className="lv-th">Sick</span><span className="lv-th r">Permissions</span><span className="lv-th r">Unpaid</span><span className="lv-th r">Pts cut</span>
           {team.people.map((p) => {
             const b = p.balance;
             if (!b) return null;
@@ -352,6 +496,7 @@ function ApproveTab({ team }: { team: LeaveTeam }) {
                 <span className="lv-who"><Face name={p.name} imageUrl={p.imageUrl} size={26} /><b>{p.name}</b></span>
                 <span className="lv-used"><span><b>{n1(clU)}</b> / {n1(b.CL.total)}</span><span className="lv-bar sm cl"><span style={{ width: pct(clU, b.CL.total) }} /></span></span>
                 <span className="lv-used"><span><b>{n1(slU)}</b> / {n1(b.SL.total)}</span><span className="lv-bar sm sl"><span style={{ width: pct(slU, b.SL.total) }} /></span></span>
+                <span className={"lv-num" + (team.permissions && (p.permissionsUsed ?? 0) >= team.permissions.perMonth ? " t-warn" : "")}>{team.permissions ? `${p.permissionsUsed ?? 0} / ${team.permissions.perMonth}` : "–"}</span>
                 <span className={"lv-num" + (unpaid ? " t-bad" : " t-mute")}>{unpaid ? n1(unpaid) : "–"}</span>
                 <span className={"lv-num" + (b.pts ? " t-bad" : " t-mute")}>{b.pts ? `−${n1(b.pts)}` : "0"}</span>
               </div>
@@ -378,7 +523,7 @@ function ApproveTab({ team }: { team: LeaveTeam }) {
 // ---- Allowances & rules ----
 
 function SettingsTab({ team }: { team: LeaveTeam }) {
-  const { org } = useOrg();
+  const { org, refetch: refetchOrg } = useOrg();
   const [rules, setRules] = useState(team.rules);
   useEffect(() => setRules(team.rules), [team.rules]);
   const [editStart, setEditStart] = useState(false);
@@ -423,6 +568,17 @@ function SettingsTab({ team }: { team: LeaveTeam }) {
     } catch (e) { fail(e, "Couldn't add those days."); } finally { setBusy(false); }
   }
   const topPerson = team.people.find((p) => p.id === topFor) ?? null;
+  const { isAdmin } = useWorkspaces();
+  const perMonth = org?.attendance?.permissionsPerMonth ?? 2;
+  async function changePerMonth(delta: number) {
+    if (!org?.attendance) return;
+    const next = Math.max(0, Math.min(10, perMonth + delta));
+    try {
+      await api("/org", { method: "PATCH", body: JSON.stringify({ attendance: { ...org.attendance, permissionsPerMonth: next } }) });
+      await refetchOrg();
+      window.dispatchEvent(new Event("pulse:attendance-changed"));
+    } catch (e) { fail(e, "Couldn't save that."); }
+  }
   const ruleRows = [
     { k: "noticeDays" as const, label: "CL notice", sub: "Working days ahead a casual leave must be asked for", value: String(rules.noticeDays), step: 1 },
     { k: "shortNoticePts" as const, label: "Short-notice cut", sub: "Discipline points per CL asked with less notice", value: n1(rules.shortNoticePts), step: 0.5 },
@@ -552,6 +708,10 @@ function SettingsTab({ team }: { team: LeaveTeam }) {
               onDec={() => changeRule(r.k, -r.step, 0, 10)} onInc={() => changeRule(r.k, r.step, 0, 10)} />
           </div>
         ))}
+        <div className="lv-rule">
+          <span className="lv-rule-l"><b>Permissions a month</b><span>Up to 2 hours each: morning (come in late) or evening (leave early). Admins change this</span></span>
+          <Stepper value={String(perMonth)} disabled={!isAdmin || !org?.attendance} onDec={() => changePerMonth(-1)} onInc={() => changePerMonth(1)} />
+        </div>
         <div className="lv-rule">
           <span className="lv-rule-l"><b>Saturdays are working days</b><span>From the work calendar (Settings › General). Off days and holidays never use leave.</span></span>
           <span className={"lv-st " + (satWorking ? "good" : "mute")}>{satWorking ? "Yes" : "No"}</span>

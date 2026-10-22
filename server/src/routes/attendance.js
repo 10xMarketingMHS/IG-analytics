@@ -575,6 +575,58 @@ attendanceRouter.post("/attendance/permission", async (req, res, next) => {
   } catch (err) { next(err); }
 });
 
+// GET /attendance/permissions/mine — your permissions this month and ahead
+// (the Attendance panel's Permission tab): how many a month, how many left
+// this month, and each one (waiting, approved, used, declined).
+attendanceRouter.get("/attendance/permissions/mine", async (req, res, next) => {
+  try {
+    if (!(await ready(res))) return;
+    if (!(await permissionsReady())) return res.json({ ready: false });
+    const [caller, { att }] = await Promise.all([callerScope(req), readSettings(req.orgId)]);
+    const today = istNow().ymd;
+    if (!caller.editorId) return res.json({ ready: true, linked: false, perMonth: att.permissionsPerMonth, left: 0, today, mine: [] });
+    const [{ rows: mine }, month] = await Promise.all([
+      pool.query(
+        `select id, date::text as date, part, status, emergency, note, created_at as "createdAt" from attendance_permission
+          where editor_id = $1 and date >= date_trunc('month', $2::date) order by date desc, part`,
+        [caller.editorId, today],
+      ),
+      permissionsThisMonth(caller.editorId, today),
+    ]);
+    res.json({
+      ready: true, linked: true, today, perMonth: att.permissionsPerMonth, left: Math.max(0, att.permissionsPerMonth - month.length),
+      halfDayAt: att.halfDayAt, mine,
+    });
+  } catch (err) { next(err); }
+});
+
+// POST /attendance/permission/:id/cancel — take back your own permission: one
+// still waiting, or an approved one for a day ahead. It counts again.
+attendanceRouter.post("/attendance/permission/:id/cancel", async (req, res, next) => {
+  if (!z.string().uuid().safeParse(req.params.id).success) return res.status(404).json({ error: "Permission not found." });
+  try {
+    if (!(await ready(res))) return;
+    if (!(await permissionsReady())) return res.status(409).json({ error: "Permissions need a database update first." });
+    const caller = await callerScope(req);
+    const { rows } = await pool.query(
+      "select id, date::text as date, part, status from attendance_permission where id = $1 and org_id = $2 and editor_id = $3",
+      [req.params.id, req.orgId, caller.editorId],
+    );
+    const p = rows[0];
+    if (!p) return res.status(404).json({ error: "Permission not found." });
+    const today = istNow().ymd;
+    if (!(p.status === "requested" || (p.status === "approved" && p.date > today))) {
+      return res.status(409).json({ error: p.status === "used" ? "It's been used already." : p.status === "declined" ? "It was declined." : "It's for today — ask your lead." });
+    }
+    await pool.query("delete from attendance_permission where id = $1", [p.id]);
+    await logActivity({
+      orgId: req.orgId, actorId: req.user.sub, verb: "attendance_permission_cancelled", entityType: "editor", entityId: caller.editorId,
+      summary: `${caller.name ?? "Someone"} cancelled their ${p.part} permission on ${p.date}`, meta: { date: p.date, part: p.part },
+    });
+    res.json({ ok: true });
+  } catch (err) { next(err); }
+});
+
 // POST /attendance/:editorId/permission { id, approve } — a lead's answer.
 attendanceRouter.post("/attendance/:editorId/permission", async (req, res, next) => {
   const parsed = z.object({ id: z.string().uuid(), approve: z.boolean() }).safeParse(req.body ?? {});

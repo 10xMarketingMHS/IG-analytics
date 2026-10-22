@@ -3,7 +3,8 @@ import { z } from "zod";
 import { pool } from "../db.js";
 import { logActivity } from "../activity.js";
 import { isSuperHere } from "../super-admin.js";
-import { callerScope, clearSettingsCache, istNow, readSettings } from "../attendance.js";
+import { callerScope, clearSettingsCache, istNow, permissionsReady, readSettings } from "../attendance.js";
+import { editorRanks, taskViewer } from "../hierarchy.js";
 import { LEAVE_COLS, LeaveError, balances, cancelLeave, createLeave, decideLeave, isApprover, leaveReady, leaveRules, previewLeave } from "../leave.js";
 import { n1, requestWords } from "../leave-math.js";
 
@@ -176,7 +177,9 @@ leaveRouter.get("/leave/team", async (req, res, next) => {
     if (!(await ready(res))) return;
     const today = istNow().ymd;
     const year = yearOf(req.query.year, today);
-    const [caller, { att }, people, superHere] = await Promise.all([callerScope(req), readSettings(req.orgId), leavePeople(req.orgId), isSuperHere(req)]);
+    const [caller, { att }, people, superHere, viewer, ranks, permOn] = await Promise.all([
+      callerScope(req), readSettings(req.orgId), leavePeople(req.orgId), isSuperHere(req), taskViewer(req), editorRanks(req.orgId), permissionsReady(),
+    ]);
     if (!isApprover(caller)) return res.status(403).json({ error: "Only a manager can see the team's leave." });
     const rules = leaveRules(att);
     const [bal, pending, decided, grants] = await Promise.all([
@@ -193,13 +196,34 @@ leaveRouter.get("/leave/team", async (req, res, next) => {
         [req.orgId, year],
       ),
     ]);
-    const who = await names([...pending.rows, ...decided.rows, ...grants.rows].map((r) => r.editorId));
+    // permissions too: each person's count this month, and the requests waiting
+    // from people below you (whoever sees all: everyone but you)
+    const below = (id) => id !== caller.editorId && (viewer.seesAll || (ranks.get(id) ?? 3) > viewer.rank);
+    const [permUsed, permWaiting] = permOn
+      ? await Promise.all([
+        pool.query(
+          `select editor_id, count(*)::int as n from attendance_permission
+            where org_id = $1 and status <> 'declined' and date >= date_trunc('month', $2::date) and date < date_trunc('month', $2::date) + interval '1 month'
+            group by editor_id`,
+          [req.orgId, today],
+        ),
+        pool.query(
+          `select id, editor_id as "editorId", date::text as date, part, note, created_at as "createdAt" from attendance_permission
+            where org_id = $1 and status = 'requested' and date >= $2::date order by date, part`,
+          [req.orgId, today],
+        ),
+      ])
+      : [{ rows: [] }, { rows: [] }];
+    const usedBy = new Map(permUsed.rows.map((r) => [r.editor_id, r.n]));
+    const permPending = permWaiting.rows.filter((p) => below(p.editorId));
+    const who = await names([...pending.rows, ...decided.rows, ...grants.rows, ...permPending].map((r) => r.editorId));
     const by = await userNames([...decided.rows.map((r) => r.decidedBy), ...grants.rows.map((g) => g.grantedBy)]);
     const named = (r) => ({ ...r, name: who.get(r.editorId)?.name ?? "Someone", imageUrl: who.get(r.editorId)?.imageUrl ?? null });
     res.json({
       year, today, rules: rulesOut(rules), counting: !!rules.countingSince, countingSince: rules.countingSince,
       me: caller.editorId, canEditRules: superHere, canEditStart: superHere || !rules.countingSince,
-      people: people.map((p) => ({ ...p, balance: bal.get(p.id) })),
+      people: people.map((p) => ({ ...p, balance: bal.get(p.id), permissionsUsed: usedBy.get(p.id) ?? 0 })),
+      permissions: permOn ? { perMonth: att.permissionsPerMonth, pending: permPending.map(named) } : null,
       pending: pending.rows.map(named),
       decided: decided.rows.map((r) => ({ ...named(r), decidedByName: by.get(r.decidedBy) ?? null })),
       grants: grants.rows.map((g) => ({ ...named(g), byName: by.get(g.grantedBy) ?? null })),

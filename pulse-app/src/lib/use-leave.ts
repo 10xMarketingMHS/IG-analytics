@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { api } from "@/lib/api";
+import { attendanceAction } from "@/lib/use-attendance";
 
 // Leave — CL (casual) and SL (sick) — the app side of server/src/routes/leave.js.
 // Each change says attendance changed, so Home, Team today and the Inbox
@@ -21,13 +22,24 @@ export type LeaveMine = {
   ready: boolean; linked?: boolean; year: number; today: string; rules: LeaveRules; counting: boolean; countingSince: string | null;
   canApprove: boolean; name?: string | null; balance: LeaveBalance | null; requests: LeaveRequest[];
 };
-export type LeavePerson = { id: string; name: string; designation: string | null; imageUrl: string | null; balance?: LeaveBalance };
+export type LeavePerson = { id: string; name: string; designation: string | null; imageUrl: string | null; balance?: LeaveBalance; permissionsUsed?: number };
 export type LeaveGrant = { id: string; editorId: string; type: LeaveType; days: number; note: string; at: string; name: string; byName: string | null };
 export type LeaveTeam = {
   year: number; today: string; rules: LeaveRules; counting: boolean; countingSince: string | null; me: string | null;
   canEditRules: boolean; canEditStart: boolean;
   people: LeavePerson[]; pending: LeaveRequest[]; decided: LeaveRequest[]; grants: LeaveGrant[];
+  // permissions: how many a month, and the requests waiting from people below you
+  permissions: { perMonth: number; pending: PermissionAsked[] } | null;
 };
+// Permissions (attendance_permission): a few a month, up to 2 hours each —
+// morning (come in late) or evening (leave early). Asked ahead and approved by
+// a lead, or used on the day while any are left.
+export type PermissionPart = "morning" | "evening";
+export type PermissionRow = {
+  id: string; date: string; part: PermissionPart; status: "requested" | "approved" | "declined" | "used"; emergency: boolean; note: string | null; createdAt: string;
+};
+export type PermissionMine = { ready: boolean; linked?: boolean; today: string; perMonth: number; left: number; halfDayAt?: string; mine: PermissionRow[] };
+export type PermissionAsked = { id: string; editorId: string; date: string; part: PermissionPart; note: string | null; createdAt: string; name: string; imageUrl: string | null };
 export type LeavePreview = { error: string } | {
   error?: undefined; days: number; paid: number; unpaid: number; notice: number | null; short: boolean; pts: number; total: number; left: number;
 };
@@ -64,6 +76,12 @@ export async function topUp(body: { editorId: string; type: LeaveType; days: num
   await post("/leave/grant", body);
   changed();
 }
+export async function cancelPermission(id: string) {
+  await post(`/attendance/permission/${id}/cancel`);
+  changed();
+}
+// a lead's answer to a permission request
+export const decidePermission = (editorId: string, id: string, approve: boolean) => attendanceAction(editorId, "permission", { id, approve });
 export async function saveLeaveRules(rules: LeaveRules) {
   await post("/leave/rules", rules, "PUT");
   changed();
