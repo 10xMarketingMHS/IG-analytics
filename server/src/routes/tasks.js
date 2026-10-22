@@ -193,7 +193,7 @@ export async function canAssignTasks(req) {
 // Someone else's task is in an assigner's hands only when they set it up: they
 // assigned it, or they made it and it's still unassigned. Assign tasks doesn't
 // reach work another person assigned.
-function setUpBy(task, userId) {
+export function setUpBy(task, userId) {
   return task.assigned_by === userId || (!task.editor_id && task.created_by === userId);
 }
 // Giving work to someone: never to a person above you (only the Super Admin
@@ -924,10 +924,16 @@ tasksRouter.patch("/tasks/:id", requireEditor, requireActiveEod, async (req, res
     }
     if (!sets.length) return res.status(400).json({ error: "No fields to update" });
 
+    // A status change counts only from the status it was read in: two people
+    // answering the same review at once — the second is told, not counted twice
+    // (no second next repeat, no "approved" over a send-back).
+    const moving = d.status !== undefined && d.status !== prior.status;
+    if (moving) params.push(prior.status);
     const { rows } = await pool.query(
-      `update task set ${sets.join(", ")} where id = $1 and org_id = $2 returning id`,
+      `update task set ${sets.join(", ")} where id = $1 and org_id = $2${moving ? ` and status = $${params.length}` : ""} returning id`,
       params,
     );
+    if (!rows.length && moving) return res.status(409).json({ error: "Someone else just changed this task. Reload it and try again." });
     if (!rows.length) return res.status(404).json({ error: "Task not found" });
 
     const finalStatus = d.status ?? prior.status;

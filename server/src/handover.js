@@ -144,8 +144,13 @@ export async function resumeAfterHandover(taskId) {
 // a waiting hand-over is over.
 export async function closePendingHandovers(taskId) {
   if (!(await handoverReady())) return;
-  await pool.query(
-    "update task_handover set status = 'cancelled', answered_at = now() where task_id = $1 and status = 'pending'",
+  const { rows } = await pool.query(
+    "update task_handover set status = 'cancelled', answered_at = now() where task_id = $1 and status = 'pending' returning offered_by",
     [taskId],
   );
+  // the hold the offer put on the task (pauseForHandover) goes with it — never
+  // anyone else's hold; the clock is the caller's to set (reassign, Review, done)
+  for (const h of rows) {
+    if (h.offered_by) await pool.query("update task set on_hold = false, held_by = null where id = $1 and on_hold and held_by = $2", [taskId, h.offered_by]);
+  }
 }
