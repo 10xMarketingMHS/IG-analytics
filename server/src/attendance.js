@@ -242,11 +242,11 @@ async function usePermission(orgId, editorId, ymd, part, att, actorId, verbWord)
   return rows[0];
 }
 // Start day undone: a permission it used goes back (one taken on the day is
-// gone; one asked ahead is approved again).
-export async function giveBackPermission(editorId, ymd, part) {
+// gone; one asked ahead is approved again). `q`: a transaction's client.
+export async function giveBackPermission(editorId, ymd, part, q = pool) {
   if (!(await permissionsReady())) return;
-  await pool.query("delete from attendance_permission where editor_id = $1 and date = $2 and part = $3 and status = 'used' and emergency", [editorId, ymd, part]);
-  await pool.query("update attendance_permission set status = 'approved' where editor_id = $1 and date = $2 and part = $3 and status = 'used'", [editorId, ymd, part]);
+  await q.query("delete from attendance_permission where editor_id = $1 and date = $2 and part = $3 and status = 'used' and emergency", [editorId, ymd, part]);
+  await q.query("update attendance_permission set status = 'approved' where editor_id = $1 and date = $2 and part = $3 and status = 'used'", [editorId, ymd, part]);
 }
 // A late start before the half-day time: a permission covers it (no late mark)
 // while one is left this month, or if one was approved for the morning.
@@ -265,6 +265,9 @@ export async function applyEveningPermission(orgId, editorId, ymd, cal, att, act
   const close = closingFor(cal, ymd);
   if (!close) return false;
   if (istNow().minutes > minutesOf(close) - 15) return false;
+  // a half day (or day) of leave already covers leaving early
+  const { rows } = await pool.query("select status from attendance where editor_id = $1 and date = $2", [editorId, ymd]);
+  if (["leave", "half_day"].includes(rows[0]?.status)) return false;
   return !!(await usePermission(orgId, editorId, ymd, "evening", att, actorId, "left early"));
 }
 
@@ -350,6 +353,10 @@ export async function syncAttendance(orgId) {
     );
     for (const s of started) {
       const c = classify(s.first, today.ymd, cal, att);
+      const { rows: before } = await pool.query(
+        `select id, status, check_in_at, leave_request_id as "leaveRequestId" from attendance where editor_id = $1 and date = $2`,
+        [s.editor_id, today.ymd],
+      );
       await pool.query(
         `insert into attendance (org_id, editor_id, date, check_in_at, status, late_minutes)
          values ($1, $2, $3, $4, $5, $6)
@@ -365,6 +372,12 @@ export async function syncAttendance(orgId) {
          where attendance.check_in_at is null`,
         [orgId, s.editor_id, today.ymd, s.first, c.status, c.lateMinutes],
       );
+      // a whole day of approved leave worked after all: back to the balance, on time
+      const b = before[0];
+      if (b && !b.check_in_at && b.status === "leave" && b.leaveRequestId) {
+        const { workedLeaveDay } = await import("./leave.js");
+        if (await workedLeaveDay(b)) continue;
+      }
       await applyMorningPermission(orgId, s.editor_id, today.ymd, att, null);
     }
 

@@ -1,6 +1,6 @@
 import { pool } from "./db.js";
 import { hasColumn } from "./schema-flags.js";
-import { classify, openingFor } from "./attendance.js";
+import { classify, giveBackPermission, openingFor, permissionsReady } from "./attendance.js";
 import {
   LEAVE_DEFAULTS, checkRequest, dayWords, daysOf, priceRequest, rangeFrozen, requestWords, resplit, splitByYear, workingDates,
 } from "./leave-math.js";
@@ -46,17 +46,30 @@ async function tx(fn) {
   }
 }
 
-// The person's allowance row for a year, made if missing, and locked until the
-// transaction ends.
+// The person's allowance row for a year, made if missing — with their last
+// year's numbers: the allowance is theirs each year, only what's used resets —
+// and locked until the transaction ends.
 async function lockYear(client, orgId, editorId, year) {
-  await client.query("insert into leave_allowance (org_id, editor_id, year) values ($1, $2, $3) on conflict do nothing", [orgId, editorId, year]);
+  await client.query(
+    `insert into leave_allowance (org_id, editor_id, year, cl, sl)
+     select $1, $2, $3, coalesce(p.cl, 0), coalesce(p.sl, 0)
+       from (select 1) one
+       left join lateral (select cl, sl from leave_allowance where editor_id = $2 and year < $3 order by year desc limit 1) p on true
+     on conflict do nothing`,
+    [orgId, editorId, year],
+  );
   await client.query("select 1 from leave_allowance where editor_id = $1 and year = $2 for update", [editorId, year]);
 }
 
 // Starting allowance and top-ups, per person and type, for a year.
 async function totalsFor(q, editorIds, year) {
   const [{ rows: al }, { rows: gr }] = await Promise.all([
-    q.query("select editor_id, cl::float as cl, sl::float as sl from leave_allowance where editor_id = any($1::uuid[]) and year = $2", [editorIds, year]),
+    // that year's numbers, or the latest year before it (carried forward)
+    q.query(
+      `select distinct on (editor_id) editor_id, cl::float as cl, sl::float as sl from leave_allowance
+        where editor_id = any($1::uuid[]) and year <= $2 order by editor_id, year desc`,
+      [editorIds, year],
+    ),
     q.query("select editor_id, type, sum(days)::float as days from leave_grant where editor_id = any($1::uuid[]) and year = $2 group by 1, 2", [editorIds, year]),
   ]);
   const out = new Map(editorIds.map((id) => [id, { CL: { start: 0, topups: 0, total: 0 }, SL: { start: 0, topups: 0, total: 0 } }]));
@@ -127,11 +140,24 @@ async function workedOn(q, editorId, dates) {
 async function writeDays(client, orgId, r, deciderId, isWorking) {
   const half = r.half !== "full";
   const dates = half ? [r.from] : workingDates(isWorking, r.from, r.to);
+  // permissions the leave covers: the whole day, or the half it takes off
+  const parts = r.half === "first" ? ["morning"] : r.half === "second" ? ["evening"] : ["morning", "evening"];
+  const perms = await permissionsReady();
   let paid = r.paid;
   for (const d of dates) {
     const size = half ? 0.5 : 1;
     const reason = paid > 0 ? r.type : "unpaid";
     paid -= Math.min(size, paid);
+    if (perms) {
+      // a late start excused by a morning permission is a half day now: the permission goes back
+      const { rows: ex } = await client.query("select reason, check_in_at from attendance where editor_id = $1 and date = $2", [r.editorId, d]);
+      if (ex[0]?.reason === "permission" && (half || !ex[0].check_in_at)) await giveBackPermission(r.editorId, d, "morning", client);
+      // and one asked for ahead, for time the leave covers, isn't needed
+      await client.query(
+        "delete from attendance_permission where editor_id = $1 and date = $2 and part = any($3::text[]) and status in ('requested', 'approved')",
+        [r.editorId, d, parts],
+      );
+    }
     await client.query(
       `insert into attendance (org_id, editor_id, date, status, marked_by, reason, auto_marked, leave_request_id)
        values ($1, $2, $3, $4, $5, $6, false, $7)
@@ -158,6 +184,27 @@ async function relabel(client, r) {
   }
 }
 
+// Leave already on any of these days: a waiting request over them, or a day of
+// approved leave still in attendance as leave (a day worked after all, or
+// taken off, is free again).
+async function clashOf(q, editorId, from, to) {
+  const { rows } = await q.query(
+    `select type, date_from::text as day from leave_request
+      where editor_id = $1 and status = 'pending' and date_from <= $3::date and date_to >= $2::date
+     union all
+     select r.type, a.date::text from attendance a join leave_request r on r.id = a.leave_request_id
+      where a.editor_id = $1 and r.status = 'approved' and a.status in ('leave', 'half_day') and a.date between $2::date and $3::date
+     order by 2 limit 1`,
+    [editorId, from, to],
+  );
+  return rows[0] ?? null;
+}
+
+const frozenMsg = (ym) => {
+  const d = new Date(`${ym}-01T00:00:00Z`);
+  return `${d.toLocaleDateString("en-GB", { month: "long", year: "numeric", timeZone: "UTC" })} is closed in Management Performance, so its leave can't change.`;
+};
+
 async function getRequest(q, id, lock = false) {
   const { rows } = await q.query(`select ${REQ_COLS} from leave_request where id = $1${lock ? " for update" : ""}`, [id]);
   return rows[0] ?? null;
@@ -172,15 +219,14 @@ export async function createLeave({ orgId, editorId, type, from, to, half = "ful
   // a manager may also put right a past day (CL or SL), from last month on
   const bad = checkRequest({ type, from, to, half, today, isWorking: isWorking });
   if (bad && !(approvedBy && /past day|go back 7 days/.test(bad))) throw new LeaveError(400, bad);
+  // a manager's mark is approved at once: never into a month already closed
+  const frozen = approvedBy ? rangeFrozen(from, to, today) : null;
+  if (frozen) throw new LeaveError(409, frozenMsg(frozen));
   return tx(async (client) => {
     const parts = splitByYear(from, to);
     for (const [a] of parts) await lockYear(client, orgId, editorId, Number(a.slice(0, 4)));
-    const { rows: clash } = await client.query(
-      `select type, date_from::text as "from" from leave_request
-        where editor_id = $1 and status in ('pending', 'approved') and date_from <= $3 and date_to >= $2 order by date_from limit 1`,
-      [editorId, from, to],
-    );
-    if (clash[0]) throw new LeaveError(409, `It overlaps the ${clash[0].type} on ${dayWords(clash[0].from)}.`);
+    const clash = await clashOf(client, editorId, from, to);
+    if (clash) throw new LeaveError(409, `It overlaps the ${clash.type} on ${dayWords(clash.day)}.`);
     if (half === "full") {
       const worked = await workedOn(client, editorId, workingDates(isWorking, from, to));
       if (worked) throw new LeaveError(409, `There's a check-in on ${dayWords(worked)}, so it can't be a full day of leave. A half day can.`);
@@ -215,12 +261,8 @@ export async function previewLeave({ editorId, type, from, to, half = "full", ca
   const isWorking = isWorkingOn(cal);
   const bad = checkRequest({ type, from, to, half, today, isWorking });
   if (bad) return { error: bad };
-  const { rows: clash } = await pool.query(
-    `select type, date_from::text as "from" from leave_request
-      where editor_id = $1 and status in ('pending', 'approved') and date_from <= $3 and date_to >= $2 order by date_from limit 1`,
-    [editorId, from, to],
-  );
-  if (clash[0]) return { error: `Overlaps your ${clash[0].type} on ${dayWords(clash[0].from)}.` };
+  const clash = await clashOf(pool, editorId, from, to);
+  if (clash) return { error: `Overlaps your ${clash.type} on ${dayWords(clash.day)}.` };
   if (half === "full") {
     const worked = await workedOn(pool, editorId, workingDates(isWorking, from, to));
     if (worked) return { error: `You checked in on ${dayWords(worked)}, so it can't be a full day of leave. A half day can.` };
@@ -239,10 +281,6 @@ export async function previewLeave({ editorId, type, from, to, half = "full", ca
   return out ?? { error: "No working days in that range (Sundays and off days don’t use leave)." };
 }
 
-const frozenMsg = (ym) => {
-  const d = new Date(`${ym}-01T00:00:00Z`);
-  return `${d.toLocaleDateString("en-GB", { month: "long", year: "numeric", timeZone: "UTC" })} is closed in Management Performance, so its leave can't change.`;
-};
 
 // A manager's answer. Approving re-checks the balance (another request may
 // have used it, or given some back) and re-splits paid and unpaid at the same
@@ -255,12 +293,13 @@ export async function decideLeave({ orgId, id, approve, deciderUserId, deciderEd
     if (!r || r.orgId !== orgId) throw new LeaveError(404, "Leave request not found.");
     if (deciderEditorId && r.editorId === deciderEditorId) throw new LeaveError(403, "You can't decide your own leave. Another manager does.");
     if (r.status !== "pending") throw new LeaveError(409, `It's already ${r.status === "approved" ? "approved" : r.status}.`);
-    const frozen = rangeFrozen(r.from, r.to, today);
-    if (frozen) throw new LeaveError(409, frozenMsg(frozen));
     if (!approve) {
       await client.query("update leave_request set status = 'declined', decided_by = $2, decided_at = now() where id = $1", [id, deciderUserId]);
       return { ...r, status: "declined" };
     }
+    // approving changes the month's attendance and points: never in a closed month
+    const frozen = rangeFrozen(r.from, r.to, today);
+    if (frozen) throw new LeaveError(409, frozenMsg(frozen));
     const year = Number(r.from.slice(0, 4));
     await lockYear(client, orgId, r.editorId, year);
     if (r.half === "full") {
@@ -296,7 +335,8 @@ export async function cancelLeave({ orgId, id, byEditorId, manager, cal, att, to
     if (started && (r.status === "approved" || !own)) {
       throw new LeaveError(409, own ? "It has started — ask a manager to change it." : r.status === "pending" ? "It has started — decline it instead." : "It has started, so it can't be cancelled.");
     }
-    const frozen = rangeFrozen(r.from, r.to, today);
+    // a waiting one changes nothing in attendance; an approved one (not started) can't be in a closed month
+    const frozen = r.status === "approved" ? rangeFrozen(r.from, r.to, today) : null;
     if (frozen) throw new LeaveError(409, frozenMsg(frozen));
     await client.query("update leave_request set status = 'cancelled' where id = $1", [id]);
     if (r.status === "approved") await clearDays(client, id, cal, att);
@@ -343,51 +383,67 @@ async function changeDays(client, r, delta) {
   return out;
 }
 
-// Start day on a whole day of approved leave: the day turns back into a working
-// day and goes back to the balance. The row keeps leave_request_id (the
-// check-in sets its status), so Undo Start day can put the leave back.
+// The reason on a leave day someone worked after all (it was given back to
+// their balance); Undo Start day puts back only such a day.
+export const WORKED = "Worked on leave";
+
+// Start day (or a correction, or Start Work) on a whole day of approved leave:
+// it turns back into a working day — an on-time one: they had the day off and
+// came in anyway — and the day goes back to the balance. The row keeps
+// leave_request_id and says WORKED, so Undo Start day can put the leave back.
+// Re-checked on the locked row, so a double tap gives the day back once.
 export async function workedLeaveDay(row) {
   if (!row?.leaveRequestId || row.status !== "leave" || !(await leaveReady())) return null;
   return tx(async (client) => {
     const r = await getRequest(client, row.leaveRequestId, true);
     if (!r || r.status !== "approved") return null;
-    const out = await changeDays(client, r, -1);
-    // a working day now (Start day classified it): no leave words on it
-    await client.query("update attendance set reason = null, marked_by = null where id = $1 and status not in ('leave', 'half_day')", [row.id]);
-    return out;
+    await lockYear(client, r.orgId, r.editorId, Number(r.from.slice(0, 4)));
+    const { rows } = await client.query("select leave_request_id, reason from attendance where id = $1 for update", [row.id]);
+    if (!rows[0] || rows[0].leave_request_id !== r.id || rows[0].reason === WORKED) return null;
+    await client.query(
+      `update attendance set status = 'on_time', late_minutes = 0, excused = false, auto_marked = false, marked_by = null, reason = $2,
+         updated_at = now() where id = $1`,
+      [row.id, WORKED],
+    );
+    return changeDays(client, r, -1);
   });
 }
 
-// Undo Start day on a day that was approved leave: the leave comes back — the
-// row is a leave day again (marked by whoever approved it) and the day comes
-// from the balance again.
+// Undo Start day on a day of leave that was given back: the leave comes back —
+// a leave day again (marked by whoever approved it), and the day comes from the
+// balance again. Only a day that was given back, and only once.
 export async function restoreLeaveDay(row) {
-  if (!row?.leaveRequestId || row.status === "leave" || row.status === "half_day" || !(await leaveReady())) return null;
+  if (!row?.leaveRequestId || !(await leaveReady())) return null;
   return tx(async (client) => {
     const r = await getRequest(client, row.leaveRequestId, true);
-    if (!r || r.status !== "approved" || row.date < r.from || row.date > r.to) return null;
-    const out = await changeDays(client, r, 1);
+    if (!r || r.status !== "approved") return null;
+    await lockYear(client, r.orgId, r.editorId, Number(r.from.slice(0, 4)));
+    const { rows } = await client.query("select leave_request_id, reason, date::text as date from attendance where id = $1 for update", [row.id]);
+    const cur = rows[0];
+    if (!cur || cur.leave_request_id !== r.id || cur.reason !== WORKED || cur.date < r.from || cur.date > r.to) return null;
     await client.query(
       `update attendance set status = 'leave', marked_by = $2, check_in_at = null, late_minutes = 0, excused = false, auto_marked = false,
          reason = $3, updated_at = now() where id = $1`,
       [row.id, r.decidedBy, r.type],
     );
-    await relabel(client, out);
-    return out;
+    return changeDays(client, r, 1);
   });
 }
 
 // A manager takes one day off an approved leave (Team › Attendance, or Undo on
 // Team today): the leave keeps its other days, or is cancelled when none are
-// left. The caller then sets the row right.
+// left. The caller then sets the row right. Once per day, even on a double tap.
 export async function dropLeaveDay(row, today) {
   if (!row?.leaveRequestId || !(await leaveReady())) return null;
   const frozen = rangeFrozen(row.date, row.date, today);
   if (frozen) throw new LeaveError(409, frozenMsg(frozen));
   return tx(async (client) => {
     const r = await getRequest(client, row.leaveRequestId, true);
-    await client.query("update attendance set leave_request_id = null where id = $1", [row.id]);
-    if (!r || r.status !== "approved") return null;
+    if (r) await lockYear(client, r.orgId, r.editorId, Number(r.from.slice(0, 4)));
+    const { rowCount } = await client.query(
+      "update attendance set leave_request_id = null where id = $1 and leave_request_id = $2", [row.id, row.leaveRequestId],
+    );
+    if (!rowCount || !r || r.status !== "approved") return null;
     const out = await changeDays(client, r, row.status === "half_day" ? -0.5 : -1);
     if (out.days <= 0) await client.query("update leave_request set status = 'cancelled' where id = $1", [r.id]);
     return out;

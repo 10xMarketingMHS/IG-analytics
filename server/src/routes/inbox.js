@@ -12,7 +12,8 @@ import { handoverFeed } from "./handover.js";
 //   waiting — leave requests (managers and admins: everyone's but their own),
 //     permission and start-time correction requests from people below you
 //     (leads and managers); hand-overs offered to you or climbed to
-//     you; work waiting for your review; tasks given to you to accept; for
+//     you; work waiting for your review; tasks given to you (or sent back to
+//     you) to accept; for
 //     admins, forgotten-password requests.
 //   sent — your leave and permissions waiting for a lead, hand-overs you
 //     offered, your work waiting for review.
@@ -66,7 +67,7 @@ inboxRouter.get("/inbox", async (req, res, next) => {
         )
         : none,
       pool.query(
-        `select t.id, t.title, t.editor_id, t.assigned_by, t.review_started_at, ${REF} as ref, e.name as "editorName", e.image_url as "imageUrl"
+        `select t.id, t.title, t.status, t.editor_id, t.assigned_by, t.review_started_at, ${REF} as ref, e.name as "editorName", e.image_url as "imageUrl"
            from task t left join editor e on e.id = t.editor_id
           where t.org_id = $1 and t.status = 'review'`,
         [req.orgId],
@@ -78,7 +79,7 @@ inboxRouter.get("/inbox", async (req, res, next) => {
              from task t
              left join app_user au on au.id = coalesce(t.assigned_by, t.created_by)
              left join editor ae on ae.id = au.editor_id
-            where t.org_id = $1 and t.editor_id = $2 and t.status = 'todo' and not t.accepted`,
+            where t.org_id = $1 and t.editor_id = $2 and t.status in ('todo', 'in_progress') and not t.accepted`,
           [req.orgId, me],
         )
         : none,

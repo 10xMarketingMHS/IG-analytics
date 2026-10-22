@@ -6,7 +6,7 @@ import { isSuperHere } from "../super-admin.js";
 import { callerScope, clearSettingsCache, istNow, permissionsReady, readSettings } from "../attendance.js";
 import { editorRanks, taskViewer } from "../hierarchy.js";
 import { LEAVE_COLS, LeaveError, balances, cancelLeave, createLeave, decideLeave, isApprover, leaveReady, leaveRules, previewLeave } from "../leave.js";
-import { n1, requestWords } from "../leave-math.js";
+import { n1, requestWords, validYmd } from "../leave-math.js";
 
 // Leave — CL (casual) and SL (sick): ask, decide, cancel, balances, the
 // starting allowance, top-ups and the rules. The Leave page (pages/leave.tsx)
@@ -19,7 +19,8 @@ import { n1, requestWords } from "../leave-math.js";
 export const leaveRouter = Router();
 
 const NEEDS_DB = "Leave needs a database update first — ask whoever runs the database to apply 20261030120000_leave.";
-const YMD = z.string().regex(/^\d{4}-\d{2}-\d{2}$/);
+// a real calendar day (not 2026-02-30, or a year far off)
+const YMD = z.string().refine(validYmd);
 const halves = (max) => z.number().min(0).max(max).refine((v) => Number.isInteger(v * 2), "Use whole or half days.");
 
 async function ready(res) {
@@ -182,7 +183,7 @@ leaveRouter.get("/leave/team", async (req, res, next) => {
     ]);
     if (!isApprover(caller)) return res.status(403).json({ error: "Only a manager can see the team's leave." });
     const rules = leaveRules(att);
-    const [bal, pending, decided, grants] = await Promise.all([
+    const [bal, pending, decided, grants, started] = await Promise.all([
       balances(people.map((p) => p.id), year),
       pool.query(`select ${LEAVE_COLS} from leave_request where org_id = $1 and status = 'pending' order by date_from`, [req.orgId]),
       pool.query(
@@ -195,10 +196,12 @@ leaveRouter.get("/leave/team", async (req, res, next) => {
            from leave_grant where org_id = $1 and year = $2 order by created_at desc`,
         [req.orgId, year],
       ),
+      pool.query("select distinct editor_id from leave_allowance where org_id = $1", [req.orgId]),
     ]);
+    const hasStart = new Set(started.rows.map((r) => r.editor_id));
     // permissions too: each person's count this month, and the requests waiting
     // from people below you (whoever sees all: everyone but you)
-    const below = (id) => id !== caller.editorId && (viewer.seesAll || (ranks.get(id) ?? 3) > viewer.rank);
+    const below = (id) => caller.scope !== "self" && id !== caller.editorId && (viewer.seesAll || (ranks.get(id) ?? 3) > viewer.rank);
     const [permUsed, permWaiting] = permOn
       ? await Promise.all([
         pool.query(
@@ -222,7 +225,12 @@ leaveRouter.get("/leave/team", async (req, res, next) => {
     res.json({
       year, today, rules: rulesOut(rules), counting: !!rules.countingSince, countingSince: rules.countingSince,
       me: caller.editorId, canEditRules: superHere, canEditStart: superHere || !rules.countingSince,
-      people: people.map((p) => ({ ...p, balance: bal.get(p.id), permissionsUsed: usedBy.get(p.id) ?? 0 })),
+      people: people.map((p) => ({
+        ...p, balance: bal.get(p.id), permissionsUsed: usedBy.get(p.id) ?? 0,
+        // what you may change for them: never your own (another manager or the Super Admin does)
+        canEditStart: superHere || (p.id !== caller.editorId && (!rules.countingSince || !hasStart.has(p.id))),
+        canTopUp: !!rules.countingSince && (superHere || p.id !== caller.editorId),
+      })),
       permissions: permOn ? { perMonth: att.permissionsPerMonth, pending: permPending.map(named) } : null,
       pending: pending.rows.map(named),
       decided: decided.rows.map((r) => ({ ...named(r), decidedByName: by.get(r.decidedBy) ?? null })),
@@ -240,8 +248,14 @@ leaveRouter.put("/leave/allowance/:editorId", async (req, res, next) => {
     if (!(await ready(res))) return;
     const [caller, { att }, superHere] = await Promise.all([callerScope(req), readSettings(req.orgId), isSuperHere(req)]);
     if (!isApprover(caller)) return res.status(403).json({ error: "Only a manager can set the allowance." });
+    if (req.params.editorId === caller.editorId && !superHere) {
+      return res.status(403).json({ error: "Another manager or the Super Admin sets your own allowance." });
+    }
+    // once counting has started only a Super Admin edits it — except someone's
+    // very first allowance (a new joiner)
     if (leaveRules(att).countingSince && !superHere) {
-      return res.status(403).json({ error: "Counting has started, so only a Super Admin edits the starting allowance. Use Top up to add days." });
+      const { rowCount: has } = await pool.query("select 1 from leave_allowance where editor_id = $1 limit 1", [req.params.editorId]);
+      if (has) return res.status(403).json({ error: "Counting has started, so only a Super Admin edits the starting allowance. Use Top up to add days." });
     }
     const { rows } = await pool.query("select name from editor where id = $1 and org_id = $2", [req.params.editorId, req.orgId]);
     if (!rows.length) return res.status(404).json({ error: "Team member not found." });
@@ -288,8 +302,11 @@ leaveRouter.post("/leave/grant", async (req, res, next) => {
   if (!parsed.success) return res.status(400).json({ error: "Pick CL or SL, the days (half-day steps) and the reason." });
   try {
     if (!(await ready(res))) return;
-    const [caller, { att }] = await Promise.all([callerScope(req), readSettings(req.orgId)]);
+    const [caller, { att }, superHere] = await Promise.all([callerScope(req), readSettings(req.orgId), isSuperHere(req)]);
     if (!isApprover(caller)) return res.status(403).json({ error: "Only a manager can add leave." });
+    if (parsed.data.editorId === caller.editorId && !superHere) {
+      return res.status(403).json({ error: "Another manager or the Super Admin adds days to your own leave." });
+    }
     if (!leaveRules(att).countingSince) return res.status(409).json({ error: "Set the starting allowance and start counting first." });
     const { editorId, type, days, note } = parsed.data;
     const year = parsed.data.year ?? Number(istNow().ymd.slice(0, 4));
@@ -301,6 +318,27 @@ leaveRouter.post("/leave/grant", async (req, res, next) => {
     );
     await log(req, "leave_topped_up", editorId, `${caller.name ?? "A manager"} added ${n1(days)} ${type} for ${rows[0].name}: ${note}`, { year, type, days });
     res.status(201).json({ ok: true });
+  } catch (err) { next(err); }
+});
+
+// PUT /leave/permissions { perMonth } — permissions a month, for everyone. An
+// admin (like the other attendance rules); only this one setting is written.
+leaveRouter.put("/leave/permissions", async (req, res, next) => {
+  const parsed = z.object({ perMonth: z.number().int().min(0).max(10) }).safeParse(req.body ?? {});
+  if (!parsed.success) return res.status(400).json({ error: "Permissions a month are 0 to 10." });
+  try {
+    if (req.role !== "admin") return res.status(403).json({ error: "Only an admin changes the permissions a month." });
+    const { perMonth } = parsed.data;
+    await pool.query(
+      `update org set settings = jsonb_set(coalesce(settings, '{}'::jsonb), '{attendance}',
+         coalesce(settings->'attendance', '{}'::jsonb) || jsonb_build_object('permissionsPerMonth', $2::int))
+       where id = $1`,
+      [req.orgId, perMonth],
+    );
+    clearSettingsCache(req.orgId);
+    const caller = await callerScope(req);
+    await log(req, "attendance_permissions_changed", caller.editorId, `Permissions a month: ${perMonth}`, { perMonth });
+    res.json({ perMonth });
   } catch (err) { next(err); }
 });
 

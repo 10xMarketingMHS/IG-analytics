@@ -10,8 +10,9 @@ import {
   istAt, istNow, leavePenalties, minutesOf, openingFor, penaltyOf, permissionsReady, permissionsThisMonth, readSettings, syncAttendance, weekdayOf,
 } from "../attendance.js";
 import {
-  LeaveError, balances, createLeave, dropLeaveDay, isApprover, leaveReady, leaveRules, requestWords, restoreLeaveDay, workedLeaveDay,
+  LeaveError, WORKED, balances, createLeave, dropLeaveDay, isApprover, leaveReady, leaveRules, requestWords, restoreLeaveDay, workedLeaveDay,
 } from "../leave.js";
+import { validYmd } from "../leave-math.js";
 
 // Attendance — Start day / End day for team members, and Team today /
 // Team › Attendance for their leads and managers. Rules: attendance.js.
@@ -102,6 +103,7 @@ attendanceRouter.get("/attendance/today", async (req, res, next) => {
       : [new Map(), none, none];
     let team = null;
     if (caller.scope !== "self") {
+      const [viewer, ranks] = await Promise.all([taskViewer(req), editorRanks(req.orgId)]);
       const byId = new Map(teamRows.rows.map((r) => [r.editorId, r]));
       const askedBy = new Map();
       for (const w of waitingPerms.rows) { if (!askedBy.has(w.editorId)) askedBy.set(w.editorId, []); askedBy.get(w.editorId).push(w); }
@@ -111,6 +113,8 @@ attendanceRouter.get("/attendance/today", async (req, res, next) => {
           editorId: p.id, name: p.name, imageUrl: p.imageUrl, designation: p.designation,
           status: shownStatus(r), row: r, penalty: penaltyOf(r, att),
           permissionRequests: askedBy.get(p.id) ?? [],
+          // marks, excuses and their requests (in the Inbox): only for people below you
+          canAct: viewer.seesAll || (ranks.get(p.id) ?? 3) > viewer.rank,
         };
       });
     }
@@ -203,26 +207,29 @@ attendanceRouter.post("/attendance/undo-check-in", async (req, res, next) => {
     if (row.leaveRequestId && (await restoreLeaveDay(row))) {
       return res.json({ attendance: await rowFor(caller.editorId, today.ymd) });
     }
+    // a second tap at the same moment: the first one has already undone it
+    const cur = await rowFor(caller.editorId, today.ymd);
+    if (!cur?.checkInAt) return res.json({ attendance: cur });
     // A lead's mark (working now, leave, half day, absent) stays; otherwise the
     // day goes back to what the clock says — and an excuse goes with the late
     // start (a morning permission it used is given back).
     const { cal, att } = await readSettings(req.orgId);
-    const leadMark = !!row.markedBy && !row.excused && ["on_time", "leave", "half_day", "absent", "half_absent"].includes(row.status);
-    if (row.excused && row.reason === "permission") await giveBackPermission(caller.editorId, today.ymd, "morning");
+    const leadMark = !!cur.markedBy && !cur.excused && ["on_time", "leave", "half_day", "absent", "half_absent"].includes(cur.status);
+    if (cur.excused && cur.reason === "permission") await giveBackPermission(caller.editorId, today.ymd, "morning");
     const opens = !!openingFor(cal, today.ymd);
     const absent = att.autoAbsentEnabled && opens && today.minutes >= minutesOf(att.autoAbsentAt);
     const halfAbsent = !absent && att.autoAbsentEnabled && att.halfDayReady !== false && opens && today.minutes >= minutesOf(att.halfDayAt);
     const alerted = today.minutes >= minutesOf(att.noSodAlertAt);
     if (leadMark) {
-      await pool.query("update attendance set check_in_at = null, late_minutes = 0, updated_at = now() where id = $1", [row.id]);
-    } else if (absent || halfAbsent || alerted || row.planNote || row.correctionStatus) {
+      await pool.query("update attendance set check_in_at = null, late_minutes = 0, updated_at = now() where id = $1 and check_in_at is not null", [cur.id]);
+    } else if (absent || halfAbsent || alerted || cur.planNote || cur.correctionStatus) {
       await pool.query(
         `update attendance set check_in_at = null, late_minutes = 0, excused = false, reason = null, marked_by = null,
-           status = $2, auto_marked = $3, updated_at = now() where id = $1`,
-        [row.id, absent ? "absent" : halfAbsent ? "half_absent" : "no_sod", absent || halfAbsent],
+           status = $2, auto_marked = $3, updated_at = now() where id = $1 and check_in_at is not null`,
+        [cur.id, absent ? "absent" : halfAbsent ? "half_absent" : "no_sod", absent || halfAbsent],
       );
     } else {
-      await pool.query("delete from attendance where id = $1", [row.id]);
+      await pool.query("delete from attendance where id = $1 and check_in_at is not null", [cur.id]);
     }
     res.json({ attendance: await rowFor(caller.editorId, today.ymd) });
   } catch (err) { next(err); }
@@ -306,10 +313,16 @@ attendanceRouter.post("/attendance/correction-request", async (req, res, next) =
                          or (attendance.auto_marked and attendance.status in ('absent', 'half_absent'))
                        then attendance.status else excluded.status end end,
          late_minutes = case when attendance.check_in_at is not null then attendance.late_minutes else excluded.late_minutes end,
+         marked_by = case when attendance.status = 'leave' and attendance.check_in_at is null then null else attendance.marked_by end,
          auto_marked = false, correction_at = excluded.correction_at, correction_note = excluded.correction_note,
          correction_status = 'pending', updated_at = now()`,
       [req.orgId, caller.editorId, today.ymd, now, c.status, c.lateMinutes, asked, parsed.data.note || null],
     );
+    // in on a whole day of approved leave: it's a working day, and goes back to the balance
+    if (already?.status === "leave" && already.leaveRequestId && !already.checkInAt) {
+      const worked = await workedLeaveDay(already);
+      if (already.markedBy) await leaveWorked(req, caller.editorId, today.ymd, !!worked);
+    }
     await logActivity({
       orgId: req.orgId, actorId: req.user.sub, verb: "attendance_correction", entityType: "editor", entityId: caller.editorId,
       summary: `Asked to correct their start time to ${parsed.data.time}`,
@@ -416,7 +429,17 @@ attendanceRouter.post("/attendance/:editorId/mark", async (req, res, next) => {
     // only working days (not Sundays, a Saturday off, or a holiday)
     const { cal, att } = await readSettings(req.orgId);
     if (!openingFor(cal, day)) return res.status(400).json({ error: "That isn't a working day." });
-    if ((parsed.data.as === "leave" || parsed.data.as === "half_day") && (await leaveReady())) {
+    const leaveOn = await leaveReady();
+    if (leaveOn) {
+      // a day of approved leave is changed by taking it off first (Undo), so the
+      // day goes back to their CL or SL
+      const cur = await rowFor(t.editorId, day);
+      if (cur?.leaveRequestId && (cur.status === "leave" || cur.status === "half_day")) {
+        return res.status(409).json({ error: `${t.name} is on approved leave ${day === t.today.ymd ? "today" : "that day"}. Undo it first — the day goes back to their CL or SL.` });
+      }
+    }
+    if ((parsed.data.as === "leave" || parsed.data.as === "half_day") && leaveOn) {
+      if (!leaveRules(att).countingSince) return res.status(409).json({ error: "Leave opens once a manager has set everyone's allowance and started counting (My Team › Leave)." });
       // Leave is CL or SL from the person's balance: an approved request, made
       // by a manager (their mark is the asking, so a CL's notice counts from
       // today). A half day: the first half unless they're in already.
@@ -538,7 +561,7 @@ attendanceRouter.post("/attendance/:editorId/nudge", async (req, res, next) => {
 // (come in late) or evening (leave early) permission; a lead approves it.
 attendanceRouter.post("/attendance/permission", async (req, res, next) => {
   const parsed = z.object({
-    date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+    date: z.string().refine(validYmd),
     part: z.enum(["morning", "evening"]),
     note: z.string().trim().max(300).optional(),
   }).safeParse(req.body ?? {});
@@ -650,17 +673,19 @@ attendanceRouter.post("/attendance/:editorId/permission", async (req, res, next)
 // POST /attendance/:editorId/correction { approve } — the lead's answer to a
 // correction request.
 attendanceRouter.post("/attendance/:editorId/correction", async (req, res, next) => {
-  const parsed = z.object({ approve: z.boolean() }).safeParse(req.body ?? {});
+  const parsed = z.object({ approve: z.boolean(), date: z.string().refine(validYmd).optional() }).safeParse(req.body ?? {});
   if (!parsed.success) return res.status(400).json({ error: "Approve or decline." });
   try {
     const t = await leadTarget(req, res);
     if (!t) return;
-    // the latest one waiting, from today or the few days before (asked late in the day, answered the next)
+    // the day asked about, or the latest one waiting — from today or the few
+    // days before (asked late in the day, answered the next)
     const { rows: waiting } = await pool.query(
       `select date::text as day from attendance
         where editor_id = $1 and correction_status = 'pending' and date >= $2::date - 3 and date <= $2::date
+          and ($3::date is null or date = $3::date)
         order by date desc limit 1`,
-      [t.editorId, t.today.ymd],
+      [t.editorId, t.today.ymd, parsed.data.date ?? null],
     );
     const day = waiting[0]?.day ?? t.today.ymd;
     const row = await rowFor(t.editorId, day);
@@ -668,11 +693,12 @@ attendanceRouter.post("/attendance/:editorId/correction", async (req, res, next)
     if (parsed.data.approve) {
       const { cal, att } = await readSettings(req.orgId);
       const c = classify(row.correctionAt, day, cal, att);
-      const keep = row.markedBy && ["on_time", "leave", "half_day", "absent", "half_absent"].includes(row.status);
+      // a lead's mark stays, and so does a day of leave worked after all (on time)
+      const keep = (row.markedBy && ["on_time", "leave", "half_day", "absent", "half_absent"].includes(row.status)) || row.reason === WORKED;
       await pool.query(
         `update attendance set check_in_at = correction_at, status = $2, late_minutes = $3,
            correction_status = 'approved', updated_at = now() where id = $1`,
-        [row.id, keep ? row.status : c.status, c.lateMinutes],
+        [row.id, keep ? row.status : c.status, row.reason === WORKED ? 0 : c.lateMinutes],
       );
       // Only the day's first session starts earlier; later ones (a reopened
       // day) stay as they were, so no hours are counted twice.
@@ -759,7 +785,7 @@ attendanceRouter.get("/attendance/month", async (req, res, next) => {
     res.json({
       month, days, rows: out, settings: att, scope: caller.scope,
       // a manager marks leave (CL / SL from the person's balance)
-      canMarkLeave: (await leaveReady()) && isApprover(caller),
+      canMarkLeave: (await leaveReady()) && isApprover(caller) && !!leaveRules(att).countingSince,
       footer: { absences, capacityLostMinutes: att.deductCapacity ? absences * dayMin : 0, latePts: att.latePenaltyPts, absentPts: att.absentPenaltyPts },
       capacity: cap,
     });
