@@ -5,6 +5,7 @@ import { requireAdmin } from "../resolve-workspace.js";
 import { requireSuper } from "../super-admin.js";
 import { monthPenalties } from "../attendance.js";
 import { scoreMonthAll } from "../goal-score.js";
+import { SETTLE_DAYS } from "../leave-math.js";
 
 // Management Performance (points-based). Admin-only board + config; a self view
 // for My Day. The performance measure is Overall Performance % — the Earned
@@ -35,7 +36,8 @@ function thisMonthFirst(offset = 0) {
 }
 // Days into a new month that last month stays live: ratings, leave and goal
 // fixes for it come in after it ends, so it's only stored (frozen) after this.
-const SETTLE_DAYS = 10;
+// That is SETTLE_DAYS (leave-math.js), shared with leave: no approving or
+// cancelling leave in a month once it is frozen.
 // Is a month still computed live (this month, a future one, or last month
 // while it settles)? Only months past that are served from what was stored.
 function liveMonth(monthFirst) {
