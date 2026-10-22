@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState, type ReactNode } from "react";
-import { useSearchParams } from "react-router-dom";
+import { useNavigate, useSearchParams } from "react-router-dom";
 import { toast } from "sonner";
 import { ApiError } from "@/lib/api";
 import { Icon } from "@/components/icon";
@@ -15,8 +15,11 @@ import "./leave.css";
 
 // Leave — casual leave (CL) and sick leave (SL), as in the prototype "Pulse
 // Leave.dc.html": Ask for leave (everyone), Approvals and Allowances & rules
-// (managers and admins). The page at /leave, and the Home side panel
-// (LeavePanel) with the same screen. Rules: server/src/leave-math.js.
+// (managers and admins). One screen, three ways in:
+//   mode "team" — My Team › Leave: Approvals and Allowances & rules;
+//   mode "mine" — My profile › My leave: your balance, requests and the form;
+//   mode "all"  — the Home side panel (LeavePanel) and /leave: all three tabs.
+// Rules: server/src/leave-math.js.
 
 type Tab = "apply" | "approve" | "settings";
 const ST: Record<LeaveRequest["status"], { t: string; cls: string }> = {
@@ -45,31 +48,37 @@ function Stepper({ value, onDec, onInc, disabled, wide }: { value: string; onDec
   );
 }
 
-export function LeaveScreen({ startTab = "apply", onTab }: { startTab?: Tab; onTab?: (t: Tab) => void }) {
+export function LeaveScreen({ startTab = "apply", onTab, mode = "all" }: { startTab?: Tab; onTab?: (t: Tab) => void; mode?: "all" | "team" | "mine" }) {
+  const navigate = useNavigate();
   const mine = useLeaveData<LeaveMine>("/leave/mine");
   const canApprove = !!mine.data?.canApprove;
-  const team = useLeaveData<LeaveTeam>(canApprove ? "/leave/team" : null);
+  const team = useLeaveData<LeaveTeam>(canApprove && mode !== "mine" ? "/leave/team" : null);
   const [tab, setTabState] = useState<Tab>(startTab);
   useEffect(() => setTabState(startTab), [startTab]);
   const setTab = (t: Tab) => { setTabState(t); onTab?.(t); };
-  const shown: Tab = canApprove ? tab : "apply";
+  const shown: Tab = mode === "mine" || !canApprove ? "apply" : mode === "team" && tab === "apply" ? "approve" : tab;
+  // where the allowances are set (from the form, before counting starts)
+  const goSettings = !canApprove ? null : mode === "all" ? () => setTab("settings") : () => navigate("/my-team?tab=leave&view=settings");
   const waiting = team.data ? team.data.pending.filter((r) => r.editorId !== team.data!.me).length : 0;
   const today = mine.data?.today;
-  const tabs: { id: Tab; label: string; icon: string; count?: number }[] = [
-    { id: "apply", label: "Ask for leave", icon: "edit_calendar" },
+  const tabs: { id: Tab; label: string; icon: string; count?: number }[] = mode === "mine" ? [] : [
+    ...(mode === "all" ? [{ id: "apply" as Tab, label: "Ask for leave", icon: "edit_calendar" }] : []),
     ...(canApprove ? [
       { id: "approve" as Tab, label: "Approvals", icon: "fact_check", count: waiting },
       { id: "settings" as Tab, label: "Allowances & rules", icon: "tune" },
     ] : []),
   ];
+  if (mode === "team" && mine.data && !canApprove) {
+    return <div className="lv"><div className="lv-card lv-empty">Only managers answer leave and set the allowances.</div></div>;
+  }
   return (
-    <div className="lv">
-      <header className="lv-head">
+    <div className={"lv" + (mode === "mine" ? " lv-mine" : "")}>
+      {mode !== "mine" && <header className="lv-head">
         <div className="lv-title">
           <span className="lv-tile"><Icon name="event_available" size={22} /></span>
           <div>
             <b>Leave</b>
-            <span>Casual leave (CL) and sick leave (SL){today ? ` · today is ${fmtDay(today)} ${today.slice(0, 4)}` : ""}</span>
+            <span>{mode === "team" ? "Approvals, balances and allowances" : "Casual leave (CL) and sick leave (SL)"}{today ? ` · today is ${fmtDay(today)} ${today.slice(0, 4)}` : ""}</span>
           </div>
         </div>
         {tabs.length > 1 && (
@@ -82,11 +91,11 @@ export function LeaveScreen({ startTab = "apply", onTab }: { startTab?: Tab; onT
             ))}
           </div>
         )}
-      </header>
+      </header>}
       {mine.error ? <div className="lv-card lv-empty">{mine.error}</div>
         : !mine.data ? <div className="lv-card lv-empty">Loading leave…</div>
         : !mine.data.ready ? <div className="lv-card lv-empty">Leave needs a database update first — ask whoever runs the database to apply 20261030120000_leave.</div>
-        : shown === "apply" ? <AskTab mine={mine.data} goSettings={canApprove ? () => setTab("settings") : null} />
+        : shown === "apply" ? <AskTab mine={mine.data} goSettings={goSettings} />
         : !team.data ? <div className="lv-card lv-empty">{team.error ?? "Loading…"}</div>
         : shown === "approve" ? <ApproveTab team={team.data} />
         : <SettingsTab team={team.data} />}

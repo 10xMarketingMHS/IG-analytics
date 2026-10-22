@@ -697,7 +697,7 @@ function AttendW({ c }: { c: HomeCtx }) {
         {counts.filter(([, n]) => n > 0).map(([l, n, t]) => <span key={l} className={"hw-count soft " + t}><b>{n}</b>{l}</span>)}
       </div>
       {att.leave?.canApprove && att.leave.teamWaiting > 0 && (
-        <Link to="/leave?tab=approve" className="hw-leave-line">
+        <Link to="/my-team?tab=leave" className="hw-leave-line">
           🌴 {att.leave.teamWaiting} leave request{att.leave.teamWaiting === 1 ? "" : "s"} waiting for a manager · Review →
         </Link>
       )}

@@ -5,6 +5,7 @@ import { useAuth } from "@/lib/auth-context";
 import { fileToSquareDataUrl } from "@/lib/image";
 import { Modal } from "@/components/modal";
 import { TeamAttendance } from "@/pages/team-attendance";
+import { LeaveScreen } from "@/pages/leave";
 
 // Same gradient-string convention used for editor/avatar chips elsewhere
 // (see leaderboard.tsx's AV_GRADIENTS) — stored as-is in app_user.color.
@@ -243,6 +244,14 @@ export function MyProfileModal({ onClose }: { onClose: () => void }) {
         <div className="field" style={{ marginTop: 16 }}>
           <label className="f">My attendance</label>
           <TeamAttendance editors={null} self />
+        </div>
+      )}
+
+      {/* Your CL / SL: balance, requests, and asking (pages/leave.tsx) */}
+      {user?.editorId && (
+        <div className="field" style={{ marginTop: 16 }}>
+          <label className="f">My leave</label>
+          <LeaveScreen mode="mine" />
         </div>
       )}
 

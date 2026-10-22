@@ -36,8 +36,6 @@ export const NAV_ITEMS: NavItem[] = [
   // Inbox — everything waiting on you (leave, permissions, corrections,
   // hand-overs, reviews, tasks to accept, password resets) and what you sent.
   { title: "Inbox", href: "/inbox", icon: "📥", section: "Home", inboxBadge: true },
-  // Leave — ask for CL / SL, and (managers) approvals, allowances and rules.
-  { title: "Leave", href: "/leave", icon: "🌴", section: "Home" },
   { title: "Team Chat", href: "/chat", icon: "💬", section: "Home", chatBadge: true },
   // Analytics — the Dashboard and Top Performers merged into one page with an
   // Overview tab and a Top performers tab (/dashboard and /top redirect here).

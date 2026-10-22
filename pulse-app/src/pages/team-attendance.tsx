@@ -134,7 +134,7 @@ export function TeamAttendance({ editors, self = false }: { editors: Editor[] | 
         </>
       )}
       {!self && data?.canMarkLeave && (
-        <div className="ta-leave-note">Balances, approvals and allowances are on the <Link to="/leave">Leave page</Link>.</div>
+        <div className="ta-leave-note">Leave balances, approvals and allowances are on the <Link to="/my-team?tab=leave">Leave</Link> tab.</div>
       )}
     </section>
   );

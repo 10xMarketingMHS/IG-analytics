@@ -9,6 +9,7 @@ import { TeamToday } from "@/pages/team-today";
 import { TeamRoster } from "@/pages/team-roster";
 import { TaskPanel } from "@/pages/tasks";
 import { TeamAttendance } from "@/pages/team-attendance";
+import { LeaveScreen } from "@/pages/leave";
 import { useAuth } from "@/lib/auth-context";
 import { homeRoleOf, peopleVisibleTo, seesTeamAttendance } from "@/lib/home-role";
 import { useOrg } from "@/lib/use-org";
@@ -18,8 +19,10 @@ import { useOrg } from "@/lib/use-org";
 // what; and Ranking — everyone ranked by Task Points for the dates you pick,
 // with each person's tasks and the Excel report; and Roster — everyone's
 // position, login and role, changed on the row; and Attendance — the month's
-// Start of day record. Admins get every tab; team leads and managers who aren't
-// admins get Attendance only (their own people); anyone else is turned away.
+// Start of day record; and Leave — Approvals and Allowances & rules for CL / SL
+// (pages/leave.tsx). Admins get every tab; managers who aren't admins get
+// Attendance and Leave, team leads Attendance only (their own people); anyone
+// else is turned away.
 export function MyTeamPage() {
   const { isAdmin, loading, active, workspaces } = useWorkspaces();
   const { user } = useAuth();
@@ -38,7 +41,11 @@ export function MyTeamPage() {
   const location = useLocation();
   const [params, setParams] = useSearchParams();
   const raw = params.get("tab");
-  const tab = attendanceOnly ? "attendance" : raw === "ranking" || raw === "roster" || raw === "attendance" ? raw : "today";
+  // Leave: whoever answers leave — a Manager or Asst. Manager, or an admin
+  const canLeave = isAdmin || homeRole === "manager";
+  const tab = raw === "leave" && canLeave ? "leave"
+    : attendanceOnly ? "attendance" : raw === "ranking" || raw === "roster" || raw === "attendance" ? raw : "today";
+  const leaveView = params.get("view") === "settings" ? "settings" : "approve";
   // Goals' "View in Team" hands over the person to show.
   const focusId = (location.state as { editorId?: string } | null)?.editorId ?? null;
   // Held by id so the open panel always shows the freshest copy after a refetch.
@@ -68,6 +75,12 @@ export function MyTeamPage() {
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><circle cx="9" cy="8" r="3.5" /><path d="M2.5 20a6.5 6.5 0 0 1 11.5-4.2M15.5 18.5l2 2 4-4.5" /></svg>
           Attendance
         </button>
+        {canLeave && (
+        <button type="button" className={tab === "leave" ? "on" : ""} onClick={() => setParams({ tab: "leave" }, { replace: true })} aria-pressed={tab === "leave"}>
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><rect x="3.5" y="5" width="17" height="15.5" rx="2.5" /><path d="M3.5 10h17M8 3v4M16 3v4" /><path d="m9 15 2 2 4-4" /></svg>
+          Leave
+        </button>
+        )}
         {!attendanceOnly && (
         <button type="button" className={tab === "roster" ? "on" : ""} onClick={() => setParams({ tab: "roster" }, { replace: true })} aria-pressed={tab === "roster"}>
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><rect x="3" y="5" width="18" height="15" rx="2" /><circle cx="9" cy="11.5" r="2.5" /><path d="M5.5 17a3.5 3.5 0 0 1 7 0M15 10h3M15 14h3M9 5V3h6v2" /></svg>
@@ -81,7 +94,9 @@ export function MyTeamPage() {
           ? <TeamPanel tasks={tasks} editors={seenPeople} onOpenTask={(t) => setOpenTaskId(t.id)} focusId={focusId} />
           : tab === "attendance"
             ? <div className="mt"><TeamAttendance editors={editors} /></div>
-            : <TeamRoster />}
+            : tab === "leave"
+              ? <LeaveScreen mode="team" startTab={leaveView} onTab={(t) => setParams(t === "settings" ? { tab: "leave", view: "settings" } : { tab: "leave" }, { replace: true })} />
+              : <TeamRoster />}
       {openTask && (
         <TaskPanel
           mode="edit" task={openTask} canWrite editors={editors ?? []} channels={workspaces ?? []}

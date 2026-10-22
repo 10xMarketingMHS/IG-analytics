@@ -113,8 +113,8 @@ export function AttendanceSection({ onDirty }: { onDirty: (d: boolean) => void }
             decDisabled={!isSuper || a.absentPenaltyPts <= 0} incDisabled={!isSuper || a.absentPenaltyPts >= 10} />
         </div>
         <div className="st-row">
-          <span className="st-label"><b>Leave (CL / SL)</b><small>Notice, the short-notice and unpaid-day cuts, and everyone's allowance are on the Leave page › Allowances &amp; rules</small></span>
-          <Link className="st-link" to="/leave?tab=settings">Open</Link>
+          <span className="st-label"><b>Leave (CL / SL)</b><small>Notice, the short-notice and unpaid-day cuts, and everyone's allowance are on My Team › Leave › Allowances &amp; rules</small></span>
+          <Link className="st-link" to="/my-team?tab=leave&view=settings">Open</Link>
         </div>
         <div className="st-row">
           <span className="st-label"><b>Count lost hours against capacity</b><small>Unplanned absence shows as lost hours on the Team › Attendance report</small></span>
