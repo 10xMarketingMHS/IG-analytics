@@ -23,7 +23,6 @@ html[data-theme="dark"] .ta{--ta-text3:#8b8b96;--ta-line2:rgba(255,255,255,.055)
 .ta-legend i{width:12px;height:12px;border-radius:4px}
 .ta-scroll{overflow-x:auto}
 .ta-grid{display:grid;gap:4px;align-items:center;min-width:1160px;padding:10px 20px 8px}
-.ta.self .ta-grid{min-width:1000px}
 .ta-row{display:contents}
 .ta-h{font-size:11px;font-weight:800;color:var(--ta-text3)}
 .ta-member{text-transform:uppercase;letter-spacing:.08em}
@@ -68,3 +67,45 @@ html[data-theme="dark"] .ta{--ta-text3:#8b8b96;--ta-line2:rgba(255,255,255,.055)
 /* where leave balances live now */
 .ta-leave-note{padding:11px 20px;border-top:1px solid var(--ta-line2);font-size:12.5px;color:var(--ta-text2)}
 .ta-leave-note a{color:var(--ta-acText);font-weight:700}
+/* The pinned Member column stays solid while the days scroll under it (it was
+   see-through, so scrolled days showed through and piled up under "Member") */
+.ta{--ta-solid:#fbfbfe}
+html[data-theme="dark"] .ta{--ta-solid:#1c1a28}
+.ta-member,.ta-who{z-index:2;background:var(--ta-solid);box-shadow:4px 0 0 var(--ta-solid),12px 0 12px -12px rgba(20,10,60,.28)}
+/* the heading cell as tall as the two-line day headings, so none show above it */
+.ta-member{align-self:stretch;display:flex;align-items:flex-end;padding-bottom:2px}
+
+/* Your own month (MyMonth): the counts, then a calendar of the days */
+.my-stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(120px,1fr));gap:10px;padding:16px 20px 6px}
+.my-stat{display:flex;flex-direction:column;gap:2px;padding:12px 14px;border:1px solid var(--ta-line);border-radius:14px;background:var(--ta-sunk);min-width:0}
+.my-stat b{font-size:24px;font-weight:800;line-height:1.1;font-variant-numeric:tabular-nums}
+.my-stat span{font-size:12px;font-weight:600;color:var(--ta-text2)}
+.my-stat em{font-style:normal;font-size:11.5px;color:var(--ta-text3)}
+.my-stat.good b{color:var(--ta-good)}.my-stat.warn b{color:var(--ta-warn)}.my-stat.bad b{color:var(--ta-bad)}.my-stat.rev b{color:var(--ta-rev)}
+.my-cal{display:grid;grid-template-columns:repeat(7,minmax(0,1fr));gap:8px;padding:14px 20px 20px}
+.my-wd{padding:0 4px 2px;font-size:11px;font-weight:800;letter-spacing:.06em;text-transform:uppercase;color:var(--ta-text3)}
+.my-day{--c:var(--ta-text3);display:flex;flex-direction:column;gap:2px;min-width:0;min-height:78px;padding:9px 10px;box-sizing:border-box;
+  border:1px solid var(--ta-line);border-radius:12px;background:var(--ta-panel)}
+.my-day b{font:700 13px 'Geist Mono',ui-monospace,monospace;color:var(--ta-text)}
+.my-st{font-size:12px;font-weight:700;color:var(--c);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.my-sub{font-size:11px;color:var(--ta-text3);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.my-day[class*=" c-"]{background:color-mix(in srgb,var(--c) 11%,var(--ta-panel));border-color:color-mix(in srgb,var(--c) 32%,transparent)}
+.my-day.c-on_time{--c:var(--ta-good)}
+.my-day.c-permission{--c:color-mix(in srgb,var(--ta-good) 55%,var(--ta-rev))}
+.my-day.c-late{--c:var(--ta-warn)}
+.my-day.c-half_absent,.my-day.c-absent{--c:var(--ta-bad)}
+.my-day.c-leave,.my-day.c-half_day{--c:var(--ta-rev)}
+.my-day.c-no_sod{--c:var(--ta-bad)}
+.my-day.c-waiting{--c:var(--ta-text3)}
+.my-day.off{background:transparent;border-style:dashed}
+.my-day.off .my-st,.my-day.off b{color:var(--ta-text3)}
+.my-day.future{background:transparent}
+.my-day.future b{color:var(--ta-text3)}
+.my-day.today{box-shadow:0 0 0 2px var(--ta-acText)}
+@media (max-width:640px){
+  .my-cal{gap:4px;padding:10px 12px 14px}
+  .my-day{min-height:54px;padding:6px}
+  .my-st{font-size:10px}
+  .my-sub{display:none}
+  .my-stats{padding:12px 12px 4px}
+}

@@ -382,6 +382,8 @@ function SettingsTab({ team }: { team: LeaveTeam }) {
   const [rules, setRules] = useState(team.rules);
   useEffect(() => setRules(team.rules), [team.rules]);
   const [editStart, setEditStart] = useState(false);
+  // one person's starting days, edited on their row (a Super Admin)
+  const [editRow, setEditRow] = useState<string | null>(null);
   const [topFor, setTopFor] = useState<string | null>(null);
   const [topType, setTopType] = useState<LeaveType>("CL");
   const [topDays, setTopDays] = useState(1);
@@ -499,12 +501,36 @@ function SettingsTab({ team }: { team: LeaveTeam }) {
                 return (
                   <div key={p.id} className="lv-tr">
                     <span className="lv-who"><Face name={p.name} imageUrl={p.imageUrl} size={26} /><b>{p.name}</b></span>
-                    <span className="lv-tot" title={`Starting ${n1(b.CL.start)} + top-ups ${n1(b.CL.topups)}`}><b>{n1(b.CL.total)}</b>{extra(b.CL.start, b.CL.topups)}</span>
-                    <span className="lv-tot" title={`Starting ${n1(b.SL.start)} + top-ups ${n1(b.SL.topups)}`}><b>{n1(b.SL.total)}</b>{extra(b.SL.start, b.SL.topups)}</span>
+                    {editRow === p.id ? (["cl", "sl"] as const).map((k) => {
+                      const tb = k === "cl" ? b.CL : b.SL;
+                      return (
+                        <span key={k} className="lv-tot edit">
+                          <Stepper value={n1(startOf(p.id)[k])} onDec={() => changeStart(p.id, k, -1)} onInc={() => changeStart(p.id, k, 1)} />
+                          <span className="t-mute">starting{tb.topups ? ` + ${n1(tb.topups)} top-up` : ""}</span>
+                        </span>
+                      );
+                    }) : (
+                      <>
+                        <span className="lv-tot" title={`Starting ${n1(b.CL.start)} + top-ups ${n1(b.CL.topups)}`}><b>{n1(b.CL.total)}</b>{extra(b.CL.start, b.CL.topups)}</span>
+                        <span className="lv-tot" title={`Starting ${n1(b.SL.start)} + top-ups ${n1(b.SL.topups)}`}><b>{n1(b.SL.total)}</b>{extra(b.SL.start, b.SL.topups)}</span>
+                      </>
+                    )}
                     <span className="lv-topcell">
-                      <button type="button" className={"lv-btn top" + (topFor === p.id ? " on" : "")} onClick={() => { setTopFor(p.id); setTopType("CL"); setTopDays(1); setTopNote(""); }}>
-                        <Icon name="add_circle" size={16} />Top up
-                      </button>
+                      {editRow === p.id ? (
+                        <button type="button" className="lv-btn line" onClick={() => setEditRow(null)}>Done</button>
+                      ) : (
+                        <>
+                          {team.canEditRules && (
+                            <button type="button" className="lv-iconbtn" title="Edit the starting days" aria-label={`Edit ${p.name}'s starting days`}
+                              onClick={() => { setEditRow(p.id); setTopFor(null); }}>
+                              <Icon name="edit" size={16} />
+                            </button>
+                          )}
+                          <button type="button" className={"lv-btn top" + (topFor === p.id ? " on" : "")} onClick={() => { setTopFor(p.id); setEditRow(null); setTopType("CL"); setTopDays(1); setTopNote(""); }}>
+                            <Icon name="add_circle" size={16} />Top up
+                          </button>
+                        </>
+                      )}
                     </span>
                   </div>
                 );

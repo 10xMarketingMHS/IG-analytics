@@ -5,13 +5,15 @@ import { api, ApiError } from "@/lib/api";
 import { Avatar } from "@/lib/editor-visuals";
 import { clockTime } from "@/lib/time-format";
 import { attendanceAction, type AttSettings, type ShownStatus } from "@/lib/use-attendance";
+import { useOrg } from "@/lib/use-org";
 import type { Editor } from "@/lib/types";
 import "./team-attendance.css";
 
 // Team › Attendance (Pulse Redesign v7): one row per person, one square per
-// day of the month in its status colour, then the month's totals. Managers and
-// team leads see everyone; anyone else only their own row (used on My profile
-// with `self`). Data: GET /attendance/month.
+// day of the month in its status colour, then the month's totals — for managers,
+// team leads and admins. With `self` (My profile, the top bar's Attendance for
+// team members): your own month as a calendar instead (MyMonth). Data:
+// GET /attendance/month.
 
 type Cell = {
   status: ShownStatus | null;
@@ -43,6 +45,10 @@ const shift = (m: string, by: number) => { const [y, mo] = m.split("-").map(Numb
 const fmtHM = (min: number) => `${Math.floor(min / 60)}h${min % 60 ? ` ${min % 60}m` : ""}`;
 
 export function TeamAttendance({ editors, self = false }: { editors: Editor[] | null; self?: boolean }) {
+  return self ? <MyMonth /> : <TeamMonth editors={editors} />;
+}
+
+function TeamMonth({ editors }: { editors: Editor[] | null }) {
   const [month, setMonth] = useState(monthOf());
   const [data, setData] = useState<Month | null>(null);
   const [err, setErr] = useState<string | null>(null);
@@ -50,11 +56,11 @@ export function TeamAttendance({ editors, self = false }: { editors: Editor[] | 
   useEffect(() => {
     let cancel = false;
     setData(null); setErr(null);
-    api<Month>(`/attendance/month?month=${month}${self ? "&self=1" : ""}`)
+    api<Month>(`/attendance/month?month=${month}`)
       .then((d) => { if (!cancel) setData(d); })
       .catch((e) => { if (!cancel) setErr(e instanceof ApiError ? e.message : "Couldn't load attendance."); });
     return () => { cancel = true; };
-  }, [month, self, reload]);
+  }, [month, reload]);
 
   const [y, mo] = month.split("-").map(Number);
   const monthName = new Date(y, mo - 1, 1).toLocaleDateString("en-GB", { month: "long", year: "numeric" });
@@ -64,7 +70,7 @@ export function TeamAttendance({ editors, self = false }: { editors: Editor[] | 
   const sub = isThisMonth ? `1–${todayN} ${shortMon} · hover a day for details · today outlined` : `${shortMon} ${y} · hover a day for details`;
 
   return (
-    <section className={"ta" + (self ? " self" : "")} aria-label="Attendance">
+    <section className="ta" aria-label="Attendance">
       <header className="ta-head">
         <div className="ta-title">
           <span className="ta-nav">
@@ -79,7 +85,7 @@ export function TeamAttendance({ editors, self = false }: { editors: Editor[] | 
           {LEGEND.map(([l, k]) => <span key={k}><i className={"c-" + k} />{l}</span>)}
         </span>
       </header>
-      {!self && data?.canMarkLeave && data.rows.length > 0 && (
+      {data?.canMarkLeave && data.rows.length > 0 && (
         <PlanLeave people={data.rows} onSaved={() => setReload((n) => n + 1)} />
       )}
       {err ? <div className="ta-empty">{err}</div> : !data ? <div className="ta-empty">Loading…</div> : data.rows.length === 0 ? (
@@ -87,15 +93,14 @@ export function TeamAttendance({ editors, self = false }: { editors: Editor[] | 
       ) : (
         <>
           <div className="ta-scroll">
-            {/* your own row (self) leaves out the points lost: those are for leads */}
-            <div className="ta-grid" style={{ gridTemplateColumns: `minmax(150px, 180px) repeat(${data.days.length}, minmax(18px, 1fr)) repeat(${self ? 4 : 5}, 58px)` }}>
+            <div className="ta-grid" style={{ gridTemplateColumns: `minmax(150px, 180px) repeat(${data.days.length}, minmax(18px, 1fr)) repeat(5, 58px)` }}>
               <span className="ta-h ta-member">Member</span>
               {data.days.map((d) => (
                 <span key={d.date} className={"ta-h ta-day" + (d.today ? " today" : !d.working || d.future ? " off" : "")}>
                   <em>{WD[d.weekday]}</em><b>{Number(d.date.slice(8))}</b>
                 </span>
               ))}
-              {(self ? ["Late", "Absent", "Leave", "On time"] : ["Late", "Absent", "Leave", "On time", "Pts lost"]).map((h) => <span key={h} className="ta-h ta-num">{h}</span>)}
+              {["Late", "Absent", "Leave", "On time", "Pts lost"].map((h) => <span key={h} className="ta-h ta-num">{h}</span>)}
               {data.rows.map((r) => {
                 const ed = editors?.find((e) => e.id === r.editorId) ?? null;
                 const t = r.totals;
@@ -118,23 +123,115 @@ export function TeamAttendance({ editors, self = false }: { editors: Editor[] | 
                     <b className={"ta-num" + (t.absent > 0 ? " bad" : "")}>{t.absent}</b>
                     <b className="ta-num" title={t.leaveBy && t.leave ? `CL ${t.leaveBy.CL} · SL ${t.leaveBy.SL} · unpaid ${t.leaveBy.unpaid}` : undefined}>{t.leave}</b>
                     <b className={"ta-num " + (t.onTimePct == null ? "" : t.onTimePct >= 90 ? "good" : t.onTimePct >= 75 ? "warn" : "bad")}>{t.onTimePct == null ? "–" : `${t.onTimePct}%`}</b>
-                    {!self && <b className={"ta-num" + (t.ptsLost > 0 ? " bad" : " faint")}>{t.ptsLost > 0 ? `−${t.ptsLost}` : "0"}</b>}
+                    <b className={"ta-num" + (t.ptsLost > 0 ? " bad" : " faint")}>{t.ptsLost > 0 ? `−${t.ptsLost}` : "0"}</b>
                   </div>
                 );
               })}
             </div>
           </div>
-          {!self && (
-            <footer className="ta-foot">
-              {data.footer.absences} unplanned absence{data.footer.absences === 1 ? "" : "s"} this month
-              {data.settings.deductCapacity ? ` · ${fmtHM(data.footer.capacityLostMinutes)} of capacity lost` : ""}
-              {` · late −${data.footer.latePts} pt, absent −${data.footer.absentPts} pts each`}
-            </footer>
-          )}
+          <footer className="ta-foot">
+            {data.footer.absences} unplanned absence{data.footer.absences === 1 ? "" : "s"} this month
+            {data.settings.deductCapacity ? ` · ${fmtHM(data.footer.capacityLostMinutes)} of capacity lost` : ""}
+            {` · late −${data.footer.latePts} pt, absent −${data.footer.absentPts} pts each`}
+          </footer>
         </>
       )}
-      {!self && data?.canMarkLeave && (
+      {data?.canMarkLeave && (
         <div className="ta-leave-note">Leave balances, approvals and allowances are on the <Link to="/my-team?tab=leave">Leave</Link> tab.</div>
+      )}
+    </section>
+  );
+}
+
+// Your own month, as a calendar: each day's status in its colour, with the
+// check-in time, how late, or which leave; the month's counts above. No points
+// (those are for leads).
+const MY_LABEL: Record<ShownStatus, string> = { ...LABEL, half_absent: "Half day absent", leave: "On leave", half_day: "Half day" };
+const WEEK = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+function MyMonth() {
+  const { org } = useOrg();
+  const [month, setMonth] = useState(monthOf());
+  const [data, setData] = useState<Month | null>(null);
+  const [err, setErr] = useState<string | null>(null);
+  const [reload, setReload] = useState(0);
+  useEffect(() => {
+    let cancel = false;
+    setErr(null);
+    api<Month>(`/attendance/month?month=${month}&self=1`)
+      .then((d) => { if (!cancel) setData(d); })
+      .catch((e) => { if (!cancel) setErr(e instanceof ApiError ? e.message : "Couldn't load attendance."); });
+    return () => { cancel = true; };
+  }, [month, reload]);
+  useEffect(() => {
+    const on = () => setReload((n) => n + 1);
+    window.addEventListener("pulse:attendance-changed", on);
+    return () => window.removeEventListener("pulse:attendance-changed", on);
+  }, []);
+  const [y, mo] = month.split("-").map(Number);
+  const monthName = new Date(y, mo - 1, 1).toLocaleDateString("en-GB", { month: "long", year: "numeric" });
+  const isThisMonth = month === monthOf();
+  const sunFirst = org?.weekStart === "sun";
+  const row = data && data.month === month ? data.rows[0] ?? null : null;
+  const days = row ? data!.days : [];
+  const lead = days.length ? (sunFirst ? days[0].weekday : (days[0].weekday + 6) % 7) : 0;
+  const week = sunFirst ? WEEK : [...WEEK.slice(1), WEEK[0]];
+  const t = row?.totals;
+  const permissions = row ? row.cells.filter((c) => c.status === "permission").length : 0;
+  const stat = (v: string, l: string, tone = "", sub = "") => (
+    <div className={"my-stat " + tone}><b>{v}</b><span>{l}</span>{sub && <em>{sub}</em>}</div>
+  );
+  return (
+    <section className="ta my" aria-label="My attendance">
+      <header className="ta-head">
+        <div className="ta-title">
+          <span className="ta-nav">
+            <button type="button" onClick={() => setMonth(shift(month, -1))} aria-label="Previous month">‹</button>
+            <b>{monthName}</b>
+            <button type="button" onClick={() => setMonth(shift(month, 1))} disabled={isThisMonth} aria-label="Next month">›</button>
+          </span>
+          <span>Your days{isThisMonth ? " so far" : ""} · today outlined</span>
+        </div>
+        <span className="ta-grow" />
+        <span className="ta-legend">
+          {LEGEND.map(([l, k]) => <span key={k}><i className={"c-" + k} />{l}</span>)}
+        </span>
+      </header>
+      {err ? <div className="ta-empty">{err}</div> : !row || !t ? <div className="ta-empty">{data && data.month === month ? "Your attendance shows here once you start your days." : "Loading…"}</div> : (
+        <>
+          <div className="my-stats">
+            {stat(t.onTimePct == null ? "–" : `${t.onTimePct}%`, "On time", t.onTimePct == null ? "" : t.onTimePct >= 90 ? "good" : t.onTimePct >= 75 ? "warn" : "bad")}
+            {stat(String(t.late), t.late === 1 ? "Late day" : "Late days", t.late ? "warn" : "")}
+            {stat(String(t.absent), "Absent", t.absent ? "bad" : "")}
+            {stat(String(t.leave), "On leave", t.leave ? "rev" : "", t.leaveBy && t.leave ? [t.leaveBy.CL ? `CL ${t.leaveBy.CL}` : "", t.leaveBy.SL ? `SL ${t.leaveBy.SL}` : "", t.leaveBy.unpaid ? `unpaid ${t.leaveBy.unpaid}` : ""].filter(Boolean).join(" · ") : "")}
+            {stat(String(permissions), permissions === 1 ? "Permission" : "Permissions")}
+          </div>
+          <div className="my-cal" role="grid" aria-label={monthName}>
+            {week.map((w) => <span key={w} className="my-wd" role="columnheader">{w}</span>)}
+            {Array.from({ length: lead }, (_, i) => <span key={"b" + i} className="my-blank" />)}
+            {days.map((d, i) => {
+              const c = row.cells[i];
+              const n = Number(d.date.slice(8));
+              const off = !d.working;
+              const excused = c.status === "late" && c.row?.excused;
+              const label = off ? "Off" : d.future ? "" : !c.status ? "No record" : excused ? "On time" : MY_LABEL[c.status];
+              const leaveKind = c.row?.reason === "CL" || c.row?.reason === "SL" ? c.row.reason : c.row?.reason === "unpaid" ? "Unpaid" : null;
+              const sub = off || d.future || !c.status ? ""
+                : c.status === "leave" || c.status === "half_day" ? leaveKind ?? (c.row?.reason || "")
+                : c.status === "late" && !excused ? `+${c.row?.lateMinutes ?? 0}m · ${c.row?.checkInAt ? clockTime(c.row.checkInAt) : ""}`
+                : c.row?.checkInAt ? `In ${clockTime(c.row.checkInAt)}` : "";
+              const cls = excused ? "on_time" : c.status;
+              return (
+                <div key={d.date} role="gridcell"
+                  className={"my-day" + (!off && !d.future && cls ? " c-" + cls : "") + (off ? " off" : "") + (d.future ? " future" : "") + (d.today ? " today" : "")}
+                  title={[`${n} ${monthName}`, label, sub].filter(Boolean).join(" · ")}>
+                  <b>{n}</b>
+                  {label && <span className="my-st">{label}</span>}
+                  {sub && <span className="my-sub">{sub}</span>}
+                </div>
+              );
+            })}
+          </div>
+        </>
       )}
     </section>
   );

@@ -187,3 +187,10 @@ html[data-theme="dark"] .lv-panel{background:var(--bg,#0a0912)}
 .lv-close{position:sticky;top:0;float:right;z-index:2;width:36px;height:36px;margin:-6px -6px 0 8px;border:1px solid var(--border,rgba(30,20,80,.08));border-radius:10px;
   background:var(--glass-solid,#fff);color:var(--text,#18181b);display:grid;place-items:center;cursor:pointer}
 @media (max-width:560px){.lv-types,.lv-dates{grid-template-columns:1fr}.lv-summary span{width:96px}}
+/* a person's starting days, edited on their row */
+.lv-topcell{gap:6px;align-items:center}
+.lv-iconbtn{flex:none;width:30px;height:30px;display:grid;place-items:center;padding:0;border:1px solid var(--lv-line);border-radius:9px;
+  background:var(--lv-solid);color:var(--lv-text2);cursor:pointer}
+.lv-iconbtn:hover{color:var(--lv-acText);border-color:var(--lv-ac)}
+.lv-tot.edit{align-items:flex-end;gap:3px}
+.lv-tot.edit>span:last-child{font-size:10.5px}
