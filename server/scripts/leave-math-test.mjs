@@ -75,6 +75,11 @@ bad9999 = M.checkRequest({ type: "SL", from: today, to: "2100-12-31", today, isW
 check("…and one to 2100 before counting its days", /Up to 30/.test(bad9999 ?? "") && Date.now() - t0 < 200, `${bad9999} in ${Date.now() - t0} ms`);
 check("Working days are never counted past a year and a bit", M.workingDates(satWorking, "2026-01-01", "2099-12-31").length <= 400);
 
+console.log("-- Waiting leave from last month: decide before the month closes");
+check("On 5 Nov, a request for 30 Oct must be decided by 10 Nov", M.decideBy("2026-10-30", "2026-11-05") === "2026-11-10");
+check("On 11 Nov it's closed (only decline or cancel)", M.decideBy("2026-10-30", "2026-11-11") === "closed");
+check("A request this month isn't closing", M.decideBy("2026-11-02", "2026-11-05") === null && M.decideBy("2026-11-20", "2026-11-05") === null);
+
 console.log("-- A leave with every day worked costs nothing");
 const s0 = M.resplit({ days: 0, total: 2, usedByOthers: 0, shortPts: 2, unpaidRate: 3 });
 check("1-day short-notice CL, worked after all: 0 days, 0 pts", s0.paid === 0 && s0.unpaid === 0 && s0.pts === 0, JSON.stringify(s0));

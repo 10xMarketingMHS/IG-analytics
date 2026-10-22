@@ -121,6 +121,17 @@ export function rangeFrozen(from, to, today) {
   return null;
 }
 
+// A waiting request that starts in an earlier month: the last day it can be
+// approved before Management Performance closes that month ('YYYY-MM-DD'), or
+// "closed" once it has (then it can only be declined or cancelled). null: the
+// month isn't closing yet.
+export function decideBy(from, today) {
+  const ym = from.slice(0, 7);
+  if (ym >= today.slice(0, 7)) return null;
+  if (monthFrozen(ym, today)) return "closed";
+  return `${today.slice(0, 7)}-${String(SETTLE_DAYS).padStart(2, "0")}`;
+}
+
 // "Mon 26 Oct" and "Mon 26 – Wed 28 Oct" style words.
 const DOW = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 const MON = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];

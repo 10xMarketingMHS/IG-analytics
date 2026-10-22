@@ -3,6 +3,7 @@ import { pool } from "../db.js";
 import { attendancePeople, attendanceReady, callerScope, istNow, permissionsReady } from "../attendance.js";
 import { LEAVE_COLS, balances, isApprover, leaveReady } from "../leave.js";
 import { editorRanks, taskViewer } from "../hierarchy.js";
+import { decideBy } from "../leave-math.js";
 import { isOrgAdmin } from "../permissions.js";
 import { withReview } from "../review-route.js";
 import { handoverFeed } from "./handover.js";
@@ -126,7 +127,7 @@ inboxRouter.get("/inbox", async (req, res, next) => {
         const p = who.get(l.editorId) ?? askers.get(l.editorId);
         return {
           kind: "leave", key: `leave:${l.id}`, at: l.createdAt, editorId: l.editorId, name: p?.name ?? "Someone", imageUrl: p?.imageUrl ?? null,
-          leave: l, balance: b ? { left: b.left, total: b.total } : null,
+          leave: { ...l, decideBy: decideBy(l.from, today) }, balance: b ? { left: b.left, total: b.total } : null,
         };
       }),
       ...perms.rows.map((p) => ({ kind: "permission", key: `permission:${p.id}`, ...p, ...person(p.editorId) })),
@@ -140,7 +141,7 @@ inboxRouter.get("/inbox", async (req, res, next) => {
       ...resets.rows.map((r) => ({ kind: "reset", key: `reset:${r.userId}`, at: r.at, userId: r.userId, name: r.name })),
     ];
     const sent = [
-      ...myLeave.rows.map((l) => ({ kind: "leave", key: `leave:${l.id}`, at: l.createdAt, leave: l })),
+      ...myLeave.rows.map((l) => ({ kind: "leave", key: `leave:${l.id}`, at: l.createdAt, leave: { ...l, decideBy: decideBy(l.from, today) } })),
       ...myPerms.rows.map((p) => ({ kind: "permission", key: `permission:${p.id}`, ...p })),
       ...handovers.items.filter((h) => h.mine === "from")
         .map((h) => ({ kind: "handover", key: `handover:${h.id}`, at: h.createdAt, handover: h })),

@@ -156,7 +156,7 @@ attendanceRouter.post("/attendance/check-in", async (req, res, next) => {
     }
     const at = session?.startedAt ?? new Date();
     const c = classify(at, today.ymd, cal, att);
-    await pool.query(
+    const checkIn = (q) => q.query(
       `insert into attendance (org_id, editor_id, date, check_in_at, status, late_minutes, plan_note)
        values ($1, $2, $3, $4, $5, $6, $7)
        on conflict (editor_id, date) do update set
@@ -167,10 +167,14 @@ attendanceRouter.post("/attendance/check-in", async (req, res, next) => {
          late_minutes = excluded.late_minutes,
          auto_marked = attendance.auto_marked and attendance.status in ('absent', 'half_absent'),
          marked_by = case when attendance.status = 'leave' then null else attendance.marked_by end,
-         plan_note = coalesce(excluded.plan_note, attendance.plan_note), updated_at = now()`,
+         plan_note = coalesce(excluded.plan_note, attendance.plan_note), updated_at = now()
+       where attendance.check_in_at is null`,
       [req.orgId, caller.editorId, today.ymd, at, c.status, c.lateMinutes, plan],
     );
-    const worked = existing?.status === "leave" && existing.leaveRequestId ? await workedLeaveDay(existing) : null;
+    // on a whole day of approved leave: checked in, given back and on time, all at once
+    const leaveDay = existing?.status === "leave" && !!existing.leaveRequestId;
+    const worked = leaveDay ? await workedLeaveDay(existing, checkIn) : null;
+    if (!leaveDay) await checkIn(pool);
     if (existing?.status === "leave" && existing?.markedBy) await leaveWorked(req, caller.editorId, today.ymd, !!worked);
     // (a leave day worked after all isn't late with a permission: no permission is used)
     if (!worked) await applyMorningPermission(req.orgId, caller.editorId, today.ymd, att, req.user.sub);
@@ -304,7 +308,7 @@ attendanceRouter.post("/attendance/correction-request", async (req, res, next) =
     const { session } = await startSession(req.orgId, caller.editorId);
     const now = session?.startedAt ?? new Date();
     const c = classify(now, today.ymd, cal, att);
-    await pool.query(
+    const checkIn = (q) => q.query(
       `insert into attendance (org_id, editor_id, date, check_in_at, status, late_minutes, correction_at, correction_note, correction_status)
        values ($1, $2, $3, $4, $5, $6, $7, $8, 'pending')
        on conflict (editor_id, date) do update set
@@ -318,10 +322,12 @@ attendanceRouter.post("/attendance/correction-request", async (req, res, next) =
          correction_status = 'pending', updated_at = now()`,
       [req.orgId, caller.editorId, today.ymd, now, c.status, c.lateMinutes, asked, parsed.data.note || null],
     );
-    // in on a whole day of approved leave: it's a working day, and goes back to the balance
+    // in on a whole day of approved leave: a working day, given back to the balance, at once
     if (already?.status === "leave" && already.leaveRequestId && !already.checkInAt) {
-      const worked = await workedLeaveDay(already);
+      const worked = await workedLeaveDay(already, checkIn);
       if (already.markedBy) await leaveWorked(req, caller.editorId, today.ymd, !!worked);
+    } else {
+      await checkIn(pool);
     }
     await logActivity({
       orgId: req.orgId, actorId: req.user.sub, verb: "attendance_correction", entityType: "editor", entityId: caller.editorId,
@@ -405,6 +411,8 @@ attendanceRouter.post("/attendance/:editorId/mark", async (req, res, next) => {
     type: z.enum(["CL", "SL"]).optional(),
     half: z.enum(["first", "second"]).optional(),
     reason: z.string().trim().max(300).optional(),
+    // a CL the person told the manager about in time: no short-notice cut
+    toldInTime: z.boolean().optional(),
     // another day: leave or half day, planned ahead or fixed afterwards
     date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
   }).safeParse(req.body ?? {});
@@ -450,9 +458,12 @@ attendanceRouter.post("/attendance/:editorId/mark", async (req, res, next) => {
       try {
         const [made] = await createLeave({
           orgId: req.orgId, editorId: t.editorId, type: parsed.data.type, from: day, to: day, half, reason: parsed.data.reason,
-          askedBy: req.user.sub, approvedBy: req.user.sub, cal, rules: leaveRules(att), today: t.today.ymd,
+          askedBy: req.user.sub, approvedBy: req.user.sub, toldInTime: !!parsed.data.toldInTime, cal, rules: leaveRules(att), today: t.today.ymd,
         });
-        await audit(req, t, "leave_approved", `Marked ${t.name}: ${requestWords(made)}${made.short ? " · short notice" : ""}${made.unpaid ? ` · ${made.unpaid} unpaid` : ""}`, { leaveId: made.id, date: day });
+        const told = parsed.data.toldInTime && made.type === "CL";
+        await audit(req, t, "leave_approved",
+          `Marked ${t.name}: ${requestWords(made)}${made.short ? " · short notice" : ""}${told ? " · they told us in time (no short-notice cut)" : ""}${made.unpaid ? ` · ${made.unpaid} unpaid` : ""}`,
+          { leaveId: made.id, date: day, toldInTime: !!told });
       } catch (err) {
         if (err instanceof LeaveError) return res.status(err.status).json({ error: err.message });
         throw err;

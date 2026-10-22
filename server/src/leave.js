@@ -9,8 +9,8 @@ import {
 // leave-math.js; the routes in routes/leave.js. Migration 20261030120000_leave.
 //   Balance for a type and year = starting allowance + top-ups; a request holds
 //   its paid days while it waits and keeps them once approved. Every change to a
-//   person's balance runs in one transaction with their allowance row locked
-//   (select … for update), so two requests can't both take the last day.
+//   person's balance runs in one transaction holding a lock on that person
+//   (lockPerson), so two requests can't both take the last day.
 //   Approved days are attendance rows: status leave (half_day for a half),
 //   marked_by the manager, reason CL / SL / unpaid, leave_request_id.
 
@@ -46,19 +46,12 @@ async function tx(fn) {
   }
 }
 
-// The person's allowance row for a year, made if missing — with their last
-// year's numbers: the allowance is theirs each year, only what's used resets —
-// and locked until the transaction ends.
-async function lockYear(client, orgId, editorId, year) {
-  await client.query(
-    `insert into leave_allowance (org_id, editor_id, year, cl, sl)
-     select $1, $2, $3, coalesce(p.cl, 0), coalesce(p.sl, 0)
-       from (select 1) one
-       left join lateral (select cl, sl from leave_allowance where editor_id = $2 and year < $3 order by year desc limit 1) p on true
-     on conflict do nothing`,
-    [orgId, editorId, year],
-  );
-  await client.query("select 1 from leave_allowance where editor_id = $1 and year = $2 for update", [editorId, year]);
+// One person's leave, locked until the transaction ends (every change to their
+// balance takes it). A lock, not a row: asking for leave never writes an
+// allowance — only a manager does — so a new joiner who asks first still gets
+// their starting allowance set.
+async function lockPerson(client, editorId) {
+  await client.query("select pg_advisory_xact_lock(hashtext('leave:' || $1::text))", [editorId]);
 }
 
 // Starting allowance and top-ups, per person and type, for a year.
@@ -213,8 +206,9 @@ export const leaveById = (id) => getRequest(pool, id);
 
 // A request (waiting for a manager), or a manager's own mark (approved and
 // written to attendance at once — a manager's mark is the asking, so its notice
-// counts from today). A range over 31 Dec becomes one request per year.
-export async function createLeave({ orgId, editorId, type, from, to, half = "full", reason = null, askedBy, approvedBy = null, cal, rules, today }) {
+// counts from today, unless the manager says they told us in time: then no
+// short-notice cut). A range over 31 Dec becomes one request per year.
+export async function createLeave({ orgId, editorId, type, from, to, half = "full", reason = null, askedBy, approvedBy = null, toldInTime = false, cal, rules, today }) {
   const isWorking = isWorkingOn(cal);
   // a manager may also put right a past day (CL or SL), from last month on
   const bad = checkRequest({ type, from, to, half, today, isWorking: isWorking });
@@ -224,7 +218,7 @@ export async function createLeave({ orgId, editorId, type, from, to, half = "ful
   if (frozen) throw new LeaveError(409, frozenMsg(frozen));
   return tx(async (client) => {
     const parts = splitByYear(from, to);
-    for (const [a] of parts) await lockYear(client, orgId, editorId, Number(a.slice(0, 4)));
+    await lockPerson(client, editorId);
     const clash = await clashOf(client, editorId, from, to);
     if (clash) throw new LeaveError(409, `It overlaps the ${clash.type} on ${dayWords(clash.day)}.`);
     if (half === "full") {
@@ -237,7 +231,7 @@ export async function createLeave({ orgId, editorId, type, from, to, half = "ful
       const days = daysOf(isWorking, a, b, half);
       if (!days) continue;
       const p = priceRequest({
-        type, days, from, today, isWorking, rules, shortApplies: i === 0,
+        type, days, from, today, isWorking, rules, shortApplies: i === 0 && !(approvedBy && toldInTime),
         total: await totalOf(client, editorId, year, type), used: await usedPaid(client, editorId, year, type),
       });
       const { rows } = await client.query(
@@ -301,7 +295,7 @@ export async function decideLeave({ orgId, id, approve, deciderUserId, deciderEd
     const frozen = rangeFrozen(r.from, r.to, today);
     if (frozen) throw new LeaveError(409, frozenMsg(frozen));
     const year = Number(r.from.slice(0, 4));
-    await lockYear(client, orgId, r.editorId, year);
+    await lockPerson(client, r.editorId);
     if (r.half === "full") {
       const worked = await workedOn(client, r.editorId, workingDates(isWorking, r.from, r.to));
       if (worked) throw new LeaveError(409, `They checked in on ${dayWords(worked)} since asking. Decline it, and they can ask again for the right days.`);
@@ -368,7 +362,7 @@ async function clearDays(client, id, cal, att) {
 // shrinks), so the day goes back to — or comes from — the person's balance.
 async function changeDays(client, r, delta) {
   const year = Number(r.from.slice(0, 4));
-  await lockYear(client, r.orgId, r.editorId, year);
+  await lockPerson(client, r.editorId);
   const days = Math.max(0, r.days + delta);
   const s = resplit({
     days, shortPts: r.shortPts, unpaidRate: r.unpaidRate,
@@ -391,14 +385,21 @@ export const WORKED = "Worked on leave";
 // it turns back into a working day — an on-time one: they had the day off and
 // came in anyway — and the day goes back to the balance. The row keeps
 // leave_request_id and says WORKED, so Undo Start day can put the leave back.
-// Re-checked on the locked row, so a double tap gives the day back once.
-export async function workedLeaveDay(row) {
-  if (!row?.leaveRequestId || row.status !== "leave" || !(await leaveReady())) return null;
+// `checkIn(client)` writes the check-in itself, in the same transaction, so the
+// day is never checked in but still charged. Re-checked on the locked row, so a
+// double tap gives the day back once.
+export async function workedLeaveDay(row, checkIn = null) {
+  if (!row?.leaveRequestId || row.status !== "leave" || !(await leaveReady())) {
+    if (checkIn) await checkIn(pool);
+    return null;
+  }
   return tx(async (client) => {
     const r = await getRequest(client, row.leaveRequestId, true);
+    if (r) await lockPerson(client, r.editorId);
+    await client.query("select 1 from attendance where id = $1 for update", [row.id]);
+    if (checkIn) await checkIn(client);
     if (!r || r.status !== "approved") return null;
-    await lockYear(client, r.orgId, r.editorId, Number(r.from.slice(0, 4)));
-    const { rows } = await client.query("select leave_request_id, reason from attendance where id = $1 for update", [row.id]);
+    const { rows } = await client.query("select leave_request_id, reason from attendance where id = $1", [row.id]);
     if (!rows[0] || rows[0].leave_request_id !== r.id || rows[0].reason === WORKED) return null;
     await client.query(
       `update attendance set status = 'on_time', late_minutes = 0, excused = false, auto_marked = false, marked_by = null, reason = $2,
@@ -417,7 +418,7 @@ export async function restoreLeaveDay(row) {
   return tx(async (client) => {
     const r = await getRequest(client, row.leaveRequestId, true);
     if (!r || r.status !== "approved") return null;
-    await lockYear(client, r.orgId, r.editorId, Number(r.from.slice(0, 4)));
+    await lockPerson(client, r.editorId);
     const { rows } = await client.query("select leave_request_id, reason, date::text as date from attendance where id = $1 for update", [row.id]);
     const cur = rows[0];
     if (!cur || cur.leave_request_id !== r.id || cur.reason !== WORKED || cur.date < r.from || cur.date > r.to) return null;
@@ -439,7 +440,7 @@ export async function dropLeaveDay(row, today) {
   if (frozen) throw new LeaveError(409, frozenMsg(frozen));
   return tx(async (client) => {
     const r = await getRequest(client, row.leaveRequestId, true);
-    if (r) await lockYear(client, r.orgId, r.editorId, Number(r.from.slice(0, 4)));
+    if (r) await lockPerson(client, r.editorId);
     const { rowCount } = await client.query(
       "update attendance set leave_request_id = null where id = $1 and leave_request_id = $2", [row.id, row.leaveRequestId],
     );

@@ -6,7 +6,7 @@ import { isSuperHere } from "../super-admin.js";
 import { callerScope, clearSettingsCache, istNow, permissionsReady, readSettings } from "../attendance.js";
 import { editorRanks, taskViewer } from "../hierarchy.js";
 import { LEAVE_COLS, LeaveError, balances, cancelLeave, createLeave, decideLeave, isApprover, leaveReady, leaveRules, previewLeave } from "../leave.js";
-import { n1, requestWords, validYmd } from "../leave-math.js";
+import { decideBy, n1, requestWords, validYmd } from "../leave-math.js";
 
 // Leave — CL (casual) and SL (sick): ask, decide, cancel, balances, the
 // starting allowance, top-ups and the rules. The Leave page (pages/leave.tsx)
@@ -85,7 +85,10 @@ leaveRouter.get("/leave/mine", async (req, res, next) => {
       ),
     ]);
     const by = await userNames(requests.map((r) => r.decidedBy));
-    res.json({ ...base, linked: true, name: caller.name, balance: bal.get(caller.editorId), requests: requests.map((r) => ({ ...r, decidedByName: by.get(r.decidedBy) ?? null })) });
+    res.json({
+      ...base, linked: true, name: caller.name, balance: bal.get(caller.editorId),
+      requests: requests.map((r) => ({ ...r, decidedByName: by.get(r.decidedBy) ?? null, decideBy: r.status === "pending" ? decideBy(r.from, today) : null })),
+    });
   } catch (err) { next(err); }
 });
 
@@ -232,7 +235,8 @@ leaveRouter.get("/leave/team", async (req, res, next) => {
         canTopUp: !!rules.countingSince && (superHere || p.id !== caller.editorId),
       })),
       permissions: permOn ? { perMonth: att.permissionsPerMonth, pending: permPending.map(named) } : null,
-      pending: pending.rows.map(named),
+      // a waiting one from last month: decide it before the month closes
+      pending: pending.rows.map((r) => ({ ...named(r), decideBy: decideBy(r.from, today) })),
       decided: decided.rows.map((r) => ({ ...named(r), decidedByName: by.get(r.decidedBy) ?? null })),
       grants: grants.rows.map((g) => ({ ...named(g), byName: by.get(g.grantedBy) ?? null })),
     });

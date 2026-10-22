@@ -357,7 +357,7 @@ export async function syncAttendance(orgId) {
         `select id, status, check_in_at, leave_request_id as "leaveRequestId" from attendance where editor_id = $1 and date = $2`,
         [s.editor_id, today.ymd],
       );
-      await pool.query(
+      const checkIn = (q) => q.query(
         `insert into attendance (org_id, editor_id, date, check_in_at, status, late_minutes)
          values ($1, $2, $3, $4, $5, $6)
          on conflict (editor_id, date) do update set
@@ -372,11 +372,14 @@ export async function syncAttendance(orgId) {
          where attendance.check_in_at is null`,
         [orgId, s.editor_id, today.ymd, s.first, c.status, c.lateMinutes],
       );
-      // a whole day of approved leave worked after all: back to the balance, on time
+      // a whole day of approved leave worked after all: checked in, back to the
+      // balance and on time, together
       const b = before[0];
       if (b && !b.check_in_at && b.status === "leave" && b.leaveRequestId) {
         const { workedLeaveDay } = await import("./leave.js");
-        if (await workedLeaveDay(b)) continue;
+        if (await workedLeaveDay(b, checkIn)) continue;
+      } else {
+        await checkIn(pool);
       }
       await applyMorningPermission(orgId, s.editor_id, today.ymd, att, null);
     }
