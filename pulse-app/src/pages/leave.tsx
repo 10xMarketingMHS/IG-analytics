@@ -434,23 +434,8 @@ function SettingsTab({ team }: { team: LeaveTeam }) {
 
   return (
     <section className="lv-grid2">
-      <div className="lv-card lv-list">
-        <b className="lv-h">Rules</b>
-        <span className="lv-faint lv-under">Settings › Attendance › Leave. Only a Super Admin changes these.</span>
-        {ruleRows.map((r) => (
-          <div key={r.k} className="lv-rule">
-            <span className="lv-rule-l"><b>{r.label}</b><span>{r.sub}</span></span>
-            <Stepper value={r.value} disabled={!team.canEditRules}
-              onDec={() => changeRule(r.k, -r.step, 0, 10)} onInc={() => changeRule(r.k, r.step, 0, 10)} />
-          </div>
-        ))}
-        <div className="lv-rule">
-          <span className="lv-rule-l"><b>Saturdays are working days</b><span>From the work calendar (Settings › General). Off days and holidays never use leave.</span></span>
-          <span className={"lv-st " + (satWorking ? "good" : "mute")}>{satWorking ? "Yes" : "No"}</span>
-        </div>
-      </div>
-
-      <div className="lv-card">
+      {/* the allowance table across the full width (names never cut short), then Rules and Leave added side by side */}
+      <div className="lv-card lv-wide">
         {setup ? (
           <>
             <span className="lv-hrow">
@@ -555,6 +540,22 @@ function SettingsTab({ team }: { team: LeaveTeam }) {
             )}
           </>
         )}
+      </div>
+
+      <div className="lv-card lv-list">
+        <b className="lv-h">Rules</b>
+        <span className="lv-faint lv-under">Only a Super Admin changes these.</span>
+        {ruleRows.map((r) => (
+          <div key={r.k} className="lv-rule">
+            <span className="lv-rule-l"><b>{r.label}</b><span>{r.sub}</span></span>
+            <Stepper value={r.value} disabled={!team.canEditRules}
+              onDec={() => changeRule(r.k, -r.step, 0, 10)} onInc={() => changeRule(r.k, r.step, 0, 10)} />
+          </div>
+        ))}
+        <div className="lv-rule">
+          <span className="lv-rule-l"><b>Saturdays are working days</b><span>From the work calendar (Settings › General). Off days and holidays never use leave.</span></span>
+          <span className={"lv-st " + (satWorking ? "good" : "mute")}>{satWorking ? "Yes" : "No"}</span>
+        </div>
       </div>
 
       <div className="lv-card lv-list">
