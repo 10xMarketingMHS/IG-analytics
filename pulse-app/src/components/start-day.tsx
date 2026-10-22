@@ -17,8 +17,8 @@ import type { Task } from "@/lib/types";
 //                      points: those are for leads),
 //                      which opens the wrap-up panel;
 //   checked out      — one line: the day closed and the hours in office
-//                      (each opens Leave in a side panel: Ask for leave on
-//                      the card, with the CL / SL line; Leave on the bars).
+//                      (Ask for leave and the CL / SL line on the card open
+//                      the leave side panel; after that it's the top bar's Leave).
 // Start day is the check-in and opens the work day (it replaced Start Work).
 
 const fmtHM = (ms: number) => {
@@ -89,9 +89,6 @@ export function StartDaySection({
   const leave = att?.leave?.counting && !preview ? att.leave : null;
   const leaveLink = leave ? (
     <button type="button" className="sd-link sd-ic" onClick={() => setLeaveOpen(true)}><Icon name="event_available" size={16} />Ask for leave</button>
-  ) : null;
-  const leaveBtn = leave ? (
-    <button type="button" className="sd-link sd-ic" onClick={() => setLeaveOpen(true)} title="Ask for leave, see your balance"><Icon name="event_available" size={16} />Leave</button>
   ) : null;
   const bal = leave?.balance;
   const leaveLine = leave && bal ? (
@@ -231,7 +228,6 @@ export function StartDaySection({
         <Icon name="task_alt" size={18} className="sd-good" />
         <span><b>Day closed</b> · {clockTime(me.checkInAt)} – {clockTime(me.checkOutAt)} · {fmtHM(new Date(me.checkOutAt).getTime() - new Date(me.checkInAt).getTime())} in office · task timers paused</span>
         <span className="sd-grow" />
-        {leaveBtn}
         <button type="button" className="sd-link" onClick={onOpenReports}>My reports</button>
         <button type="button" className="sd-btn primary" onClick={() => start().then(() => toast.success("Day reopened. Your task timers are running again.")).catch((e) => toast.error(e instanceof ApiError ? e.message : "Couldn't reopen your day."))} disabled={busy}>{busy ? "Reopening…" : "Reopen day"}</button>
         {/* leave can be applied for whatever state today is in */}
@@ -290,7 +286,6 @@ export function StartDaySection({
         <button type="button" className="sd-link" onClick={openSod} title="Pick today's tasks and copy the Start of Day report for WhatsApp">Start of Day</button>
         <button type="button" className="sd-link" onClick={onOpenReports}>My reports</button>
         {askLink}
-        {leaveBtn}
         {canUndo && <button type="button" className="sd-link" onClick={undo} disabled={busy}>Undo</button>}
         {!ending && (
           <button type="button" className="sd-btn" onClick={() => setEnding(true)}><Icon name="logout" size={17} />End day</button>

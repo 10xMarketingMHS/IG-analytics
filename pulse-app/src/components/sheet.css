@@ -57,10 +57,20 @@ html[data-theme="dark"]{--sheet-panel:oklch(0.2 0.04 var(--acH) / .72)}
 .accent-grid button.on .accent-tile{box-shadow:0 0 0 2px var(--glass-solid),0 0 0 4px var(--accent)}
 .accent-grid button:focus-visible{outline:2px solid var(--accent);outline-offset:1px}
 .accent-note{padding:2px 2px 0;font-size:11px;line-height:1.4;color:var(--faint)}
+/* light / dark, at the top of the same menu */
+.theme-seg{display:grid;grid-template-columns:1fr 1fr;gap:3px;padding:3px;margin-bottom:6px;border:1px solid var(--border);border-radius:11px;background:var(--panel2)}
+.theme-seg button{display:inline-flex;align-items:center;justify-content:center;gap:6px;height:32px;border:0;border-radius:8px;background:transparent;
+  color:var(--muted);font:700 12.5px 'Plus Jakarta Sans',sans-serif;cursor:pointer}
+.theme-seg button.on{background:var(--glass-solid,#fff);color:var(--text);box-shadow:0 1px 2px rgba(30,20,80,.1)}
+/* the top bar's Leave (opens the leave side panel) */
+.top-leave{display:inline-flex;align-items:center;gap:6px;font-weight:700;white-space:nowrap}
 /* phones: the choice lives in the More menu instead of the top bar */
 .sb2-accent{display:none}
 @media (max-width:768px){
-  .app .topbar .accent-pick{display:none}
+  /* phones: the top bar keeps this button too — light / dark is only here
+     (the colours are also in the More menu) */
+  .top-leave .top-leave-l{display:none}
+  .top-leave{padding:0 10px}
   .sb2-accent{display:flex;flex-direction:column;gap:8px;padding:10px 16px;border-top:1px solid var(--sb-line);font-size:12px;font-weight:500;color:var(--sb-text3)}
   .sb2-accent>div{display:grid;grid-template-columns:repeat(8,1fr);gap:4px}
   .sb2-accent button{aspect-ratio:1;display:grid;place-items:center;padding:0;border:0;border-radius:9px;background:transparent;cursor:pointer}

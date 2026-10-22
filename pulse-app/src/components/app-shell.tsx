@@ -11,6 +11,8 @@ import { useAutoSync } from "@/lib/auto-sync";
 import { getActivitySeen, markActivitySeen, onActivitySeenChange } from "@/lib/activity-seen";
 import { NotifyPanel } from "@/components/notify-panel";
 import { useInbox } from "@/lib/use-inbox";
+import { LeavePanel } from "@/pages/leave";
+import { Icon } from "@/components/icon";
 import { hasSeenTask, useTaskAssignNotify } from "@/lib/use-task-notify";
 import { useDueOverdueNotify, useOverdueTaskNotify, useReviewWaitingNotify } from "@/lib/use-overdue-notify";
 import { useReviewAccess } from "@/lib/use-review-access";
@@ -192,8 +194,9 @@ export function AppShell() {
 // when only channel messages are waiting.
 // The accent colour picker in the top bar: violet, blue or green tints the
 // background and every highlight (index.css --acH).
+// Appearance: light or dark, and the accent colour — one button in the top bar.
 function AccentPicker() {
-  const { accent, setAccent } = useTheme();
+  const { accent, setAccent, theme, toggle } = useTheme();
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
   useEffect(() => {
@@ -207,11 +210,20 @@ function AccentPicker() {
   const cur = ACCENTS.find((a) => a.key === accent) ?? ACCENTS[0];
   return (
     <div className="accent-pick" ref={ref}>
-      <button type="button" className="btn icon" title="Accent colour" aria-label={`Accent colour: ${cur.label}`} aria-haspopup="menu" aria-expanded={open} onClick={() => setOpen((o) => !o)}>
+      <button type="button" className="btn icon" title="Theme and accent colour" aria-label={`Theme: ${theme}, accent colour: ${cur.label}`} aria-haspopup="menu" aria-expanded={open} onClick={() => setOpen((o) => !o)}>
         <span className="accent-dot" style={{ background: cur.swatch }} />
       </button>
       {open && (
-        <div className="accent-pop" role="menu" aria-label="Accent colour">
+        <div className="accent-pop" role="menu" aria-label="Theme and accent colour">
+          <b>Theme</b>
+          <div className="theme-seg" role="radiogroup" aria-label="Theme">
+            {(["light", "dark"] as const).map((t) => (
+              <button key={t} type="button" role="radio" aria-checked={theme === t} className={theme === t ? "on" : ""}
+                onClick={() => { if (theme !== t) toggle(); }}>
+                <Icon name={t === "light" ? "light_mode" : "dark_mode"} size={17} />{t === "light" ? "Light" : "Dark"}
+              </button>
+            ))}
+          </div>
           <b>Accent colour</b>
           <div className="accent-grid">
             {ACCENTS.map((a) => (
@@ -226,7 +238,7 @@ function AccentPicker() {
               </button>
             ))}
           </div>
-          <span className="accent-note">Tints the background and highlights. Only for you, on this browser.</span>
+          <span className="accent-note">Only for you, on this browser.</span>
         </div>
       )}
     </div>
@@ -303,7 +315,6 @@ function AppShellInner() {
     else setNewTaskOpen(true);
   };
   const { editors } = useEditors();
-  const { theme, toggle } = useTheme();
   const location = useLocation();
   const navigate = useNavigate();
   const { posts } = usePosts();
@@ -314,6 +325,8 @@ function AppShellInner() {
   // The bell opens a small box of the latest notices (See all opens Activity).
   // What was read before it opened stays marked as read; the rest show as new.
   const [notifyOpen, setNotifyOpen] = useState(false);
+  // the top bar's Leave: the leave side panel (pages/leave.tsx)
+  const [leaveOpen, setLeaveOpen] = useState(false);
   const [seenAtOpen, setSeenAtOpen] = useState("");
   const bellRef = useRef<HTMLButtonElement>(null);
   const closeNotify = useCallback(() => setNotifyOpen(false), []);
@@ -670,6 +683,11 @@ function AppShellInner() {
               <button className="btn" onClick={() => navigate("/home")}>← My Day</button>
             </>
           )}
+          {(user?.editorId || isAdmin) && (
+            <button type="button" className="btn top-leave" onClick={() => setLeaveOpen(true)} title="Ask for leave, see your balance" aria-label="Leave">
+              <Icon name="event_available" size={18} /><span className="top-leave-l">Leave</span>
+            </button>
+          )}
           <div className="nt-wrap">
             <button
               ref={bellRef}
@@ -694,9 +712,6 @@ function AppShellInner() {
             )}
           </div>
           <AccentPicker />
-          <button className="btn icon" title="Theme" onClick={toggle}>
-            {theme === "dark" ? "☀️" : "🌙"}
-          </button>
           {(isAdmin || hasPermission("create_post")) && (
             <button
               className="btn btn-primary add-post-btn"
@@ -736,6 +751,7 @@ function AppShellInner() {
       <BreakOverlay />
       <SodModal />
       {viewAsOpen && <ViewAsModal onClose={() => setViewAsOpen(false)} />}
+      {leaveOpen && <LeavePanel onClose={() => setLeaveOpen(false)} />}
       {newTaskOpen && (
         <TaskPanel
           mode="create" task={null} canWrite={canWrite} editors={editors ?? []} channels={workspaces ?? []}
