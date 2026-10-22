@@ -11,6 +11,7 @@ import { monthPenalties, readSettings } from "../attendance.js";
 import { isSuperHere } from "../super-admin.js";
 import { editorRanks, seesEditor, taskViewer } from "../hierarchy.js";
 import { scoreMonthAll } from "../goal-score.js";
+import { monthFrozen } from "../leave-math.js";
 
 export const goalsRouter = Router();
 
@@ -126,6 +127,12 @@ async function goalWriteError(req, editorId, month, kind) {
   if (month < istMonthStart(kind === "rating" ? -1 : 0)) {
     return kind === "rating" ? "Ratings for that month are closed." : "That month is over, so its goals are locked.";
   }
+  // last month's ratings: only until Management Performance closes the month
+  // (the 10th), so its saved scores and these agree
+  const istToday = new Date(Date.now() + 330 * 60_000).toISOString().slice(0, 10);
+  if (kind === "rating" && month < istMonthStart(0) && monthFrozen(String(month).slice(0, 7), istToday)) {
+    return "Ratings for that month are closed: Management Performance has saved it.";
+  }
   return null;
 }
 const isProject = (f) => f.category === "project" && f.duration_days != null;
@@ -175,16 +182,18 @@ async function goalView(req, res, next) {
 }
 
 // GET /goals/totals?month=YYYY-MM — each editor's Goal Points total for the
-// month: Σ(jc × the content type's points), the same figure Goal Setting's
-// "Goal points" shows. Powers the Goal column on the Media House Leaders board,
+// month: Σ(jc × the content type's points), cut for approved leave — the same
+// goal the leaderboard and Management Performance score against (goalPointsSet:
+// before the cut). Powers the Goal column on the Media House Leaders board,
 // so it's readable by any workspace member (like the board itself) — no admin
 // gate. Editors with no goals that month simply don't appear. Defaults to the
 // current calendar month when no month is given.
 goalsRouter.get("/goals/totals", async (req, res, next) => {
   try {
-    const monthIn = req.query.month || new Date().toISOString().slice(0, 10);
+    const monthIn = req.query.month || istMonthStart(0);
     const month = monthStart(monthIn);
     if (!month) return res.status(400).json({ error: "That month couldn't be read." });
+    const scored = await scoreMonthAll(req.orgId, month);
     const { rows } = await pool.query(
       `select g.editor_id as "editorId", coalesce(sum(g.jc * coalesce((to_jsonb(g)->>'points')::numeric, cf.points)), 0)::float as "goalPoints"
          from editor_goal g
@@ -193,7 +202,11 @@ goalsRouter.get("/goals/totals", async (req, res, next) => {
         group by g.editor_id`,
       [req.orgId, month],
     );
-    res.json({ month, totals: rows });
+    const totals = rows.map((r) => {
+      const s = scored.get(r.editorId);
+      return { editorId: r.editorId, goalPoints: s ? Math.round(s.goalPoints * 10) / 10 : r.goalPoints, goalPointsSet: r.goalPoints };
+    });
+    res.json({ month, totals });
   } catch (err) {
     next(err);
   }
@@ -338,7 +351,7 @@ goalsRouter.get("/goals/performance-all", goalView, async (req, res, next) => {
         `select editor_id, content_format_id, count(*)::int actual
            from task
           where org_id=$1 and status='done' and content_format_id is not null
-            and completed_at >= $2 and completed_at < ($2::date + interval '1 month')${self ? " and editor_id = $3" : ""}
+            and completed_at >= ($2::date)::timestamp at time zone 'Asia/Kolkata' and completed_at < ($2::date + interval '1 month')::timestamp at time zone 'Asia/Kolkata'${self ? " and editor_id = $3" : ""}
           group by editor_id, content_format_id`,
         P,
       ),
@@ -490,7 +503,7 @@ goalsRouter.get("/goals/performance", goalView, async (req, res, next) => {
       `select content_format_id, count(*)::int actual
          from task
         where org_id=$1 and editor_id=$2 and status='done' and content_format_id is not null
-          and completed_at >= $3 and completed_at < ($3::date + interval '1 month')
+          and completed_at >= ($3::date)::timestamp at time zone 'Asia/Kolkata' and completed_at < ($3::date + interval '1 month')::timestamp at time zone 'Asia/Kolkata'
         group by content_format_id`,
       [req.orgId, editorId, month],
     );
@@ -580,7 +593,7 @@ goalsRouter.get("/goals/export", requireAdmin, async (req, res, next) => {
       `select editor_id, content_format_id, count(*)::int actual
          from task
         where org_id=$1 and status='done' and content_format_id is not null
-          and completed_at >= $2 and completed_at < ($2::date + interval '1 month')
+          and completed_at >= ($2::date)::timestamp at time zone 'Asia/Kolkata' and completed_at < ($2::date + interval '1 month')::timestamp at time zone 'Asia/Kolkata'
         group by editor_id, content_format_id`,
       [req.orgId, month],
     );

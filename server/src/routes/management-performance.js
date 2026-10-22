@@ -239,7 +239,8 @@ async function scoreForEditor(orgId, editorId, monthFirst) {
 // ---------------------------------------------------------------------------
 // Thresholds config
 // ---------------------------------------------------------------------------
-managementPerformanceRouter.get("/management-performance/thresholds", requireAdmin, async (req, res, next) => {
+// readable by any member: Goals › Discipline labels its people by them
+managementPerformanceRouter.get("/management-performance/thresholds", async (req, res, next) => {
   try {
     res.json(await getThresholds(req.orgId));
   } catch (err) { next(err); }
@@ -307,7 +308,7 @@ const PAST_TTL_MS = 10 * 60_000;
 const boardCache = new Map();   // `${orgId}:${monthFirst}` -> { data, ts }
 const detailCache = new Map();  // `${orgId}:${editorId}:${monthFirst}` -> { data, ts }
 const hotBoards = new Map();    // key -> orgId, current-month boards to keep warm
-const refreshing = new Set();   // keys with an in-flight background refresh
+const refreshing = new Map();   // key -> the refresh in flight (a second look waits for it)
 
 function cacheLookup(cache, key, ttl) {
   const hit = cache.get(key);
@@ -354,15 +355,18 @@ async function computeBoard(orgId, monthFirst, isCurrent) {
 // Recompute + cache one board, guarding against overlapping refreshes.
 async function refreshBoard(orgId, monthFirst, isCurrent) {
   const key = `${orgId}:${monthFirst}`;
-  if (refreshing.has(key)) return;
-  refreshing.add(key);
-  try {
-    const data = await computeBoard(orgId, monthFirst, isCurrent);
-    boardCache.set(key, { data, ts: Date.now() });
-    return data;
-  } finally {
-    refreshing.delete(key);
-  }
+  if (refreshing.has(key)) return refreshing.get(key);
+  const run = (async () => {
+    try {
+      const data = await computeBoard(orgId, monthFirst, isCurrent);
+      boardCache.set(key, { data, ts: Date.now() });
+      return data;
+    } finally {
+      refreshing.delete(key);
+    }
+  })();
+  refreshing.set(key, run);
+  return run;
 }
 
 managementPerformanceRouter.get("/management-performance", requireAdmin, async (req, res, next) => {
@@ -450,7 +454,7 @@ async function computeDetail(orgId, editorId, monthFirst, isCurrent) {
             select content_format_id id, count(*)::int n
               from task where org_id = $1 and editor_id = $2 and status = 'done'
                 and content_format_id is not null
-                and completed_at >= $3 and completed_at < ($3::date + interval '1 month')
+                and completed_at >= ($3::date)::timestamp at time zone 'Asia/Kolkata' and completed_at < ($3::date + interval '1 month')::timestamp at time zone 'Asia/Kolkata'
               group by content_format_id
           )
           select cf.id, cf.name, cf.icon, cf.category, cf.metric_tier, coalesce(g.pts, cf.points) as points,
@@ -529,15 +533,18 @@ async function computeDetail(orgId, editorId, monthFirst, isCurrent) {
 
 async function refreshDetail(orgId, editorId, monthFirst, isCurrent) {
   const key = `${orgId}:${editorId}:${monthFirst}`;
-  if (refreshing.has(key)) return detailCache.get(key)?.data ?? null;
-  refreshing.add(key);
-  try {
-    const data = await computeDetail(orgId, editorId, monthFirst, isCurrent);
-    if (data) detailCache.set(key, { data, ts: Date.now() });
-    return data;
-  } finally {
-    refreshing.delete(key);
-  }
+  if (refreshing.has(key)) return refreshing.get(key);
+  const run = (async () => {
+    try {
+      const data = await computeDetail(orgId, editorId, monthFirst, isCurrent);
+      if (data) detailCache.set(key, { data, ts: Date.now() });
+      return data;
+    } finally {
+      refreshing.delete(key);
+    }
+  })();
+  refreshing.set(key, run);
+  return run;
 }
 
 managementPerformanceRouter.get("/management-performance/:editorId", requireAdmin, async (req, res, next) => {

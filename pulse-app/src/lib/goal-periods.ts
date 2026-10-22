@@ -9,7 +9,8 @@ import { ymd } from "@/lib/task-points";
 // from the same tasks — done, of that type, approved in those days.
 
 export type Period = "h1" | "h2" | "m";
-export type PerfRow = { contentFormatId: string; name: string; goalJC: number; actualJC: number; points: number };
+// goalAdjusted: the goal after approved leave (what the score counts against)
+export type PerfRow = { contentFormatId: string; name: string; goalJC: number; goalAdjusted?: number; actualJC: number; points: number };
 export type GoalLine = { id: string; name: string; month: number; target: number; done: number };
 
 function lastDay(month: string) {
@@ -49,10 +50,12 @@ export function doneByType(tasks: Task[], editorId: string, from: string, to: st
 export function goalLines(rows: PerfRow[], per: Period, halfCounts?: Map<string, number>): GoalLine[] {
   return rows
     .map((r) => {
-      const first = Math.ceil(r.goalJC / 2);
-      const target = per === "h1" ? first : per === "h2" ? r.goalJC - first : r.goalJC;
+      // the goal after approved leave, like the leaderboard and Management Performance
+      const goal = r.goalAdjusted ?? r.goalJC;
+      const first = Math.round((goal / 2) * 10) / 10;
+      const target = per === "h1" ? first : per === "h2" ? Math.round((goal - first) * 10) / 10 : goal;
       const done = per === "m" ? r.actualJC : halfCounts?.get(r.contentFormatId) ?? 0;
-      return { id: r.contentFormatId, name: r.name, month: r.goalJC, target, done };
+      return { id: r.contentFormatId, name: r.name, month: goal, target, done };
     })
     .filter((l) => l.target > 0);
 }

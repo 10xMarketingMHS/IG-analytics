@@ -329,6 +329,9 @@ type DiscEditor = {
 };
 
 function Discipline({ month }: { month: string }) {
+  // the bands Management Performance labels people by (Settings › Performance bands)
+  const { data: bands } = useResource<{ epiMinPct: number; mpiMinPct: number }>("/management-performance/thresholds");
+  const epi = bands?.epiMinPct ?? 85, mpi = bands?.mpiMinPct ?? 75;
   const { editors } = useEditors();
   const [data, setData] = useState<DiscEditor[] | null>(null);
   const [draft, setDraft] = useState<Record<string, Ratings>>({});
@@ -386,7 +389,7 @@ function Discipline({ month }: { month: string }) {
               const rated = DISCIPLINE_CRITERIA.some((c) => r[c.key] != null);
               const disc = bd ? Math.round((bd.discipline / bd.total) * 100) : Math.round((DISCIPLINE_CRITERIA.reduce((s, c) => s + (r[c.key] ?? 5), 0) / 25) * 20);
               const overall = bd ? Math.round((bd.overall / bd.total) * 100) : null;
-              const st = !rated ? { l: "Not rated yet", t: "" } : overall == null ? { l: "No goals", t: "" } : overall >= 85 ? { l: "Excellent", t: "good" } : overall >= 70 ? { l: "On track", t: "ac" } : { l: "Needs support", t: "warn" };
+              const st = !rated ? { l: "Not rated yet", t: "" } : overall == null ? { l: "No goals", t: "" } : overall >= epi ? { l: "Excellent", t: "good" } : overall >= mpi ? { l: "On track", t: "ac" } : { l: "Needs support", t: "warn" };
               return (
                 <div key={e.editorId} className={"gl-tr" + (draft[e.editorId] ? " dirty" : "")}>
                   <span className="gl-who"><Face editor={ed ?? { name: e.editorName, image_url: null }} size="sm" /><span><b>{e.editorName}</b><em>{ed?.designation || ""}</em></span></span>
