@@ -6,7 +6,7 @@ import { logActivity } from "../activity.js";
 import { capacityFor, LUNCH_MIN, TEA_MIN, normalizeCalendar } from "../work-calendar.js";
 import { startSession, endSession, pauseDayTimers } from "./eod.js";
 import {
-  applyEveningPermission, applyMorningPermission, attendancePeople, giveBackPermission, attendanceReady, callerScope, canSee, classify, closingFor,
+  applyEveningPermission, applyMorningPermission, attendancePeople, giveBackPermission, attendanceReady, callerScope, canSee, classify, closingFor, judgeHalfDay,
   istAt, istNow, leavePenalties, minutesOf, openingFor, penaltyOf, permissionsReady, permissionsThisMonth, readSettings, syncAttendance, weekdayOf,
 } from "../attendance.js";
 import {
@@ -173,9 +173,14 @@ attendanceRouter.post("/attendance/check-in", async (req, res, next) => {
     );
     // on a whole day of approved leave: checked in, given back and on time, all at once
     const leaveDay = existing?.status === "leave" && !!existing.leaveRequestId;
-    const worked = leaveDay ? await workedLeaveDay(existing, checkIn) : null;
+    // after the half-day time only the afternoon goes back (the morning stays leave)
+    const afterHalf = att.halfDayReady !== false && today.minutes >= minutesOf(att.halfDayAt);
+    const worked = leaveDay ? await workedLeaveDay(existing, checkIn, { afterHalf }) : null;
     if (!leaveDay) await checkIn(pool);
-    if (existing?.status === "leave" && existing?.markedBy) await leaveWorked(req, caller.editorId, today.ymd, !!worked);
+    if (existing?.status === "leave" && existing?.markedBy) await leaveWorked(req, caller.editorId, today.ymd, !!worked, afterHalf);
+    // a half day of leave: judged on the half they work
+    const now = await rowFor(caller.editorId, today.ymd);
+    if (now?.status === "half_day" && now.leaveRequestId) await judgeHalfDay(pool, now.id, cal, att);
     // (a leave day worked after all isn't late with a permission: no permission is used)
     if (!worked) await applyMorningPermission(req.orgId, caller.editorId, today.ymd, att, req.user.sub);
     const row = await rowFor(caller.editorId, today.ymd);
@@ -324,11 +329,14 @@ attendanceRouter.post("/attendance/correction-request", async (req, res, next) =
     );
     // in on a whole day of approved leave: a working day, given back to the balance, at once
     if (already?.status === "leave" && already.leaveRequestId && !already.checkInAt) {
-      const worked = await workedLeaveDay(already, checkIn);
-      if (already.markedBy) await leaveWorked(req, caller.editorId, today.ymd, !!worked);
+      const afterHalf = att.halfDayReady !== false && today.minutes >= minutesOf(att.halfDayAt);
+      const worked = await workedLeaveDay(already, checkIn, { afterHalf });
+      if (already.markedBy) await leaveWorked(req, caller.editorId, today.ymd, !!worked, afterHalf);
     } else {
       await checkIn(pool);
     }
+    const nowRow = await rowFor(caller.editorId, today.ymd);
+    if (nowRow?.status === "half_day" && nowRow.leaveRequestId) await judgeHalfDay(pool, nowRow.id, cal, att);
     await logActivity({
       orgId: req.orgId, actorId: req.user.sub, verb: "attendance_correction", entityType: "editor", entityId: caller.editorId,
       summary: `Asked to correct their start time to ${parsed.data.time}`,
@@ -343,12 +351,14 @@ attendanceRouter.post("/attendance/correction-request", async (req, res, next) =
 // Someone a lead marked on leave checked in anyway: it's a working day now (the
 // check-in already counts it as one), and the lead is told, to mark leave
 // again if that's really right.
-async function leaveWorked(req, editorId, ymd, givenBack = false) {
+async function leaveWorked(req, editorId, ymd, givenBack = false, half = false) {
   const { rows: who } = await pool.query("select name from editor where id = $1", [editorId]);
   await logActivity({
     orgId: req.orgId, actorId: req.user.sub, verb: "attendance_leave_worked", entityType: "editor", entityId: editorId,
     summary: givenBack
-      ? `${who[0]?.name ?? "Someone"} checked in on a day of approved leave, so it's a working day and goes back to their balance.`
+      ? half
+        ? `${who[0]?.name ?? "Someone"} checked in on a day of approved leave after the half-day time: the morning stays leave, the afternoon goes back to their balance.`
+        : `${who[0]?.name ?? "Someone"} checked in on a day of approved leave, so it's a working day and goes back to their balance.`
       : `${who[0]?.name ?? "Someone"} checked in on a day marked as leave, so it counts as a working day. Mark leave again if that's right.`,
     meta: { date: ymd },
   });
@@ -698,6 +708,8 @@ attendanceRouter.post("/attendance/:editorId/correction", async (req, res, next)
         order by date desc limit 1`,
       [t.editorId, t.today.ymd, parsed.data.date ?? null],
     );
+    // the day asked about isn't waiting any more (answered from another Inbox): say so
+    if (parsed.data.date && !waiting[0]) return res.status(409).json({ error: "That correction has already been answered." });
     const day = waiting[0]?.day ?? t.today.ymd;
     const row = await rowFor(t.editorId, day);
     if (!row || row.correctionStatus !== "pending") return res.status(400).json({ error: "There's no correction waiting." });
@@ -711,6 +723,7 @@ attendanceRouter.post("/attendance/:editorId/correction", async (req, res, next)
            correction_status = 'approved', updated_at = now() where id = $1`,
         [row.id, keep ? row.status : c.status, row.reason === WORKED ? 0 : c.lateMinutes],
       );
+      if (row.status === "half_day" && row.leaveRequestId) await judgeHalfDay(pool, row.id, cal, att);
       // Only the day's first session starts earlier; later ones (a reopened
       // day) stay as they were, so no hours are counted twice.
       await pool.query(
@@ -771,6 +784,11 @@ attendanceRouter.get("/attendance/month", async (req, res, next) => {
           else if (r.status === "on_time" || (r.status === "late" && r.excused)) onTime++;
           if (r.status === "absent") absent++;
           if (r.status === "half_absent") absent += 0.5;
+          // a half day of leave: the half they work, missed or late
+          if (r.status === "half_day" && r.leaveRequestId) {
+            if (r.autoMarked) absent += 0.5;
+            else if (r.lateMinutes > 0 && !r.excused) late++;
+          }
           if (r.status === "leave" || r.status === "half_day") {
             const n = r.status === "leave" ? 1 : 0.5;
             leave += n;
@@ -781,7 +799,7 @@ attendanceRouter.get("/attendance/month", async (req, res, next) => {
         return {
           status: s,
           row: r ? {
-            checkInAt: r.checkInAt, lateMinutes: r.lateMinutes, excused: r.excused, reason: r.reason,
+            checkInAt: r.checkInAt, lateMinutes: r.lateMinutes, excused: r.excused, reason: r.reason, autoMarked: r.autoMarked,
           } : null,
         };
       });

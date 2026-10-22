@@ -18,9 +18,12 @@ import "./team-attendance.css";
 type Cell = {
   status: ShownStatus | null;
   row: {
-    checkInAt: string | null; lateMinutes: number; excused: boolean; reason: string | null;
+    checkInAt: string | null; lateMinutes: number; excused: boolean; reason: string | null; autoMarked?: boolean;
   } | null;
 };
+// A half day of leave is judged on the half they work: missed, or a late start.
+const halfNote = (c: Cell) => (c.status !== "half_day" || !c.row ? ""
+  : c.row.autoMarked ? "other half missed" : c.row.lateMinutes > 0 && !c.row.excused ? `late +${c.row.lateMinutes}m` : "");
 type Row = {
   editorId: string; name: string; imageUrl: string | null; designation: string | null; cells: Cell[];
   totals: { late: number; absent: number; leave: number; leaveBy?: { CL: number; SL: number; unpaid: number }; onTimePct: number | null; ptsLost: number };
@@ -115,7 +118,7 @@ function TeamMonth({ editors }: { editors: Editor[] | null }) {
                       const day = `${Number(d.date.slice(8))} ${shortMon}`;
                       const off = !d.working ? (d.weekday === 0 ? "Sunday" : "Office closed") : d.future ? "upcoming" : null;
                       const tip = off ? `${day} · ${off}`
-                        : c.status ? `${day} · ${c.row?.excused ? "On time (late excused)" : LABEL[c.status]}${c.row?.checkInAt ? ` · in ${clockTime(c.row.checkInAt)}` : ""}${c.status === "late" && c.row?.lateMinutes ? ` · +${c.row.lateMinutes}m` : ""}${c.row?.reason ? ` · ${c.row.reason}` : ""}`
+                        : c.status ? `${day} · ${c.row?.excused ? "On time (late excused)" : LABEL[c.status]}${c.row?.checkInAt ? ` · in ${clockTime(c.row.checkInAt)}` : ""}${c.status === "late" && c.row?.lateMinutes ? ` · +${c.row.lateMinutes}m` : ""}${c.row?.reason ? ` · ${c.row.reason}` : ""}${halfNote(c) ? ` · ${halfNote(c)}` : ""}`
                         : `${day} · no record`;
                       return <span key={d.date} className={"ta-cell" + (c.status ? " c-" + c.status : "") + (off ? " off" : "") + (d.today ? " today" : "")} title={tip} />;
                     })}
@@ -216,7 +219,7 @@ function MyMonth() {
               const label = off ? "Off" : d.future ? "" : !c.status ? "No record" : excused ? "On time" : MY_LABEL[c.status];
               const leaveKind = c.row?.reason === "CL" || c.row?.reason === "SL" ? c.row.reason : c.row?.reason === "unpaid" ? "Unpaid" : null;
               const sub = off || d.future || !c.status ? ""
-                : c.status === "leave" || c.status === "half_day" ? leaveKind ?? (c.row?.reason || "")
+                : c.status === "leave" || c.status === "half_day" ? [leaveKind ?? (c.row?.reason || ""), halfNote(c)].filter(Boolean).join(" · ")
                 : c.status === "late" && !excused ? `+${c.row?.lateMinutes ?? 0}m · ${c.row?.checkInAt ? clockTime(c.row.checkInAt) : ""}`
                 : c.row?.checkInAt ? `In ${clockTime(c.row.checkInAt)}` : "";
               const cls = excused ? "on_time" : c.status;

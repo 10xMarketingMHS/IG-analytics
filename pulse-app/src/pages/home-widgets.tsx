@@ -673,7 +673,12 @@ function AttendW({ c }: { c: HomeCtx }) {
       case "no_sod": return `${r?.alertSentAt ? `Alert sent ${clockTime(r.alertSentAt)}` : `Office opened ${att.opening ? at(att.opening) : ""}`}${s.autoAbsentEnabled ? ` · absent at ${at(s.autoAbsentAt)}` : ""}`;
       case "waiting": return att.opening ? `Grace until ${at(minutesToHHMM(toMin(att.opening) + s.graceMinutes))}` : "Office closed today";
       case "absent": return `${r?.reason ? r.reason : r?.markedBy ? "Marked by lead" : `Auto-marked at ${at(s.autoAbsentAt)}`}${p.penalty ? ` · −${p.penalty} pts` : ""}`;
-      case "half_day": return r?.reason === "CL" || r?.reason === "SL" || r?.reason === "unpaid" ? `Half day · ${r.reason}` : r?.reason || "Half-day leave";
+      case "half_day": {
+        const kind = r?.reason === "CL" || r?.reason === "SL" || r?.reason === "unpaid" ? `Half day · ${r.reason}` : r?.reason || "Half-day leave";
+        // the half they work: missed, or a late start
+        const note = r?.autoMarked ? " · other half missed" : r?.lateMinutes && !r.excused && r.checkInAt ? ` · in ${clockTime(r.checkInAt)}, +${r.lateMinutes}m` : "";
+        return `${kind}${note}${p.penalty ? ` · −${p.penalty} pt${p.penalty === 1 ? "" : "s"}` : ""}`;
+      }
       case "leave": return r?.reason === "CL" || r?.reason === "SL" || r?.reason === "unpaid" ? `On leave · ${r.reason}` : r?.reason || "Approved leave";
     }
   };

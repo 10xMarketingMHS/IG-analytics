@@ -1,8 +1,8 @@
 import { pool } from "./db.js";
 import { hasColumn } from "./schema-flags.js";
-import { classify, giveBackPermission, openingFor, permissionsReady } from "./attendance.js";
+import { classify, giveBackPermission, istNow, openingFor, permissionsReady } from "./attendance.js";
 import {
-  LEAVE_DEFAULTS, checkRequest, dayWords, daysOf, priceRequest, rangeFrozen, requestWords, resplit, splitByYear, workingDates,
+  LEAVE_DEFAULTS, checkRequest, dayWords, daysOf, monthFrozen, priceRequest, rangeFrozen, requestWords, resplit, splitByYear, workingDates,
 } from "./leave-math.js";
 
 // Leave — CL (casual) and SL (sick): the database side. The maths is in
@@ -142,9 +142,10 @@ async function writeDays(client, orgId, r, deciderId, isWorking) {
     const reason = paid > 0 ? r.type : "unpaid";
     paid -= Math.min(size, paid);
     if (perms) {
-      // a late start excused by a morning permission is a half day now: the permission goes back
+      // a late start excused by a morning permission, now the half off: the permission goes back
+      // (a second half off keeps it: the morning was worked, late, with it)
       const { rows: ex } = await client.query("select reason, check_in_at from attendance where editor_id = $1 and date = $2", [r.editorId, d]);
-      if (ex[0]?.reason === "permission" && (half || !ex[0].check_in_at)) await giveBackPermission(r.editorId, d, "morning", client);
+      if (ex[0]?.reason === "permission" && r.half === "first") await giveBackPermission(r.editorId, d, "morning", client);
       // and one asked for ahead, for time the leave covers, isn't needed
       await client.query(
         "delete from attendance_permission where editor_id = $1 and date = $2 and part = any($3::text[]) and status in ('requested', 'approved')",
@@ -155,9 +156,14 @@ async function writeDays(client, orgId, r, deciderId, isWorking) {
       `insert into attendance (org_id, editor_id, date, status, marked_by, reason, auto_marked, leave_request_id)
        values ($1, $2, $3, $4, $5, $6, false, $7)
        on conflict (editor_id, date) do update set status = excluded.status, marked_by = excluded.marked_by, reason = excluded.reason,
-         auto_marked = false, excused = false, leave_request_id = excluded.leave_request_id, updated_at = now()
+         leave_request_id = excluded.leave_request_id, updated_at = now(),
+         -- second half off over a check-in: the morning stands (late, excused, or
+         -- missed when they came only after it); otherwise nothing carries over
+         auto_marked = $8 = 'second' and attendance.check_in_at is not null and attendance.status in ('half_absent', 'absent'),
+         excused = case when $8 = 'second' then attendance.excused else false end,
+         late_minutes = case when $8 = 'second' and attendance.status not in ('half_absent', 'absent') then attendance.late_minutes else 0 end
        where attendance.check_in_at is null or excluded.status = 'half_day'`,
-      [orgId, r.editorId, d, half ? "half_day" : "leave", deciderId, reason, r.id],
+      [orgId, r.editorId, d, half ? "half_day" : "leave", deciderId, reason, r.id, r.half],
     );
   }
 }
@@ -368,6 +374,10 @@ async function changeDays(client, r, delta) {
     days, shortPts: r.shortPts, unpaidRate: r.unpaidRate,
     total: await totalOf(client, r.editorId, year, r.type), usedByOthers: await usedPaid(client, r.editorId, year, r.type, r.id),
   });
+  // its points are booked to the month it starts: once Management Performance
+  // has closed that month, they stay as they were (a leave running on into this
+  // month can still change its days)
+  if (monthFrozen(r.from.slice(0, 7), istNow().ymd)) s.pts = r.pts;
   await client.query(
     "update leave_request set days = $2, paid_days = $3, unpaid_days = $4, penalty_pts = $5 where id = $1",
     [r.id, days, s.paid, s.unpaid, s.pts],
@@ -388,7 +398,9 @@ export const WORKED = "Worked on leave";
 // `checkIn(client)` writes the check-in itself, in the same transaction, so the
 // day is never checked in but still charged. Re-checked on the locked row, so a
 // double tap gives the day back once.
-export async function workedLeaveDay(row, checkIn = null) {
+// afterHalf: they started after the half-day time — the morning stays leave
+// (a half day, first half off) and only the afternoon goes back.
+export async function workedLeaveDay(row, checkIn = null, { afterHalf = false } = {}) {
   if (!row?.leaveRequestId || row.status !== "leave" || !(await leaveReady())) {
     if (checkIn) await checkIn(pool);
     return null;
@@ -399,8 +411,16 @@ export async function workedLeaveDay(row, checkIn = null) {
     await client.query("select 1 from attendance where id = $1 for update", [row.id]);
     if (checkIn) await checkIn(client);
     if (!r || r.status !== "approved") return null;
-    const { rows } = await client.query("select leave_request_id, reason from attendance where id = $1", [row.id]);
-    if (!rows[0] || rows[0].leave_request_id !== r.id || rows[0].reason === WORKED) return null;
+    const { rows } = await client.query("select leave_request_id, reason, status from attendance where id = $1", [row.id]);
+    if (!rows[0] || rows[0].leave_request_id !== r.id || rows[0].reason === WORKED || rows[0].status === "half_day") return null;
+    if (afterHalf) {
+      await client.query(
+        `update attendance set status = 'half_day', late_minutes = 0, excused = false, auto_marked = false, marked_by = $2, reason = $3,
+           updated_at = now() where id = $1`,
+        [row.id, r.decidedBy, r.type],
+      );
+      return changeDays(client, r, -0.5);
+    }
     await client.query(
       `update attendance set status = 'on_time', late_minutes = 0, excused = false, auto_marked = false, marked_by = null, reason = $2,
          updated_at = now() where id = $1`,
@@ -411,23 +431,26 @@ export async function workedLeaveDay(row, checkIn = null) {
 }
 
 // Undo Start day on a day of leave that was given back: the leave comes back —
-// a leave day again (marked by whoever approved it), and the day comes from the
-// balance again. Only a day that was given back, and only once.
+// a leave day again (marked by whoever approved it), and the day (or the
+// afternoon, after a late start) comes from the balance again. Only a day that
+// was given back, and only once.
 export async function restoreLeaveDay(row) {
   if (!row?.leaveRequestId || !(await leaveReady())) return null;
   return tx(async (client) => {
     const r = await getRequest(client, row.leaveRequestId, true);
     if (!r || r.status !== "approved") return null;
     await lockPerson(client, r.editorId);
-    const { rows } = await client.query("select leave_request_id, reason, date::text as date from attendance where id = $1 for update", [row.id]);
+    const { rows } = await client.query("select leave_request_id, reason, status, date::text as date from attendance where id = $1 for update", [row.id]);
     const cur = rows[0];
-    if (!cur || cur.leave_request_id !== r.id || cur.reason !== WORKED || cur.date < r.from || cur.date > r.to) return null;
+    // a whole day of leave started late is a half day under a whole-day request
+    const halfBack = cur?.status === "half_day" && r.half === "full";
+    if (!cur || cur.leave_request_id !== r.id || !(cur.reason === WORKED || halfBack) || cur.date < r.from || cur.date > r.to) return null;
     await client.query(
       `update attendance set status = 'leave', marked_by = $2, check_in_at = null, late_minutes = 0, excused = false, auto_marked = false,
          reason = $3, updated_at = now() where id = $1`,
       [row.id, r.decidedBy, r.type],
     );
-    return changeDays(client, r, 1);
+    return changeDays(client, r, halfBack ? 0.5 : 1);
   });
 }
 
