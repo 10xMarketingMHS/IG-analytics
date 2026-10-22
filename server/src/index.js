@@ -1,3 +1,4 @@
+import "./async-errors.js"; // first: async route errors go to the error handler, never crash the server
 import express from "express";
 import cors from "cors";
 import cookieParser from "cookie-parser";
@@ -104,6 +105,7 @@ if (config.NODE_ENV === "production") {
 // eslint-disable-next-line no-unused-vars
 app.use((err, _req, res, _next) => {
   console.error(err);
+  if (res.headersSent) return res.end(); // part of an answer already went out
   res.status(500).json({ error: "Internal server error" });
 });
 
