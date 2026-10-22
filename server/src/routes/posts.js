@@ -232,6 +232,17 @@ postsRouter.get("/posts", async (req, res, next) => {
   }
 });
 
+// GET /posts/count — how many posts this channel has (the sidebar's number),
+// without sending every post.
+postsRouter.get("/posts/count", async (req, res, next) => {
+  try {
+    const { rows } = await pool.query("select count(*)::int as n from post where workspace_id = $1 and deleted_at is null", [req.workspaceId]);
+    res.json({ count: rows[0].n });
+  } catch (err) {
+    next(err);
+  }
+});
+
 postsRouter.get("/posts/:id", async (req, res, next) => {
   try {
     const { rows } = await pool.query(

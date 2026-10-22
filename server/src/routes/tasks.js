@@ -230,11 +230,22 @@ async function assignLimitError(req, contentFormatId, editorId) {
 //   taskType=<type>
 //   dueBefore/dueAfter — YYYY-MM-DD, inclusive, for due-date range views
 //   socialMedia=1       — only post-linked tasks (§ Social Media tracking)
+//   open=1              — not completed (what the alerts look at)
+//   lite=1              — only the fields the alerts read (a much smaller answer)
+// What the background alerts read (new task, over budget, overdue, review
+// waiting) — polled every minute, so it carries nothing else.
+const LITE = [
+  "id", "title", "status", "editor_id", "editor_name", "due_date", "created_by", "accepted", "on_hold",
+  "budget_hours", "budget_started_at", "budget_used_seconds", "editor_break_used_seconds", "editor_break_started_at",
+  "review_started_at", "can_review", "review_by",
+];
+const liteTask = (t) => Object.fromEntries(LITE.filter((k) => k in t).map((k) => [k, t[k]]));
 tasksRouter.get("/tasks", async (req, res, next) => {
   try {
     const clauses = ["t.org_id = $1"];
     const params = [req.orgId];
     if (req.query.socialMedia === "1") clauses.push("t.post_id is not null");
+    if (req.query.open === "1") clauses.push("t.status <> 'done'");
 
     if (req.query.assignee === "me") {
       const { rows } = await pool.query("select editor_id from app_user where id = $1", [req.user.sub]);
@@ -283,7 +294,8 @@ tasksRouter.get("/tasks", async (req, res, next) => {
       editorRanks(req.orgId),
     ]);
     const seen = viewer.seesAll ? rows : rows.filter((t) => canSeeTask(viewer, ranks, t));
-    res.json({ tasks: await withReview(req, seen) });
+    const tasks = await withReview(req, seen);
+    res.json({ tasks: req.query.lite === "1" ? tasks.map(liteTask) : tasks });
   } catch (err) {
     next(err);
   }

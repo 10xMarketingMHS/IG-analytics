@@ -69,6 +69,13 @@ activityRouter.get("/activity", async (req, res, next) => {
         and not exists (select 1 from task t where t.id = a.entity_id and t.editor_id = $${eid}::uuid)
       )`;
     }
+    // after=<time>: only what's newer (the bell's check every half minute — most
+    // often nothing at all)
+    if (req.query.after && !Number.isNaN(Date.parse(String(req.query.after)))) {
+      params.push(String(req.query.after));
+      // to the millisecond, as the app has it (stored times carry microseconds)
+      where += ` and date_trunc('milliseconds', a.created_at) > $${params.length}::timestamptz`;
+    }
     const limit = Math.min(Number(req.query.limit) || 60, 200);
     params.push(limit);
     const { rows } = await pool.query(

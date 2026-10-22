@@ -307,7 +307,8 @@ const CUR_TTL_MS = 20_000;
 const PAST_TTL_MS = 10 * 60_000;
 const boardCache = new Map();   // `${orgId}:${monthFirst}` -> { data, ts }
 const detailCache = new Map();  // `${orgId}:${editorId}:${monthFirst}` -> { data, ts }
-const hotBoards = new Map();    // key -> orgId, current-month boards to keep warm
+const hotBoards = new Map();    // key -> { orgId, at }: current-month boards someone looked at lately
+const HOT_FOR_MS = 10 * 60_000;  // kept warm for 10 minutes after the last look
 const refreshing = new Map();   // key -> the refresh in flight (a second look waits for it)
 
 function cacheLookup(cache, key, ttl) {
@@ -375,7 +376,7 @@ managementPerformanceRouter.get("/management-performance", requireAdmin, async (
     // live (not frozen) while it's this month, a future one, or last month settling
     const isCurrent = liveMonth(monthFirst);
     const key = `${req.orgId}:${monthFirst}`;
-    if (isCurrent) hotBoards.set(key, req.orgId); // keep this board warm
+    if (isCurrent) hotBoards.set(key, { orgId: req.orgId, at: Date.now() }); // keep this board warm a while
 
     const c = cacheLookup(boardCache, key, isCurrent ? CUR_TTL_MS : PAST_TTL_MS);
     if (c) {
@@ -389,13 +390,13 @@ managementPerformanceRouter.get("/management-performance", requireAdmin, async (
 });
 
 // Keep recently-viewed current-month boards fresh in the background, so a user's
-// load reads a warm cache instead of paying the compute. Drops keys once their
-// month rolls over. Also keeps the DB pool warm via steady query traffic.
+// load reads a warm cache instead of paying the compute — for 10 minutes after
+// the last look, not around the clock. Drops keys once their month rolls over.
 setInterval(() => {
   const cur = thisMonthFirst();
-  for (const [key, orgId] of hotBoards) {
-    if (!key.endsWith(cur)) { hotBoards.delete(key); boardCache.delete(key); continue; }
-    refreshBoard(orgId, cur, true).catch(() => {});
+  for (const [key, hot] of hotBoards) {
+    if (!key.endsWith(cur) || Date.now() - hot.at > HOT_FOR_MS) { hotBoards.delete(key); continue; }
+    refreshBoard(hot.orgId, cur, true).catch(() => {});
   }
 }, CUR_TTL_MS).unref();
 
