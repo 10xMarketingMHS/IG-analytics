@@ -16,7 +16,8 @@ import type { Task } from "@/lib/types";
 //                      plan, Undo (first 5 minutes) and End day (no discipline
 //                      points: those are for leads),
 //                      which opens the wrap-up panel;
-//   checked out      — one line: the day closed and the hours in office.
+//   checked out      — one line: the day closed and the hours in office
+//                      (Apply for leave is on every one of these).
 // Start day is the check-in and opens the work day (it replaced Start Work).
 
 const fmtHM = (ms: number) => {
@@ -217,8 +218,11 @@ export function StartDaySection({
         <Icon name="task_alt" size={18} className="sd-good" />
         <span><b>Day closed</b> · {clockTime(me.checkInAt)} – {clockTime(me.checkOutAt)} · {fmtHM(new Date(me.checkOutAt).getTime() - new Date(me.checkInAt).getTime())} in office · task timers paused</span>
         <span className="sd-grow" />
+        {leaveLink}
         <button type="button" className="sd-link" onClick={onOpenReports}>My reports</button>
         <button type="button" className="sd-btn primary" onClick={() => start().then(() => toast.success("Day reopened. Your task timers are running again.")).catch((e) => toast.error(e instanceof ApiError ? e.message : "Couldn't reopen your day."))} disabled={busy}>{busy ? "Reopening…" : "Reopen day"}</button>
+        {/* leave can be applied for whatever state today is in */}
+        {leaveForm}
       </section>
     );
   }

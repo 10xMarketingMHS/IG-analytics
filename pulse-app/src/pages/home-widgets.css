@@ -249,3 +249,4 @@ div.hw-timer-title{cursor:default}
 .lv-state{font-size:11.5px;font-weight:700;padding:1px 8px;border-radius:999px;background:var(--md-panel);color:var(--md-text2)}
 .lv-state.approved{color:var(--md-good,#15803d)}
 .hw-faint.warn{color:var(--md-warn);font-weight:700}
+.sd-bar.closed .lv-ask{flex:1 1 100%}
