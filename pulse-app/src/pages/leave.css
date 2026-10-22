@@ -180,8 +180,8 @@ html[data-theme="dark"] .lv{--lv-text:#ededf0;--lv-text2:#a1a1aa;--lv-text3:#717
 .lv-topup-acts{display:flex;gap:8px;justify-content:flex-end}
 
 /* Home: the side panel */
-.lv-scrim{position:fixed;inset:0;z-index:44;background:rgba(10,8,20,.35)}
-.lv-panel{position:fixed;top:0;right:0;bottom:0;z-index:45;width:min(900px,100vw);overflow-y:auto;box-sizing:border-box;padding:22px clamp(14px,3vw,28px) 48px;
+.lv-scrim{position:fixed;inset:0;z-index:940;background:rgba(10,8,20,.35)}
+.lv-panel{position:fixed;top:0;right:0;bottom:0;z-index:950;width:min(900px,100vw);overflow-y:auto;box-sizing:border-box;padding:22px clamp(14px,3vw,28px) 48px;
   background:var(--bg,#f5f4fa);box-shadow:-24px 0 60px -20px rgba(20,10,60,.35)}
 html[data-theme="dark"] .lv-panel{background:var(--bg,#0a0912)}
 .lv-close{position:sticky;top:0;float:right;z-index:2;width:36px;height:36px;margin:-6px -6px 0 8px;border:1px solid var(--border,rgba(30,20,80,.08));border-radius:10px;

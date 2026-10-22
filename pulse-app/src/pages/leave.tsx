@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState, type ReactNode } from "react";
+import { createPortal } from "react-dom";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { toast } from "sonner";
 import { ApiError } from "@/lib/api";
@@ -529,20 +530,22 @@ export function LeavePage() {
 }
 
 // Home: the same screen in a side panel (Ask for leave, the balance line, the
-// bar's Leave button).
+// bar's Leave button). Put on the page itself (a portal): the day bar it's
+// opened from blurs its background, which would hold a fixed panel inside it.
 export function LeavePanel({ onClose }: { onClose: () => void }) {
   useEffect(() => {
     const esc = (e: KeyboardEvent) => { if (e.key === "Escape") onClose(); };
     window.addEventListener("keydown", esc);
     return () => window.removeEventListener("keydown", esc);
   }, [onClose]);
-  return (
+  return createPortal(
     <>
       <div className="lv-scrim" onClick={onClose} aria-hidden="true" />
-      <aside className="lv-panel" aria-label="Leave">
+      <aside className="lv-panel" aria-label="Leave" role="dialog">
         <button type="button" className="lv-close" onClick={onClose} title="Close" aria-label="Close"><Icon name="close" size={20} /></button>
         <LeaveScreen startTab="apply" />
       </aside>
-    </>
+    </>,
+    document.body,
   );
 }
