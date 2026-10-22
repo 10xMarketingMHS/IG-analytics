@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { api } from "@/lib/api";
 import { onTasksChanged } from "@/lib/task-events";
 import type { HandoverItem } from "@/components/handover";
-import type { Leave } from "@/lib/use-attendance";
+import type { LeaveRequest } from "@/lib/use-leave";
 
 // The Inbox (server/src/routes/inbox.js): what's waiting on you — leave,
 // permission and start-time correction requests from your people, hand-overs,
@@ -13,8 +13,8 @@ import type { Leave } from "@/lib/use-attendance";
 
 type Who = { editorId: string; name: string; imageUrl: string | null };
 export type InboxItem =
-  // a lead sees the asker's CL this year beside a leave request
-  | ({ kind: "leave"; key: string; at: string; leave: Leave; balance?: { perYear: number | null; cl: number; unpaid: number } | null } & Partial<Who>)
+  // a manager sees what the asker has left of that type this year
+  | ({ kind: "leave"; key: string; at: string; leave: LeaveRequest; balance?: { left: number; total: number } | null } & Partial<Who>)
   | ({ kind: "permission"; key: string; at: string; id: string; date: string; part: "morning" | "evening"; note: string | null } & Partial<Who>)
   | ({ kind: "correction"; key: string; at: string; date: string; correctionAt: string; checkInAt: string | null; note: string | null } & Who)
   | { kind: "handover"; key: string; at: string; handover: HandoverItem }

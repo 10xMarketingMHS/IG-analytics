@@ -40,7 +40,11 @@ export const VERB_META: Record<ActivityVerb, { icon: string; cls: string }> = {
   leave_approved: { icon: "🌴", cls: "v-done" },
   leave_declined: { icon: "↩️", cls: "v-editor" },
   leave_cancelled: { icon: "↩️", cls: "v-editor" },
-  leave_cl_set: { icon: "🗓️", cls: "v-editor" },
+  leave_topped_up: { icon: "➕", cls: "v-done" },
+  leave_allowance_set: { icon: "🗓️", cls: "v-editor" },
+  leave_counting_started: { icon: "▶️", cls: "v-editor" },
+  leave_rules_changed: { icon: "⚙️", cls: "v-editor" },
+  attendance_leave_worked: { icon: "💼", cls: "v-editor" },
 };
 
 export function relTime(iso: string) {

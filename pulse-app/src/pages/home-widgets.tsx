@@ -673,8 +673,8 @@ function AttendW({ c }: { c: HomeCtx }) {
       case "no_sod": return `${r?.alertSentAt ? `Alert sent ${clockTime(r.alertSentAt)}` : `Office opened ${att.opening ? at(att.opening) : ""}`}${s.autoAbsentEnabled ? ` · absent at ${at(s.autoAbsentAt)}` : ""}`;
       case "waiting": return att.opening ? `Grace until ${at(minutesToHHMM(toMin(att.opening) + s.graceMinutes))}` : "Office closed today";
       case "absent": return `${r?.reason ? r.reason : r?.markedBy ? "Marked by lead" : `Auto-marked at ${at(s.autoAbsentAt)}`}${p.penalty ? ` · −${p.penalty} pts` : ""}`;
-      case "half_day": return `${r?.reason || "Half-day leave"}${r?.shortNotice ? ` · short notice · −${p.penalty} pts` : ""}`;
-      case "leave": return `${r?.reason || "Approved leave"}${r?.shortNotice ? ` · short notice · −${p.penalty} pts` : ""}`;
+      case "half_day": return r?.reason === "CL" || r?.reason === "SL" || r?.reason === "unpaid" ? `Half day · ${r.reason}` : r?.reason || "Half-day leave";
+      case "leave": return r?.reason === "CL" || r?.reason === "SL" || r?.reason === "unpaid" ? `On leave · ${r.reason}` : r?.reason || "Approved leave";
     }
   };
   async function run(p: TeamPerson, action: "excuse" | "undo" | "nudge" | "mark" | "correction" | "permission", body: object | undefined, ok: string) {
@@ -696,6 +696,11 @@ function AttendW({ c }: { c: HomeCtx }) {
       <div className="hw-chips">
         {counts.filter(([, n]) => n > 0).map(([l, n, t]) => <span key={l} className={"hw-count soft " + t}><b>{n}</b>{l}</span>)}
       </div>
+      {att.leave?.canApprove && att.leave.teamWaiting > 0 && (
+        <Link to="/leave?tab=approve" className="hw-leave-line">
+          🌴 {att.leave.teamWaiting} leave request{att.leave.teamWaiting === 1 ? "" : "s"} waiting for a manager · Review →
+        </Link>
+      )}
       <div className="hw-att">
         {rows.map((p) => {
           const pill = PILL[p.status];
@@ -708,10 +713,10 @@ function AttendW({ c }: { c: HomeCtx }) {
               <span className="hw-li-txt"><b>{p.name}</b><span>{meta(p)}</span></span>
               <span className={"hw-pill " + pill.t}>{pill.l}</span>
               <span className="hw-att-acts">
-                {/* requests (leave, permissions, corrections) are answered in the Inbox */}
-                {((p.leaveRequests?.length ?? 0) + (p.permissionRequests?.length ?? 0) + (r?.correctionStatus === "pending" ? 1 : 0)) > 0 && (
+                {/* requests (permissions, corrections) are answered in the Inbox */}
+                {((p.permissionRequests?.length ?? 0) + (r?.correctionStatus === "pending" ? 1 : 0)) > 0 && (
                   <Link to="/inbox" className="hw-faint sm hw-inbox-link">
-                    {(p.leaveRequests?.length ?? 0) + (p.permissionRequests?.length ?? 0) + (r?.correctionStatus === "pending" ? 1 : 0)} in Inbox →
+                    {(p.permissionRequests?.length ?? 0) + (r?.correctionStatus === "pending" ? 1 : 0)} in Inbox →
                   </Link>
                 )}
                 {(p.status === "no_sod" || p.status === "waiting") && (
@@ -728,18 +733,20 @@ function AttendW({ c }: { c: HomeCtx }) {
                 {canMark && (
                   <select className="hw-mark" value="" disabled={busy === p.editorId} aria-label={`Mark ${p.name} as`}
                     onChange={(e) => {
-                      // "leave:cl" — leave or a half day is CL or SL
-                      const [v, kind] = e.target.value.split(":") as ["working" | "half_day" | "leave" | "absent", "cl" | "sl" | undefined];
+                      // "leave:CL" — a manager's leave mark uses CL or SL from the person's balance
+                      const [v, type] = e.target.value.split(":") as ["working" | "half_day" | "leave" | "absent", "CL" | "SL" | undefined];
                       if (!v) return;
                       const word = { working: "working now", half_day: "half-day leave", leave: "on leave", absent: "absent" }[v];
-                      run(p, "mark", { as: v, kind }, `${p.name} marked as ${word}${kind ? ` (${kind.toUpperCase()})` : ""}`);
+                      run(p, "mark", { as: v, type }, `${p.name} marked as ${word}${type ? ` (${type})` : ""}`);
                     }}>
                     <option value="">Mark as…</option>
                     <option value="working">Working now</option>
-                    <option value="leave:sl">On leave · SL (sick)</option>
-                    <option value="leave:cl">On leave · CL (short notice)</option>
-                    <option value="half_day:sl">Half day · SL</option>
-                    <option value="half_day:cl">Half day · CL (short notice)</option>
+                    {att.leave?.canApprove && <>
+                      <option value="leave:SL">On leave · SL (sick)</option>
+                      <option value="leave:CL">On leave · CL (short notice)</option>
+                      <option value="half_day:SL">Half day · SL</option>
+                      <option value="half_day:CL">Half day · CL (short notice)</option>
+                    </>}
                     <option value="absent">Absent</option>
                   </select>
                 )}

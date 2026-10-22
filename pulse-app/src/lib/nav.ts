@@ -36,6 +36,8 @@ export const NAV_ITEMS: NavItem[] = [
   // Inbox — everything waiting on you (leave, permissions, corrections,
   // hand-overs, reviews, tasks to accept, password resets) and what you sent.
   { title: "Inbox", href: "/inbox", icon: "📥", section: "Home", inboxBadge: true },
+  // Leave — ask for CL / SL, and (managers) approvals, allowances and rules.
+  { title: "Leave", href: "/leave", icon: "🌴", section: "Home" },
   { title: "Team Chat", href: "/chat", icon: "💬", section: "Home", chatBadge: true },
   // Analytics — the Dashboard and Top Performers merged into one page with an
   // Overview tab and a Top performers tab (/dashboard and /top redirect here).
@@ -63,6 +65,7 @@ export const NAV_ITEMS: NavItem[] = [
 export const PAGE_META: Record<string, [string, string]> = {
   "/home": ["Home", "What needs your attention today"],
   "/inbox": ["Inbox", "Everything waiting on you, and what you sent"],
+  "/leave": ["Leave", "Casual leave (CL) and sick leave (SL)"],
   "/chat": ["Team Chat", "Channels for the team, direct messages for one-to-one"],
   "/analytics/": ["Format analytics", "Total performance across all posts of one format"],
   "/analytics": ["Analytics", "Content performance across your channels and platforms"],

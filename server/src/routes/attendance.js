@@ -706,6 +706,8 @@ attendanceRouter.get("/attendance/month", async (req, res, next) => {
     const cap = capacityFor(cal, y, m - 1);
     res.json({
       month, days, rows: out, settings: att, scope: caller.scope,
+      // a manager marks leave (CL / SL from the person's balance)
+      canMarkLeave: (await leaveReady()) && isApprover(caller),
       footer: { absences, capacityLostMinutes: att.deductCapacity ? absences * dayMin : 0, latePts: att.latePenaltyPts, absentPts: att.absentPenaltyPts },
       capacity: cap,
     });

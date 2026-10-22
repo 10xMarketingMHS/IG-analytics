@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { Link } from "react-router-dom";
 import { toast } from "sonner";
 import { api, ApiError } from "@/lib/api";
 import { useOrg } from "@/lib/use-org";
@@ -14,7 +15,7 @@ import { SI, Stepper, Toggle } from "@/pages/settings-ui";
 // Office hours come from General › Work calendar. Kept as a draft until Save.
 
 const DEFAULTS: AttSettings = {
-  requireSod: true, graceMinutes: 10, noSodAlertAt: "09:30", halfDayAt: "11:30", autoAbsentAt: "13:30", autoAbsentEnabled: true, permissionsPerMonth: 2, clNoticeDays: 2,
+  requireSod: true, graceMinutes: 10, noSodAlertAt: "09:30", halfDayAt: "11:30", autoAbsentAt: "13:30", autoAbsentEnabled: true, permissionsPerMonth: 2,
   requireEodNote: true, allowCorrections: true, latePenaltyPts: 1, absentPenaltyPts: 3, deductCapacity: true,
   teamView: { manager: true, asstManager: true, teamLead: true },
 };
@@ -112,9 +113,8 @@ export function AttendanceSection({ onDirty }: { onDirty: (d: boolean) => void }
             decDisabled={!isSuper || a.absentPenaltyPts <= 0} incDisabled={!isSuper || a.absentPenaltyPts >= 10} />
         </div>
         <div className="st-row">
-          <span className="st-label"><b>CL notice</b><small>CL applied for fewer days ahead is short notice: each day costs the absence penalty. SL never does</small></span>
-          <Stepper label="CL notice" value={`${a.clNoticeDays ?? 2} day${(a.clNoticeDays ?? 2) === 1 ? "" : "s"}`} onDec={() => set("clNoticeDays", Math.max(0, (a.clNoticeDays ?? 2) - 1))} onInc={() => set("clNoticeDays", Math.min(14, (a.clNoticeDays ?? 2) + 1))}
-            decDisabled={!isSuper || (a.clNoticeDays ?? 2) <= 0} incDisabled={!isSuper || (a.clNoticeDays ?? 2) >= 14} />
+          <span className="st-label"><b>Leave (CL / SL)</b><small>Notice, the short-notice and unpaid-day cuts, and everyone's allowance are on the Leave page › Allowances &amp; rules</small></span>
+          <Link className="st-link" to="/leave?tab=settings">Open</Link>
         </div>
         <div className="st-row">
           <span className="st-label"><b>Count lost hours against capacity</b><small>Unplanned absence shows as lost hours on the Team › Attendance report</small></span>

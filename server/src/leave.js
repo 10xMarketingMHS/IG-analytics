@@ -209,6 +209,36 @@ export async function createLeave({ orgId, editorId, type, from, to, half = "ful
   });
 }
 
+// What a request would be, without sending it (the form's summary as it's
+// filled in): an error, or its days, notice, paid and unpaid days and points.
+export async function previewLeave({ editorId, type, from, to, half = "full", cal, rules, today }) {
+  const isWorking = isWorkingOn(cal);
+  const bad = checkRequest({ type, from, to, half, today, isWorking });
+  if (bad) return { error: bad };
+  const { rows: clash } = await pool.query(
+    `select type, date_from::text as "from" from leave_request
+      where editor_id = $1 and status in ('pending', 'approved') and date_from <= $3 and date_to >= $2 order by date_from limit 1`,
+    [editorId, from, to],
+  );
+  if (clash[0]) return { error: `Overlaps your ${clash[0].type} on ${dayWords(clash[0].from)}.` };
+  if (half === "full") {
+    const worked = await workedOn(pool, editorId, workingDates(isWorking, from, to));
+    if (worked) return { error: `You checked in on ${dayWords(worked)}, so it can't be a full day of leave. A half day can.` };
+  }
+  let out = null;
+  for (const [i, [a, b]] of splitByYear(from, to).entries()) {
+    const year = Number(a.slice(0, 4));
+    const days = daysOf(isWorking, a, b, half);
+    if (!days) continue;
+    const p = priceRequest({
+      type, days, from, today, isWorking, rules, shortApplies: i === 0,
+      total: await totalOf(pool, editorId, year, type), used: await usedPaid(pool, editorId, year, type),
+    });
+    out = out ? { ...out, days: out.days + p.days, paid: out.paid + p.paid, unpaid: out.unpaid + p.unpaid, pts: out.pts + p.pts } : p;
+  }
+  return out ?? { error: "No working days in that range (Sundays and off days don’t use leave)." };
+}
+
 const frozenMsg = (ym) => {
   const d = new Date(`${ym}-01T00:00:00Z`);
   return `${d.toLocaleDateString("en-GB", { month: "long", year: "numeric", timeZone: "UTC" })} is closed in Management Performance, so its leave can't change.`;

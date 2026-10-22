@@ -7,7 +7,8 @@ import { Avatar } from "@/lib/editor-visuals";
 import { relTime } from "@/lib/activity-meta";
 import { clockTime } from "@/lib/time-format";
 import { notifyTasksChanged } from "@/lib/task-events";
-import { attendanceAction, cancelMyLeave, leaveAction, leaveWords } from "@/lib/use-attendance";
+import { attendanceAction } from "@/lib/use-attendance";
+import { cancelLeave, decideLeave, detailOf, fmtDates } from "@/lib/use-leave";
 import { useInbox, type InboxItem } from "@/lib/use-inbox";
 import type { Editor } from "@/lib/types";
 import "./inbox.css";
@@ -85,17 +86,14 @@ export function InboxPage() {
     switch (i.kind) {
       case "leave": {
         const l = i.leave;
-        what = <>{leaveWords(l)}{l.shortNotice && <span className="ib-tag warn">short notice</span>}</>;
-        who = sent ? <Person name="Your lead" kind="leave" /> : <Person name={i.name} imageUrl={i.imageUrl} kind="leave" />;
+        what = <>{l.type} · {fmtDates(l)}{l.short && <span className="ib-tag warn">short notice</span>}</>;
+        who = sent ? <Person name="A manager" kind="leave" /> : <Person name={i.name} imageUrl={i.imageUrl} kind="leave" />;
         const b = i.balance;
-        const bal = !sent && l.kind === "cl" && b
-          ? b.perYear ? `${n1(Math.max(0, b.perYear - b.cl))} of ${n1(b.perYear)} CL left${b.unpaid ? `, ${n1(b.unpaid)} unpaid` : ""}` : "No CL set (unpaid)"
-          : null;
-        details = <>{l.note ? <span>“{l.note}”</span> : null}{bal ? <span className="ib-faint">{bal}</span> : null}{!l.note && !bal ? <span className="ib-faint">{sent ? "Waiting for your lead" : "—"}</span> : null}</>;
+        details = <>{l.reason ? <span>“{l.reason}”</span> : null}<span className="ib-faint">{detailOf(l)}{!sent && b ? ` · ${n1(b.left)} of ${n1(b.total)} ${l.type} left` : ""}</span></>;
         acts = sent
-          ? btn("Cancel", () => act(i.key, () => cancelMyLeave(l.id), "Leave cancelled."), "ghost")
-          : <>{btn("Decline", () => act(i.key, () => leaveAction(i.editorId!, l.id, "decline"), "Leave declined."), "ghost")}
-             {btn("Approve", () => act(i.key, () => leaveAction(i.editorId!, l.id, "approve"), `${i.name?.split(" ")[0]}'s leave approved.`), "good")}</>;
+          ? btn("Cancel", () => act(i.key, () => cancelLeave(l.id), "Request cancelled · balance given back."), "ghost")
+          : <>{btn("Decline", () => act(i.key, () => decideLeave(l.id, false), "Leave declined · balance given back."), "ghost")}
+             {btn("Approve", () => act(i.key, () => decideLeave(l.id, true), `${i.name?.split(" ")[0]}'s ${l.type} approved.`), "good")}</>;
         break;
       }
       case "permission":

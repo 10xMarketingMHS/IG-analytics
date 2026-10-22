@@ -30,6 +30,7 @@ import { TasksPage } from "@/pages/tasks";
 import { SocialMediaPage } from "@/pages/social-media";
 import { ActivityPage } from "@/pages/activity";
 import { InboxPage } from "@/pages/inbox";
+import { LeavePage } from "@/pages/leave";
 import { ChatPage } from "@/pages/chat";
 import { AddPostPage } from "@/pages/add-post";
 import { BulkAddPostPage } from "@/pages/bulk-add-post";
@@ -94,6 +95,7 @@ function AppRoutes() {
           <Route element={<AppShell />}>
             <Route path="/home" element={<HomePage />} />
             <Route path="/inbox" element={<InboxPage />} />
+            <Route path="/leave" element={<LeavePage />} />
             {/* Dashboard and Top Performers live on as the two tabs of Analytics. */}
             <Route path="/analytics" element={<AnalyticsPage />} />
             <Route path="/dashboard" element={<Navigate to="/analytics" replace />} />

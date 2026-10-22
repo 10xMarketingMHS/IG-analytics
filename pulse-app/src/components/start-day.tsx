@@ -5,7 +5,7 @@ import { useEodState } from "@/lib/eod-context";
 import { clockTime } from "@/lib/time-format";
 import { Icon } from "@/components/icon";
 import { askPermission, minutesOf, type AttToday } from "@/lib/use-attendance";
-import { LeaveAsk, leaveLine } from "@/components/leave-ask";
+import { LeavePanel } from "@/pages/leave";
 import type { Task } from "@/lib/types";
 
 // Start of day on Home (Pulse Redesign v7), for team leads and editors:
@@ -17,7 +17,8 @@ import type { Task } from "@/lib/types";
 //                      points: those are for leads),
 //                      which opens the wrap-up panel;
 //   checked out      — one line: the day closed and the hours in office
-//                      (Apply for leave is on every one of these).
+//                      (each opens Leave in a side panel: Ask for leave on
+//                      the card, with the CL / SL line; Leave on the bars).
 // Start day is the check-in and opens the work day (it replaced Start Work).
 
 const fmtHM = (ms: number) => {
@@ -83,12 +84,24 @@ export function StartDaySection({
     <button type="button" className="sd-link" onClick={() => setPermOpen((o) => !o)}>Ask for a permission</button>
   ) : null;
   const askForm = permOpen && perms ? <PermissionAsk today={today} left={perms.left} onDone={() => setPermOpen(false)} /> : null;
-  // Leave this year: CL and SL (null before the database has it).
-  const leave = att?.leave ?? null;
-  const leaveLink = leave && !preview ? (
-    <button type="button" className="sd-link" onClick={() => setLeaveOpen((o) => !o)}>Apply for leave</button>
+  // Leave (pages/leave.tsx), once a manager has started counting: Ask for
+  // leave and the CL / SL line on the card, Leave on the bars — a side panel.
+  const leave = att?.leave?.counting && !preview ? att.leave : null;
+  const leaveLink = leave ? (
+    <button type="button" className="sd-link sd-ic" onClick={() => setLeaveOpen(true)}><Icon name="event_available" size={16} />Ask for leave</button>
   ) : null;
-  const leaveForm = leaveOpen && leave ? <LeaveAsk today={today} leave={leave} onDone={() => setLeaveOpen(false)} /> : null;
+  const leaveBtn = leave ? (
+    <button type="button" className="sd-link sd-ic" onClick={() => setLeaveOpen(true)} title="Ask for leave, see your balance"><Icon name="event_available" size={16} />Leave</button>
+  ) : null;
+  const bal = leave?.balance;
+  const leaveLine = leave && bal ? (
+    <button type="button" className="sd-leave-line" onClick={() => setLeaveOpen(true)} title="Open your leave">
+      <span><i className="cl" />CL <b>{fmtN(bal.CL.left)} of {fmtN(bal.CL.total)}</b> left</span>
+      <span><i className="sl" />SL <b>{fmtN(bal.SL.left)} of {fmtN(bal.SL.total)}</b> left</span>
+      {leave.waiting > 0 && <span>· {leave.waiting} request{leave.waiting === 1 ? "" : "s"} waiting</span>}
+    </button>
+  ) : null;
+  const leaveForm = leaveOpen ? <LeavePanel onClose={() => setLeaveOpen(false)} /> : null;
   const now = new Date(nowMs);
   const nowMin = now.getHours() * 60 + now.getMinutes();
   // A preview (an admin seeing another role's Home) always shows the card a
@@ -170,7 +183,7 @@ export function StartDaySection({
             {leaveLink}
           </div>
           {permLine && <p className="sd-faint">{permLine}</p>}
-          {leave && <p className="sd-faint">{leaveLine(leave)}</p>}
+          {leaveLine}
           {askForm}
           {leaveForm}
           {corrOpen && (
@@ -218,7 +231,7 @@ export function StartDaySection({
         <Icon name="task_alt" size={18} className="sd-good" />
         <span><b>Day closed</b> · {clockTime(me.checkInAt)} – {clockTime(me.checkOutAt)} · {fmtHM(new Date(me.checkOutAt).getTime() - new Date(me.checkInAt).getTime())} in office · task timers paused</span>
         <span className="sd-grow" />
-        {leaveLink}
+        {leaveBtn}
         <button type="button" className="sd-link" onClick={onOpenReports}>My reports</button>
         <button type="button" className="sd-btn primary" onClick={() => start().then(() => toast.success("Day reopened. Your task timers are running again.")).catch((e) => toast.error(e instanceof ApiError ? e.message : "Couldn't reopen your day."))} disabled={busy}>{busy ? "Reopening…" : "Reopen day"}</button>
         {/* leave can be applied for whatever state today is in */}
@@ -277,7 +290,7 @@ export function StartDaySection({
         <button type="button" className="sd-link" onClick={openSod} title="Pick today's tasks and copy the Start of Day report for WhatsApp">Start of Day</button>
         <button type="button" className="sd-link" onClick={onOpenReports}>My reports</button>
         {askLink}
-        {leaveLink}
+        {leaveBtn}
         {canUndo && <button type="button" className="sd-link" onClick={undo} disabled={busy}>Undo</button>}
         {!ending && (
           <button type="button" className="sd-btn" onClick={() => setEnding(true)}><Icon name="logout" size={17} />End day</button>
@@ -305,6 +318,9 @@ export function StartDaySection({
     </section>
   );
 }
+
+// 2 or 1.5 (leave days)
+const fmtN = (x: number) => String(Math.round(x * 10) / 10);
 
 // "09:00" today → a Date (for clockTime).
 function atToday(hhmm: string) {

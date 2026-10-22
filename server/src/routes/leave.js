@@ -4,7 +4,7 @@ import { pool } from "../db.js";
 import { logActivity } from "../activity.js";
 import { isSuperHere } from "../super-admin.js";
 import { callerScope, clearSettingsCache, istNow, readSettings } from "../attendance.js";
-import { LEAVE_COLS, LeaveError, balances, cancelLeave, createLeave, decideLeave, isApprover, leaveReady, leaveRules } from "../leave.js";
+import { LEAVE_COLS, LeaveError, balances, cancelLeave, createLeave, decideLeave, isApprover, leaveReady, leaveRules, previewLeave } from "../leave.js";
 import { n1, requestWords } from "../leave-math.js";
 
 // Leave — CL (casual) and SL (sick): ask, decide, cancel, balances, the
@@ -113,6 +113,23 @@ leaveRouter.post("/leave", async (req, res, next) => {
     }
     res.status(201).json({ requests: made });
   } catch (err) { fail(res, next, err); }
+});
+
+// POST /leave/preview { type, from, to, half } — what that request would be
+// (days, notice, paid / unpaid, points), for the form's summary. Nothing saved.
+leaveRouter.post("/leave/preview", async (req, res, next) => {
+  const parsed = z.object({ type: z.enum(["CL", "SL"]), from: YMD, to: YMD.optional(), half: z.enum(["full", "first", "second"]).optional() }).safeParse(req.body ?? {});
+  if (!parsed.success) return res.json({ error: "Pick the days." });
+  try {
+    if (!(await ready(res))) return;
+    const [caller, { cal, att }] = await Promise.all([callerScope(req), readSettings(req.orgId)]);
+    if (!caller.editorId) return res.json({ error: "Your account isn't linked to a team member." });
+    const d = parsed.data;
+    res.json(await previewLeave({
+      editorId: caller.editorId, type: d.type, from: d.from, to: d.to ?? d.from, half: d.half ?? "full",
+      cal, rules: leaveRules(att), today: istNow().ymd,
+    }));
+  } catch (err) { next(err); }
 });
 
 // POST /leave/:id/decide { approve } — a manager's answer (not on their own).

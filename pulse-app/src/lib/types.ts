@@ -313,7 +313,8 @@ export type ActivityVerb =
   // Hand over (components/handover.tsx)
   | "handover_offered" | "handover_accepted" | "handover_declined" | "handover_cancelled" | "handover_escalated" | "handover_moved"
   // Leave: CL and SL (components/leave-ask.tsx)
-  | "leave_asked" | "leave_approved" | "leave_declined" | "leave_cancelled" | "leave_cl_set";
+  | "leave_asked" | "leave_approved" | "leave_declined" | "leave_cancelled" | "leave_topped_up" | "leave_allowance_set"
+  | "leave_counting_started" | "leave_rules_changed" | "attendance_leave_worked";
 
 export type Activity = {
   id: string;
