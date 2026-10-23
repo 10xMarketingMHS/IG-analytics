@@ -1,9 +1,10 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState, type MouseEvent } from "react";
 
 // Pulse Run — a one-button runner on the sign-in screen (login.tsx), Pulse's
 // own little game: the Pulse orb rolls along, jumps the blocks and catches the
-// sparks, a little faster all the time. Space / ↑ / a tap to jump, held for a
-// higher one. Never while you're typing in the form. Best score kept per browser.
+// sparks, a little faster all the time. The Play button starts a round; then
+// Space / ↑ / a tap to jump, held for a higher one — never while you're typing
+// in the form. Best score kept per browser.
 
 type Block = { x: number; w: number; h: number };
 type Spark = { x: number; y: number; got: boolean };
@@ -25,9 +26,17 @@ const TOP = 720;       // …climbing to this
 const typing = (t: EventTarget | null) =>
   t instanceof HTMLElement && (t.isContentEditable || /^(INPUT|TEXTAREA|SELECT|BUTTON|A)$/.test(t.tagName));
 
+const PLAY = (
+  <svg width="14" height="14" viewBox="0 0 24 24" aria-hidden="true"><path d="M7 4.5v15a1 1 0 0 0 1.5.86l12.4-7.5a1 1 0 0 0 0-1.72L8.5 3.64A1 1 0 0 0 7 4.5z" fill="currentColor" /></svg>
+);
+
 export function PulseRun() {
   const wrap = useRef<HTMLDivElement>(null);
   const canvas = useRef<HTMLCanvasElement>(null);
+  // the Play button and what it says: the round itself lives in the effect
+  const [phase, setPhase] = useState<"idle" | "run" | "over">("idle");
+  const [result, setResult] = useState({ score: 0, best: readBest() });
+  const startRound = useRef(() => {});
 
   useEffect(() => {
     const box = wrap.current, cv = canvas.current;
@@ -50,7 +59,7 @@ export function PulseRun() {
 
     let mode: "idle" | "run" | "over" = "idle";
     let y = 0, vy = 0, onGround = true;               // y: height above the ground
-    let speed = START, dist = 0, bonus = 0, gap = 0, roll = 0, clock = 0, overAt = 0;
+    let speed = START, dist = 0, bonus = 0, gap = 0, roll = 0, clock = 0;
     let blocks: Block[] = [], sparks: Spark[] = [], trail: number[] = [];
     let best = readBest();
     const ground = () => H - 24;
@@ -61,11 +70,9 @@ export function PulseRun() {
       y = 0; vy = 0; onGround = true; speed = START; dist = 0; bonus = 0; roll = 0;
       blocks = []; sparks = []; trail = []; gap = Math.max(W * 0.9, 360); // a run-up before the first block
     };
-    const press = () => {
-      if (mode === "over" && performance.now() - overAt < 400) return; // a held key doesn't restart at once
-      if (mode !== "run") { reset(); mode = "run"; }
-      if (onGround) { vy = JUMP; onGround = false; }
-    };
+    // a round starts only from the Play button; keys and taps just jump
+    startRound.current = () => { reset(); mode = "run"; setPhase("run"); };
+    const press = () => { if (mode === "run" && onGround) { vy = JUMP; onGround = false; } };
     const release = () => { if (vy > CUT) vy = CUT; };
 
     const spawn = () => {
@@ -104,8 +111,10 @@ export function PulseRun() {
         if (!s.got && Math.hypot(orbX() - s.x, ground() - R - y - (ground() - s.y)) < R + 8) { s.got = true; bonus += 10; }
       }
       if (blocks.some(hits)) {
-        mode = "over"; overAt = performance.now();
+        mode = "over";
         if (score() > best) { best = score(); saveBest(best); }
+        setResult({ score: score(), best });
+        setPhase("over");
       }
     };
 
@@ -169,19 +178,10 @@ export function PulseRun() {
       ctx.fillStyle = accent;
       ctx.beginPath(); ctx.arc(0, 0, R - 3, Math.PI / 2, (3 * Math.PI) / 2); ctx.closePath(); ctx.fill();
       ctx.restore();
-      // words
-      if (mode !== "idle") {
+      // the score while playing (before and after a round, the Play panel says it)
+      if (mode === "run") {
         text(String(score()).padStart(5, "0"), W - 22, 22, 15, 800, "right");
         if (best) text(`Best ${best}`, W - 22, 42, 11.5, 600, "right", 0.8);
-      }
-      const mid = Math.max(40, (g - 60) / 2);
-      if (mode === "idle") {
-        text("Tap or press Space to play", W / 2, mid, 15);
-        text("Jump the blocks · catch the sparks", W / 2, mid + 22, 12, 500, "center", 0.85);
-      } else if (mode === "over") {
-        text("Game over", W / 2, mid - 6, 18, 800);
-        text(`Score ${score()}${best ? ` · Best ${best}` : ""}`, W / 2, mid + 18, 12.5, 600, "center", 0.9);
-        text("Tap or press Space to play again", W / 2, mid + 38, 12, 500, "center", 0.8);
       }
     };
 
@@ -203,6 +203,7 @@ export function PulseRun() {
     };
     const onKeyUp = (e: KeyboardEvent) => { if (isJump(e)) release(); };
     const onDown = (e: PointerEvent) => {
+      if (mode !== "run") return;
       e.preventDefault();
       if (typing(document.activeElement)) (document.activeElement as HTMLElement).blur();
       box.dataset.pointer = ""; // focused by a tap: no keyboard ring (login.css)
@@ -233,10 +234,29 @@ export function PulseRun() {
     };
   }, []);
 
+  // Play: start, then keep the keys on the game (a click leaves no focus ring)
+  const play = (e: MouseEvent<HTMLButtonElement>) => {
+    const box = wrap.current;
+    if (box) {
+      if (e.detail > 0) box.dataset.pointer = ""; else delete box.dataset.pointer;
+      box.focus({ preventScroll: true });
+    }
+    startRound.current();
+  };
+
   return (
-    <div className="lg-game" ref={wrap} tabIndex={0} role="application"
-      aria-label="Pulse Run, a mini game: press Space or tap to jump over the blocks and catch the sparks">
+    <div className="lg-game" ref={wrap} tabIndex={-1} role="application"
+      aria-label="Pulse Run, a mini game: press Play, then Space or tap to jump over the blocks and catch the sparks">
       <canvas ref={canvas} />
+      {phase !== "run" && (
+        <div className="lg-gameui">
+          {phase === "over"
+            ? <><b>Game over</b><span>Score {result.score}{result.best ? ` · Best ${result.best}` : ""}</span></>
+            : <><b>Pulse Run</b><span>Jump the blocks · catch the sparks</span></>}
+          <button type="button" className="lg-play" onClick={play}>{PLAY}{phase === "over" ? "Play again" : "Play"}</button>
+          {phase === "idle" && <small>Then Space, ↑ or a tap to jump</small>}
+        </div>
+      )}
     </div>
   );
 }

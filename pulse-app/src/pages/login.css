@@ -42,6 +42,18 @@
 .lg-game{position:relative;z-index:2;flex:1;min-height:170px;margin:10px -32px 14px;outline:none}
 .lg-game canvas{position:absolute;inset:0;width:100%;height:100%;display:block;cursor:pointer;touch-action:manipulation;-webkit-tap-highlight-color:transparent}
 .lg-game:focus-visible:not([data-pointer]){box-shadow:inset 0 0 0 2px rgba(255,255,255,.75);border-radius:14px}
+/* before and after a round: the name or the score, and Play */
+.lg-gameui{position:absolute;inset:0 0 44px;z-index:1;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:6px;
+  text-align:center;pointer-events:none;text-shadow:0 1px 10px rgba(20,10,60,.55)}
+.lg-gameui b{font-size:19px;font-weight:800;letter-spacing:-.01em}
+.lg-gameui span{font-size:12.5px;font-weight:600;opacity:.92}
+.lg-gameui small{font-size:11.5px;font-weight:500;opacity:.82}
+.lg-play{pointer-events:auto;margin:10px 0 4px;display:inline-flex;align-items:center;gap:9px;height:44px;padding:0 24px 0 20px;
+  border:1px solid rgba(255,255,255,.65);border-radius:999px;background:rgba(255,255,255,.92);color:oklch(0.42 0.22 var(--acH));
+  font-family:inherit;font-size:14.5px;font-weight:800;cursor:pointer;text-shadow:none;
+  box-shadow:0 12px 30px -10px rgba(20,10,60,.6),inset 0 1px 0 #fff;transition:background-color .15s,box-shadow .15s}
+.lg-play:hover{background:#fff;box-shadow:0 16px 36px -10px rgba(20,10,60,.7),inset 0 1px 0 #fff}
+.lg-play:focus-visible{outline:3px solid rgba(255,255,255,.9);outline-offset:3px}
 .lg-pitch{position:relative;z-index:2;display:flex;flex-direction:column;gap:12px;max-width:420px;text-shadow:0 1px 12px rgba(20,10,60,.35)}
 .lg-pitch span{font-size:13.5px;font-weight:600;opacity:.92}
 .lg-pitch b{font-size:clamp(24px,2.6vw,32px);font-weight:800;line-height:1.18;letter-spacing:-.02em;text-wrap:balance}
@@ -86,6 +98,9 @@
   .lg-card{grid-template-columns:minmax(0,1fr);min-height:0;border-radius:26px}
   .lg-art{min-height:330px;padding:22px 22px 24px}
   .lg-game{min-height:150px;margin:6px -22px 10px}
+  .lg-gameui{inset:0 0 34px;gap:4px}
+  .lg-gameui small{display:none}
+  .lg-play{height:40px;margin-top:6px}
   .lg-blob.b1{width:72%;height:170%;top:-35%}
   .lg-pitch b{font-size:24px}
   .lg-side{padding:28px 14px 22px}
