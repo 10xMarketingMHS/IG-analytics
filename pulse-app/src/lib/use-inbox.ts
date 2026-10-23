@@ -26,6 +26,7 @@ export type InboxData = { waiting: InboxItem[]; sent: InboxItem[]; count: number
 
 let current: { who: string; data: InboxData } | null = null;
 let inflight: Promise<void> | null = null;
+let inflightWho = "";
 let queued: Promise<void> | null = null;
 const subs = new Set<() => void>();
 const tell = () => subs.forEach((f) => f());
@@ -34,11 +35,14 @@ const tell = () => subs.forEach((f) => f());
 // left before the change, so another one follows it.
 export function refreshInbox(who: string, fresh = false): Promise<void> {
   if (!who) return Promise.resolve();
+  // a look still on its way for someone else (before a sign-out): not theirs to share
+  if (inflight && inflightWho !== who) inflight = null;
   if (inflight && fresh) {
     queued ??= inflight.then(() => { queued = null; return refreshInbox(who); });
     return queued;
   }
   if (!inflight) {
+    inflightWho = who;
     inflight = api<InboxData>("/inbox")
       .then((data) => { current = { who, data }; tell(); })
       .catch(() => { /* kept as it was; the next look tries again */ })

@@ -29,6 +29,7 @@ import { BreakProvider, useBreakState } from "@/lib/break-context";
 import { useDayLocked, useEodState } from "@/lib/eod-context";
 import { MyProfileModal } from "@/components/my-profile-modal";
 import { Modal } from "@/components/modal";
+import { ErrorBoundary } from "@/components/error-boundary";
 import { notifyTasksChanged } from "@/lib/task-events";
 import { SodModal } from "@/components/sod-modal";
 import { useTheme, ACCENTS } from "@/components/theme-provider";
@@ -356,7 +357,7 @@ function AppShellInner() {
   const review = useReviewAccess();
   // the alerts' one shared list of open tasks: the team's for admins and
   // reviewers, otherwise just your own (lib/use-task-alerts.ts)
-  const alertTasks = useTaskAlertList(isAdmin || review.reviewer ? "team" : user?.editorId ? "mine" : null);
+  const alertTasks = useTaskAlertList(isAdmin || review.reviewer ? "team" : user?.editorId ? "mine" : null, user?.id ?? "");
   useTaskAssignNotify(alertTasks);
   useOverdueTaskNotify(alertTasks);
   useDueOverdueNotify(alertTasks);
@@ -740,7 +741,10 @@ function AppShellInner() {
           )}
         </div>
         <div className="content">
-          <Outlet />
+          {/* a page that breaks says so (the sidebar stays); another page starts afresh */}
+          <ErrorBoundary resetKey={location.pathname}>
+            <Outlet />
+          </ErrorBoundary>
         </div>
       </main>
       {/* Phones: an app-style tab bar (components/mobile.css) — the four

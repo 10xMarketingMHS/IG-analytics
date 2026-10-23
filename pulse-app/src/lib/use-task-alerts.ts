@@ -16,7 +16,7 @@ const subs = new Set<() => void>();
 
 function load(key: string) {
   if (!inflight) {
-    inflight = api<{ tasks: Task[] }>(key)
+    inflight = api<{ tasks: Task[] }>(key.slice(key.indexOf("|") + 1))
       .then((d) => { current = { key, tasks: d.tasks }; subs.forEach((f) => f()); })
       .catch(() => { /* kept as it was; the next look tries again */ })
       .finally(() => { inflight = null; });
@@ -24,8 +24,17 @@ function load(key: string) {
   return inflight;
 }
 
-export function useTaskAlertList(scope: AlertScope): Task[] | null {
-  const key = scope === "team" ? "/tasks?open=1&lite=1" : scope === "mine" ? "/tasks?assignee=me&open=1&lite=1" : "";
+// Signed out: the list goes with them.
+export function clearTaskAlerts() {
+  current = null;
+  inflight = null;
+}
+
+// `who`: the signed-in person, so the next one on this browser never gets the
+// previous one's list (or alerts about it).
+export function useTaskAlertList(scope: AlertScope, who: string): Task[] | null {
+  const url = scope === "team" ? "/tasks?open=1&lite=1" : scope === "mine" ? "/tasks?assignee=me&open=1&lite=1" : "";
+  const key = url && who ? `${who}|${url}` : "";
   const [, setTick] = useState(0);
   useEffect(() => {
     if (!key) return;
