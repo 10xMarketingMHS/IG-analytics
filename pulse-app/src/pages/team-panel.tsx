@@ -8,6 +8,7 @@ import { DAILY_BREAK_CAP_SEC } from "@/lib/task-timing";
 import type { Editor, Task } from "@/lib/types";
 import "./my-team.css";
 import { clockTime } from "@/lib/time-format";
+import { webLink } from "@/lib/csv";
 
 // The body of the admin-only My Team page (Pulse Redesign v5, Team): every team
 // member as a card, ranked by Task Points for a chosen date range, with what
@@ -137,7 +138,7 @@ export async function exportReport(ranked: RankedRow[], from: string, to: string
       done && t.completed_at ? ymd(new Date(t.completed_at)) : "",
       daysLate(t), Math.max(0, (t.revision ?? 1) - 1),
       done && isScorableTask(t) ? Math.round(taskPoints(t) * 10) / 10 : "",
-      t.delivery_link ? { text: t.delivery_link, hyperlink: t.delivery_link } : "",
+      webLink(t.delivery_link) ? { text: t.delivery_link, hyperlink: t.delivery_link } : t.delivery_link ?? "",
       (t.attachments ?? []).map((a) => (a.label ? `${a.label}: ${a.url}` : a.url)).join("\n"),
       taskNote(t, today).text,
       t.self_created ? "Yes" : "",

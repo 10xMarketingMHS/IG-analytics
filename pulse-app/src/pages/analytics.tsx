@@ -10,6 +10,7 @@ import {
 } from "@/lib/date-range";
 import { performanceScore } from "@/lib/score";
 import type { Post, Platform, Account } from "@/lib/types";
+import { csvCell } from "@/lib/csv";
 import "./analytics.css";
 
 // Analytics — the Dashboard and Top Performers in one page (Pulse Redesign v5).
@@ -337,12 +338,11 @@ export function AnalyticsPage() {
 
   function exportCsv() {
     const head = ["Date", "Title", "Channel", "Platform", "Type", "Views", "Reach", "Likes", "Comments", "Shares", "Saves", "Engagement rate %", "Performance score"];
-    const esc = (v: string | number) => { const s = String(v); return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s; };
     const rows = [...counted].sort((a, b) => (a.date < b.date ? 1 : -1)).map((p) => [
       p.date, p.title, p.channel_name ?? "", platformName(p.platform_id), TYPE_LABEL[p.post_type] ?? p.post_type,
       p.views, p.reach, p.likes, p.comments, p.shares, p.saves, rateOf(engOf(p), p.reach).toFixed(2), Math.round(performanceScore(p)),
     ]);
-    const csv = [head, ...rows].map((r) => r.map(esc).join(",")).join("\n");
+    const csv = [head, ...rows].map((r) => r.map(csvCell).join(",")).join("\n");
     const url = URL.createObjectURL(new Blob([csv], { type: "text/csv;charset=utf-8" }));
     const a = document.createElement("a");
     a.href = url; a.download = `pulse-analytics-${from}-to-${to}.csv`;
