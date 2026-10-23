@@ -52,6 +52,10 @@ export function normalizeAttendance(a) {
   return s;
 }
 
+// Senior Editor, Editor and Junior Editor: one level (Team › Roster); only the
+// title differs. Mirrors pulse-app/src/lib/home-role.ts.
+export const EDITOR_TITLES = ["senior editor", "editor", "junior editor"];
+
 // The position's key in teamView, or null for everyone else.
 export function positionKey(designation) {
   const p = String(designation || "").trim().toLowerCase();
@@ -123,13 +127,13 @@ export const attendanceReady = () => hasColumn("attendance", "id");
 
 // Home role from the position (Team › Roster): Manager and Asst. Manager get
 // the Manager Home, Team Lead the Team lead Home, everyone else the Editor
-// Home; an admin whose position isn't Editor or Viewer (none, or an older
+// Home; an admin whose position isn't an Editor's or Viewer (none, or an older
 // title) counts as a Manager. Mirrors pulse-app/src/lib/home-role.ts.
 export function homeRoleOf(designation, isAdmin) {
   const p = String(designation || "").trim().toLowerCase();
   if (p === "manager" || p === "asst. manager" || p === "assistant manager") return "manager";
   if (p === "team lead") return "lead";
-  if (isAdmin && p !== "editor" && p !== "viewer") return "manager";
+  if (isAdmin && !EDITOR_TITLES.includes(p) && p !== "viewer") return "manager";
   return "editor";
 }
 

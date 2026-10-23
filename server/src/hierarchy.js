@@ -1,10 +1,10 @@
 import { pool } from "./db.js";
 import { isOrgAdmin } from "./permissions.js";
-import { positionKey } from "./attendance.js";
+import { EDITOR_TITLES, positionKey } from "./attendance.js";
 import { isSuperUser, superState } from "./super-admin.js";
 
 // The team's hierarchy by position: Manager › Asst. Manager › Team Lead ›
-// Editor › Viewer (Team › Roster). Nobody sees the tasks of someone above
+// Editor (Senior, Junior: the same level) › Viewer (Team › Roster). Nobody sees the tasks of someone above
 // them — an editor doesn't see a team lead's or a manager's tasks, and an
 // admin who is a Team Lead doesn't see a Manager's. Only the Super Admin sees
 // everything (before anyone is one, any admin does). Lower number = more senior.
@@ -15,7 +15,7 @@ export function rankOf(designation, isAdmin) {
   const p = String(designation || "").trim().toLowerCase();
   if (p === "viewer") return 4;
   // An admin with no position, or an older title, sits at the top.
-  if (isAdmin && p !== "editor") return 0;
+  if (isAdmin && !EDITOR_TITLES.includes(p)) return 0;
   return 3;
 }
 

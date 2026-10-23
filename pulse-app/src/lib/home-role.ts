@@ -1,14 +1,17 @@
 // Home role from the position (Team › Roster): Manager and Asst. Manager get
 // the Manager Home, Team Lead the Team lead Home, everyone else the Editor
-// Home; an admin whose position isn't Editor or Viewer (none, or an older
+// Home; an admin whose position isn't an Editor's or Viewer (none, or an older
 // title) counts as a Manager. Mirrors homeRoleOf() in server/src/attendance.js.
 export type HomeRole = "manager" | "lead" | "editor";
+
+// Senior Editor, Editor and Junior Editor: one level; only the title differs.
+const EDITOR_TITLES = ["senior editor", "editor", "junior editor"];
 
 export function homeRoleOf(designation: string | null | undefined, isAdmin: boolean): HomeRole {
   const p = String(designation || "").trim().toLowerCase();
   if (p === "manager" || p === "asst. manager" || p === "assistant manager") return "manager";
   if (p === "team lead") return "lead";
-  if (isAdmin && p !== "editor" && p !== "viewer") return "manager";
+  if (isAdmin && !EDITOR_TITLES.includes(p) && p !== "viewer") return "manager";
   return "editor";
 }
 
@@ -26,7 +29,7 @@ export function positionKey(designation: string | null | undefined): TeamViewKey
   return null;
 }
 // The team's hierarchy (Team › Roster positions): Manager › Asst. Manager ›
-// Team Lead › Editor › Viewer; an admin with no position, or an older title,
+// Team Lead › Editor (Senior, Junior: the same level) › Viewer; an admin with no position, or an older title,
 // sits at the top. Lower number = more senior. Mirrors rankOf() in
 // server/src/hierarchy.js.
 export function rankOf(designation: string | null | undefined, isAdmin: boolean): number {
@@ -36,7 +39,7 @@ export function rankOf(designation: string | null | undefined, isAdmin: boolean)
   if (k === "teamLead") return 2;
   const p = String(designation || "").trim().toLowerCase();
   if (p === "viewer") return 4;
-  if (isAdmin && p !== "editor") return 0;
+  if (isAdmin && !EDITOR_TITLES.includes(p)) return 0;
   return 3;
 }
 // Who someone sees in lists of people: the Super Admin sees everyone; anyone

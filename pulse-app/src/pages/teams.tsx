@@ -9,7 +9,8 @@ import type { AppUser, Editor, Role } from "@/lib/types";
 // Positions: the team's hierarchy, most senior first. A job title only — what
 // someone can do in Pulse is their Role. Picked from this list; a position
 // saved before the list was fixed still shows on that person until changed.
-export const DESIGNATIONS = ["Manager", "Asst. Manager", "Team Lead", "Editor", "Viewer"];
+// Senior Editor, Editor and Junior Editor are one level; only the title differs.
+export const DESIGNATIONS = ["Manager", "Asst. Manager", "Team Lead", "Senior Editor", "Editor", "Junior Editor", "Viewer"];
 // Where a position sits in the hierarchy (0 = most senior); anything else
 // comes after the list, and no position last.
 export const positionRank = (p: string | null | undefined): number => {
@@ -183,7 +184,7 @@ export function TeamMemberModal({ row, onClose, onSaved, existingEmails, startWi
                 <option value="">No position</option>
                 {(designation && !DESIGNATIONS.includes(designation) ? [designation, ...DESIGNATIONS] : DESIGNATIONS).map((d) => <option key={d} value={d}>{d}</option>)}
               </select>
-              <div className="hint" style={{ marginTop: 5 }}>Manager › Asst. Manager › Team Lead › Editor › Viewer. A job title only; what they can do is set by their Role.</div>
+              <div className="hint" style={{ marginTop: 5 }}>Manager › Asst. Manager › Team Lead › Editor › Viewer; Senior and Junior Editors are at the Editor level. What they can do is set by their Role.</div>
             </div>
             <div className="field">
               <label className="f">Employee code</label>
