@@ -8,10 +8,11 @@
 .lg-card{min-height:100%;display:grid;grid-template-columns:minmax(0,1.1fr) minmax(0,1fr);gap:12px;padding:14px}
 
 /* the art */
-.lg-art{position:relative;overflow:hidden;isolation:isolate;border-radius:22px;color:#fff;min-height:420px;
+/* clip (not just hidden): the panel can't be scrolled, so focusing the game never shifts it */
+.lg-art{position:relative;overflow:hidden;overflow:clip;isolation:isolate;border-radius:22px;color:#fff;min-height:420px;
   display:flex;flex-direction:column;justify-content:space-between;padding:30px 32px 34px;
   background:linear-gradient(155deg,oklch(0.86 0.07 calc(var(--acH) - 70)) 0%,oklch(0.93 0.04 var(--acH)) 55%,oklch(0.97 0.02 calc(var(--acH) + 20)) 100%)}
-.lg-light{position:absolute;inset:0;z-index:0;pointer-events:none}
+.lg-light{position:absolute;inset:0;z-index:0;pointer-events:none;overflow:hidden;border-radius:inherit}
 .lg-blob{position:absolute;border-radius:50%;filter:blur(46px);will-change:transform}
 /* each blob drifts on its own (transform) and leans toward the pointer (translate) */
 .lg-blob.b1{width:78%;height:82%;left:-18%;top:12%;background:radial-gradient(closest-side,oklch(0.3 0.22 calc(var(--acH) - 10)),oklch(0.42 0.25 var(--acH)) 55%,transparent);
@@ -38,21 +39,25 @@
 .lg-mark{position:relative;z-index:2;width:46px;height:46px;display:grid;place-items:center;border-radius:14px;font-size:22px;color:#fff;
   background:rgba(255,255,255,.16);border:1px solid rgba(255,255,255,.32);backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px);
   box-shadow:0 8px 24px -8px rgba(20,10,60,.5)}
-/* the mini game (components/pulse-run.tsx): the panel's width, between the mark and the words */
+/* the mini game (components/pulse-run.tsx): the panel's width, between the mark
+   and the words. Nothing of it shows until Play: the panel is its colours. */
 .lg-game{position:relative;z-index:2;flex:1;min-height:170px;margin:10px -32px 14px;outline:none}
-.lg-game canvas{position:absolute;inset:0;width:100%;height:100%;display:block;cursor:pointer;touch-action:manipulation;-webkit-tap-highlight-color:transparent}
+.lg-game canvas{position:absolute;inset:0;width:100%;height:100%;display:block;opacity:0;pointer-events:none;transition:opacity .45s ease;
+  touch-action:manipulation;-webkit-tap-highlight-color:transparent}
+.lg-game[data-on] canvas{opacity:1;pointer-events:auto;cursor:pointer}
 .lg-game:focus-visible:not([data-pointer]){box-shadow:inset 0 0 0 2px rgba(255,255,255,.75);border-radius:14px}
-/* before and after a round: the name or the score, and Play */
-.lg-gameui{position:absolute;inset:0 0 44px;z-index:1;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:6px;
-  text-align:center;pointer-events:none;text-shadow:0 1px 10px rgba(20,10,60,.55)}
-.lg-gameui b{font-size:19px;font-weight:800;letter-spacing:-.01em}
-.lg-gameui span{font-size:12.5px;font-weight:600;opacity:.92}
-.lg-gameui small{font-size:11.5px;font-weight:500;opacity:.82}
-.lg-play{pointer-events:auto;margin:10px 0 4px;display:inline-flex;align-items:center;gap:9px;height:44px;padding:0 24px 0 20px;
-  border:1px solid rgba(255,255,255,.65);border-radius:999px;background:rgba(255,255,255,.92);color:oklch(0.42 0.22 var(--acH));
-  font-family:inherit;font-size:14.5px;font-weight:800;cursor:pointer;text-shadow:none;
-  box-shadow:0 12px 30px -10px rgba(20,10,60,.6),inset 0 1px 0 #fff;transition:background-color .15s,box-shadow .15s}
-.lg-play:hover{background:#fff;box-shadow:0 16px 36px -10px rgba(20,10,60,.7),inset 0 1px 0 #fff}
+/* top-right of the panel, level with the mark: Play, the score, the result */
+.lg-gamebar{position:absolute;z-index:3;top:34px;right:32px;display:flex;align-items:center;gap:10px}
+.lg-score{display:flex;flex-direction:column;align-items:flex-end;line-height:1.15;text-shadow:0 1px 10px rgba(20,10,60,.55)}
+.lg-score b{font-size:16px;font-weight:800;font-variant-numeric:tabular-nums;letter-spacing:.02em}
+.lg-score span{font-size:11.5px;font-weight:600;opacity:.85}
+.lg-score.over b{font-size:13.5px;letter-spacing:0}
+.lg-play{display:inline-flex;align-items:center;gap:8px;height:38px;padding:0 18px 0 15px;
+  border:1px solid rgba(255,255,255,.55);border-radius:999px;background:rgba(255,255,255,.2);color:#fff;
+  backdrop-filter:blur(12px);-webkit-backdrop-filter:blur(12px);
+  font-family:inherit;font-size:13.5px;font-weight:750;cursor:pointer;text-shadow:0 1px 6px rgba(20,10,60,.35);
+  box-shadow:0 8px 24px -10px rgba(20,10,60,.55),inset 0 1px 0 rgba(255,255,255,.35);transition:background-color .15s,color .15s,box-shadow .15s}
+.lg-play:hover{background:rgba(255,255,255,.92);color:oklch(0.42 0.22 var(--acH));text-shadow:none}
 .lg-play:focus-visible{outline:3px solid rgba(255,255,255,.9);outline-offset:3px}
 .lg-pitch{position:relative;z-index:2;display:flex;flex-direction:column;gap:12px;max-width:420px;text-shadow:0 1px 12px rgba(20,10,60,.35)}
 .lg-pitch span{font-size:13.5px;font-weight:600;opacity:.92}
@@ -98,9 +103,7 @@
   .lg-card{grid-template-columns:minmax(0,1fr);min-height:0;border-radius:26px}
   .lg-art{min-height:330px;padding:22px 22px 24px}
   .lg-game{min-height:150px;margin:6px -22px 10px}
-  .lg-gameui{inset:0 0 34px;gap:4px}
-  .lg-gameui small{display:none}
-  .lg-play{height:40px;margin-top:6px}
+  .lg-gamebar{top:26px;right:22px}
   .lg-blob.b1{width:72%;height:170%;top:-35%}
   .lg-pitch b{font-size:24px}
   .lg-side{padding:28px 14px 22px}

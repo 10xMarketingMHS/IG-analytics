@@ -2,17 +2,21 @@ import { useEffect, useRef, useState, type MouseEvent } from "react";
 
 // Pulse Run — a one-button runner on the sign-in screen (login.tsx), Pulse's
 // own little game: the Pulse orb rolls along, jumps the blocks and catches the
-// sparks, a little faster all the time. The Play button starts a round; then
-// Space / ↑ / a tap to jump, held for a higher one — never while you're typing
+// sparks, a little faster all the time. Until Play is pressed the panel is
+// just its moving colours; the game fades in for a round and back out after
+// it. Play and the score sit in the panel's top-right corner. During a round,
+// Space / ↑ / a tap jump (held for a higher one) — never while you're typing
 // in the form. Best score kept per browser.
 
 type Block = { x: number; w: number; h: number };
 type Spark = { x: number; y: number; got: boolean };
+type Phase = "idle" | "run" | "over";
 
 const BEST_KEY = "pulse:runBest";
 const readBest = () => { try { return Number(localStorage.getItem(BEST_KEY)) || 0; } catch { return 0; } };
 const saveBest = (n: number) => { try { localStorage.setItem(BEST_KEY, String(n)); } catch { /* private window */ } };
 const rand = (a: number, b: number) => a + Math.random() * (b - a);
+const pad = (n: number) => String(n).padStart(5, "0");
 
 // physics, in px and seconds
 const R = 13;          // the orb
@@ -21,20 +25,22 @@ const JUMP = 760;      // up to ~120px high
 const CUT = 300;       // let go early: a lower hop
 const START = 320;     // speed, px/s…
 const TOP = 720;       // …climbing to this
+const LINGER = 1100;   // ms the crash stays on screen before the game fades out
 
 // typing in the form (or on a button) never jumps
 const typing = (t: EventTarget | null) =>
   t instanceof HTMLElement && (t.isContentEditable || /^(INPUT|TEXTAREA|SELECT|BUTTON|A)$/.test(t.tagName));
 
 const PLAY = (
-  <svg width="14" height="14" viewBox="0 0 24 24" aria-hidden="true"><path d="M7 4.5v15a1 1 0 0 0 1.5.86l12.4-7.5a1 1 0 0 0 0-1.72L8.5 3.64A1 1 0 0 0 7 4.5z" fill="currentColor" /></svg>
+  <svg width="13" height="13" viewBox="0 0 24 24" aria-hidden="true"><path d="M7 4.5v15a1 1 0 0 0 1.5.86l12.4-7.5a1 1 0 0 0 0-1.72L8.5 3.64A1 1 0 0 0 7 4.5z" fill="currentColor" /></svg>
 );
 
 export function PulseRun() {
   const wrap = useRef<HTMLDivElement>(null);
   const canvas = useRef<HTMLCanvasElement>(null);
-  // the Play button and what it says: the round itself lives in the effect
-  const [phase, setPhase] = useState<"idle" | "run" | "over">("idle");
+  const scoreEl = useRef<HTMLElement>(null);   // the running score, written by the loop (no re-render per frame)
+  const [phase, setPhase] = useState<Phase>("idle");
+  const [shown, setShown] = useState(false);   // the game on screen (a round, and the moment after)
   const [result, setResult] = useState({ score: 0, best: readBest() });
   const startRound = useRef(() => {});
 
@@ -42,7 +48,6 @@ export function PulseRun() {
     const box = wrap.current, cv = canvas.current;
     const ctx = cv?.getContext("2d");
     if (!box || !cv || !ctx) return;
-    const still = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
     const accent = getComputedStyle(document.documentElement).getPropertyValue("--accent").trim() || "#7c3aed";
 
     let W = 0, H = 0;
@@ -52,26 +57,32 @@ export function PulseRun() {
       W = r.width; H = r.height;
       cv.width = Math.round(W * dpr); cv.height = Math.round(H * dpr);
       ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      painted = false;
     };
+    let painted = false;   // the last frame is still on the canvas (it fades out with it)
     const ro = new ResizeObserver(fit);
     ro.observe(cv);
-    fit();
 
-    let mode: "idle" | "run" | "over" = "idle";
+    let mode: Phase = "idle";
     let y = 0, vy = 0, onGround = true;               // y: height above the ground
-    let speed = START, dist = 0, bonus = 0, gap = 0, roll = 0, clock = 0;
+    let speed = START, dist = 0, bonus = 0, gap = 0, roll = 0, clock = 0, shownScore = -1;
     let blocks: Block[] = [], sparks: Spark[] = [], trail: number[] = [];
     let best = readBest();
+    let hideTimer = 0;
     const ground = () => H - 24;
     const orbX = () => Math.max(56, W * 0.16);
     const score = () => Math.floor(dist / 12) + bonus;
 
     const reset = () => {
-      y = 0; vy = 0; onGround = true; speed = START; dist = 0; bonus = 0; roll = 0;
+      y = 0; vy = 0; onGround = true; speed = START; dist = 0; bonus = 0; roll = 0; shownScore = -1;
       blocks = []; sparks = []; trail = []; gap = Math.max(W * 0.9, 360); // a run-up before the first block
     };
     // a round starts only from the Play button; keys and taps just jump
-    startRound.current = () => { reset(); mode = "run"; setPhase("run"); };
+    startRound.current = () => {
+      window.clearTimeout(hideTimer);
+      reset(); mode = "run";
+      setPhase("run"); setShown(true);
+    };
     const press = () => { if (mode === "run" && onGround) { vy = JUMP; onGround = false; } };
     const release = () => { if (vy > CUT) vy = CUT; };
 
@@ -110,22 +121,16 @@ export function PulseRun() {
       for (const s of sparks) {
         if (!s.got && Math.hypot(orbX() - s.x, ground() - R - y - (ground() - s.y)) < R + 8) { s.got = true; bonus += 10; }
       }
+      const now = score();
+      if (now !== shownScore && scoreEl.current) { scoreEl.current.textContent = pad(now); shownScore = now; }
       if (blocks.some(hits)) {
         mode = "over";
-        if (score() > best) { best = score(); saveBest(best); }
-        setResult({ score: score(), best });
+        if (now > best) { best = now; saveBest(best); }
+        setResult({ score: now, best });
         setPhase("over");
+        // the crash stays a moment, then the panel is colours again
+        hideTimer = window.setTimeout(() => setShown(false), LINGER);
       }
-    };
-
-    const text = (s: string, x: number, yy: number, size: number, weight = 700, align: CanvasTextAlign = "center", alpha = 1) => {
-      ctx.save();
-      ctx.font = `${weight} ${size}px Inter, "Segoe UI", system-ui, sans-serif`;
-      ctx.textAlign = align; ctx.textBaseline = "middle";
-      ctx.shadowColor = "rgba(20,10,60,.55)"; ctx.shadowBlur = 10;
-      ctx.fillStyle = `rgba(255,255,255,${alpha})`;
-      ctx.fillText(s, x, yy);
-      ctx.restore();
     };
 
     const draw = () => {
@@ -162,8 +167,7 @@ export function PulseRun() {
         ctx.restore();
       }
       // the orb: a trail, a glow, the Pulse half-moon turning as it rolls
-      const bob = mode === "idle" && !still ? Math.abs(Math.sin(clock * 3)) * 10 : 0;
-      const cy = g - R - (mode === "idle" ? bob : y);
+      const cy = g - R - y;
       trail.forEach((ty, i) => {
         ctx.fillStyle = `rgba(255,255,255,${0.22 - i * 0.022})`;
         ctx.beginPath(); ctx.arc(ox - (i + 1) * 7, ty, R * (1 - i * 0.07), 0, Math.PI * 2); ctx.fill();
@@ -178,18 +182,18 @@ export function PulseRun() {
       ctx.fillStyle = accent;
       ctx.beginPath(); ctx.arc(0, 0, R - 3, Math.PI / 2, (3 * Math.PI) / 2); ctx.closePath(); ctx.fill();
       ctx.restore();
-      // the score while playing (before and after a round, the Play panel says it)
-      if (mode === "run") {
-        text(String(score()).padStart(5, "0"), W - 22, 22, 15, 800, "right");
-        if (best) text(`Best ${best}`, W - 22, 42, 11.5, 600, "right", 0.8);
-      }
+      painted = true;
     };
 
+    // drawn only during a round (and its last frame kept while it fades out)
     let raf = 0, last = performance.now();
     const frame = (now: number) => {
       const dt = Math.min(0.033, (now - last) / 1000);
       last = now;
-      if (!document.hidden) { step(dt); draw(); }
+      if (!document.hidden) {
+        step(dt);
+        if (mode === "run" || (mode === "over" && !painted)) draw();
+      }
       raf = requestAnimationFrame(frame);
     };
     raf = requestAnimationFrame(frame);
@@ -197,7 +201,7 @@ export function PulseRun() {
 
     const isJump = (e: KeyboardEvent) => e.code === "Space" || e.key === " " || e.key === "ArrowUp";
     const onKeyDown = (e: KeyboardEvent) => {
-      if (!isJump(e) || typing(e.target) || e.metaKey || e.ctrlKey || e.altKey) return;
+      if (mode !== "run" || !isJump(e) || typing(e.target) || e.metaKey || e.ctrlKey || e.altKey) return;
       e.preventDefault();
       if (!e.repeat) press();
     };
@@ -222,6 +226,7 @@ export function PulseRun() {
     cv.addEventListener("pointerleave", release);
     return () => {
       cancelAnimationFrame(raf);
+      window.clearTimeout(hideTimer);
       ro.disconnect();
       box.removeEventListener("blur", onBlur);
       window.removeEventListener("keydown", onKeyDown);
@@ -245,18 +250,26 @@ export function PulseRun() {
   };
 
   return (
-    <div className="lg-game" ref={wrap} tabIndex={-1} role="application"
-      aria-label="Pulse Run, a mini game: press Play, then Space or tap to jump over the blocks and catch the sparks">
-      <canvas ref={canvas} />
-      {phase !== "run" && (
-        <div className="lg-gameui">
-          {phase === "over"
-            ? <><b>Game over</b><span>Score {result.score}{result.best ? ` · Best ${result.best}` : ""}</span></>
-            : <><b>Pulse Run</b><span>Jump the blocks · catch the sparks</span></>}
-          <button type="button" className="lg-play" onClick={play}>{PLAY}{phase === "over" ? "Play again" : "Play"}</button>
-          {phase === "idle" && <small>Then Space, ↑ or a tap to jump</small>}
-        </div>
-      )}
-    </div>
+    <>
+      <div className="lg-game" ref={wrap} tabIndex={-1} data-on={shown || undefined} role="application"
+        aria-label="Pulse Run, a mini game: press Play, then Space or tap to jump over the blocks and catch the sparks">
+        <canvas ref={canvas} />
+      </div>
+      {/* top-right of the panel: Play, the score while playing, the result after */}
+      <div className="lg-gamebar" aria-live="polite">
+        {phase === "run" ? (
+          <span className="lg-score"><b ref={scoreEl}>{pad(0)}</b>{result.best > 0 && <span>Best {result.best}</span>}</span>
+        ) : (
+          <>
+            {phase === "over" && (
+              <span className="lg-score over"><b>Game over · {result.score}</b><span>Best {result.best}</span></span>
+            )}
+            <button type="button" className="lg-play" onClick={play} title="Play Pulse Run: jump the blocks, catch the sparks (Space, ↑ or a tap)">
+              {PLAY}{phase === "over" ? "Play again" : "Play"}
+            </button>
+          </>
+        )}
+      </div>
+    </>
   );
 }
