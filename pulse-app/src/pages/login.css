@@ -64,7 +64,15 @@
 .lg-pitch b{font-size:clamp(24px,2.6vw,32px);font-weight:800;line-height:1.18;letter-spacing:-.02em;text-wrap:balance}
 
 /* the form */
-.lg-side{display:grid;place-items:center;padding:40px 28px}
+.lg-side{position:relative;display:grid;place-items:center;padding:40px 28px}
+/* light / dark, top-right of the form side */
+.lg-theme{position:absolute;top:22px;right:24px;display:flex;gap:2px;padding:3px;border:1px solid var(--border);border-radius:999px;background:var(--panel2)}
+.lg-theme button{width:34px;height:28px;display:grid;place-items:center;padding:0;border:0;border-radius:999px;background:transparent;color:var(--muted);
+  cursor:pointer;transition:background-color .15s,color .15s}
+.lg-theme button:hover{color:var(--text)}
+.lg-theme button[aria-checked="true"]{background:color-mix(in srgb,var(--accent) 16%,var(--panel));color:var(--accent-ink);
+  box-shadow:0 1px 2px oklch(0.3 0.1 var(--acH) / .12),0 4px 10px -4px oklch(0.45 0.2 var(--acH) / .4)}
+.lg-theme button:focus-visible{outline:2px solid var(--accent);outline-offset:1px}
 .lg-form{width:min(380px,100%);display:flex;flex-direction:column}
 .lg-logo{width:42px;height:42px;border-radius:13px;font-size:19px;margin-bottom:22px}
 .lg-form h1{margin:0;font-size:30px;font-weight:800;letter-spacing:-.025em;color:var(--text)}
@@ -107,6 +115,7 @@
   .lg-blob.b1{width:72%;height:170%;top:-35%}
   .lg-pitch b{font-size:24px}
   .lg-side{padding:28px 14px 22px}
+  .lg-theme{top:16px;right:14px}
   .lg-logo{display:none}
 }
 @media (max-width:480px){
