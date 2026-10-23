@@ -2,6 +2,7 @@ import { pool } from "./db.js";
 import { hasColumn } from "./schema-flags.js";
 import { logActivity } from "./activity.js";
 import { closingFor, istAt, istYmd, positionKey, readSettings } from "./attendance.js";
+import { editorRanks, rankOf } from "./hierarchy.js";
 
 // Hand over — someone passes their own task to a teammate (the task's panel on
 // the Task Board). It stays theirs, its timer paused, until the teammate
@@ -15,6 +16,8 @@ import { closingFor, istAt, istYmd, positionKey, readSettings } from "./attendan
 export const handoverReady = () => hasColumn("task_handover", "id");
 
 const LEVEL_KEYS = [null, "teamLead", "asstManager", "manager"];
+// each level's rank (hierarchy.js: lower = more senior)
+const LEVEL_RANK = [null, 2, 1, 0];
 export const LEVEL_LABEL = [null, "Team Leads", "Asst. Managers", "Managers"];
 
 const addDay = (ymd) => new Date(Date.parse(`${ymd}T12:00:00Z`) + 86_400_000).toISOString().slice(0, 10);
@@ -61,14 +64,18 @@ export async function leadsAndManagers(orgId) {
 }
 
 // Who a hand-over reaches at a level: that position's people, or, when nobody
-// holds it, the next one up, then the admins. Never the two people in it.
-async function targetsFor(orgId, level, skip) {
+// holds it, the next one up, then the admins. Never the two people in it, and
+// only people above its owner (a Manager's task never climbs to Team Leads).
+async function targetsFor(orgId, level, skip, ownerRank = 3) {
   const people = (await handoverPeople(orgId)).filter((p) => !skip.includes(p.id));
   for (let l = level; l <= 3; l++) {
+    if (LEVEL_RANK[l] >= ownerRank) continue;
     const at = people.filter((p) => positionKey(p.designation) === LEVEL_KEYS[l]);
     if (at.length) return at.map((p) => p.id);
   }
-  return people.filter((p) => p.isAdmin).map((p) => p.id);
+  const admins = people.filter((p) => p.isAdmin);
+  const above = admins.filter((p) => rankOf(p.designation, true) < ownerRank);
+  return (above.length ? above : admins).map((p) => p.id);
 }
 
 const lastSync = new Map();
@@ -89,12 +96,12 @@ export async function syncHandovers(orgId) {
       [orgId],
     );
     if (!rows.length) return;
-    const { cal } = await readSettings(orgId);
+    const [{ cal }, ranks] = await Promise.all([readSettings(orgId), editorRanks(orgId)]);
     for (const h of rows) {
       const due = closingsAfter(cal, h.created_at).filter((c) => c.getTime() <= now).length;
       if (due <= h.level) continue;
       const before = h.reached ?? [];
-      const ids = await targetsFor(orgId, due, [h.from_editor_id, h.to_editor_id].filter(Boolean));
+      const ids = await targetsFor(orgId, due, [h.from_editor_id, h.to_editor_id].filter(Boolean), ranks.get(h.from_editor_id) ?? 3);
       const fresh = ids.filter((id) => !before.includes(id));
       await pool.query(
         "update task_handover set level = $2, reached = $3::uuid[], escalated_at = now() where id = $1",
@@ -127,16 +134,18 @@ export async function pauseForHandover(task, userId) {
   return true;
 }
 
-// Declined or called off: the owner's timer runs on from where it stopped.
-export async function resumeAfterHandover(taskId) {
+// Declined or called off: the owner's timer runs on from where it stopped —
+// only the pause this hand-over made (heldBy: whoever offered it), never a
+// hold someone else put on the task meanwhile.
+export async function resumeAfterHandover(taskId, heldBy) {
   await pool.query(
     `update task
         set on_hold = false, held_by = null,
             budget_started_at = case when budget_hours is null then null
                                      else now() - make_interval(secs => coalesce(budget_used_seconds, 0)) end,
             budget_used_seconds = 0
-      where id = $1 and on_hold`,
-    [taskId],
+      where id = $1 and on_hold and held_by is not distinct from $2`,
+    [taskId, heldBy ?? null],
   );
 }
 

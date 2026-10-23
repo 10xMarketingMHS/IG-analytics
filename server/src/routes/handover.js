@@ -30,6 +30,7 @@ const notReady = (res) => res.status(503).json({ error: "Hand over isn't set up 
 async function load(req, id) {
   const { rows } = await pool.query(
     `select h.*, t.title, t.channel_id, t.status as task_status, t.content_format_id, t.editor_id as task_editor_id,
+            t.on_hold as task_on_hold, t.held_by as task_held_by,
             ef.name as from_name, et.name as to_name
        from task_handover h
        join task t on t.id = h.task_id
@@ -73,12 +74,23 @@ async function giveTask(orgId, h, editorId, accepted, assignedBy) {
   );
 }
 
+// Answer it — only while it's still waiting: two answers at once (the owner
+// calling it off as the teammate accepts, say), and only the first counts.
+// False when someone else got there first.
 async function answer(id, status, userId, note = null) {
-  await pool.query(
-    "update task_handover set status = $2, answered_by = $3, answer_note = $4, answered_at = now() where id = $1",
+  const { rowCount } = await pool.query(
+    "update task_handover set status = $2, answered_by = $3, answer_note = $4, answered_at = now() where id = $1 and status = 'pending'",
     [id, status, userId, note],
   );
+  return rowCount === 1;
 }
+// …and undone, when moving the task then fails
+const unanswer = (id) => pool.query("update task_handover set status = 'pending', answered_by = null, answer_note = null, answered_at = null where id = $1", [id]);
+const ANSWERED = "This hand-over has already been answered.";
+// someone (an admin, say) put the task on hold after it was offered: it stays
+// as it is until they resume it
+const heldByOther = (h) => h.task_on_hold && h.task_held_by && h.task_held_by !== h.offered_by;
+const HELD = "Someone has put this task on hold. It can be taken once they resume it.";
 
 // What's waiting that concerns you: hand-overs you offered, ones offered to
 // you, and ones that have climbed to you (admins also see the rest, from people
@@ -150,8 +162,13 @@ handoverRouter.post("/tasks/:id/handover", requireEditor, async (req, res, next)
     if (t.status !== "todo" && t.status !== "in_progress") {
       return res.status(400).json({ error: "Only a task in To Do or In Progress can be handed over." });
     }
+    // a hold (yours, or one an admin put on it) isn't lifted by handing it on
+    if (t.on_hold) return res.status(409).json({ error: "This task is on hold. Resume it first, then hand it over." });
     const to = parsed.data.toEditorId;
     if (to === who.editorId) return res.status(400).json({ error: "Pick someone other than yourself." });
+    // never to someone above you (the Super Admin: anyone), as the list shows
+    const [viewer, ranks] = await Promise.all([taskViewer(req), editorRanks(req.orgId)]);
+    if (!seesEditor(viewer, ranks, to)) return res.status(403).json({ error: "You can't hand a task to someone above you." });
     const person = (await handoverPeople(req.orgId)).find((p) => p.id === to);
     if (!person) return res.status(400).json({ error: "That person can't take tasks yet. They need an active login on the team." });
     const waiting = await pool.query("select 1 from task_handover where task_id = $1 and status = 'pending'", [t.id]);
@@ -189,8 +206,14 @@ handoverRouter.post("/handovers/:id/accept", requireEditor, requireActiveEod, as
       await answer(h.id, "cancelled", req.user.sub);
       return res.status(409).json({ error: "This task has already moved on." });
     }
-    await giveTask(req.orgId, h, h.to_editor_id, true, undefined);
-    await answer(h.id, "accepted", req.user.sub);
+    if (heldByOther(h)) return res.status(409).json({ error: HELD });
+    if (!(await answer(h.id, "accepted", req.user.sub))) return res.status(409).json({ error: ANSWERED });
+    try {
+      await giveTask(req.orgId, h, h.to_editor_id, true, undefined);
+    } catch (err) {
+      await unanswer(h.id).catch(() => {});
+      throw err;
+    }
     await logActivity({
       orgId: req.orgId, actorId: req.user.sub, verb: "handover_accepted", entityType: "task", entityId: h.task_id, channelId: h.channel_id,
       summary: `Took over “${h.title}” from ${h.from_name ?? "a teammate"}`,
@@ -216,9 +239,9 @@ handoverRouter.post("/handovers/:id/decline", requireEditor, async (req, res, ne
     if (h.status !== "pending") return res.status(409).json({ error: "This hand-over has already been answered." });
     const who = await caller(req);
     if (!who.editorId || who.editorId !== h.to_editor_id) return res.status(403).json({ error: "Only the person it was handed to can decline it." });
-    if (h.paused) await resumeAfterHandover(h.task_id);
     const note = parsed.data.note || null;
-    await answer(h.id, "declined", req.user.sub, note);
+    if (!(await answer(h.id, "declined", req.user.sub, note))) return res.status(409).json({ error: ANSWERED });
+    if (h.paused) await resumeAfterHandover(h.task_id, h.offered_by);
     await logActivity({
       orgId: req.orgId, actorId: req.user.sub, verb: "handover_declined", entityType: "task", entityId: h.task_id, channelId: h.channel_id,
       summary: `Declined “${h.title}”, so it stays with ${h.from_name ?? "its owner"}${note ? `: ${note}` : ""}`,
@@ -242,8 +265,8 @@ handoverRouter.post("/handovers/:id/cancel", requireEditor, async (req, res, nex
     if (!own && !(who.admin && seesEditor(await taskViewer(req), await editorRanks(req.orgId), h.from_editor_id))) {
       return res.status(403).json({ error: "Only the task's owner can call off its hand-over." });
     }
-    if (h.paused) await resumeAfterHandover(h.task_id);
-    await answer(h.id, "cancelled", req.user.sub);
+    if (!(await answer(h.id, "cancelled", req.user.sub))) return res.status(409).json({ error: ANSWERED });
+    if (h.paused) await resumeAfterHandover(h.task_id, h.offered_by);
     await logActivity({
       orgId: req.orgId, actorId: req.user.sub, verb: "handover_cancelled", entityType: "task", entityId: h.task_id, channelId: h.channel_id,
       summary: `Called off handing over “${h.title}” to ${h.to_name ?? "a teammate"}`,
@@ -280,8 +303,14 @@ handoverRouter.post("/handovers/:id/move", requireEditor, async (req, res, next)
     const person = (await handoverPeople(req.orgId)).find((p) => p.id === to);
     if (!person) return res.status(400).json({ error: "That person can't take tasks yet. They need an active login on the team." });
     const toSelf = to === who.editorId;
-    await giveTask(req.orgId, h, to, toSelf, toSelf ? null : req.user.sub);
-    await answer(h.id, "moved", req.user.sub);
+    if (heldByOther(h)) return res.status(409).json({ error: HELD });
+    if (!(await answer(h.id, "moved", req.user.sub))) return res.status(409).json({ error: ANSWERED });
+    try {
+      await giveTask(req.orgId, h, to, toSelf, toSelf ? null : req.user.sub);
+    } catch (err) {
+      await unanswer(h.id).catch(() => {});
+      throw err;
+    }
     await logActivity({
       orgId: req.orgId, actorId: req.user.sub, verb: "handover_moved", entityType: "task", entityId: h.task_id, channelId: h.channel_id,
       summary: `${toSelf ? `Took over “${h.title}”` : `Moved “${h.title}” to ${person.name}`} (${h.to_name ?? "the teammate"} hadn't accepted it from ${h.from_name ?? "its owner"})`,
