@@ -4,6 +4,7 @@ import { pool } from "../db.js";
 import { isOrgAdmin } from "../permissions.js";
 import { isActiveLogin } from "../auth.js";
 import { reviewContext, routeReview } from "../review-route.js";
+import { canSeeTask, editorRanks, taskViewer } from "../hierarchy.js";
 
 // Team chat — channels, direct messages, threads, reactions, @mentions and task
 // links (see the team_chat migration). Everyone who works in the org (an admin or
@@ -136,11 +137,12 @@ chatRouter.get("/chat/stream", (req, res) => {
   if (!wasOnline) sendToOrg(req.orgId, { type: "presence", userId: me, online: true });
 
   // Proxies drop a silent connection; a comment line every 25s keeps it open.
-  // Each ping also checks the login is still on: a switched-off person's open
-  // tab stops receiving messages.
+  // Each ping also checks the login is still on and still on the team (an
+  // admin or editor here): a switched-off or removed person's open tab stops
+  // receiving messages.
   const ping = setInterval(async () => {
     try {
-      if (!(await isActiveLogin(me))) { clearInterval(ping); res.end(); return; }
+      if (!(await isActiveLogin(me)) || !(await orgPeople(entry.orgId)).byId.has(me)) { clearInterval(ping); res.end(); return; }
     } catch { /* the database blinked: keep the stream, check again next time */ }
     res.write(": ping\n\n");
   }, 25_000);
@@ -449,7 +451,7 @@ async function taskSummaries(orgId, ids) {
   if (!ids.length) return {};
   const { rows } = await pool.query(
     `select t.id, t.title, t.status, t.task_type, t.tid, t.sid, t.ad_id, t.svid, t.pid, t.due_date,
-            t.editor_id, t.assigned_by, t.delivery_link, t.review_started_at, t.pending_note, t.content_format_id,
+            t.editor_id, t.assigned_by, t.created_by, t.delivery_link, t.review_started_at, t.pending_note, t.content_format_id,
             coalesce(t.review_link_required, cf.review_link_required, false) as link_required,
             e.name as editor_name, e.image_url as editor_image, w.name as channel_name,
             cf.name as content_format_name
@@ -535,7 +537,28 @@ function mentionedOutsiders(channel, mentions) {
   return channel.kind === "channel" && !channel.is_private ? mentions : [];
 }
 
-// Push a message (new or changed) to everyone it concerns.
+// A message's task cards, kept to the tasks this person may open (the Task
+// Board's rule, ../hierarchy.js canSeeTask): another's card isn't sent at all,
+// and the message shows the link without it. `who`: a request, or { orgId,
+// userId } for someone else (the live stream).
+async function cardsFor(who, tasks) {
+  const ids = Object.keys(tasks);
+  if (!ids.length) return tasks;
+  const req = who.user ? who : { orgId: who.orgId, user: { sub: who.userId }, workspaceId: await anyWorkspace(who.orgId) };
+  const [viewer, ranks] = await Promise.all([taskViewer(req), editorRanks(req.orgId)]);
+  return Object.fromEntries(ids.filter((id) => canSeeTask(viewer, ranks, tasks[id])).map((id) => [id, tasks[id]]));
+}
+const workspaceOf = new Map();
+async function anyWorkspace(orgId) {
+  if (!workspaceOf.has(orgId)) {
+    const { rows } = await pool.query("select id from workspace where org_id = $1 order by created_at limit 1", [orgId]);
+    workspaceOf.set(orgId, rows[0]?.id ?? null);
+  }
+  return workspaceOf.get(orgId);
+}
+
+// Push a message (new or changed) to everyone it concerns — each with only the
+// task cards they may open.
 async function broadcastMessage(orgId, row, { isNew = false, extra = [] } = {}) {
   const { messages, tasks } = await hydrate(orgId, [row]);
   const event = { type: "message", isNew, message: messages[0], tasks };
@@ -547,7 +570,11 @@ async function broadcastMessage(orgId, row, { isNew = false, extra = [] } = {}) 
     );
     event.threadUserIds = rows.map((r) => r.author_id);
   }
-  await notifyChannel(row.channel_id, event, extra);
+  if (!Object.keys(tasks).length) await notifyChannel(row.channel_id, event, extra);
+  else {
+    const ids = new Set([...(await memberIds(row.channel_id)), ...extra]);
+    for (const id of ids) if (streams.has(id)) send(id, { ...event, tasks: await cardsFor({ orgId, userId: id }, tasks) });
+  }
   return { message: messages[0], tasks };
 }
 
@@ -569,7 +596,8 @@ chatRouter.get("/chat/channels/:id/messages", async (req, res, next) => {
     );
     const hasMore = rows.length > limit;
     const page = rows.slice(0, limit).reverse();
-    res.json({ ...(await hydrate(req.orgId, page)), hasMore });
+    const h = await hydrate(req.orgId, page);
+    res.json({ ...h, tasks: await cardsFor(req, h.tasks), hasMore });
   } catch (err) {
     next(err);
   }
@@ -586,7 +614,7 @@ chatRouter.get("/chat/messages/:id/thread", async (req, res, next) => {
       [parent.id],
     );
     const { messages, tasks } = await hydrate(req.orgId, [parent, ...rows]);
-    res.json({ parent: messages[0], replies: messages.slice(1), tasks });
+    res.json({ parent: messages[0], replies: messages.slice(1), tasks: await cardsFor(req, tasks) });
   } catch (err) {
     next(err);
   }
