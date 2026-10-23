@@ -3,13 +3,14 @@ import { Navigate, useNavigate, useSearchParams } from "react-router-dom";
 import { useAuth, ApiError } from "@/lib/auth-context";
 import { api, noAnswer } from "@/lib/api";
 import { PulseRun } from "@/components/pulse-run";
+import { ParticleField } from "@/components/particle-field";
 import { useTheme } from "@/components/theme-provider";
 import "./login.css";
 
-// The sign-in screen (login.css), full screen: a living gradient on the left —
-// slow drifting light, a glow that follows the pointer, the colours shifting a
-// little toward it — with a mini game to play (components/pulse-run.tsx), and
-// the form on the right. One column on phones.
+// The sign-in screen (login.css), full screen: on the left, rings of small
+// coloured dashes turning slowly and stepping aside around the pointer
+// (components/particle-field.tsx), a glow under it, and a mini game to play
+// (components/pulse-run.tsx); the form on the right. One column on phones.
 
 const EYE = (
   <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
@@ -34,24 +35,22 @@ const EYE_OFF = (
 );
 
 // Pointer → CSS variables on the art panel, eased so the light glides:
-// --mx/--my where the glow sits (over the panel), --px/--py (-1…1) how far the
-// colours lean (from anywhere on the page). Still for reduced motion.
+// --mx/--my where the glow sits, and data-lit while the pointer is over the
+// panel. Still for reduced motion.
 function usePointerLight(ref: React.RefObject<HTMLDivElement | null>) {
   useEffect(() => {
     const el = ref.current;
     if (!el || window.matchMedia("(prefers-reduced-motion: reduce)").matches) return;
     const REST = { x: 0.3, y: 0.42 };
-    const t = { ...REST, px: 0, py: 0 }, c = { ...t };
+    const t = { ...REST }, c = { ...t };
     let raf = 0;
     const paint = () => {
       el.style.setProperty("--mx", `${(c.x * 100).toFixed(2)}%`);
       el.style.setProperty("--my", `${(c.y * 100).toFixed(2)}%`);
-      el.style.setProperty("--px", c.px.toFixed(3));
-      el.style.setProperty("--py", c.py.toFixed(3));
     };
     const tick = () => {
       let moving = false;
-      for (const k of ["x", "y", "px", "py"] as const) {
+      for (const k of ["x", "y"] as const) {
         c[k] += (t[k] - c[k]) * 0.09;
         if (Math.abs(t[k] - c[k]) > 0.0008) moving = true;
       }
@@ -66,11 +65,9 @@ function usePointerLight(ref: React.RefObject<HTMLDivElement | null>) {
       el.toggleAttribute("data-lit", inside);
       if (inside) { t.x = clamp((e.clientX - r.left) / r.width); t.y = clamp((e.clientY - r.top) / r.height); }
       else { t.x = REST.x; t.y = REST.y; }
-      t.px = clamp(e.clientX / window.innerWidth) * 2 - 1;
-      t.py = clamp(e.clientY / window.innerHeight) * 2 - 1;
       go();
     };
-    const onLeave = () => { el.removeAttribute("data-lit"); Object.assign(t, REST, { px: 0, py: 0 }); go(); };
+    const onLeave = () => { el.removeAttribute("data-lit"); Object.assign(t, REST); go(); };
     paint();
     window.addEventListener("pointermove", onMove);
     document.documentElement.addEventListener("pointerleave", onLeave);
@@ -154,7 +151,7 @@ export function LoginPage() {
       <div className="lg-card">
         <div className="lg-art" ref={art}>
           <div className="lg-light" aria-hidden="true">
-            <span className="lg-blob b1" /><span className="lg-blob b2" /><span className="lg-blob b3" /><span className="lg-blob b4" />
+            <ParticleField className="lg-particles" />
             <span className="lg-glow" />
             <span className="lg-grain" />
           </div>

@@ -48,7 +48,20 @@ export function PulseRun() {
     const box = wrap.current, cv = canvas.current;
     const ctx = cv?.getContext("2d");
     if (!box || !cv || !ctx) return;
-    const accent = getComputedStyle(document.documentElement).getPropertyValue("--accent").trim() || "#7c3aed";
+    // the colours come from the panel (login.css --run-*): dark ink on the light
+    // theme, light on the dark one; read again when the theme or accent changes
+    const readPalette = () => {
+      const cs = getComputedStyle(box), v = (name: string, or: string) => cs.getPropertyValue(name).trim() || or;
+      return {
+        line: v("--run-line", "rgba(255,255,255,.7)"), dash: v("--run-dash", "rgba(255,255,255,.4)"),
+        orb: v("--run-orb", "#fff"), mark: v("--run-mark", "#7c3aed"), glow: v("--run-glow", "rgba(255,255,255,.9)"), trail: v("--run-trail", "#fff"),
+        block: v("--run-block", "rgba(255,255,255,.86)"), blockLine: v("--run-block-line", "rgba(40,20,110,.28)"),
+        shadow: v("--run-shadow", "rgba(30,10,80,.35)"), spark: v("--run-spark", "#ffe08a"),
+      };
+    };
+    let pal = readPalette();
+    const themeWatch = new MutationObserver(() => { pal = readPalette(); painted = false; });
+    themeWatch.observe(document.documentElement, { attributes: true, attributeFilter: ["data-theme", "data-accent"] });
 
     let W = 0, H = 0;
     const fit = () => {
@@ -80,6 +93,7 @@ export function PulseRun() {
     // a round starts only from the Play button; keys and taps just jump
     startRound.current = () => {
       window.clearTimeout(hideTimer);
+      pal = readPalette();
       reset(); mode = "run";
       setPhase("run"); setShown(true);
     };
@@ -138,10 +152,10 @@ export function PulseRun() {
       const g = ground(), ox = orbX();
       // the ground: a line and dots rolling past
       ctx.save();
-      ctx.shadowColor = "rgba(20,10,60,.35)"; ctx.shadowBlur = 6;
-      ctx.strokeStyle = "rgba(255,255,255,.7)"; ctx.lineWidth = 2;
+      ctx.shadowColor = pal.shadow; ctx.shadowBlur = 6;
+      ctx.strokeStyle = pal.line; ctx.lineWidth = 2;
       ctx.beginPath(); ctx.moveTo(0, g + 0.5); ctx.lineTo(W, g + 0.5); ctx.stroke();
-      ctx.fillStyle = "rgba(255,255,255,.4)";
+      ctx.fillStyle = pal.dash;
       for (let x = -(dist % 28); x < W; x += 28) ctx.fillRect(x, g + 8, 10, 2);
       ctx.restore();
       // sparks
@@ -150,8 +164,8 @@ export function PulseRun() {
         const sy = g - s.y, k = 5 + Math.sin(clock * 8 + s.x * 0.05) * 1.2;
         ctx.save();
         ctx.translate(s.x, sy); ctx.rotate(clock * 2);
-        ctx.shadowColor = "rgba(255,214,120,.9)"; ctx.shadowBlur = 12;
-        ctx.fillStyle = "#ffe08a";
+        ctx.shadowColor = pal.spark; ctx.shadowBlur = 12;
+        ctx.fillStyle = pal.spark;
         ctx.beginPath();
         for (let i = 0; i < 8; i++) { const a = (i * Math.PI) / 4, rr = i % 2 ? k * 0.38 : k; ctx.lineTo(Math.cos(a) * rr, Math.sin(a) * rr); }
         ctx.closePath(); ctx.fill();
@@ -160,26 +174,29 @@ export function PulseRun() {
       // blocks: frosted glass
       for (const b of blocks) {
         ctx.save();
-        ctx.shadowColor = "rgba(30,10,80,.35)"; ctx.shadowBlur = 10;
-        ctx.fillStyle = "rgba(255,255,255,.86)";
-        ctx.strokeStyle = "rgba(40,20,110,.28)"; ctx.lineWidth = 1;
+        ctx.shadowColor = pal.shadow; ctx.shadowBlur = 10;
+        ctx.fillStyle = pal.block;
+        ctx.strokeStyle = pal.blockLine; ctx.lineWidth = 1;
         ctx.beginPath(); ctx.roundRect(b.x, g - b.h, b.w, b.h, 6); ctx.fill(); ctx.stroke();
         ctx.restore();
       }
       // the orb: a trail, a glow, the Pulse half-moon turning as it rolls
       const cy = g - R - y;
+      ctx.save();
+      ctx.fillStyle = pal.trail;
       trail.forEach((ty, i) => {
-        ctx.fillStyle = `rgba(255,255,255,${0.22 - i * 0.022})`;
+        ctx.globalAlpha = 0.22 - i * 0.022;
         ctx.beginPath(); ctx.arc(ox - (i + 1) * 7, ty, R * (1 - i * 0.07), 0, Math.PI * 2); ctx.fill();
       });
+      ctx.restore();
       ctx.save();
-      ctx.shadowColor = "rgba(255,255,255,.9)"; ctx.shadowBlur = 18;
-      ctx.fillStyle = "#fff";
+      ctx.shadowColor = pal.glow; ctx.shadowBlur = 18;
+      ctx.fillStyle = pal.orb;
       ctx.beginPath(); ctx.arc(ox, cy, R, 0, Math.PI * 2); ctx.fill();
       ctx.restore();
       ctx.save();
       ctx.translate(ox, cy); ctx.rotate(roll);
-      ctx.fillStyle = accent;
+      ctx.fillStyle = pal.mark;
       ctx.beginPath(); ctx.arc(0, 0, R - 3, Math.PI / 2, (3 * Math.PI) / 2); ctx.closePath(); ctx.fill();
       ctx.restore();
       painted = true;
@@ -228,6 +245,7 @@ export function PulseRun() {
       cancelAnimationFrame(raf);
       window.clearTimeout(hideTimer);
       ro.disconnect();
+      themeWatch.disconnect();
       box.removeEventListener("blur", onBlur);
       window.removeEventListener("keydown", onKeyDown);
       window.removeEventListener("keyup", onKeyUp);
