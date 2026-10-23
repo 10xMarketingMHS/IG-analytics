@@ -158,11 +158,8 @@
 }
 @keyframes m-sheet{from{transform:translateY(100%)}to{transform:none}}
 
-/* touch screens: no hover lifts, and text fields large enough that iOS
-   doesn't zoom the page when you start typing */
-@media (hover:none){
-  .an-topcard:hover,.an-pod:hover,.mt-person:hover{transform:none}
-}
+/* touch screens: text fields large enough that iOS doesn't zoom the page
+   when you start typing */
 @media (pointer:coarse){
   input:not([type="checkbox"]):not([type="radio"]):not([type="range"]):not([type="color"]),select,textarea{font-size:16px!important}
 }

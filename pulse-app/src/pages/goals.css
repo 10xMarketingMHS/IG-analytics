@@ -98,7 +98,7 @@ em.bad{color:var(--gl-bad)}
 .gl-stat>span:last-child>span{font-size:12px;color:var(--gl-text3)}
 .gl-cards{display:grid;grid-template-columns:repeat(auto-fill,minmax(min(100%,320px),1fr));gap:16px}
 .gl-goal{display:flex;flex-direction:column;gap:14px;padding:18px;color:var(--gl-text);font:inherit;text-align:left;cursor:pointer;transition:transform .2s,box-shadow .2s}
-.gl-goal:hover{transform:translateY(-2px);box-shadow:var(--gl-sh2)}
+.gl-goal:hover{box-shadow:var(--gl-sh2)}
 .gl-goaltop{display:flex;align-items:center;gap:6px;width:100%}
 .gl-face{flex:none;width:24px;height:24px;border-radius:50%;display:grid;place-items:center;background:var(--gl-acGrad);color:#fff;font-size:9.5px;font-weight:800}
 .gl-goalhd{display:flex;flex-direction:column;gap:3px}
@@ -113,7 +113,7 @@ em.bad{color:var(--gl-bad)}
 .gl-goalnums>span{display:flex;flex-direction:column;min-width:0}
 .gl-goalnums b{font-size:14px;font-weight:700;font-variant-numeric:tabular-nums;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .gl-goalnums>span>span{font-size:11px;color:var(--gl-text3)}
-@media (prefers-reduced-motion:reduce){.gl-goal{transition:none}.gl-goal:hover{transform:none}}
+@media (prefers-reduced-motion:reduce){.gl-goal{transition:none}}
 
 /* a goal's drawer */
 .gl-drawer{display:flex;flex-direction:column;gap:14px}

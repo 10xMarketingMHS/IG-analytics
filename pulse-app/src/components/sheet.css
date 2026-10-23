@@ -26,8 +26,8 @@ html[data-theme="dark"]{--sheet-panel:oklch(0.2 0.04 var(--acH) / .72)}
   .lb-tabs,.lb-row
 ){box-shadow:none}
 .app .content :is(.card,.an-card,.an-kpis,.mt-card,.gl-card,.gl-kpis,.md-card,.tb-bar,.lb-tabs){background-color:var(--sheet-panel)}
-.app .content :is(.an-topcard,.an-pod,.mt-person,.mt-lcard,.gl-goal,.lb-row,.task-card):hover{transform:none;box-shadow:none}
-/* a picked person keeps its ring, without the lift */
+.app .content :is(.an-topcard,.an-pod,.mt-person,.mt-lcard,.gl-goal,.lb-row,.task-card):hover{box-shadow:none}
+/* a picked person keeps its ring */
 .app .content :is(.mt-person,.mt-lcard).on{box-shadow:0 0 0 3px var(--mt-acGlow)}
 
 /* the main list or table of a page runs edge to edge */

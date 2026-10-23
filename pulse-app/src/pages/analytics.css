@@ -231,7 +231,7 @@ html[data-theme="dark"] .an{
 .an-top3{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,270px),1fr));gap:14px;padding-top:6px}
 .an-topcard{position:relative;display:flex;gap:14px;padding:14px;border:1px solid var(--an-line);border-radius:var(--an-rm);text-align:left;color:var(--an-text);font:inherit;cursor:pointer;
   background:linear-gradient(160deg,color-mix(in srgb,var(--medal) 14%,var(--an-solid)),var(--an-solid) 60%);transition:transform .2s,box-shadow .2s}
-.an-topcard:hover{transform:translateY(-3px);box-shadow:var(--an-sh2)}
+.an-topcard:hover{box-shadow:var(--an-sh2)}
 .an-topcard>.an-thumb{width:54px;height:84px;border-radius:12px}
 .an-topcard>.an-thumb svg{width:24px;height:24px}
 .an-rank{position:absolute;top:-9px;left:-9px;width:28px;height:28px;display:grid;place-items:center;border-radius:50%;border:2px solid var(--an-solid);
@@ -262,7 +262,7 @@ html[data-theme="dark"] .an{
 @media (min-width:860px){.an-pod.p1{order:2}.an-pod.p2{order:1}.an-pod.p3{order:3}}
 .an-pod{display:flex;flex-direction:column;gap:10px;min-width:0;padding:12px 12px 14px;border:1px solid var(--an-line);border-radius:18px;background:var(--an-panel);
   box-shadow:var(--an-sh1);backdrop-filter:var(--an-blur);-webkit-backdrop-filter:var(--an-blur);color:var(--an-text);font:inherit;text-align:left;cursor:pointer;transition:transform .2s}
-.an-pod:hover{transform:translateY(-3px)}
+.an-pod:hover{box-shadow:var(--an-sh2)}
 .an-pod.p1{border-color:color-mix(in srgb,var(--an-gold) 55%,var(--an-line));box-shadow:var(--an-sh2);
   background:linear-gradient(180deg,color-mix(in srgb,var(--an-gold) 14%,var(--an-panel)),var(--an-panel))}
 .an-podthumb{position:relative;display:block}
@@ -299,4 +299,4 @@ html[data-theme="dark"] .an{
 .an .num.on{color:var(--an-acText);font-weight:800}
 .an-showmore{height:40px;border:0;border-top:1px solid var(--an-line2);background:transparent;color:var(--an-acText);font:700 12.5px 'Plus Jakarta Sans',sans-serif;cursor:pointer}
 .an-showmore:hover{background:var(--an-hover)}
-@media (prefers-reduced-motion:reduce){.an-topcard,.an-pod{transition:none}.an-topcard:hover,.an-pod:hover{transform:none}}
+@media (prefers-reduced-motion:reduce){.an-topcard,.an-pod{transition:none}}

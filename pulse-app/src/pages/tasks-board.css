@@ -130,7 +130,7 @@ html[data-theme="dark"] .tb,html[data-theme="dark"] .tp2{
 /* ---- cards ---- */
 .tb .task-card{display:flex;flex-direction:column;gap:10px;margin:0;padding:14px 14px 0;border:1px solid var(--tb-line);border-left:1px solid var(--tb-line);border-radius:14px;
   background:var(--tb-panel);box-shadow:var(--tb-sh1);color:var(--tb-text);transition:transform .2s,box-shadow .2s,border-color .2s;transform:none}
-.tb .task-card:hover{transform:translateY(-2px);box-shadow:var(--tb-sh2)}
+.tb .task-card:hover{box-shadow:var(--tb-sh2)}
 .tb .task-card.is-over{border-color:color-mix(in srgb,var(--tb-bad) 55%,var(--tb-line));box-shadow:0 0 0 3px color-mix(in srgb,var(--tb-bad) 10%,transparent),var(--tb-sh1)}
 .tb .task-card.selected{border-color:var(--tb-ac);box-shadow:0 0 0 3px var(--tb-acGlow),var(--tb-sh1)}
 .tb .task-card:not(:has(.task-actions)){padding-bottom:14px}
