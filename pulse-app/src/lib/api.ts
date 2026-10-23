@@ -1,4 +1,7 @@
-const API_URL = import.meta.env.VITE_API_URL ?? "http://localhost:4000/api";
+// Dev: /api on the page's own address, passed to the API by the dev server
+// (vite.config.ts), so each address keeps its own sign-in — for example
+// superadmin.localhost:3000, admin.localhost:3000 and editor.localhost:3000 at once.
+const API_URL = import.meta.env.VITE_API_URL ?? (import.meta.env.DEV ? "/api" : "http://localhost:4000/api");
 
 // Absolute API base — needed for full-page navigations like the OAuth connect
 // flow (where the browser, not fetch, hits the backend so cookies ride along).
