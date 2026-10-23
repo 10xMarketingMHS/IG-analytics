@@ -142,7 +142,6 @@ export function PostsPage() {
   const pillarName = (id: string) => name(taxonomy?.pillars, id);
   const avatarName = (id: string) => name(taxonomy?.avatars, id);
   const formatName = (id: string) => name(taxonomy?.formats, id);
-  const editorName = (id: string | null) => (id ? editors?.find((e) => e.id === id)?.name ?? "—" : "—");
   const channelName = (id: string | null | undefined) => (id ? workspaces.find((w) => w.id === id)?.name ?? "—" : "—");
   const platformOf = (id: string | null) => (id ? platData?.platforms.find((p) => p.id === id) : undefined);
 
