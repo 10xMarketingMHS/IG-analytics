@@ -887,12 +887,13 @@ tasksRouter.patch("/tasks/:id", requireEditor, requireActiveEod, async (req, res
     if (d.contentFormatId !== undefined) push("content_format_id", d.contentFormatId ?? null);
     if (d.reviewLinkRequired !== undefined && (d.reviewLinkRequired ?? null) !== (prior.review_link_required ?? null)) {
       // The assignee can't waive their own review link — only an admin, or
-      // whoever set this task up (an assigner who gave it, or its person on a
-      // task they made for themselves).
+      // someone who may assign work (the Assign tasks grant) and set this task
+      // up: they gave it, or made it for themselves. Mirrored by the switch
+      // in the task panel (pulse-app/src/pages/tasks.tsx).
       const mineMade = prior.created_by === req.user.sub && !prior.assigned_by;
-      const setUp = mineMade || ((await hasActiveGrant(req.orgId, req.user.sub, "assign_tasks")) && setUpBy(prior, req.user.sub));
+      const setUp = (mineMade || setUpBy(prior, req.user.sub)) && (await hasActiveGrant(req.orgId, req.user.sub, "assign_tasks"));
       if (req.role !== "admin" && !setUp) {
-        return res.status(403).json({ error: "Only an admin or whoever set this task up can change whether it needs a review link." });
+        return res.status(403).json({ error: "Only an admin, or someone who can assign tasks and set this one up, can change whether it needs a review link." });
       }
       push("review_link_required", d.reviewLinkRequired);
     }

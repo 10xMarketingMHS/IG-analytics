@@ -2096,6 +2096,11 @@ export function TaskPanel({ mode, task, canWrite, editors, channels, onClose, on
   const canTake = !creating && !ro && !canReassign && !isDoneTask && !!user?.editorId && !task?.editor_id;
   const briefRo = !canEditBrief;
   const canEditDelivery = canEditWork && (isAdmin || isOwnerTask);
+  // Whether it needs a review link: an admin, or someone who may assign work
+  // and set this task up (gave it, or made it for themselves) — the server's rule.
+  const setUpByMe = !!task && !!user && (task.assigned_by === user.id
+    || (task.created_by === user.id && (!task.assigned_by || !task.editor_id)));
+  const canSetLink = creating ? canAssign : isAdmin || (canAssign && setUpByMe);
   const { contentFormats } = useContentFormats();
   const [draft, setDraft] = useState<{
     channel_id: string | null; editor_id: string | null; due_date: string | null; start_date: string | null; priority: string;
@@ -2413,7 +2418,7 @@ export function TaskPanel({ mode, task, canWrite, editors, channels, onClose, on
         <input
           type="checkbox"
           checked={linkRequired}
-          disabled={ro || !canAssign || (isDoneTask && !isAdmin)}
+          disabled={ro || !canSetLink || (isDoneTask && !isAdmin)}
           onChange={(e) => (creating ? setLinkOverride(e.target.checked) : patch({ reviewLinkRequired: e.target.checked }))}
         />
         <span className="tp2-track" aria-hidden="true"><span /></span>
