@@ -43,6 +43,21 @@ const app = express();
 // session cookies to be set.
 app.set("trust proxy", 1);
 
+// Safety headers on every answer: don't guess file types, don't let another
+// site show Pulse inside a frame (a click-trick), send only the site name on
+// links out, no camera / microphone / location, and — when it's live, over
+// HTTPS — always HTTPS from now on. No "X-Powered-By: Express" either.
+app.disable("x-powered-by");
+app.use((_req, res, next) => {
+  res.setHeader("X-Content-Type-Options", "nosniff");
+  res.setHeader("X-Frame-Options", "DENY");
+  res.setHeader("Content-Security-Policy", "frame-ancestors 'none'");
+  res.setHeader("Referrer-Policy", "strict-origin-when-cross-origin");
+  res.setHeader("Permissions-Policy", "camera=(), microphone=(), geolocation=()");
+  if (config.NODE_ENV === "production") res.setHeader("Strict-Transport-Security", "max-age=15552000");
+  next();
+});
+
 // In dev the frontend port can vary (auto-assigned), so reflect any origin.
 // In production the frontend is same-origin, so CORS is effectively a no-op.
 app.use(cors({ origin: config.NODE_ENV === "production" ? config.CORS_ORIGIN : true, credentials: true }));
