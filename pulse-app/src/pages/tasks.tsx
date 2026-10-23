@@ -1661,11 +1661,11 @@ export function TaskModal({
       <form onSubmit={submit}>
         <div className="field">
           <label className="f">Task <span className="req">*</span></label>
-          <input className="t" placeholder="e.g. Edit Diabetes reel" value={title} onChange={(e) => setTitle(e.target.value)} />
+          <input className="t" placeholder="e.g. Edit Diabetes reel" value={title} maxLength={300} onChange={(e) => setTitle(e.target.value)} />
         </div>
         <div className="field">
           <label className="f">Details</label>
-          <textarea className="t" placeholder="Optional notes…" value={description} onChange={(e) => setDescription(e.target.value)} />
+          <textarea className="t" placeholder="Optional notes…" value={description} maxLength={20000} onChange={(e) => setDescription(e.target.value)} />
         </div>
         <div className="grid g3">
           <div className="field">
@@ -2457,9 +2457,9 @@ export function TaskPanel({ mode, task, canWrite, editors, channels, onClose, on
                 </button>
               </div>
             )}
-            <input className={"tp-title tp2-title" + (title.trim() ? " filled" : "")} autoFocus placeholder="Task title…" value={title}
+            <input className={"tp-title tp2-title" + (title.trim() ? " filled" : "")} autoFocus placeholder="Task title…" value={title} maxLength={300}
               onChange={(e) => setTitle(e.target.value)} />
-            <textarea className="tp-desc tp2-desc" placeholder="Add a description…" value={description} onChange={(e) => setDescription(e.target.value)} />
+            <textarea className="tp-desc tp2-desc" placeholder="Add a description…" value={description} maxLength={20000} onChange={(e) => setDescription(e.target.value)} />
             <div className="tp-fields tp2-card">
               <Row label="Category" note={category ? undefined : "Required"}>
                 <div className="tp2-chips" role="group" aria-label="Category">
@@ -2536,10 +2536,10 @@ export function TaskPanel({ mode, task, canWrite, editors, channels, onClose, on
                 : "Only an admin can change this task. You can still comment on it."}
             </div>
           )}
-          <input className="tp-title tp2-dtitle" placeholder="Task title…" value={title} disabled={briefRo}
+          <input className="tp-title tp2-dtitle" placeholder="Task title…" value={title} maxLength={300} disabled={briefRo}
             onChange={(e) => setTitle(e.target.value)}
             onBlur={() => { if (title.trim() && title !== t.title) patch({ title: title.trim() }); }} />
-          <textarea className="tp-desc tp2-desc" placeholder="Add a description…" value={description} disabled={briefRo}
+          <textarea className="tp-desc tp2-desc" placeholder="Add a description…" value={description} maxLength={20000} disabled={briefRo}
             onChange={(e) => setDescription(e.target.value)}
             onBlur={() => { if (description !== (t.description ?? "")) patch({ description }); }} />
           <div className="tp-fields tp2-props">
@@ -2669,7 +2669,7 @@ function Checklist({ taskId, readOnly = false, onChanged }: { taskId: string; re
       </div>
       {!readOnly && (
         <div className="chk-add">
-          <input className="t" placeholder="Add checklist item…" value={newTitle} onChange={(e) => setNewTitle(e.target.value)}
+          <input className="t" placeholder="Add checklist item…" value={newTitle} maxLength={300} onChange={(e) => setNewTitle(e.target.value)}
             onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); add(); } }} />
           <button type="button" className="btn" onClick={add} disabled={!newTitle.trim()}>Add</button>
         </div>
@@ -2897,7 +2897,7 @@ function Comments({ taskId, readOnly = false }: { taskId: string; readOnly?: boo
       </div>
       {!readOnly && (
         <div className="cmt-add">
-          <input className="t" placeholder="Write a comment…" value={text} onChange={(e) => setText(e.target.value)}
+          <input className="t" placeholder="Write a comment…" value={text} maxLength={4000} onChange={(e) => setText(e.target.value)}
             onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); send(); } }} />
           <button type="button" className="btn btn-primary" onClick={send} disabled={sending || !text.trim()}>Post</button>
         </div>

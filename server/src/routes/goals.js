@@ -450,6 +450,12 @@ goalsRouter.put("/goals", requirePermission("edit_goals"), async (req, res, next
     if (!month) return res.status(400).json({ error: "That month couldn't be read." });
     const why = await goalWriteError(req, d.editorId, month, "goals");
     if (why) return res.status(403).json({ error: why });
+    // the person and every content type must be this organisation's
+    const { rowCount: mine } = await pool.query("select 1 from editor where id = $1 and org_id = $2", [d.editorId, req.orgId]);
+    if (!mine) return res.status(400).json({ error: "That team member wasn't found." });
+    const ids = [...new Set(d.goals.map((g) => g.contentFormatId))];
+    const { rows: known } = await pool.query("select id from task_content_format where id = any($1::uuid[]) and org_id = $2", [ids, req.orgId]);
+    if (known.length !== ids.length) return res.status(400).json({ error: "That content type wasn't found." });
     for (const g of d.goals) {
       if (g.jc == null) {
         await pool.query(

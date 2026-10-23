@@ -55,8 +55,8 @@ const MetaSchema = z
   .partial();
 
 const TaskSchema = z.object({
-  title: z.string().min(1),
-  description: z.string().optional(),
+  title: z.string().min(1).max(300),
+  description: z.string().max(20_000).optional(),
   editorId: z.string().uuid().nullable().optional(),
   channelId: z.string().uuid().nullable().optional(),
   postId: z.string().uuid().nullable().optional(),
@@ -301,6 +301,23 @@ tasksRouter.get("/tasks", async (req, res, next) => {
   }
 });
 
+// Every id a task points at must be this organisation's — its brand, content
+// type and person; another organisation's would show its names and take its
+// points. Null when fine, else what to say.
+async function outsideOrgError(orgId, d) {
+  const checks = [
+    [d.channelId, "select 1 from workspace where id = $1 and org_id = $2", "That brand wasn't found."],
+    [d.contentFormatId, "select 1 from task_content_format where id = $1 and org_id = $2", "That content type wasn't found."],
+    [d.editorId, "select 1 from editor where id = $1 and org_id = $2", "That team member wasn't found."],
+  ];
+  for (const [id, sql, msg] of checks) {
+    if (!id) continue;
+    const { rowCount } = await pool.query(sql, [id, orgId]);
+    if (!rowCount) return msg;
+  }
+  return null;
+}
+
 tasksRouter.post("/tasks", requireEditor, requireActiveEod, async (req, res, next) => {
   const parsed = TaskSchema.safeParse(req.body);
   if (!parsed.success) {
@@ -308,6 +325,8 @@ tasksRouter.post("/tasks", requireEditor, requireActiveEod, async (req, res, nex
   }
   const d = parsed.data;
   try {
+    const outside = await outsideOrgError(req.orgId, d);
+    if (outside) return res.status(400).json({ error: outside });
     // This endpoint is for manual tasks only (auto-created ones are inserted
     // directly by syncPostTask) — default to "general".
     const taskType = d.taskType ?? "general";
@@ -476,6 +495,8 @@ tasksRouter.patch("/tasks/:id", requireEditor, requireActiveEod, async (req, res
   // fetched), not this generic field loop. See the sets.length guard below
   // that one instead of duplicating it here.
   try {
+    const outside = await outsideOrgError(req.orgId, d);
+    if (outside) return res.status(400).json({ error: outside });
     // Capture prior state so we can spawn the next occurrence on completion,
     // guard task_type for post-linked tasks, and re-resolve the time budget.
     const prior = (await pool.query(
@@ -864,10 +885,14 @@ tasksRouter.patch("/tasks/:id", requireEditor, requireActiveEod, async (req, res
       }
     }
     if (d.contentFormatId !== undefined) push("content_format_id", d.contentFormatId ?? null);
-    if (d.reviewLinkRequired !== undefined) {
-      // The assignee can't waive their own review link — only whoever may assign work.
-      if (req.role !== "admin" && !(await hasActiveGrant(req.orgId, req.user.sub, "assign_tasks"))) {
-        return res.status(403).json({ error: "Only an admin can change whether this task needs a review link." });
+    if (d.reviewLinkRequired !== undefined && (d.reviewLinkRequired ?? null) !== (prior.review_link_required ?? null)) {
+      // The assignee can't waive their own review link — only an admin, or
+      // whoever set this task up (an assigner who gave it, or its person on a
+      // task they made for themselves).
+      const mineMade = prior.created_by === req.user.sub && !prior.assigned_by;
+      const setUp = mineMade || ((await hasActiveGrant(req.orgId, req.user.sub, "assign_tasks")) && setUpBy(prior, req.user.sub));
+      if (req.role !== "admin" && !setUp) {
+        return res.status(403).json({ error: "Only an admin or whoever set this task up can change whether it needs a review link." });
       }
       push("review_link_required", d.reviewLinkRequired);
     }
@@ -1247,6 +1272,7 @@ tasksRouter.get("/tasks/:id/subtasks", async (req, res, next) => {
 tasksRouter.post("/tasks/:id/subtasks", requireEditor, requireActiveEod, async (req, res, next) => {
   const title = typeof req.body?.title === "string" ? req.body.title.trim() : "";
   if (!title) return res.status(400).json({ error: "A checklist item needs a title." });
+  if (title.length > 300) return res.status(400).json({ error: "A checklist item can be up to 300 characters." });
   try {
     const parent = (await pool.query("select id, status, editor_id, assigned_by from task where id = $1 and org_id = $2", [req.params.id, req.orgId])).rows[0];
     const refusal = await checklistRefusal(req, parent);
@@ -1269,6 +1295,7 @@ tasksRouter.patch("/subtasks/:id", requireEditor, requireActiveEod, async (req, 
   if (typeof req.body?.done === "boolean") { params.push(req.body.done); sets.push(`done = $${params.length}`); }
   if (typeof req.body?.title === "string" && req.body.title.trim()) { params.push(req.body.title.trim()); sets.push(`title = $${params.length}`); }
   if (!sets.length) return res.status(400).json({ error: "Nothing to update." });
+  if (typeof req.body?.title === "string" && req.body.title.trim().length > 300) return res.status(400).json({ error: "A checklist item can be up to 300 characters." });
   try {
     const parent = await taskOfSubtask(req.params.id, req.orgId);
     if (!parent) return res.status(404).json({ error: "Checklist item not found" });
@@ -1328,8 +1355,11 @@ tasksRouter.get("/tasks/:id/comments", async (req, res, next) => {
 tasksRouter.post("/tasks/:id/comments", requireEditor, async (req, res, next) => {
   const body = typeof req.body?.body === "string" ? req.body.body.trim() : "";
   if (!body) return res.status(400).json({ error: "Write a comment first." });
+  if (body.length > 4000) return res.status(400).json({ error: "A comment can be up to 4,000 characters." });
   try {
     if (!(await ownsTask(req.params.id, req.orgId))) return res.status(404).json({ error: "Task not found" });
+    // only on a task you may open (as reading its comments)
+    if (!(await mayOpenTask(req, req.params.id))) return res.status(404).json({ error: "Task not found" });
     const { rows } = await pool.query(
       `insert into task_comment (task_id, author_id, body) values ($1, $2, $3) returning id, body, created_at, author_id`,
       [req.params.id, req.user.sub, body],
