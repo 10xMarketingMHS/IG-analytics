@@ -33,14 +33,15 @@ type FollowerDaily = {
 // light and dark (see analytics.css). Assigned by position, never cycled.
 const SERIES = ["var(--an-s1)", "var(--an-s2)", "var(--an-s3)", "var(--an-s4)"];
 const OTHER = "var(--an-other)";
-const PLATFORM_COLOR: Record<string, string> = { instagram: "#e1306c", facebook: "#1877f2", youtube: "#ff0033" };
-const PLATFORM_AB: Record<string, string> = { instagram: "IG", facebook: "FB", youtube: "YT" };
+export const PLATFORM_COLOR: Record<string, string> = { instagram: "#e1306c", facebook: "#1877f2", youtube: "#ff0033" };
+export const PLATFORM_AB: Record<string, string> = { instagram: "IG", facebook: "FB", youtube: "YT" };
 const TYPE_LABEL: Record<string, string> = { reel: "Reel", carousel: "Carousel" };
 
 const svg = (paths: ReactNode, size = 16) => (
   <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">{paths}</svg>
 );
-const IC = {
+// Icons, shared with the Posts page (posts.tsx), which uses this design too.
+export const IC = {
   eye: svg(<><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12z" /><circle cx="12" cy="12" r="3" /></>, 15),
   users: svg(<><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2" /><circle cx="9" cy="7" r="4" /><path d="M22 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75" /></>, 15),
   heart: svg(<path d="M19 14c1.49-1.46 3-3.21 3-5.5A5.5 5.5 0 0 0 16.5 3c-1.76 0-3 .5-4.5 2-1.5-1.5-2.74-2-4.5-2A5.5 5.5 0 0 0 2 8.5c0 2.3 1.5 4.05 3 5.5l7 7Z" />, 15),
@@ -62,6 +63,12 @@ const IC = {
   download: svg(<><path d="M12 3v12" /><path d="m7 10 5 5 5-5" /><path d="M5 21h14" /></>, 15),
   table: svg(<><rect x="3" y="4" width="18" height="16" rx="2" /><path d="M3 10h18M9 4v16" /></>, 14),
   chart: svg(<><path d="M3 3v18h18" /><path d="m7 15 4-4 3 3 5-6" /></>, 14),
+  search: svg(<><circle cx="11" cy="11" r="7" /><path d="m21 21-4.3-4.3" /></>, 15),
+  x: svg(<path d="M18 6 6 18M6 6l12 12" />, 14),
+  columns: svg(<><rect x="3" y="4" width="18" height="16" rx="2" /><path d="M9 4v16M15 4v16" /></>, 15),
+  trash: svg(<><path d="M3 6h18" /><path d="M8 6V4h8v2" /><path d="M19 6l-1 14H6L5 6" /></>, 15),
+  ext: svg(<><path d="M14 4h6v6" /><path d="M20 4 10 14" /><path d="M19 14v5a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V6a1 1 0 0 1 1-1h5" /></>, 13),
+  clock: svg(<><circle cx="12" cy="12" r="9" /><path d="M12 7v5l3 2" /></>, 15),
 };
 
 // ── numbers & dates ─────────────────────────────────────────────────────────
@@ -74,7 +81,7 @@ const isoOf = (d: Date) =>
   `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
 const addDays = (iso: string, n: number) => { const d = dayOf(iso); d.setDate(d.getDate() + n); return isoOf(d); };
 const spanDays = (from: string, to: string) => Math.round((dayOf(to).getTime() - dayOf(from).getTime()) / 86400000) + 1;
-const shortDate = (iso: string) => dayOf(iso).toLocaleDateString("en-GB", { day: "numeric", month: "short" });
+export const shortDate = (iso: string) => dayOf(iso).toLocaleDateString("en-GB", { day: "numeric", month: "short" });
 const growthPct = (cur: number, prev: number) => (prev > 0 ? ((cur - prev) / prev) * 100 : null);
 
 // The trend is drawn in days for short ranges, weeks up to ~7 months, months
@@ -517,7 +524,7 @@ function Delta({ d, unit }: { d: number | null; unit: string }) {
   );
 }
 
-function RangePicker({ range, label, dates, onPick, onCustom }: {
+export function RangePicker({ range, label, dates, onPick, onCustom }: {
   range: RangeKey; label: string; dates: string;
   onPick: (k: RangeKey) => void; onCustom: (from: string, to: string) => void;
 }) {
