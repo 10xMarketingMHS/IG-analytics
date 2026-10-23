@@ -2,12 +2,10 @@
    follows the pointer and colours that lean toward it (--mx/--my/--px/--py,
    set by usePointerLight). Right: the form. Colours follow the accent the
    person picked (--acH); everything holds still for reduced motion. */
-.lg{position:fixed;inset:0;z-index:200;overflow:auto;display:grid;place-items:center;padding:28px;
-  background:radial-gradient(60% 50% at 15% 10%,oklch(0.75 0.15 var(--acH) / .16),transparent 70%),
-             radial-gradient(50% 45% at 90% 90%,oklch(0.75 0.13 calc(var(--acH) - 70) / .14),transparent 70%),var(--bg)}
-.lg-card{width:min(1080px,100%);min-height:min(640px,calc(100vh - 56px));display:grid;grid-template-columns:minmax(0,1.05fr) minmax(0,1fr);gap:12px;
-  padding:12px;border:1px solid var(--border);border-radius:30px;background:var(--panel);
-  box-shadow:0 2px 6px oklch(0.3 0.1 var(--acH) / .06),0 30px 80px -24px oklch(0.45 0.2 var(--acH) / .35)}
+/* full screen: the art fills the left (a small inset), the form the right */
+.lg{position:fixed;inset:0;z-index:200;overflow:auto;
+  background:radial-gradient(45% 55% at 95% 100%,oklch(0.75 0.13 calc(var(--acH) - 70) / .1),transparent 70%),var(--panel)}
+.lg-card{min-height:100%;display:grid;grid-template-columns:minmax(0,1.1fr) minmax(0,1fr);gap:12px;padding:14px}
 
 /* the art */
 .lg-art{position:relative;overflow:hidden;isolation:isolate;border-radius:22px;color:#fff;min-height:420px;
@@ -40,6 +38,10 @@
 .lg-mark{position:relative;z-index:2;width:46px;height:46px;display:grid;place-items:center;border-radius:14px;font-size:22px;color:#fff;
   background:rgba(255,255,255,.16);border:1px solid rgba(255,255,255,.32);backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px);
   box-shadow:0 8px 24px -8px rgba(20,10,60,.5)}
+/* the mini game (components/pulse-run.tsx): the panel's width, between the mark and the words */
+.lg-game{position:relative;z-index:2;flex:1;min-height:170px;margin:10px -32px 14px;outline:none}
+.lg-game canvas{position:absolute;inset:0;width:100%;height:100%;display:block;cursor:pointer;touch-action:manipulation;-webkit-tap-highlight-color:transparent}
+.lg-game:focus-visible:not([data-pointer]){box-shadow:inset 0 0 0 2px rgba(255,255,255,.75);border-radius:14px}
 .lg-pitch{position:relative;z-index:2;display:flex;flex-direction:column;gap:12px;max-width:420px;text-shadow:0 1px 12px rgba(20,10,60,.35)}
 .lg-pitch span{font-size:13.5px;font-weight:600;opacity:.92}
 .lg-pitch b{font-size:clamp(24px,2.6vw,32px);font-weight:800;line-height:1.18;letter-spacing:-.02em;text-wrap:balance}
@@ -82,7 +84,8 @@
 @media (max-width:880px){
   .lg{padding:16px;place-items:start center}
   .lg-card{grid-template-columns:minmax(0,1fr);min-height:0;border-radius:26px}
-  .lg-art{min-height:240px;padding:22px 22px 24px}
+  .lg-art{min-height:330px;padding:22px 22px 24px}
+  .lg-game{min-height:150px;margin:6px -22px 10px}
   .lg-blob.b1{width:72%;height:170%;top:-35%}
   .lg-pitch b{font-size:24px}
   .lg-side{padding:28px 14px 22px}
@@ -91,7 +94,8 @@
 @media (max-width:480px){
   .lg{padding:10px}
   .lg-card{padding:8px;border-radius:22px}
-  .lg-art{min-height:190px;border-radius:16px}
+  .lg-art{min-height:300px;border-radius:16px}
+  .lg-game{min-height:140px}
   .lg-pitch span{display:none}
   .lg-pitch b{font-size:21px}
   .lg-form h1{font-size:26px}

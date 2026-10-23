@@ -2,11 +2,13 @@ import { useEffect, useRef, useState, type FormEvent } from "react";
 import { Navigate, useNavigate, useSearchParams } from "react-router-dom";
 import { useAuth, ApiError } from "@/lib/auth-context";
 import { api } from "@/lib/api";
+import { PulseRun } from "@/components/pulse-run";
 import "./login.css";
 
-// The sign-in screen (login.css): a living gradient on the left — slow drifting
-// light, a glow that follows the pointer, the colours shifting a little toward
-// it — and the form on the right. One column on phones.
+// The sign-in screen (login.css), full screen: a living gradient on the left —
+// slow drifting light, a glow that follows the pointer, the colours shifting a
+// little toward it — with a mini game to play (components/pulse-run.tsx), and
+// the form on the right. One column on phones.
 
 const EYE = (
   <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
@@ -136,8 +138,9 @@ export function LoginPage() {
             <span className="lg-grain" />
           </div>
           <span className="lg-mark" aria-hidden="true">◐</span>
+          <PulseRun />
           <div className="lg-pitch">
-            <span>Pulse · DF Foods</span>
+            <span>Pulse</span>
             <b>Your team’s content, tasks and goals in one place</b>
           </div>
         </div>
