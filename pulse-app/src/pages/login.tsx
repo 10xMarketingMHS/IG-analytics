@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState, type FormEvent } from "react";
 import { Navigate, useNavigate, useSearchParams } from "react-router-dom";
 import { useAuth, ApiError } from "@/lib/auth-context";
-import { api } from "@/lib/api";
+import { api, noAnswer } from "@/lib/api";
 import { PulseRun } from "@/components/pulse-run";
 import "./login.css";
 
@@ -97,8 +97,16 @@ export function LoginPage() {
     setError(null);
     setPending(true);
     const formData = new FormData(event.currentTarget);
+    const email = String(formData.get("email")), password = String(formData.get("password"));
     try {
-      await login(String(formData.get("email")), String(formData.get("password")));
+      try {
+        await login(email, password);
+      } catch (err) {
+        // the server didn't answer (restarting, waking up): once more, a moment later
+        if (!noAnswer(err)) throw err;
+        await new Promise((r) => setTimeout(r, 1500));
+        await login(email, password);
+      }
       navigate(redirectTo, { replace: true });
     } catch (err) {
       setError(err instanceof ApiError ? err.message : "Sign-in failed.");
