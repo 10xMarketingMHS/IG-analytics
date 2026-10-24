@@ -34,6 +34,7 @@ import { notifyTasksChanged } from "@/lib/task-events";
 import { SodModal } from "@/components/sod-modal";
 import { useTheme, ACCENTS } from "@/components/theme-provider";
 import { ChatProvider, useChat } from "@/lib/chat";
+import { OnlineNow } from "@/components/online-now";
 import { navIcon, SIGN_OUT_ICON, RAIL_ICON, COMPOSE_ICON, SEARCH_ICON, PLUS_ICON, BREAK_ICON, GEAR_ICON, MORE_ICON, CLOSE_ICON } from "@/components/nav-icons";
 import { JumpPalette, type JumpItem } from "@/components/jump-palette";
 import { channelTile, initialsOf } from "@/lib/editor-visuals";
@@ -702,6 +703,8 @@ function AppShellInner() {
               <button className="btn" onClick={() => navigate("/home")}>← My Day</button>
             </>
           )}
+          {/* who else has Pulse open: hover for names, click one to chat */}
+          <OnlineNow />
           {(user?.editorId || isAdmin) && (
             <button type="button" className="btn top-leave" onClick={() => setLeaveOpen(true)} title="Attendance and leave" aria-label="Attendance">
               <Icon name="event_available" size={18} /><span className="top-leave-l">Attendance</span>
