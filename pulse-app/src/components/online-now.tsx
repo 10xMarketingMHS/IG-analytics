@@ -5,12 +5,14 @@ import { api, ApiError } from "@/lib/api";
 import { avatarColor, initials, useChat, type ChatPerson } from "@/lib/chat";
 import "./online-now.css";
 
-// Who's on Pulse right now, on the top bar: their faces in a small overlapping
-// stack that spreads out on hover (or on a first tap, on a phone), each naming
-// itself when pointed at; a click opens your direct messages with that person.
+// Who's on Pulse right now, on the top bar: four faces in a tight stack that,
+// on hover (or on a first tap, on a phone), spreads out into everyone side by
+// side, each naming itself when pointed at; a click opens your direct messages
+// with that person.
 // From chat's presence (lib/chat.tsx): the people with Pulse open, you left out.
 
-const SHOW = 6;   // faces; anyone past these is in the "+N"
+const STACK = 4;  // faces in the stack
+const SHOW = 8;   // faces spread out; anyone past these is in the "+N"
 
 export function OnlineNow() {
   const { available, state, people, online, refresh } = useChat();
@@ -37,7 +39,9 @@ export function OnlineNow() {
     .filter((p): p is ChatPerson => !!p)
     .sort((a, b) => a.name.localeCompare(b.name));
   if (!live.length) return null;
-  const shown = live.slice(0, SHOW), more = live.slice(SHOW);
+  const shown = live.slice(0, SHOW);
+  // past eight, once spread: a "+N" (the stack is just four faces; the label has the count)
+  const more = live.slice(SHOW);
 
   async function message(p: ChatPerson) {
     // your conversation with just them, if there is one; otherwise it's started
@@ -82,7 +86,7 @@ export function OnlineNow() {
           <button
             key={p.id}
             type="button"
-            className="on-face"
+            className={"on-face" + (i >= STACK ? " extra" : "")}
             style={{ zIndex: SHOW + 1 - i }}
             aria-label={`Message ${p.name}`}
             aria-busy={busy === p.id || undefined}
@@ -102,7 +106,7 @@ export function OnlineNow() {
         {more.length > 0 && (
           <button
             type="button"
-            className="on-face on-more"
+            className={"on-face on-more" + (open ? "" : " gone")}
             style={{ zIndex: 0 }}
             aria-label={`${more.length} more online: ${more.map((p) => p.name).join(", ")}. Open Team Chat`}
             onClick={pick(() => { setOpen(false); navigate("/chat"); })}
