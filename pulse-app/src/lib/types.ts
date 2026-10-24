@@ -26,6 +26,8 @@ export type AppUser = {
   name: string | null;
   active: boolean;
   role: Role;
+  // An admin who can also manage other admins (Team › Roster).
+  isSuperAdmin?: boolean;
   isSelf: boolean;
   editor_id: string | null;
   // Set while a "Forgot password?" request is waiting for the admin.
@@ -38,6 +40,13 @@ export type Editor = {
   designation: string;
   image_url: string | null;
   active: boolean;
+  // Company ID shown on the roster, e.g. MHS001.
+  employee_code?: string | null;
+  // Counts in the Task Points rankings: false when a Super Admin switched them
+  // out on the roster; null or true counts (see countsInTaskScore in lib/task-points).
+  in_task_score?: boolean | null;
+  // The Team Lead this person reports to (Team › Roster); null for none.
+  lead_editor_id?: string | null;
   // True when this editor is linked to a user with an admin role. Admins are
   // hidden from "assign an editor" pickers (they don't get assigned editing).
   is_admin?: boolean;
@@ -225,11 +234,17 @@ export type Task = {
   link_required: boolean;
   budget_hours: number | null;
   budget_started_at: string | null;
+  // Time banked while the clock waits (on hold, or the day closed).
+  budget_used_seconds?: number | null;
   // Time spent waiting for a reviewer, which never counts against the assignee:
   // when it last went into Review (null while it isn't there), and every
   // finished wait added up. See workedUntil() in task-points.ts.
   review_started_at?: string | null;
   review_wait_seconds?: number;
+  // In Review: whether you may approve or send it back, and who it's waiting
+  // for in words ("Rahul", "a Team Lead") — server/src/review-route.js.
+  can_review?: boolean;
+  review_by?: string | null;
   // The assignee's break state — offsets the countdown by however long
   // they've been (or are currently) on break, shared across every task
   // they have running. See use-break.ts.
@@ -290,8 +305,16 @@ export type TaskTimeRule = {
 export type ActivityVerb =
   | "created" | "completed" | "assigned" | "commented" | "published"
   | "stage_completed" | "channel_added" | "editor_added"
-  | "review_requested" | "sent_back" | "reopened" | "deleted"
-  | "held" | "resumed" | "password_reset_requested" | "password_reset" | "sod_submitted";
+  | "review_requested" | "review_copied" | "sent_back" | "reopened" | "deleted"
+  | "held" | "resumed" | "accepted" | "password_reset_requested" | "password_reset" | "sod_submitted"
+  // Attendance (Start day, a lead's marks, nudges, corrections, the no-SOD alert)
+  | "attendance_check_in" | "attendance_no_sod" | "attendance_nudge" | "attendance_marked" | "attendance_excused"
+  | "attendance_undone" | "attendance_correction" | "attendance_correction_answered"
+  // Hand over (components/handover.tsx)
+  | "handover_offered" | "handover_accepted" | "handover_declined" | "handover_cancelled" | "handover_escalated" | "handover_moved"
+  // Leave: CL and SL (components/leave-ask.tsx)
+  | "leave_asked" | "leave_approved" | "leave_declined" | "leave_cancelled" | "leave_topped_up" | "leave_allowance_set"
+  | "leave_counting_started" | "leave_rules_changed" | "attendance_leave_worked";
 
 export type Activity = {
   id: string;

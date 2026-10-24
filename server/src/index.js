@@ -1,3 +1,4 @@
+import "./async-errors.js"; // first: async route errors go to the error handler, never crash the server
 import express from "express";
 import cors from "cors";
 import cookieParser from "cookie-parser";
@@ -14,6 +15,8 @@ import { taxonomyRouter } from "./routes/taxonomy.js";
 import { editorsRouter } from "./routes/editors.js";
 import { platformsRouter } from "./routes/platforms.js";
 import { tasksRouter } from "./routes/tasks.js";
+import { handoverRouter } from "./routes/handover.js";
+import { leaderboardRouter } from "./routes/leaderboard.js";
 import { taskRulesRouter } from "./routes/task-rules.js";
 import { contentFormatsRouter } from "./routes/content-formats.js";
 import { usersRouter } from "./routes/users.js";
@@ -26,6 +29,12 @@ import { eodRouter } from "./routes/eod.js";
 import { sodRouter } from "./routes/sod.js";
 import { managementPerformanceRouter } from "./routes/management-performance.js";
 import { accessRouter } from "./routes/access.js";
+import { chatRouter } from "./routes/chat.js";
+import { orgRouter } from "./routes/org.js";
+import { attendanceRouter } from "./routes/attendance.js";
+import { inboxRouter } from "./routes/inbox.js";
+import { leaveRouter } from "./routes/leave.js";
+import { homeRouter } from "./routes/home.js";
 
 const app = express();
 
@@ -33,6 +42,21 @@ const app = express();
 // it so Express knows the original request was HTTPS — required for `secure`
 // session cookies to be set.
 app.set("trust proxy", 1);
+
+// Safety headers on every answer: don't guess file types, don't let another
+// site show Pulse inside a frame (a click-trick), send only the site name on
+// links out, no camera / microphone / location, and — when it's live, over
+// HTTPS — always HTTPS from now on. No "X-Powered-By: Express" either.
+app.disable("x-powered-by");
+app.use((_req, res, next) => {
+  res.setHeader("X-Content-Type-Options", "nosniff");
+  res.setHeader("X-Frame-Options", "DENY");
+  res.setHeader("Content-Security-Policy", "frame-ancestors 'none'");
+  res.setHeader("Referrer-Policy", "strict-origin-when-cross-origin");
+  res.setHeader("Permissions-Policy", "camera=(), microphone=(), geolocation=()");
+  if (config.NODE_ENV === "production") res.setHeader("Strict-Transport-Security", "max-age=15552000");
+  next();
+});
 
 // In dev the frontend port can vary (auto-assigned), so reflect any origin.
 // In production the frontend is same-origin, so CORS is effectively a no-op.
@@ -55,6 +79,8 @@ app.use("/api", requireAuth, resolveWorkspace, taxonomyRouter);
 app.use("/api", requireAuth, resolveWorkspace, editorsRouter);
 app.use("/api", requireAuth, resolveWorkspace, platformsRouter);
 app.use("/api", requireAuth, resolveWorkspace, tasksRouter);
+app.use("/api", requireAuth, resolveWorkspace, handoverRouter);
+app.use("/api", requireAuth, resolveWorkspace, leaderboardRouter);
 app.use("/api", requireAuth, resolveWorkspace, taskRulesRouter);
 app.use("/api", requireAuth, resolveWorkspace, contentFormatsRouter);
 app.use("/api", requireAuth, resolveWorkspace, usersRouter);
@@ -67,6 +93,12 @@ app.use("/api", requireAuth, resolveWorkspace, eodRouter);
 app.use("/api", requireAuth, resolveWorkspace, sodRouter);
 app.use("/api", requireAuth, resolveWorkspace, managementPerformanceRouter);
 app.use("/api", requireAuth, resolveWorkspace, accessRouter);
+app.use("/api", requireAuth, resolveWorkspace, chatRouter);
+app.use("/api", requireAuth, resolveWorkspace, orgRouter);
+app.use("/api", requireAuth, resolveWorkspace, attendanceRouter);
+app.use("/api", requireAuth, resolveWorkspace, inboxRouter);
+app.use("/api", requireAuth, resolveWorkspace, leaveRouter);
+app.use("/api", requireAuth, resolveWorkspace, homeRouter);
 
 // In production this one service also serves the built React app, so the whole
 // thing lives on a single origin (no cross-site cookie/CORS headaches). In dev
@@ -88,6 +120,7 @@ if (config.NODE_ENV === "production") {
 // eslint-disable-next-line no-unused-vars
 app.use((err, _req, res, _next) => {
   console.error(err);
+  if (res.headersSent) return res.end(); // part of an answer already went out
   res.status(500).json({ error: "Internal server error" });
 });
 

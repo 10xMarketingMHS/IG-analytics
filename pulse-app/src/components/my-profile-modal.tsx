@@ -4,6 +4,7 @@ import { api, ApiError } from "@/lib/api";
 import { useAuth } from "@/lib/auth-context";
 import { fileToSquareDataUrl } from "@/lib/image";
 import { Modal } from "@/components/modal";
+import { TeamAttendance } from "@/pages/team-attendance";
 
 // Same gradient-string convention used for editor/avatar chips elsewhere
 // (see leaderboard.tsx's AV_GRADIENTS) — stored as-is in app_user.color.
@@ -138,7 +139,7 @@ export function MyProfileModal({ onClose }: { onClose: () => void }) {
   const initial = (name || user?.email || "?").charAt(0).toUpperCase();
 
   return (
-    <Modal title="My Profile" onClose={onClose}>
+    <Modal title="My Profile" onClose={onClose} wide={!!user?.editorId}>
       <div className="profile-photo-row">
         <div
           className="profile-photo-preview"
@@ -236,6 +237,14 @@ export function MyProfileModal({ onClose }: { onClose: () => void }) {
           </form>
         )}
       </div>
+
+      {/* Your own Start of day record this month (Team › Attendance, your row). */}
+      {user?.editorId && (
+        <div className="field" style={{ marginTop: 16 }}>
+          <label className="f">My attendance</label>
+          <TeamAttendance editors={null} self />
+        </div>
+      )}
 
       <div className="mfoot" style={{ marginTop: 18 }}>
         <button type="button" className="btn" onClick={onClose}>Cancel</button>

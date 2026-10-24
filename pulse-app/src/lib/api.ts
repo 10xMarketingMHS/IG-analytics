@@ -14,6 +14,16 @@ export function setActiveWorkspaceId(id: string) {
   localStorage.setItem(ACTIVE_WORKSPACE_KEY, id);
 }
 
+// "Not signed in" from the server (the session ran out, the login was switched
+// off, the password changed): the app signs out once instead of every open
+// panel carrying on polling (lib/auth-context.tsx). Not for the sign-in calls.
+const SIGNED_OUT = "pulse:signed-out";
+export function onSignedOut(fn: (message: string) => void): () => void {
+  const h = (e: Event) => fn((e as CustomEvent<string>).detail ?? "");
+  window.addEventListener(SIGNED_OUT, h);
+  return () => window.removeEventListener(SIGNED_OUT, h);
+}
+
 export class ApiError extends Error {
   status: number;
   constructor(message: string, status: number) {
@@ -48,8 +58,11 @@ export async function api<T>(
     // The server says the work day isn't open (ended on another device, closed
     // automatically, or no plan yet) — let the shell re-check instead of
     // carrying on as if it were.
-    if (res.status === 403 && /Press Start Work/.test(message)) {
+    if (res.status === 403 && /Press Start Work|Start your day first/.test(message)) {
       window.dispatchEvent(new Event("pulse:workday-changed"));
+    }
+    if (res.status === 401 && !path.startsWith("/auth/")) {
+      window.dispatchEvent(new CustomEvent(SIGNED_OUT, { detail: message }));
     }
     throw new ApiError(message, res.status);
   }

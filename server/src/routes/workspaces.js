@@ -1,6 +1,7 @@
 import { Router } from "express";
 import { z } from "zod";
 import { pool } from "../db.js";
+import { hasColumn } from "../schema-flags.js";
 import { createWorkspace } from "../bootstrap.js";
 import { logActivity } from "../activity.js";
 import { requirePermission } from "../permissions.js";
@@ -53,19 +54,19 @@ workspacesRouter.post("/workspaces", resolveWorkspace, requirePermission("channe
   const client = await pool.connect();
   try {
     await client.query("BEGIN");
-    // Resolve the caller's org + an existing channel to copy taxonomy from.
+    // The new channel goes in the org this request is for (where the Channels
+    // permission was checked), copying the taxonomy of one of its channels.
+    const orgId = req.orgId ?? (await client.query("select id from org order by created_at limit 1")).rows[0]?.id ?? null;
     const ctx = await client.query(
-      `select w.id as ws_id, w.org_id from workspace w
-       join membership m on m.workspace_id = w.id
-       where m.user_id = $1 and w.org_id is not null
-       order by w.created_at asc limit 1`,
-      [req.user.sub],
+      "select id from workspace where org_id = $1 order by created_at asc limit 1",
+      [orgId],
     );
-    let orgId = ctx.rows[0]?.org_id ?? null;
-    const sourceWorkspaceId = ctx.rows[0]?.ws_id ?? null;
-    if (!orgId) orgId = (await client.query("select id from org order by created_at limit 1")).rows[0]?.id ?? null;
+    const sourceWorkspaceId = ctx.rows[0]?.id ?? null;
+    // An admin makes it as its admin; someone with only the Channels grant joins
+    // it as an editor (admin of any channel would make them admin of the org).
+    const ownerRole = req.role === "admin" ? "admin" : "editor";
 
-    const workspace = await createWorkspace(client, parsed.data.name, req.user.sub, { orgId, sourceWorkspaceId });
+    const workspace = await createWorkspace(client, parsed.data.name, req.user.sub, { orgId, sourceWorkspaceId, ownerRole });
 
     // Enable Instagram by default so the new channel is immediately usable.
     if (orgId) {
@@ -144,6 +145,23 @@ workspacesRouter.delete("/workspaces/:id", resolveWorkspace, requirePermission("
     if (!other) {
       await client.query("ROLLBACK");
       return res.status(409).json({ error: "This is your only channel — you can't delete it." });
+    }
+    // The Super Admin's only admin role must not go with it (they'd lose the
+    // Super Admin settings).
+    if (await hasColumn("app_user", "is_super_admin")) {
+      const { rows: only } = await client.query(
+        `select 1 from app_user u
+          where u.is_super_admin
+            and exists (select 1 from membership m where m.user_id = u.id and m.workspace_id = $1 and m.role = 'admin')
+            and not exists (select 1 from membership m join workspace w on w.id = m.workspace_id
+                             where m.user_id = u.id and m.role = 'admin' and w.org_id = $2 and m.workspace_id <> $1)
+          limit 1`,
+        [ws.id, ws.org_id],
+      );
+      if (only.length) {
+        await client.query("ROLLBACK");
+        return res.status(409).json({ error: "This channel holds the Super Admin's admin role. Make them an admin of another channel first." });
+      }
     }
     // Editors are the org's shared team (NOT NULL workspace_id cascades) — move
     // them to another channel so they survive.

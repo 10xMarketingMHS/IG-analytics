@@ -24,33 +24,43 @@ export type CriterionKey = (typeof DISCIPLINE_CRITERIA)[number]["key"];
 export type Ratings = Partial<Record<CriterionKey, number | null>>;
 const MAX_RATING_SUM = DISCIPLINE_CRITERIA.length * 5; // 25
 
-// The 80/20 split of Total Goal Points into an Overall Score:
-//   Editor Earned Points = 80% × Σ[ min(1, actualJC/goalJC) × goalJC × points ]
-//     — a points-weighted, per-type completion ratio (each type capped at 100%,
-//       so overachieving one can't offset missing another), never lateness-
-//       penalised (that lives in Task Points, kept separate on purpose).
+// What a month's work counts for is worked out on the server, by one rule for
+// every screen (server/src/goal-score.js): goals cut for approved leave, each
+// content type up to 150% of its goal (only assigned work goes beyond it), and
+// covered work (taken over from someone) on top. Each row brings its goal after
+// leave (goalJC) and the jobs that count (countedJC); covered work comes as
+// points. This only splits that into the Overall Score:
+//   Earned Points     = 80% × (Σ countedJC × points + covered points), at most
+//                       150% of Total Goal Points
+//                       — never lateness-penalised (that lives in Task Points).
 //   Admin ceiling     = 20% × Total Goal Points.
 //   Discipline points = (Σ 5 criterion ratings ÷ 25) × ceiling, computed live;
 //                       each unrated criterion counts as 5 (full) until set.
-//                       Inherently bounded by the ceiling (Σ ≤ 25), so Overall
-//                       can never exceed Total even if goals change later.
-//   Overall Score     = Earned + Discipline.
+//   Overall Score     = Earned + Discipline, which can pass the total (extra
+//                       and covered work).
 // Returns null when Total Goal Points is 0 (no goals) — nothing to split.
-export type BreakdownRow = { goalJC: number; actualJC: number; points: number };
+// Mirrors computeScore() in server/src/routes/management-performance.js.
+export const TYPE_CAP = 1.5;
+// the month as a whole, covered work included (server/src/goal-score.js TOTAL_CAP)
+export const TOTAL_CAP = 1.5;
+export type BreakdownRow = { goalJC: number; actualJC: number; points: number; countedJC?: number };
 export type GoalBreakdown = {
   total: number; earned: number; ceiling: number;
   discipline: number; ratingSum: number; reviewed: boolean; overall: number;
 };
-export function goalBreakdown(rows: BreakdownRow[], ratings: Ratings): GoalBreakdown | null {
+// `penalty`: the month's attendance points lost (late, absent — Settings ›
+// Attendance), taken off the discipline points, never below 0.
+// `coveredPoints`: covered work, counted on top.
+export function goalBreakdown(rows: BreakdownRow[], ratings: Ratings, penalty = 0, coveredPoints = 0): GoalBreakdown | null {
   const total = goalPointsTotal(rows.map((r) => ({ jc: r.goalJC, points: r.points })));
   if (total <= 0) return null;
-  const earned = 0.8 * rows.reduce((s, r) => {
-    const comp = r.goalJC > 0 ? Math.min(1, r.actualJC / r.goalJC) : 0;
-    return s + comp * r.goalJC * r.points;
-  }, 0);
+  // countedJC from the server; without it, the per-type limit alone
+  const counted = (r: BreakdownRow) => (r.goalJC > 0 ? r.countedJC ?? Math.min(TYPE_CAP * r.goalJC, r.actualJC) : 0);
+  const reached = Math.min(rows.reduce((s, r) => s + counted(r) * r.points, 0) + coveredPoints, TOTAL_CAP * total);
+  const earned = 0.8 * reached;
   const ceiling = 0.2 * total;
   const ratingSum = DISCIPLINE_CRITERIA.reduce((s, c) => s + (ratings[c.key] ?? 5), 0);
   const reviewed = DISCIPLINE_CRITERIA.every((c) => ratings[c.key] != null);
-  const discipline = (ratingSum / MAX_RATING_SUM) * ceiling;
+  const discipline = Math.max(0, (ratingSum / MAX_RATING_SUM) * ceiling - (penalty || 0));
   return { total, earned, ceiling, discipline, ratingSum, reviewed, overall: earned + discipline };
 }

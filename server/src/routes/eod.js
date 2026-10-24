@@ -2,6 +2,7 @@ import { Router } from "express";
 import { z } from "zod";
 import { pool } from "../db.js";
 import { requireAdmin } from "../resolve-workspace.js";
+import { hasColumn } from "../schema-flags.js";
 
 // Start/End EOD — one clock-in session per editor per workday. Editors are
 // gated out of the whole app (and, server-side, task mutations) until they Start
@@ -24,11 +25,66 @@ let lastSweep = 0;
 export async function closeStaleSessions() {
   if (Date.now() - lastSweep < 60_000) return;
   lastSweep = Date.now();
+  // …and their task clocks stop where the day was closed (see pauseDayTimers);
+  // one started after the close stops too, with nothing banked. The day is
+  // India's: a session is stale once India's date has moved on.
   await pool.query(
-    `update eod_session
-        set ended_at = greatest(started_at, (date + time '18:00') at time zone 'Asia/Kolkata'),
-            auto_closed = true
-      where ended_at is null and date < current_date`,
+    `with closed as (
+       update eod_session
+          set ended_at = greatest(started_at, (date + time '18:00') at time zone 'Asia/Kolkata'),
+              auto_closed = true
+        where ended_at is null and date < (now() at time zone 'Asia/Kolkata')::date
+        returning editor_id, ended_at, date
+     )
+     update task t
+        set budget_used_seconds = coalesce(t.budget_used_seconds, 0)
+              + greatest(0, extract(epoch from c.ended_at - t.budget_started_at)
+                            - case when e.break_date = c.date then coalesce(e.break_used_seconds, 0) else 0 end),
+            budget_started_at = null
+       from closed c join editor e on e.id = c.editor_id
+      where t.editor_id = c.editor_id and t.status = 'in_progress' and t.accepted and not t.on_hold
+        and t.budget_hours is not null and t.budget_started_at is not null`,
+  );
+}
+
+// Today's break so far for the task's person, as the board nets it out of a
+// running clock (lib/task-timing.ts breakOffsetMs): what's banked plus the
+// break under way, capped at the day's 75 minutes.
+const BREAK_NOW = `(case when e.break_date = (now() at time zone 'Asia/Kolkata')::date
+    then coalesce(e.break_used_seconds, 0)
+       + case when e.break_started_at is not null
+              then least(greatest(0, extract(epoch from now() - e.break_started_at)), greatest(0, 4500 - coalesce(e.break_used_seconds, 0)))
+              else 0 end
+    else 0 end)`;
+
+// Closing the day stops every running clock on that person's tasks: the time
+// so far (less today's breaks) is banked and the clock waits, the task still
+// In Progress, accepted and not on hold, until they start their day again.
+export async function pauseDayTimers(eid) {
+  await pool.query(
+    `update task t
+        set budget_used_seconds = coalesce(t.budget_used_seconds, 0)
+              + greatest(0, extract(epoch from now() - t.budget_started_at) - ${BREAK_NOW}),
+            budget_started_at = null
+       from editor e
+      where e.id = t.editor_id and t.editor_id = $1 and t.status = 'in_progress' and t.accepted and not t.on_hold
+        and t.budget_hours is not null and t.budget_started_at is not null and t.budget_started_at <= now()`,
+    [eid],
+  );
+}
+
+// Starting (or reopening) the day: those clocks run on from what was banked.
+// The start point also allows for today's breaks so far, which the board
+// takes off again, so the time shown carries straight on.
+async function resumeDayTimers(eid) {
+  await pool.query(
+    `update task t
+        set budget_started_at = now() - make_interval(secs => (coalesce(t.budget_used_seconds, 0) + ${BREAK_NOW})::double precision),
+            budget_used_seconds = 0
+       from editor e
+      where e.id = t.editor_id and t.editor_id = $1 and t.status = 'in_progress' and t.accepted and not t.on_hold
+        and t.budget_hours is not null and t.budget_started_at is null`,
+    [eid],
   );
 }
 
@@ -39,7 +95,7 @@ export async function closeStaleSessions() {
 // how many of those are done — a separate figure from Completed, since work
 // finished today is often due another day. Working hours run
 // from the day's first start to its last end (null while a session is still open).
-async function summaryFor(orgId, editorId, date) {
+export async function summaryFor(orgId, editorId, date) {
   const { rows: sessions } = await pool.query(
     `select id, started_at as "startedAt", ended_at as "endedAt", auto_closed as "autoClosed"
        from eod_session where editor_id = $1 and org_id = $2 and date = $3
@@ -85,7 +141,7 @@ async function summaryFor(orgId, editorId, date) {
   const { rows: br } = await pool.query(
     "select break_used_seconds, break_started_at, break_date from editor where id = $1", [editorId],
   );
-  const sessionDays = new Set(sessions.map((s) => new Date(s.startedAt).toISOString().slice(0, 10)));
+  const sessionDays = new Set(sessions.map((s) => new Date(new Date(s.startedAt).getTime() + 330 * 60_000).toISOString().slice(0, 10)));
   let breakSeconds = null;
   if (br[0]?.break_date && sessionDays.has(String(br[0].break_date).slice(0, 10))) {
     const running = br[0].break_started_at ? Math.max(0, (Date.now() - new Date(br[0].break_started_at)) / 1000) : 0;
@@ -184,38 +240,68 @@ eodRouter.get("/eod/status", async (req, res, next) => {
   } catch (err) { next(err); }
 });
 
+// Open a work session for this person — idempotent: the open one if there is
+// one. { session, created }. Shared with Start day (routes/attendance.js).
+export async function startSession(orgId, eid) {
+  await closeStaleSessions();
+  const open = await pool.query(
+    `select id, date, started_at as "startedAt", ended_at as "endedAt"
+       from eod_session where editor_id = $1 and ended_at is null limit 1`,
+    [eid],
+  );
+  if (open.rows.length) return { session: open.rows[0], created: false };
+  try {
+    const { rows } = await pool.query(
+      `insert into eod_session (org_id, editor_id, date, started_at)
+       values ($1, $2, (now() at time zone 'Asia/Kolkata')::date, now())
+       returning id, date, started_at as "startedAt", ended_at as "endedAt"`,
+      [orgId, eid],
+    );
+    await resumeDayTimers(eid);
+    return { session: rows[0], created: true };
+  } catch (e) {
+    // Lost a race to the partial-unique index — return whoever won.
+    if (e.code === "23505") {
+      const { rows } = await pool.query(
+        `select id, date, started_at as "startedAt", ended_at as "endedAt"
+           from eod_session where editor_id = $1 and ended_at is null limit 1`,
+        [eid],
+      );
+      return { session: rows[0] ?? null, created: false };
+    }
+    throw e;
+  }
+}
+
+// Close this person's open session and return it with the day's summary, or
+// null when nothing was open. Also stamps the day's attendance check-out.
+// Shared with End day (routes/attendance.js).
+export async function endSession(orgId, eid) {
+  const { rows } = await pool.query(
+    `update eod_session set ended_at = now()
+      where editor_id = $1 and ended_at is null
+      returning id, date, started_at as "startedAt", ended_at as "endedAt"`,
+    [eid],
+  );
+  if (!rows.length) return null;
+  await pauseDayTimers(eid);
+  if (await hasColumn("attendance", "id")) {
+    await pool.query(
+      `update attendance set check_out_at = now(), updated_at = now()
+        where editor_id = $1 and date = (now() at time zone 'Asia/Kolkata')::date and check_out_at is null`,
+      [eid],
+    );
+  }
+  return { session: rows[0], summary: await summaryFor(orgId, eid, rows[0].date) };
+}
+
 // Start EOD — idempotent: returns the existing open session if there is one.
 eodRouter.post("/eod/start", async (req, res, next) => {
   try {
-    await closeStaleSessions();
     const eid = await callerEditorId(req);
     if (!eid) return res.status(400).json({ error: "Your account isn't linked to a team member." });
-    const open = await pool.query(
-      `select id, date, started_at as "startedAt", ended_at as "endedAt"
-         from eod_session where editor_id = $1 and ended_at is null limit 1`,
-      [eid],
-    );
-    if (open.rows.length) return res.json({ session: open.rows[0] });
-    try {
-      const { rows } = await pool.query(
-        `insert into eod_session (org_id, editor_id, date, started_at)
-         values ($1, $2, current_date, now())
-         returning id, date, started_at as "startedAt", ended_at as "endedAt"`,
-        [req.orgId, eid],
-      );
-      res.status(201).json({ session: rows[0] });
-    } catch (e) {
-      // Lost a race to the partial-unique index — return whoever won.
-      if (e.code === "23505") {
-        const { rows } = await pool.query(
-          `select id, date, started_at as "startedAt", ended_at as "endedAt"
-             from eod_session where editor_id = $1 and ended_at is null limit 1`,
-          [eid],
-        );
-        return res.json({ session: rows[0] ?? null });
-      }
-      throw e;
-    }
+    const { session, created } = await startSession(req.orgId, eid);
+    res.status(created ? 201 : 200).json({ session });
   } catch (err) { next(err); }
 });
 
@@ -224,15 +310,9 @@ eodRouter.patch("/eod/end", async (req, res, next) => {
   try {
     const eid = await callerEditorId(req);
     if (!eid) return res.status(400).json({ error: "Your account isn't linked to a team member." });
-    const { rows } = await pool.query(
-      `update eod_session set ended_at = now()
-        where editor_id = $1 and ended_at is null
-        returning id, date, started_at as "startedAt", ended_at as "endedAt"`,
-      [eid],
-    );
-    if (!rows.length) return res.status(400).json({ error: "You haven't started work, so there's nothing to end." });
-    const summary = await summaryFor(req.orgId, eid, rows[0].date);
-    res.json({ session: rows[0], summary });
+    const ended = await endSession(req.orgId, eid);
+    if (!ended) return res.status(400).json({ error: "You haven't started work, so there's nothing to end." });
+    res.json(ended);
   } catch (err) { next(err); }
 });
 
@@ -247,7 +327,7 @@ eodRouter.put("/eod/notes", async (req, res, next) => {
     const eid = await callerEditorId(req);
     if (!eid) return res.status(400).json({ error: "Your account isn't linked to a team member." });
     const { rows: s } = await pool.query(
-      "select date from eod_session where editor_id = $1 and org_id = $2 and date = current_date limit 1", [eid, req.orgId],
+      "select date from eod_session where editor_id = $1 and org_id = $2 and date = (now() at time zone 'Asia/Kolkata')::date limit 1", [eid, req.orgId],
     );
     if (!s.length) return res.status(400).json({ error: "Press Start Work first." });
     const date = s[0].date;
@@ -289,10 +369,56 @@ eodRouter.get("/eod/summary", async (req, res, next) => {
   } catch (err) { next(err); }
 });
 
+// My reports — your own work days, newest first: each day you started work or
+// copied a Start of Day in the last ?days= (30 by default, at most 365), with
+// the same figures the admin's Work Day page shows. Always yourself.
+eodRouter.get("/eod/my-days", async (req, res, next) => {
+  try {
+    const eid = await callerEditorId(req);
+    if (!eid) return res.json({ days: [], unlinked: true });
+    const span = Math.min(Math.max(Number(req.query.days) || 30, 1), 365);
+    await closeStaleSessions();
+    const { rows } = await pool.query(
+      `with days as (
+         select date from eod_session where editor_id = $1 and date > (now() at time zone 'Asia/Kolkata')::date - $2::int
+         union
+         select date from sod_plan where editor_id = $1 and date > (now() at time zone 'Asia/Kolkata')::date - $2::int
+       )
+       select to_char(d.date, 'YYYY-MM-DD') as date,
+              coalesce(sum(extract(epoch from coalesce(s.ended_at, now()) - s.started_at)), 0)::int as "workedSeconds",
+              coalesce(bool_or(s.auto_closed), false) as "autoClosed",
+              (select p.submitted_at from sod_plan p where p.editor_id = $1 and p.date = d.date) as "planSubmittedAt",
+              (select count(*)::int from sod_plan p, jsonb_array_elements(p.tasks) x
+                 where p.editor_id = $1 and p.date = d.date and x->>'group' <> 'skipped') as "planCount",
+              min(s.started_at) as "startedAt",
+              max(s.ended_at)   as "endedAt",
+              bool_or(s.ended_at is null) as "anyOpen",
+              count(s.id)::int  as "sessions"
+         from days d
+         left join eod_session s on s.editor_id = $1 and s.date = d.date
+        group by d.date
+        order by d.date desc`,
+      [eid, span],
+    );
+    const days = rows.map((r) => ({
+      date: r.date,
+      status: r.sessions === 0 ? "not_started" : (r.anyOpen ? "active" : "completed"),
+      startedAt: r.startedAt,
+      endedAt: r.anyOpen ? null : r.endedAt,
+      sessions: r.sessions,
+      workedSeconds: r.workedSeconds,
+      autoClosed: r.autoClosed,
+      planSubmittedAt: r.planSubmittedAt,
+      planCount: r.planCount,
+    }));
+    res.json({ days });
+  } catch (err) { next(err); }
+});
+
 // Admin oversight — every (non-admin) editor's EOD status for a date.
 eodRouter.get("/eod/team", requireAdmin, async (req, res, next) => {
   try {
-    const date = String(req.query.date || new Date().toISOString().slice(0, 10)).slice(0, 10);
+    const date = String(req.query.date || new Date(Date.now() + 330 * 60_000).toISOString().slice(0, 10)).slice(0, 10);
     if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) return res.status(400).json({ error: "A valid date is required." });
     await closeStaleSessions();
     const { rows } = await pool.query(
@@ -342,12 +468,17 @@ export async function requireActiveEod(req, res, next) {
     if (req.role !== "editor") return next();
     const eid = await callerEditorId(req);
     if (!eid) return next(); // no roster link — no session to require
+    // Settings › Attendance › Require Start of day off: work isn't gated.
+    if (await hasColumn("org", "settings")) {
+      const { rows: o } = await pool.query("select settings->'attendance'->'requireSod' as r from org where id = $1", [req.orgId]);
+      if (o[0]?.r === false) return next();
+    }
     await closeStaleSessions();
     const { rowCount } = await pool.query(
       "select 1 from eod_session where editor_id = $1 and ended_at is null limit 1",
       [eid],
     );
-    if (!rowCount) return res.status(403).json({ error: "Press Start Work before working on tasks." });
+    if (!rowCount) return res.status(403).json({ error: "Start your day first — tap Start day on Home." });
     next();
   } catch (err) { next(err); }
 }

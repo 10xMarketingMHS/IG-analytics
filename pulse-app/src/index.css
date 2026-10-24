@@ -1,31 +1,53 @@
-/* Pulse design system — purple glassmorphism */
+/* Pulse design system — glass on a soft tint of the accent colour. Two hues
+   drive it everywhere: --acH, the accent itself, and --acH2, the colour its
+   gradients and the second background glow blend into. Each person picks one
+   of eight pairs (the My Profile palette) — see ACCENTS in theme-provider.tsx,
+   set on <html> as data-accent before first paint (index.html). */
 :root{
-  --bg:#f3f0fb; --panel:#ffffff; --panel2:#f7f4fe; --text:#1a1035; --muted:#5a5182; --faint:#6f6699;
-  --border:#e7e0f7; --border2:#efeafa; --accent:#7c3aed; --accent-weak:#ede9fe; --accent-ink:#6d28d9;
-  --indigo:#7c3aed; --indigo-weak:#ede9fe; --amber:#b45309; --rose:#e11d48; --good:#16a34a;
-  --grad:linear-gradient(135deg,#7c3aed,#a855f7); --grad-soft:linear-gradient(135deg,#8b5cf6,#c084fc);
-  --glass:rgba(255,255,255,.72); --glass-brd:rgba(124,58,237,.16); --glass-solid:rgba(255,255,255,.95);
-  --shadow:0 2px 8px rgba(80,40,160,.06),0 18px 40px rgba(80,40,160,.10); --radius:18px;
-  --c1:#7c3aed;--c2:#a855f7;--c3:#22d3ee;--c4:#f472b6;--c5:#f59e0b;
+  --acH:290;--acH2:330;
+  --bg:oklch(0.97 0.012 var(--acH)); --panel:#ffffff; --panel2:oklch(0.975 0.014 var(--acH));
+  --text:oklch(0.22 0.06 var(--acH)); --muted:oklch(0.46 0.07 var(--acH)); --faint:oklch(0.54 0.06 var(--acH));
+  --border:oklch(0.92 0.035 var(--acH)); --border2:oklch(0.95 0.02 var(--acH));
+  --accent:oklch(0.55 0.21 var(--acH)); --accent-weak:oklch(0.94 0.04 var(--acH)); --accent-ink:oklch(0.48 0.2 var(--acH));
+  --indigo:oklch(0.55 0.21 var(--acH)); --indigo-weak:oklch(0.94 0.04 var(--acH)); --amber:#b45309; --rose:#e11d48; --good:#16a34a;
+  --grad:linear-gradient(135deg,oklch(0.55 0.22 var(--acH)),oklch(0.63 0.2 var(--acH2)));
+  --grad-soft:linear-gradient(135deg,oklch(0.6 0.2 var(--acH)),oklch(0.72 0.15 var(--acH2)));
+  --glass:rgba(255,255,255,.72); --glass-brd:oklch(0.55 0.2 var(--acH) / .16); --glass-solid:rgba(255,255,255,.95);
+  --shadow:0 2px 8px oklch(0.4 0.15 var(--acH) / .06),0 18px 40px oklch(0.4 0.15 var(--acH) / .1); --radius:18px;
+  --c1:oklch(0.55 0.21 var(--acH));--c2:oklch(0.63 0.2 var(--acH2));--c3:#22d3ee;--c4:#f472b6;--c5:#f59e0b;
 }
+html[data-accent="indigo"]{--acH:272;--acH2:215}
+html[data-accent="blue"]{--acH:252;--acH2:205}
+html[data-accent="orchid"]{--acH:305;--acH2:350}
+html[data-accent="pink"]{--acH:350;--acH2:295}
+html[data-accent="green"]{--acH:155;--acH2:200}
+html[data-accent="amber"]{--acH:65;--acH2:300}
+html[data-accent="sunset"]{--acH:28;--acH2:68}
 html[data-theme="dark"]{
-  --bg:#0a0713; --panel:#171128; --panel2:#130e22; --text:#f1eefa; --muted:#b3a9d6; --faint:#9088b5;
-  --border:rgba(150,120,240,.14); --border2:rgba(150,120,240,.08); --accent:#8b5cf6; --accent-weak:rgba(139,92,246,.22); --accent-ink:#d3c4ff;
-  --indigo:#a78bfa; --indigo-weak:rgba(139,92,246,.22);
-  --grad:linear-gradient(135deg,#7c3aed,#a855f7); --grad-soft:linear-gradient(135deg,#8b5cf6,#c084fc);
-  --glass:rgba(32,24,58,.62); --glass-brd:rgba(168,140,255,.18); --glass-solid:rgba(26,19,46,.94);
-  --shadow:0 2px 8px rgba(0,0,0,.35),0 24px 55px rgba(60,25,120,.40);
-  --c1:#8b5cf6;--c2:#c084fc;--c3:#22d3ee;--c4:#f472b6;--c5:#fbbf24;
+  --bg:oklch(0.14 0.025 var(--acH)); --panel:oklch(0.2 0.045 var(--acH)); --panel2:oklch(0.175 0.04 var(--acH));
+  --text:oklch(0.96 0.012 var(--acH)); --muted:oklch(0.76 0.06 var(--acH)); --faint:oklch(0.66 0.06 var(--acH));
+  --border:oklch(0.7 0.12 var(--acH) / .14); --border2:oklch(0.7 0.12 var(--acH) / .08);
+  --accent:oklch(0.62 0.2 var(--acH)); --accent-weak:oklch(0.62 0.2 var(--acH) / .22); --accent-ink:oklch(0.85 0.09 var(--acH));
+  --indigo:oklch(0.72 0.15 var(--acH)); --indigo-weak:oklch(0.62 0.2 var(--acH) / .22);
+  --glass:oklch(0.24 0.06 var(--acH) / .62); --glass-brd:oklch(0.75 0.12 var(--acH) / .18); --glass-solid:oklch(0.2 0.05 var(--acH) / .94);
+  --shadow:0 2px 8px rgba(0,0,0,.35),0 24px 55px oklch(0.3 0.15 var(--acH) / .4);
+  --c1:oklch(0.62 0.2 var(--acH));--c2:oklch(0.72 0.15 var(--acH2));--c3:#22d3ee;--c4:#f472b6;--c5:#fbbf24;
 }
 *{box-sizing:border-box}
 html,body{margin:0;height:100%}
 body{font-family:'Inter',-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Arial,sans-serif;background:var(--bg);color:var(--text);-webkit-font-smoothing:antialiased}
-/* Ambient purple glow behind everything — the glass cards blur this. */
+/* The page background: three soft glows tinted by the accent (Pulse Redesign
+   v5), so the whole app takes the colour the person picked. */
 body::before{content:'';position:fixed;inset:0;z-index:-1;pointer-events:none;
   background:
-    radial-gradient(62% 55% at 12% -5%,rgba(124,58,237,.30),transparent 60%),
-    radial-gradient(50% 55% at 105% 105%,rgba(168,85,247,.24),transparent 60%),
-    radial-gradient(42% 42% at 92% 8%,rgba(56,189,248,.10),transparent 60%);}
+    radial-gradient(1100px 640px at 0% 0%,oklch(0.87 0.1 var(--acH) / .95),transparent 64%),
+    radial-gradient(900px 560px at 100% 0%,oklch(0.9 0.09 var(--acH2) / .85),transparent 62%),
+    radial-gradient(800px 640px at 85% 100%,oklch(0.92 0.07 calc(var(--acH) - 70) / .75),transparent 60%)}
+html[data-theme="dark"] body::before{
+  background:
+    radial-gradient(1100px 640px at 0% 0%,oklch(0.34 0.13 var(--acH) / .6),transparent 64%),
+    radial-gradient(900px 560px at 100% 0%,oklch(0.32 0.11 var(--acH2) / .45),transparent 62%),
+    radial-gradient(800px 640px at 85% 100%,oklch(0.28 0.09 calc(var(--acH) - 70) / .4),transparent 60%)}
 button{font-family:inherit;cursor:pointer}
 a{color:inherit}
 #root{min-height:100vh}
@@ -89,12 +111,11 @@ main{min-width:0;display:flex;flex-direction:column}
 
 .card{background:var(--glass);border:1px solid var(--glass-brd);border-radius:var(--radius);box-shadow:var(--shadow);
   backdrop-filter:blur(20px) saturate(140%);-webkit-backdrop-filter:blur(20px) saturate(140%);
-  position:relative;transition:transform .28s cubic-bezier(.22,.61,.36,1),box-shadow .28s,border-color .28s}
+  position:relative}
 /* soft top highlight for the glass sheen */
 .card::after{content:'';position:absolute;inset:0;border-radius:inherit;pointer-events:none;
   background:linear-gradient(180deg,rgba(255,255,255,.06),transparent 40%)}
-.card:hover{transform:translateY(-4px);border-color:var(--accent);
-  box-shadow:0 2px 8px rgba(0,0,0,.28),0 30px 64px rgba(90,40,180,.34)}
+/* panels stay still on hover — nothing lifts, anywhere */
 .card.pad{padding:20px}
 
 /* ===== Glass modal ===== */
@@ -248,7 +269,7 @@ main{min-width:0;display:flex;flex-direction:column}
 .task-count{margin-left:auto;font-size:11px;font-weight:800;color:var(--accent-ink);background:var(--accent-weak);padding:1px 9px;border-radius:10px}
 .task-card{background:var(--panel);border:1px solid var(--border);border-left:3px solid transparent;border-radius:10px;padding:12px 13px;margin-bottom:10px;
   cursor:pointer;transition:transform .18s,border-color .18s,box-shadow .18s}
-.task-card:hover{transform:translateY(-2px);border-color:var(--accent);box-shadow:0 12px 28px rgba(90,40,180,.22)}
+.task-card:hover{border-color:var(--accent);box-shadow:0 12px 28px rgba(90,40,180,.22)}
 .task-card.pri-high{border-left-color:#fb7185}
 .task-card.pri-medium{border-left-color:var(--accent)}
 .task-card.pri-low{border-left-color:transparent}
@@ -421,7 +442,7 @@ main{min-width:0;display:flex;flex-direction:column}
 .plat-card{text-align:left;font:inherit;color:inherit;cursor:pointer;background:var(--glass);border:1px solid var(--glass-brd);
   border-radius:18px;padding:18px 18px 16px;position:relative;transition:transform .25s cubic-bezier(.22,.61,.36,1),border-color .25s,box-shadow .25s;
   backdrop-filter:blur(18px) saturate(140%);-webkit-backdrop-filter:blur(18px) saturate(140%)}
-.plat-card:hover{transform:translateY(-4px);box-shadow:0 24px 52px rgba(90,40,180,.28)}
+.plat-card:hover{box-shadow:0 24px 52px rgba(90,40,180,.28)}
 .plat-card.on{border-color:var(--accent);box-shadow:0 0 0 2px var(--accent-weak),0 20px 44px rgba(90,40,180,.30)}
 .plat-ic{width:46px;height:46px;border-radius:13px;display:grid;place-items:center;font-size:22px;color:#fff;margin-bottom:12px;
   box-shadow:0 8px 18px rgba(0,0,0,.28)}
@@ -555,7 +576,7 @@ main{min-width:0;display:flex;flex-direction:column}
 .home-stat{text-align:left;font:inherit;color:inherit;cursor:pointer;background:var(--glass);border:1px solid var(--glass-brd);
   border-left:3px solid var(--faint);border-radius:16px;padding:16px 18px;position:relative;transition:transform .2s,box-shadow .2s,border-color .2s;
   backdrop-filter:blur(16px) saturate(140%);-webkit-backdrop-filter:blur(16px) saturate(140%)}
-.home-stat:hover{transform:translateY(-3px);box-shadow:0 18px 40px rgba(90,40,180,.22)}
+.home-stat:hover{box-shadow:0 18px 40px rgba(90,40,180,.22)}
 .home-stat.danger{border-left-color:#f43f5e}.home-stat.warn{border-left-color:#f59e0b}
 .home-stat.accent{border-left-color:var(--accent)}.home-stat.info{border-left-color:#3b82f6}
 .hs-v{font-size:30px;font-weight:800;letter-spacing:-.8px;font-variant-numeric:tabular-nums;line-height:1}
@@ -570,8 +591,7 @@ main{min-width:0;display:flex;flex-direction:column}
   background:linear-gradient(120deg,rgba(124,58,237,.14),rgba(245,158,11,.08));border:1px solid var(--glass-brd);
   backdrop-filter:blur(16px) saturate(140%);-webkit-backdrop-filter:blur(16px) saturate(140%);flex-wrap:wrap}
 .score-tile{flex:1;min-width:120px;text-align:center;padding:10px 8px;border-radius:14px;background:var(--panel);
-  border:1px solid var(--border);transition:transform .2s}
-.score-tile:hover{transform:translateY(-2px)}
+  border:1px solid var(--border)}
 .score-tile-label{font-size:11px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.4px}
 .score-tile-rank{font-size:26px;font-weight:800;line-height:1.3;margin-top:2px}
 .score-tile-pts{font-size:13px;font-weight:700;color:var(--accent-ink)}
@@ -610,7 +630,7 @@ main{min-width:0;display:flex;flex-direction:column}
 @keyframes tpf-marquee{from{transform:translateX(0)}to{transform:translateX(-50%)}}
 .tpf-card{flex:none;display:flex;align-items:center;gap:9px;padding:6px 14px 6px 8px;border-radius:999px;text-decoration:none;
   background:var(--panel);border:1px solid var(--border);transition:transform .2s,box-shadow .2s}
-.tpf-card:hover{transform:translateY(-2px);box-shadow:0 6px 16px rgba(60,20,120,.14)}
+.tpf-card:hover{box-shadow:0 6px 16px rgba(60,20,120,.14)}
 .tpf-rank{font-size:15px;font-weight:800;color:var(--muted);min-width:20px;text-align:center}
 .tpf-ava{flex:none;border-radius:12px;padding:2px;background:var(--ring,var(--accent));display:grid;box-shadow:0 0 10px -2px var(--ring,var(--accent))}
 .tpf-card .lb-ava{width:34px;height:34px;border-radius:10px;font-size:14px}
@@ -690,7 +710,7 @@ main{min-width:0;display:flex;flex-direction:column}
 .myday-stat{display:flex;align-items:center;gap:13px;text-align:left;font:inherit;color:inherit;cursor:pointer;
   background:var(--panel);border:1px solid var(--border);border-left:4px solid var(--accent);border-radius:16px;
   padding:15px 16px;transition:transform .16s,box-shadow .16s,border-color .16s;box-shadow:var(--shadow)}
-.myday-stat:hover{transform:translateY(-3px);box-shadow:0 18px 40px rgba(90,40,180,.20)}
+.myday-stat:hover{box-shadow:0 18px 40px rgba(90,40,180,.20)}
 .myday-stat .ms-ic{flex:none;width:42px;height:42px;border-radius:13px;display:grid;place-items:center;font-size:19px;
   background:var(--accent-weak)}
 .myday-stat .ms-body{display:flex;flex-direction:column;min-width:0}
@@ -722,7 +742,7 @@ main{min-width:0;display:flex;flex-direction:column}
 .tt-list{display:flex;flex-direction:column;gap:8px}
 .tt-row{display:flex;align-items:center;gap:12px;width:100%;text-align:left;font:inherit;color:inherit;cursor:pointer;
   background:var(--panel2);border:1px solid var(--border2);border-radius:13px;padding:11px 13px;transition:.14s}
-.tt-row:hover{border-color:var(--accent);transform:translateX(2px)}
+.tt-row:hover{border-color:var(--accent)}
 .tt-check{flex:none;width:20px;height:20px;border-radius:50%;border:2px solid var(--border);background:transparent}
 .tt-row:hover .tt-check{border-color:var(--accent)}
 .tt-main{flex:1;min-width:0;display:flex;align-items:center;gap:10px}
@@ -1158,6 +1178,9 @@ select.mini{font-family:inherit;font-size:12.5px;font-weight:700;color:var(--tex
 .lb-goal-bar{height:6px;border-radius:999px;background:var(--panel2);border:1px solid var(--border);overflow:hidden}
 .lb-goal-fill{height:100%;border-radius:inherit;background:linear-gradient(90deg,var(--accent),var(--indigo,#6366f1))}
 .lb-goal-none{color:var(--faint);font-size:13px}
+/* past the goal (extra or covered work), and what changed it */
+.lb-goal-pct.over{color:var(--good)}
+.lb-goal-extra{display:flex;gap:8px;margin-top:4px;font-size:11px;font-weight:600;color:var(--muted)}
 .lb-teamgoal{margin-top:14px;font-size:13px;color:var(--muted);text-align:right;padding-right:22px}
 .lb-teamgoal b{color:var(--text);font-variant-numeric:tabular-nums}
 .lb-statbar{display:flex;align-items:center;gap:16px;margin:0 0 16px}
@@ -1168,18 +1191,19 @@ select.mini{font-family:inherit;font-size:12.5px;font-weight:700;color:var(--tex
 .lb-head,.lb-row{display:grid;grid-template-columns:110px 1fr 124px 92px 104px;align-items:center}
 .lb-head{padding:0 22px 12px;font-size:11px;text-transform:uppercase;letter-spacing:.5px;color:var(--muted);font-weight:700}
 .lb-list{display:flex;flex-direction:column;gap:10px}
-/* Caps the ranked list at ~6 rows tall and scrolls the rest, so the page
-   stays the same size whether the team has 4 people or 40 — same "keep
-   room" pattern as the Task Settings format table. The header row rides
-   along, pinned to the top of the scroll area. */
-.lb-table-wrap{max-height:600px;overflow-y:auto;padding:2px 2px 0}
-.lb-table-wrap .lb-head{position:sticky;top:0;z-index:2;background:var(--bg);padding-top:2px}
+/* The list scrolls with the page; its column titles freeze just below the top
+   bar on a solid band, so rows pass cleanly underneath. */
+.lb-table-wrap{padding:6px 10px 10px;margin:0 -10px}
+/* room on every side for a row lifting on hover, and no scrollbar showing beside the points */
+.lb-table-wrap::-webkit-scrollbar{display:none}
+.lb-table-wrap .lb-head{position:sticky;top:var(--topbar-h,84px);z-index:5;margin-bottom:2px;padding:12px 22px;border:1px solid var(--border);border-radius:12px;
+  background:var(--glass-solid);box-shadow:0 6px 16px -10px rgba(30,20,80,.25)}
 .lb-row{position:relative;background:var(--panel);border:1px solid var(--border);border-radius:12px;height:74px;overflow:hidden;
   transition:transform .3s cubic-bezier(.22,.61,.36,1),box-shadow .3s ease,border-color .2s ease;will-change:transform}
 /* soft top-halo that fades in on hover — the premium "glow" */
 .lb-row::after{content:'';position:absolute;inset:0;border-radius:inherit;pointer-events:none;opacity:0;
   transition:opacity .3s ease;background:radial-gradient(130% 90% at 50% -25%,rgba(255,255,255,.16),transparent 58%)}
-.lb-row:hover{transform:translateY(-5px) scale(1.015);border-color:var(--accent);z-index:3;
+.lb-row:hover{border-color:var(--accent);z-index:3;
   box-shadow:0 20px 42px rgba(0,0,0,.42),0 6px 14px rgba(0,0,0,.28)}
 .lb-row:hover::after{opacity:1}
 .lb-row.gold{background:linear-gradient(90deg,rgba(245,196,81,.22),var(--panel) 42%);border-color:rgba(245,196,81,.45)}
@@ -1196,7 +1220,6 @@ select.mini{font-family:inherit;font-size:12.5px;font-weight:700;color:var(--tex
 .lb-rnum{font-size:15px;font-weight:700;color:var(--muted)}
 .lb-player{display:flex;align-items:center;gap:13px;padding-left:4px}
 .lb-ava{width:42px;height:42px;border-radius:11px;display:grid;place-items:center;color:#fff;font-weight:800;font-size:16px;flex:none;transition:transform .3s cubic-bezier(.22,.61,.36,1)}
-.lb-row:hover .lb-ava{transform:scale(1.08)}
 img.lb-ava{object-fit:cover}
 .lb-player .who b{font-size:14.5px;display:block;line-height:1.2}
 .lb-player .who small{font-size:11.5px;color:var(--muted)}
@@ -1209,8 +1232,8 @@ img.lb-ava{object-fit:cover}
 /* featured #1 champion panel (right column) */
 .lb-layout{display:grid;grid-template-columns:minmax(0,1fr) 300px;gap:20px;align-items:start}
 .lb-main{min-width:0}
-.lb-featured{position:sticky;top:14px;height:auto;border-radius:22px;overflow:hidden;padding:18px 18px 22px;text-align:center;
-  background:radial-gradient(120% 75% at 50% -5%,#7c3aed,#3b1a78 52%,#1a0b3a);
+.lb-featured{position:sticky;top:calc(var(--topbar-h,84px) + 14px);height:auto;border-radius:22px;overflow:hidden;padding:18px 18px 22px;text-align:center;
+  background:radial-gradient(120% 75% at 50% -5%,oklch(0.55 0.22 var(--acH)),oklch(0.32 0.13 var(--acH)) 52%,oklch(0.18 0.07 var(--acH)));
   border:1px solid rgba(180,140,255,.30);
   box-shadow:0 24px 60px rgba(8,20,60,.5),inset 0 1px 0 rgba(255,255,255,.07);
   animation:fxpop .45s cubic-bezier(.22,.61,.36,1)}
@@ -1294,6 +1317,29 @@ img.lb-ava{object-fit:cover}
 .bell-dot{position:absolute;top:-5px;right:-5px;min-width:17px;height:17px;padding:0 4px;border-radius:9px;
   background:var(--rose,#f43f5e);color:#fff;font-size:10.5px;font-weight:800;line-height:17px;text-align:center;
   box-shadow:0 0 0 2px var(--bg);pointer-events:none}
+/* the bell's box: latest notices, See all opens Activity */
+.nt-wrap{position:relative}
+.nt-pop{position:absolute;top:calc(100% + 8px);right:0;z-index:60;width:360px;max-width:calc(100vw - 24px);
+  display:flex;flex-direction:column;border:1px solid var(--border);border-radius:14px;background:var(--glass-solid);
+  box-shadow:0 18px 44px -12px rgba(0,0,0,.35);overflow:hidden}
+.nt-head{display:flex;align-items:center;justify-content:space-between;padding:12px 14px 8px}
+.nt-head b{font-size:15px}
+.nt-all{border:0;background:none;color:var(--accent-ink);font-size:13px;font-weight:700;cursor:pointer;padding:2px 4px}
+.nt-list{list-style:none;margin:0;padding:0 6px 4px;max-height:min(420px,60vh);overflow:auto}
+.nt-row{display:flex;gap:10px;align-items:flex-start;width:100%;padding:9px 8px;border:0;border-radius:10px;
+  background:none;text-align:left;font:inherit;color:inherit}
+button.nt-row{cursor:pointer}
+button.nt-row:hover,button.nt-row:focus-visible{background:var(--panel2)}
+.nt-row.unread{background:color-mix(in srgb,var(--accent) 7%,transparent)}
+.nt-icon.act-icon{width:32px;height:32px;border-radius:9px;font-size:15px}
+.nt-main{flex:1;min-width:0;display:flex;flex-direction:column;gap:2px}
+.nt-text{font-size:13px;line-height:1.4;color:var(--text);display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+.nt-time{font-size:11.5px;color:var(--muted)}
+.nt-dot{flex:none;width:8px;height:8px;margin-top:6px;border-radius:50%;background:var(--accent)}
+.nt-empty{padding:14px 16px 18px;font-size:13px;color:var(--muted)}
+.nt-more{border:0;border-top:1px solid var(--border);background:none;padding:11px;font:inherit;font-size:13px;font-weight:700;
+  color:var(--accent-ink);cursor:pointer}
+.nt-more:hover{background:var(--panel2)}
 .act-toolbar{display:flex;align-items:center;margin-bottom:4px}
 .act-feed{display:flex;flex-direction:column;gap:20px}
 .act-group{display:flex;flex-direction:column;gap:10px}
@@ -1598,7 +1644,7 @@ img.lb-ava{object-fit:cover}
 .goalt-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(320px,1fr));gap:16px}
 .goalt-card{text-align:left;font:inherit;color:inherit;cursor:pointer;background:var(--panel);border:1px solid var(--border);
   border-radius:16px;padding:16px 17px;transition:transform .16s,box-shadow .16s,border-color .16s;box-shadow:var(--shadow)}
-.goalt-card:hover{transform:translateY(-3px);border-color:var(--accent);box-shadow:0 16px 38px rgba(90,40,180,.18)}
+.goalt-card:hover{border-color:var(--accent);box-shadow:0 16px 38px rgba(90,40,180,.18)}
 .goalt-card-top{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:10px}
 .goalt-type{font-size:11px;font-weight:800;padding:3px 10px;border-radius:999px;white-space:nowrap}
 .goalt-type.rev{background:rgba(245,158,11,.16);color:#f59e0b}
@@ -1673,17 +1719,31 @@ img.lb-ava{object-fit:cover}
    deliberately left OUT of the grayed set. Excluded controls (bell, theme,
    userchip) sit outside these selectors, so they stay in colour + interactive.
    Both the filter (visual) and pointer-events:none (the real disabling) apply. */
-.eod-lock nav.side,
+.eod-lock nav.side .navsec,
+.eod-lock nav.side .navitem:not(.eod-live),
 .eod-lock .topbar-title,
-.eod-lock .content > .screen:not(.myday):not(.eod-open),
-.eod-lock .myday > *:not(.myday-hero){filter:grayscale(100%);opacity:.92}
-.eod-lock nav.side,
-.eod-lock .content{pointer-events:none}
+.eod-lock:not(.lock-page-open) .content > .screen:not(.myday):not(.eod-open),
+.eod-lock .myday > *:not(.myday-hero):not(.hw),
+.eod-lock .myday .hw > *:not(.sd-card):not(.sd-bar){filter:grayscale(100%);opacity:.92}
+.eod-lock:not(.lock-page-open) .content{pointer-events:none}
+/* A greyed link that waits for Start Work still answers a click — with the
+   "start your work day first" pop-up (app-shell.tsx). */
+.eod-lock nav.side .navitem:not(.eod-live){cursor:pointer}
+.lock-ask p{margin:0 0 16px;line-height:1.55;color:var(--muted)}
+.lock-ask p b{color:var(--text)}
+.lock-ask-acts{display:flex;justify-content:flex-end;gap:8px}
 /* Re-enable the few live controls even under the disabled content. */
 .eod-lock .eod-live{pointer-events:auto !important}
-/* Read-only pages a locked editor may still open (Activity): full colour and
+/* Pages a locked editor may still open (Activity): full colour and
    usable, even though the rest of the content area stays disabled. */
 .eod-lock .content > .screen.eod-open{pointer-events:auto}
+/* (The others a locked editor may open — Team Chat, the Task Board,
+   Analytics, Settings — lift the lock for the whole page: .lock-page-open.) */
+/* The Task Board stays usable before Start day but in grey, like the rest of a
+   closed day, so it's plain the day hasn't started (the top bar's Start day
+   stays in colour). Its children, not the board itself: a filter on the board
+   would pin the task drawer inside it instead of over the page. */
+.eod-lock.lock-page-open .content > .screen.tb > *{filter:grayscale(100%);opacity:.92}
 /* My Day header button row (unlocked: New Task + End EOD + status) */
 .mh-cta-row{display:flex;align-items:center;gap:12px;flex-wrap:wrap}
 .mh-endeod{background:rgba(255,255,255,.14);border-color:rgba(255,255,255,.28);color:#fff;font-weight:700;
@@ -2018,3 +2078,7 @@ html[data-theme="dark"] .tmp-note.warn{color:var(--c5)}
 .eod-item-body .eod-task-input{margin-top:0}
 @media(max-width:560px){.eod-item-head .eod-task-meta{display:none}}
 .eod-sum-report.full{max-height:none}
+
+/* Material Symbols Rounded icons (components/icon.tsx) */
+.msr{font-family:'Material Symbols Rounded';font-weight:normal;font-style:normal;line-height:1;letter-spacing:normal;text-transform:none;
+  display:inline-block;white-space:nowrap;word-wrap:normal;direction:ltr;-webkit-font-smoothing:antialiased;flex:none;user-select:none;overflow:hidden;width:1em;height:1em}

@@ -2,14 +2,20 @@ import { Fragment, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import { toast } from "sonner";
 import { useResource } from "@/lib/use-resource";
-import { ymd, lateDays, taskPoints, isScorableTask } from "@/lib/task-points";
-import { Avatar } from "@/lib/editor-visuals";
+import { ymd, lateDays, taskPoints, isScorableTask, countsInTaskScore } from "@/lib/task-points";
+import { gradFor } from "@/lib/editor-visuals";
+import { DAILY_BREAK_CAP_SEC } from "@/lib/task-timing";
 import type { Editor, Task } from "@/lib/types";
+import "./my-team.css";
+import { clockTime } from "@/lib/time-format";
+import { webLink } from "@/lib/csv";
 
-// The body of the admin-only My Team page: every team member ranked by Task
-// Points for a chosen date range, and — for the one selected — every task in
-// that range with the same details the Excel report carries: the main columns
-// in a table, the rest in a row that expands on click.
+// The body of the admin-only My Team page (Pulse Redesign v5, Team): every team
+// member as a card, ranked by Task Points for a chosen date range, with what
+// they're doing right now; for the one selected, their profile — points, on-time
+// rate, sent back, this month's goal — and every task in that range with the
+// same details the Excel report carries: the main columns in the list, the rest
+// in a row that expands on click.
 //
 // Which period a task belongs to: a finished task counts on the day it was
 // completed (so points land in the period they were earned); an unfinished one
@@ -45,7 +51,7 @@ function fmtDay(day: string) {
   return new Date(y, m - 1, d).toLocaleDateString("en-GB", { day: "numeric", month: "short" });
 }
 function fmtClock(iso: string | null) {
-  return iso ? new Date(iso).toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" }) : "";
+  return iso ? clockTime(iso) : "";
 }
 const fmtPts = (n: number) => (Math.round(n * 10) / 10).toString();
 const plural = (n: number, one: string) => `${n} ${one}${n === 1 ? "" : "s"}`;
@@ -63,14 +69,43 @@ function daysLate(t: Task): number {
   return Math.max(0, lateDays(t));
 }
 
-type RankedRow = { editor: Editor; tasks: Task[]; points: number; done: number; open: number; late: number };
+export type RankedRow = { editor: Editor; tasks: Task[]; points: number; done: number; open: number; late: number; scored: boolean };
+
+// Everyone on the active roster with their tasks in the range, ranked: points,
+// then tasks completed, then name. (My Team's Ranking and Today's Day report.)
+// People a Super Admin switched out of the task score still show,
+// with their work, after everyone ranked — but never with a rank.
+export function rankTeam(tasks: Task[], editors: Editor[], from: string, to: string, today: string): RankedRow[] {
+  return editors
+    .filter((e) => e.active)
+    .map((e) => {
+      const own = tasks
+        .filter((t) => t.editor_id === e.id)
+        .filter((t) => { const d = taskDay(t, today); return d >= from && d <= to; })
+        .sort((a, b) => taskDay(b, today).localeCompare(taskDay(a, today)));
+      const done = own.filter((t) => t.status === "done");
+      const open = own.filter((t) => t.status !== "done");
+      return {
+        editor: e,
+        tasks: own,
+        points: done.filter(isScorableTask).reduce((s, t) => s + taskPoints(t), 0),
+        done: done.length,
+        open: open.length,
+        late: open.filter((t) => lateDays(t) > 0).length,
+        scored: countsInTaskScore(e),
+      };
+    })
+    .sort((a, b) => Number(b.scored) - Number(a.scored)
+      || (a.scored ? b.points - a.points || b.done - a.done : 0)
+      || a.editor.name.localeCompare(b.editor.name));
+}
 
 // The report for a weekly or month-end meeting: exactly what the panel shows for
 // the chosen dates, as an Excel file — a Summary sheet (one row per person, in
 // rank order), an All tasks sheet, and a sheet per person with every task in
 // full, including the link to the finished work. The Excel library is loaded
 // only when someone actually exports.
-async function exportReport(ranked: RankedRow[], from: string, to: string, today: string) {
+export async function exportReport(ranked: RankedRow[], from: string, to: string, today: string) {
   const { default: ExcelJS } = await import("exceljs");
   const wb = new ExcelJS.Workbook();
   const period = from === to ? from : `${from} to ${to}`;
@@ -81,9 +116,9 @@ async function exportReport(ranked: RankedRow[], from: string, to: string, today
   summary.addRow([]);
   summary.addRow(["Rank", "Employee", "Designation", "Points", "Completed", "Open", "Late"]).font = { bold: true };
   ranked.forEach((r, i) => summary.addRow([
-    i + 1, r.editor.name, r.editor.designation ?? "", Math.round(r.points * 10) / 10, r.done, r.open, r.late,
+    r.scored ? i + 1 : "Exempt", r.editor.name, r.editor.designation ?? "", Math.round(r.points * 10) / 10, r.done, r.open, r.late,
   ]));
-  summary.columns.forEach((c, i) => { c.width = [8, 28, 22, 10, 12, 10, 10][i] ?? 12; });
+  summary.columns.forEach((c, i) => { c.width = [11, 28, 22, 10, 12, 10, 10][i] ?? 12; });
 
   // Every detail of one task, as a row. The work link is a real hyperlink so a
   // completed task's output opens straight from the sheet.
@@ -103,7 +138,7 @@ async function exportReport(ranked: RankedRow[], from: string, to: string, today
       done && t.completed_at ? ymd(new Date(t.completed_at)) : "",
       daysLate(t), Math.max(0, (t.revision ?? 1) - 1),
       done && isScorableTask(t) ? Math.round(taskPoints(t) * 10) / 10 : "",
-      t.delivery_link ? { text: t.delivery_link, hyperlink: t.delivery_link } : "",
+      webLink(t.delivery_link) ? { text: t.delivery_link, hyperlink: t.delivery_link } : t.delivery_link ?? "",
       (t.attachments ?? []).map((a) => (a.label ? `${a.label}: ${a.url}` : a.url)).join("\n"),
       taskNote(t, today).text,
       t.self_created ? "Yes" : "",
@@ -174,52 +209,88 @@ function taskNote(t: Task, today: string): { text: string; tone: "good" | "warn"
   return { text: t.due_date === today ? "Due today" : `Due ${fmtDay(t.due_date)}`, tone: "plain" };
 }
 
-export function TeamPanel({ tasks, editors, onOpenTask }: {
-  tasks: Task[] | null; editors: Editor[] | null; onOpenTask: (t: Task) => void;
+// Live line under each person: on break, working on something, finished, or
+// not started — from today's End of Day state and the break their tasks carry.
+type Live = { tone: "work" | "break" | "idle" | "done" | "none"; text: string };
+function liveStatus(own: Task[], day: TeamRow | undefined, nowMs: number): Live {
+  const onBreak = own.find((t) => t.editor_break_started_at);
+  if (onBreak?.editor_break_started_at) {
+    const elapsed = (nowMs - new Date(onBreak.editor_break_started_at).getTime()) / 1000;
+    const left = DAILY_BREAK_CAP_SEC - (onBreak.editor_break_used_seconds ?? 0) - Math.max(0, elapsed);
+    if (left > 0) return { tone: "break", text: `On break · ${Math.ceil(left / 60)} min left` };
+  }
+  if (day?.status === "completed") return { tone: "done", text: `Finished at ${fmtClock(day.endedAt)}` };
+  if (day?.status === "active") {
+    const cur = own.find((t) => t.status === "in_progress" && t.accepted && !t.on_hold && t.budget_started_at && new Date(t.budget_started_at).getTime() <= nowMs);
+    return { tone: "work", text: cur ? `Working on ${cur.title}` : `Working since ${fmtClock(day.startedAt)}` };
+  }
+  if (day?.status === "not_started") return { tone: "idle", text: "Not started today" };
+  return { tone: "none", text: "" };
+}
+
+// The stage, as the board names it, and its colour.
+function stageOf(t: Task): { label: string; tone: "todo" | "prog" | "rev" | "done" | "bad" | "warn" } {
+  if (t.status === "done") return { label: "Completed", tone: "done" };
+  if ((t.revision ?? 1) > 1) return { label: "Sent back", tone: "bad" };
+  if (t.on_hold) return { label: "On hold", tone: "warn" };
+  if (t.status === "review") return { label: "In review", tone: "rev" };
+  if (t.status === "in_progress") return { label: "In progress", tone: "prog" };
+  return { label: "To do", tone: "todo" };
+}
+
+const initials = (name: string) => name.split(/\s+/).filter(Boolean).map((w) => w[0]).join("").slice(0, 2).toUpperCase();
+function Face({ editor, big }: { editor: Editor; big?: boolean }) {
+  const cls = "mt-face" + (big ? " big" : "");
+  return editor.image_url
+    ? <img className={cls} src={editor.image_url} alt="" />
+    : <span className={cls} style={{ background: gradFor(editor.name) }}>{initials(editor.name)}</span>;
+}
+
+const ICON_DOWNLOAD = (
+  <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M12 3v12" /><path d="m7 10 5 5 5-5" /><path d="M5 21h14" /></svg>
+);
+const ICON_ARROW = (
+  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M5 12h14M13 6l6 6-6 6" /></svg>
+);
+
+export function TeamPanel({ tasks, editors, onOpenTask, focusId }: {
+  tasks: Task[] | null; editors: Editor[] | null; onOpenTask: (t: Task) => void; focusId?: string | null;
 }) {
   const today = ymd(new Date());
   const [rangeKey, setRangeKey] = useState<RangeKey>("month");
   const [custom, setCustom] = useState<[string, string]>(() => presetRange("month", new Date()));
   const [from, to] = rangeKey === "custom" ? custom : presetRange(rangeKey, new Date());
-  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [selectedId, setSelectedId] = useState<string | null>(focusId ?? null);
   const [exporting, setExporting] = useState(false);
   // The task row whose extra details are showing (one at a time).
   const [expandedId, setExpandedId] = useState<string | null>(null);
 
   const { data: eod } = useResource<{ editors: TeamRow[] }>(`/eod/team?date=${today}`);
+  // This month's goal per person (Goal Setting), the same figure the Leaderboard shows.
+  const { data: goalData } = useResource<{ totals: { editorId: string; goalPoints: number }[] }>(`/goals/totals?month=${today.slice(0, 7)}-01`);
 
-  // Everyone on the active roster, ranked: points, then tasks completed, then name.
-  const ranked = useMemo((): RankedRow[] => {
-    const all = tasks ?? [];
-    return (editors ?? [])
-      .filter((e) => e.active)
-      .map((e) => {
-        const own = all
-          .filter((t) => t.editor_id === e.id)
-          .filter((t) => { const d = taskDay(t, today); return d >= from && d <= to; })
-          .sort((a, b) => taskDay(b, today).localeCompare(taskDay(a, today)));
-        const done = own.filter((t) => t.status === "done");
-        const open = own.filter((t) => t.status !== "done");
-        return {
-          editor: e,
-          tasks: own,
-          points: done.filter(isScorableTask).reduce((s, t) => s + taskPoints(t), 0),
-          done: done.length,
-          open: open.length,
-          late: open.filter((t) => lateDays(t) > 0).length,
-        };
-      })
-      .sort((a, b) => b.points - a.points || b.done - a.done || a.editor.name.localeCompare(b.editor.name));
-  }, [tasks, editors, from, to, today]);
+  const ranked = useMemo(() => rankTeam(tasks ?? [], editors ?? [], from, to, today), [tasks, editors, from, to, today]);
 
-  const selected = ranked.find((r) => r.editor.id === selectedId) ?? ranked[0] ?? null;
-  const day = selected ? eod?.editors.find((r) => r.id === selected.editor.id) : undefined;
-  const dayText = !day ? ""
-    : day.status === "active" ? `Working since ${fmtClock(day.startedAt)}`
-    : day.status === "completed" ? `Finished at ${fmtClock(day.endedAt)}`
-    : "Not started today";
+  // Points earned this calendar month, for the goal bar whatever range is picked.
+  const monthPoints = useMemo(() => {
+    const [mf, mt] = presetRange("month", new Date());
+    const m = new Map<string, number>();
+    for (const t of tasks ?? []) {
+      if (t.status !== "done" || !t.editor_id || !isScorableTask(t)) continue;
+      const d = taskDay(t, today);
+      if (d >= mf && d <= mt) m.set(t.editor_id, (m.get(t.editor_id) ?? 0) + taskPoints(t));
+    }
+    return m;
+  }, [tasks, today]);
+
+  const nowMs = Date.now();
+  const liveOf = (id: string) => liveStatus((tasks ?? []).filter((t) => t.editor_id === id), eod?.editors.find((r) => r.id === id), nowMs);
+
+  const selectedIndex = Math.max(0, ranked.findIndex((r) => r.editor.id === selectedId));
+  const selected = ranked[selectedIndex] ?? null;
 
   const rangeLabel = from === to ? fmtDay(from) : `${fmtDay(from)} to ${fmtDay(to)}`;
+  const rangeWord = { today: "today", week: "this week", lastweek: "last week", month: "this month", custom: rangeLabel }[rangeKey];
   const PRESETS: { key: Exclude<RangeKey, "custom">; label: string }[] = [
     { key: "today", label: "Today" }, { key: "week", label: "This week" },
     { key: "lastweek", label: "Last week" }, { key: "month", label: "This month" },
@@ -244,157 +315,166 @@ export function TeamPanel({ tasks, editors, onOpenTask }: {
     setRangeKey("custom");
   }
 
-  return (
-    <div className="card myday-panel tmp">
-      <div className="mp-head">
-        <h3><span className="mp-ic">🏅</span> Ranking and progress</h3>
-        <Link to="/leaderboard" className="mp-link">Leaderboard →</Link>
-      </div>
+  const doneTasks = selected ? selected.tasks.filter((t) => t.status === "done") : [];
+  const onTime = doneTasks.length ? Math.round((doneTasks.filter((t) => lateDays(t) <= 0).length / doneTasks.length) * 100) : null;
+  const sentBackTotal = selected ? selected.tasks.reduce((s, t) => s + Math.max(0, (t.revision ?? 1) - 1), 0) : 0;
+  const goal = selected ? goalData?.totals.find((g) => g.editorId === selected.editor.id)?.goalPoints ?? 0 : 0;
+  const monthPts = selected ? monthPoints.get(selected.editor.id) ?? 0 : 0;
+  const live = selected ? liveOf(selected.editor.id) : null;
 
-      <div className="tmp-bar">
-        <div className="seg" role="group" aria-label="Date range">
+  return (
+    <div className="mt">
+      <div className="mt-bar">
+        <div className="mt-seg" role="group" aria-label="Date range">
           {PRESETS.map((p) => (
             <button key={p.key} type="button" className={rangeKey === p.key ? "on" : ""} onClick={() => setRangeKey(p.key)}>{p.label}</button>
           ))}
           <button type="button" className={rangeKey === "custom" ? "on" : ""} onClick={() => { setCustom([from, to]); setRangeKey("custom"); }}>Custom</button>
         </div>
-        <div className="tmp-dates">
-          <input className="t" type="date" aria-label="From date" value={from} max={to} onChange={(e) => setCustomDate(0, e.target.value)} />
-          <span>to</span>
-          <input className="t" type="date" aria-label="To date" value={to} min={from} onChange={(e) => setCustomDate(1, e.target.value)} />
+        {rangeKey === "custom" ? (
+          <div className="mt-dates">
+            <input type="date" aria-label="From date" value={from} max={to} onChange={(e) => setCustomDate(0, e.target.value)} />
+            <span>to</span>
+            <input type="date" aria-label="To date" value={to} min={from} onChange={(e) => setCustomDate(1, e.target.value)} />
+          </div>
+        ) : <span className="mt-range">{rangeLabel}</span>}
+        <div className="mt-actions">
+          <Link to="/leaderboard" className="mt-btn ghost">Leaderboard{ICON_ARROW}</Link>
+          <button type="button" className="mt-btn" disabled={exporting || ranked.length === 0} onClick={onExport} title={`Download an Excel report for ${rangeLabel}`}>
+            {ICON_DOWNLOAD}{exporting ? "Preparing…" : "Excel report"}
+          </button>
         </div>
-        <button
-          type="button" className="btn btn-primary tmp-export"
-          disabled={exporting || ranked.length === 0}
-          onClick={onExport}
-          title={`Download an Excel report for ${rangeLabel}`}
-        >
-          {exporting ? "Preparing…" : "⬇ Export .xlsx"}
-        </button>
       </div>
 
       {tasks === null || editors === null ? (
-        <div className="home-empty">Loading…</div>
+        <div className="mt-card mt-empty">Loading…</div>
       ) : ranked.length === 0 ? (
-        <div className="home-empty">No team members yet. <Link to="/teams">Add people in Settings</Link>.</div>
+        <div className="mt-card mt-empty">No team members yet. <Link to="/my-team?tab=roster">Add people on the Roster</Link>.</div>
       ) : (
         <>
-          <div className="tmp-people" role="tablist" aria-label={`Team ranking, ${rangeLabel}`}>
-            {ranked.map((r, i) => (
-              <button
-                key={r.editor.id} type="button" role="tab" aria-selected={selected?.editor.id === r.editor.id}
-                className={"tmp-person" + (selected?.editor.id === r.editor.id ? " on" : "")}
-                onClick={() => { setSelectedId(r.editor.id); setExpandedId(null); }}
-              >
-                <span className="tmp-rank">{i + 1}</span>
-                <Avatar editor={r.editor} />
-                <span className="tmp-who">
-                  <span className="tmp-name">{r.editor.name}</span>
-                  <span className="tmp-meta">
-                    {fmtPts(r.points)} pts · {r.done} done · {r.open} open{r.late > 0 && <b className="tmp-latecount"> · {r.late} late</b>}
-                  </span>
-                </span>
-              </button>
-            ))}
+          <div className="mt-people" role="tablist" aria-label={`Team ranking, ${rangeLabel}`}>
+            {ranked.map((r, i) => {
+              const on = selected?.editor.id === r.editor.id;
+              const lv = liveOf(r.editor.id);
+              return (
+                <button key={r.editor.id} type="button" role="tab" aria-selected={on} className={"mt-person" + (on ? " on" : "")}
+                  onClick={() => { setSelectedId(r.editor.id); setExpandedId(null); }}>
+                  <span className="mt-ptop"><Face editor={r.editor} /><span className="mt-grow" />{r.scored
+                    ? <b className={"mt-rank" + (i === 0 && r.points > 0 ? " first" : "")}>#{i + 1}</b>
+                    : <b className="mt-rank off" title="Exempt from task scoring — a Super Admin can change this on Team › Roster">Exempt</b>}</span>
+                  <span className="mt-who"><b>{r.editor.name}</b><span>{r.editor.designation || "Team member"}</span></span>
+                  <span className="mt-pts"><b>{fmtPts(r.points)}</b><span>pts · {r.done} done{r.late > 0 && <em> · {r.late} late</em>}</span></span>
+                  <span className={"mt-live " + lv.tone}><i />{lv.text || `${r.open} open`}</span>
+                </button>
+              );
+            })}
           </div>
 
           {selected && (
-            <div className="tmp-detail">
-              <div className="tmp-colhead">
-                {selected.editor.name}{selected.editor.designation ? ` · ${selected.editor.designation}` : ""}
-                <span>{[rangeLabel, dayText].filter(Boolean).join(" · ")}</span>
-              </div>
-              <div className="tmp-stats">
-                <div><b>{fmtPts(selected.points)}</b><span>Points</span></div>
-                <div><b>{selected.done}</b><span>Completed</span></div>
-                <div><b>{selected.open}</b><span>Open</span></div>
-                <div className={selected.late > 0 ? "bad" : ""}><b>{selected.late}</b><span>Late</span></div>
-              </div>
-              {selected.tasks.length === 0 ? (
-                <div className="home-empty">No tasks in this period.</div>
-              ) : (
-                <div className="tmp-scroll">
-                  <table className="tmp-table">
-                    <thead>
-                      <tr>
-                        <th>Task</th><th>Type</th><th>Stage</th><th>Assigned</th><th>Due</th><th>Completed</th>
-                        <th>Late</th><th>Sent back</th><th>Points</th><th>Work</th>
-                      </tr>
-                    </thead>
-                    <tbody>
+            <div className="mt-row">
+              <section className="mt-card mt-profile">
+                <div className="mt-phead">
+                  <Face editor={selected.editor} big />
+                  <span className="mt-who"><b>{selected.editor.name}</b><span>{selected.editor.designation || "Team member"} · {selected.scored ? `#${selectedIndex + 1} ${rangeWord}` : "exempt from task scoring"}</span></span>
+                </div>
+                {live && live.text && <div className={"mt-livebox " + live.tone}><i />{live.text}</div>}
+                <div className="mt-kpis">
+                  <span><b>{fmtPts(selected.points)}</b><span>Points {rangeWord}</span></span>
+                  <span><b>{selected.done}</b><span>Completed</span></span>
+                  <span><b className={onTime == null ? "" : onTime >= 90 ? "good" : onTime < 80 ? "warn" : ""}>{onTime == null ? "–" : `${onTime}%`}</b><span>On time</span></span>
+                  <span><b className={sentBackTotal > 3 ? "bad" : ""}>{sentBackTotal}</b><span>Sent back</span></span>
+                </div>
+                <div className="mt-goal">
+                  <span><span>Monthly goal points</span><b>{goal > 0 ? `${fmtPts(monthPts)} / ${fmtPts(goal)}` : "No goal set"}</b></span>
+                  <span className="mt-goalbar"><span style={{ width: `${goal > 0 ? Math.min(100, (monthPts / goal) * 100) : 0}%` }} /></span>
+                </div>
+              </section>
+
+              <section className="mt-card mt-tasks">
+                <div className="mt-thead">
+                  <b>Tasks</b>
+                  <span>{plural(selected.tasks.length, "task")} · {selected.open} open{selected.late > 0 && <em> · {selected.late} late</em>}</span>
+                  <span className="mt-grow" />
+                  <span className="mt-range">{rangeLabel}</span>
+                </div>
+                {selected.tasks.length === 0 ? (
+                  <div className="mt-none">No tasks in this period.</div>
+                ) : (
+                  <div className="mt-scroll">
+                    <div className="mt-list">
+                      <div className="mt-lh">
+                        <span>Task</span><span>Type</span><span>Stage</span><span>Due</span><span>Done</span>
+                        <span className="num">Sent back</span><span className="num">Pts</span><span className="num">Work</span>
+                      </div>
                       {selected.tasks.map((t) => {
                         const stage = STAGE_INDEX[t.status];
+                        const st = stageOf(t);
                         const note = taskNote(t, today);
                         const done = t.status === "done";
                         const late = daysLate(t);
                         const sentBack = Math.max(0, (t.revision ?? 1) - 1);
                         const open = expandedId === t.id;
                         const otherId = t.sid ?? t.ad_id ?? t.svid ?? t.pid;
+                        const pts = done && isScorableTask(t) ? taskPoints(t) : null;
                         const toggle = () => setExpandedId(open ? null : t.id);
                         return (
                           <Fragment key={t.id}>
-                            <tr
-                              className={"tmp-tr" + (open ? " open" : "")} tabIndex={0} aria-expanded={open}
+                            <div
+                              className={"mt-lr" + (open ? " open" : "")} role="button" tabIndex={0} aria-expanded={open}
                               title={open ? "Hide the details" : "Show all the details"}
                               onClick={toggle}
                               onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); toggle(); } }}
                             >
-                              <td className="tmp-td-task">
-                                <span className="tmp-name">{t.title}{t.self_created && <span className="self-chip" title="Created by the assignee for themselves">🙋 Self-created</span>}</span>
-                                <span className="tmp-meta">{t.tid ?? ""}</span>
-                              </td>
-                              <td>{t.content_format_name ?? "–"}</td>
-                              <td><span className={"tmp-note " + note.tone}>{STAGES[stage]}</span></td>
-                              <td>{fmtDay(ymd(new Date(t.created_at)))}</td>
-                              <td>{t.due_date ? fmtDay(t.due_date) : "–"}</td>
-                              <td>{done && t.completed_at ? fmtDay(ymd(new Date(t.completed_at))) : "–"}</td>
-                              <td className={late > 0 ? "tmp-latecount" : ""}>{late > 0 ? plural(late, "day") : "–"}</td>
-                              <td>{sentBack > 0 ? sentBack : "–"}</td>
-                              <td>{done && isScorableTask(t) ? fmtPts(taskPoints(t)) : "–"}</td>
-                              <td>
+                              <span className="mt-ttl">
+                                <span className="mt-ref">{t.tid ?? ""}{t.self_created && <span className="mt-self" title="Created by the assignee for themselves">Self-created</span>}</span>
+                                <b>{t.title}</b>
+                              </span>
+                              <span className="mt-sub">{t.content_format_name ?? "–"}</span>
+                              <span><span className={"mt-stage " + st.tone}>{st.label}</span></span>
+                              <span className={late > 0 ? "mt-late" : "mt-sub"}>{t.due_date ? fmtDay(t.due_date) : "–"}{late > 0 && <em>{plural(late, "day")} late</em>}</span>
+                              <span className="mt-sub">{done && t.completed_at ? fmtDay(ymd(new Date(t.completed_at))) : "–"}</span>
+                              <span className="num mt-sub">{sentBack > 0 ? sentBack : "–"}</span>
+                              <b className={"num " + (pts == null ? "mt-sub" : pts >= 0 ? "mt-good" : "mt-bad")}>{pts == null ? "–" : `${pts >= 0 ? "+" : ""}${fmtPts(pts)}`}</b>
+                              <span className="num">
                                 {t.delivery_link ? (
                                   <a href={t.delivery_link} target="_blank" rel="noopener noreferrer" onClick={(e) => e.stopPropagation()}>Open ↗</a>
-                                ) : "–"}
-                              </td>
-                            </tr>
+                                ) : <span className="mt-sub">–</span>}
+                              </span>
+                            </div>
                             {open && (
-                              <tr className="tmp-more">
-                                <td colSpan={10}>
-                                  {/* Pinned to the visible width, so nothing hides off to the right when the table scrolls sideways. */}
-                                  <div className="tmp-morein">
-                                  <div className="tmp-moregrid">
-                                    <div><span>Description</span>{t.description?.trim() || "None"}</div>
-                                    <div><span>Category and brand</span>{[CATEGORY[t.task_type] ?? t.task_type, t.channel_name].filter(Boolean).join(" · ")}</div>
-                                    <div><span>Priority</span>{t.priority.charAt(0).toUpperCase() + t.priority.slice(1)}</div>
-                                    <div><span>Other ID</span>{otherId ?? "None"}</div>
-                                    <div>
-                                      <span>Other links</span>
-                                      {(t.attachments ?? []).length === 0 ? "None" : (t.attachments ?? []).map((a) => (
-                                        <a key={a.url} href={a.url} target="_blank" rel="noopener noreferrer">{a.label || a.url} ↗</a>
-                                      ))}
-                                    </div>
-                                    <div><span>Note</span>{note.text}</div>
+                              <div className="mt-more">
+                                <div className="mt-moregrid">
+                                  <div><span>Description</span>{t.description?.trim() || "None"}</div>
+                                  <div><span>Category and brand</span>{[CATEGORY[t.task_type] ?? t.task_type, t.channel_name].filter(Boolean).join(" · ")}</div>
+                                  <div><span>Priority</span>{t.priority.charAt(0).toUpperCase() + t.priority.slice(1)}</div>
+                                  <div><span>Assigned</span>{fmtDay(ymd(new Date(t.created_at)))}</div>
+                                  <div><span>Other ID</span>{otherId ?? "None"}</div>
+                                  <div>
+                                    <span>Other links</span>
+                                    {(t.attachments ?? []).length === 0 ? "None" : (t.attachments ?? []).map((a) => (
+                                      <a key={a.url} href={a.url} target="_blank" rel="noopener noreferrer">{a.label || a.url} ↗</a>
+                                    ))}
                                   </div>
-                                  <div className="tmp-progress">
-                                    <span className="tmp-steps" aria-hidden>
-                                      {STAGES.map((st, k) => <span key={st} className={k <= stage ? "done" : ""} />)}
-                                    </span>
-                                    <span className="tmp-labels">
-                                      {STAGES.map((st, k) => <span key={st} className={k === stage ? "cur" : ""}>{st}</span>)}
-                                    </span>
-                                  </div>
-                                  <button type="button" className="btn btn-sm" onClick={() => onOpenTask(t)}>Open task</button>
-                                  </div>
-                                </td>
-                              </tr>
+                                  <div><span>Note</span>{note.text}</div>
+                                </div>
+                                <div className="mt-progress">
+                                  <span className="mt-steps" aria-hidden>
+                                    {STAGES.map((s, k) => <span key={s} className={k <= stage ? "done" : ""} />)}
+                                  </span>
+                                  <span className="mt-labels">
+                                    {STAGES.map((s, k) => <span key={s} className={k === stage ? "cur" : ""}>{s}</span>)}
+                                  </span>
+                                </div>
+                                <button type="button" className="mt-btn" onClick={() => onOpenTask(t)}>Open task</button>
+                              </div>
                             )}
                           </Fragment>
                         );
                       })}
-                    </tbody>
-                  </table>
-                </div>
-              )}
+                    </div>
+                  </div>
+                )}
+              </section>
             </div>
           )}
         </>

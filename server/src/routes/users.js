@@ -6,10 +6,19 @@ import { config } from "../config.js";
 import { requireAdmin, clearMembershipCache } from "../resolve-workspace.js";
 import { requirePermission } from "../permissions.js";
 import { logActivity } from "../activity.js";
+import { hasColumn } from "../schema-flags.js";
+import { superState, isSuperUser } from "../super-admin.js";
+import { forgetActive, issueSession } from "../auth.js";
 
 export const usersRouter = Router();
 
 const ROLES = ["admin", "editor", "viewer"];
+
+// Super Admin (super-admin.js): only a Super Admin can make someone an admin,
+// or change, reset, deactivate or remove an admin or Super Admin. The
+// workspace always keeps at least one.
+const SUPER_ONLY = "Only a Super Admin can change admins.";
+const LAST_SUPER = "This is the only Super Admin — make someone else Super Admin first.";
 
 // Everything here is admin-only — requireAdmin is applied per-route, not
 // router-wide. A router-level `.use(requireAdmin)` would 403 every request
@@ -22,8 +31,9 @@ const ROLES = ["admin", "editor", "viewer"];
 // to populate the Access picker). Mutations below stay admin-only (Team).
 usersRouter.get("/users", requirePermission("access_manage"), async (req, res, next) => {
   try {
+    const superCol = (await hasColumn("app_user", "is_super_admin")) ? "u.is_super_admin" : "false";
     const { rows } = await pool.query(
-      `select u.id, u.email, u.name, u.active, u.editor_id, m.role,
+      `select u.id, u.email, u.name, u.active, u.editor_id, m.role, ${superCol} as "isSuperAdmin",
               -- An open "forgot password" request: asked, and no reset since.
               (select max(a.created_at) from activity a
                 where a.org_id = $2 and a.actor_id = u.id and a.verb = 'password_reset_requested'
@@ -49,10 +59,26 @@ const CreateSchema = z.object({
   name: z.string().trim().optional(),
   password: z.string().min(6).optional(),
   role: z.enum(["admin", "editor", "viewer"]),
+  // A new admin who is also Super Admin (role must be admin).
+  superAdmin: z.boolean().optional(),
   // Link straight to a team-member (editor) record at creation — the Teams
   // page's "add person with login" flow does this in one step.
   editorId: z.string().uuid().nullable().optional(),
 });
+
+// Whether a login belongs to an admin anywhere in this org, or the Super Admin.
+// Such a login is a Super Admin's to manage, whichever channel the change comes
+// from (an admin could otherwise add it to a channel of their own as an editor
+// and change it there).
+async function adminLogin(orgId, userId) {
+  const { rows } = await pool.query(
+    `select exists (select 1 from membership m join workspace w on w.id = m.workspace_id
+                     where m.user_id = $2 and m.role = 'admin' and w.org_id = $1)
+            ${(await hasColumn("app_user", "is_super_admin")) ? "or coalesce((select is_super_admin from app_user where id = $2), false)" : ""} as a`,
+    [orgId, userId],
+  );
+  return !!rows[0]?.a;
+}
 
 // Add a user to the workspace with a role. Creates the account if the email
 // is new (password required); otherwise just grants access to an existing one.
@@ -62,14 +88,24 @@ usersRouter.post("/users", requireAdmin, async (req, res, next) => {
     return res.status(400).json({ error: "Enter a valid email, role, and a password (6+ chars) for new users." });
   }
   const { email, name, password, role, editorId } = parsed.data;
+  const superAdmin = !!parsed.data.superAdmin && role === "admin";
+  const st = await superState(req.workspaceId);
+  if (role === "admin" && !(await isSuperUser(req.user.sub, st))) {
+    return res.status(403).json({ error: "Only a Super Admin can add an admin." });
+  }
   const client = await pool.connect();
   try {
     await client.query("BEGIN");
     let { rows } = await client.query(
-      "select id, email, name, active from app_user where lower(email) = lower($1)",
+      "select id, email, name, active, editor_id from app_user where lower(email) = lower($1)",
       [email],
     );
     let user = rows[0];
+    // An admin's existing login is added (and linked) only by the Super Admin.
+    if (user && (await adminLogin(req.orgId, user.id)) && !(await isSuperUser(req.user.sub, st))) {
+      await client.query("ROLLBACK");
+      return res.status(403).json({ error: "That email is an admin's login. Only a Super Admin can add it to a channel." });
+    }
 
     // Someone who already has a login here is changed through Edit, never through
     // this add form: it carries a role (defaulting to editor), so re-adding an
@@ -106,6 +142,11 @@ usersRouter.post("/users", requireAdmin, async (req, res, next) => {
         await client.query("ROLLBACK");
         return res.status(400).json({ error: "That team member wasn't found." });
       }
+      // Adding an existing login never moves it to a different team member.
+      if (user.editor_id && user.editor_id !== editorId) {
+        await client.query("ROLLBACK");
+        return res.status(409).json({ error: "That login is already linked to another team member. Change it on their row instead." });
+      }
       const { rows: taken } = await client.query(
         "select 1 from app_user where editor_id = $1 and id != $2", [editorId, user.id],
       );
@@ -123,9 +164,10 @@ usersRouter.post("/users", requireAdmin, async (req, res, next) => {
        on conflict (workspace_id, user_id) do update set role = excluded.role`,
       [req.workspaceId, user.id, role],
     );
+    if (superAdmin && st.on) await client.query("update app_user set is_super_admin = true where id = $1", [user.id]);
     await client.query("COMMIT");
     clearMembershipCache();
-    res.status(201).json({ user: { ...user, role, isSelf: user.id === req.user.sub } });
+    res.status(201).json({ user: { ...user, role, isSuperAdmin: superAdmin && st.on, isSelf: user.id === req.user.sub } });
   } catch (err) {
     await client.query("ROLLBACK");
     next(err);
@@ -136,6 +178,8 @@ usersRouter.post("/users", requireAdmin, async (req, res, next) => {
 
 const UpdateSchema = z.object({
   role: z.enum(["admin", "editor", "viewer"]).optional(),
+  // Make (true) or stop being (false) a Super Admin. true also makes them admin.
+  superAdmin: z.boolean().optional(),
   active: z.boolean().optional(),
   name: z.string().trim().optional(),
   password: z.string().min(6).optional(),
@@ -159,6 +203,8 @@ const SelfUpdateSchema = z.object({
   // A CSS gradient/color value (e.g. "linear-gradient(135deg,#ec4899,#8b5cf6)"),
   // not just a short hex code — needs real room.
   color: z.string().max(120).nullable().optional(),
+  // Settings › Notifications: alert key → on/off.
+  notifyPrefs: z.record(z.string().max(40), z.boolean()).optional(),
 });
 
 // Self-service profile — any authenticated user can update their own display
@@ -194,7 +240,11 @@ usersRouter.post("/users/me/password", async (req, res, next) => {
     if (currentPassword === newPassword) {
       return res.status(400).json({ error: "Choose a password different from your current one." });
     }
-    await pool.query("update app_user set password_hash = $2 where id = $1", [req.user.sub, await bcrypt.hash(newPassword, 10)]);
+    const hash = await bcrypt.hash(newPassword, 10);
+    await pool.query("update app_user set password_hash = $2 where id = $1", [req.user.sub, hash]);
+    // sessions signed in with the old password end; this one carries on
+    forgetActive(req.user.sub);
+    issueSession(res, { id: req.user.sub, email: req.user.email, password_hash: hash });
     res.status(204).end();
   } catch (err) {
     next(err);
@@ -211,6 +261,13 @@ usersRouter.patch("/users/me", async (req, res, next) => {
   if (d.name !== undefined) push("name", d.name);
   if (d.imageUrl !== undefined) push("image_url", d.imageUrl);
   if (d.color !== undefined) push("color", d.color);
+  if (d.notifyPrefs !== undefined) {
+    if (!(await hasColumn("app_user", "notify_prefs"))) {
+      return res.status(409).json({ error: "Notification choices need a database update first — ask whoever runs the database to apply 20261023120000_org_settings_notify_prefs." });
+    }
+    params.push(JSON.stringify(d.notifyPrefs));
+    sets.push(`notify_prefs = coalesce(notify_prefs, '{}'::jsonb) || $${params.length}::jsonb`);
+  }
   if (!sets.length) return res.status(400).json({ error: "Nothing to update." });
   try {
     await pool.query(`update app_user set ${sets.join(", ")} where id = $1`, params);
@@ -229,7 +286,9 @@ usersRouter.patch("/users/me", async (req, res, next) => {
 usersRouter.patch("/users/:id", requireAdmin, async (req, res, next) => {
   const parsed = UpdateSchema.safeParse(req.body);
   if (!parsed.success) return res.status(400).json({ error: "Invalid update." });
-  const { role, active, name, password, editorId } = parsed.data;
+  const { active, name, password, editorId, superAdmin } = parsed.data;
+  // Super Admin is an admin: making someone one makes them admin too.
+  const role = superAdmin === true ? "admin" : parsed.data.role;
   const targetId = req.params.id;
   const isSelf = targetId === req.user.sub;
 
@@ -240,6 +299,9 @@ usersRouter.patch("/users/:id", requireAdmin, async (req, res, next) => {
         [editorId, req.orgId],
       );
       if (!erows.length) return res.status(400).json({ error: "That team member wasn't found." });
+      // One login per team member — never take over someone else's record.
+      const { rows: taken } = await pool.query("select 1 from app_user where editor_id = $1 and id != $2", [editorId, targetId]);
+      if (taken.length) return res.status(409).json({ error: "That team member already has a login linked." });
     }
     const { rows: mrows } = await pool.query(
       "select role from membership where workspace_id = $1 and user_id = $2",
@@ -262,6 +324,28 @@ usersRouter.patch("/users/:id", requireAdmin, async (req, res, next) => {
       return res.status(409).json({ error: "You can't remove your own admin role." });
     }
 
+    // Admins are a Super Admin's to manage: making one, or changing another's
+    // role, password or sign-in.
+    const st = await superState(req.workspaceId);
+    const targetSuper = st.on
+      ? !!(await pool.query("select is_super_admin from app_user where id = $1", [targetId])).rows[0]?.is_super_admin
+      : false;
+    // An admin anywhere in the org counts, not only in this channel.
+    const targetAdmin = currentRole === "admin" || targetSuper || (await adminLogin(req.orgId, targetId));
+    const touchesAdmin = (role === "admin" && currentRole !== "admin") || superAdmin === true || (superAdmin === false && targetSuper)
+      || (targetAdmin && !isSelf && (role !== undefined || active !== undefined || password !== undefined
+        || name !== undefined || editorId !== undefined))
+      // your own login's team member decides your position (your rank): not yours to change
+      || (isSelf && targetAdmin && editorId !== undefined);
+    if (touchesAdmin && !(await isSuperUser(req.user.sub, st))) {
+      return res.status(403).json({ error: SUPER_ONLY });
+    }
+    const losesSuper = targetSuper && (superAdmin === false || (role && role !== "admin"));
+    if (losesSuper && st.count <= 1) return res.status(409).json({ error: LAST_SUPER });
+    if (st.on && (superAdmin !== undefined || losesSuper)) {
+      await pool.query("update app_user set is_super_admin = $2 where id = $1", [targetId, superAdmin === true]);
+    }
+
     if (role) {
       await pool.query(
         "update membership set role = $1 where workspace_id = $2 and user_id = $3",
@@ -272,12 +356,17 @@ usersRouter.patch("/users/:id", requireAdmin, async (req, res, next) => {
     const vals = [];
     if (active !== undefined) { vals.push(active); sets.push(`active = $${vals.length}`); }
     if (name !== undefined) { vals.push(name); sets.push(`name = $${vals.length}`); }
-    if (password) { vals.push(await bcrypt.hash(password, 10)); sets.push(`password_hash = $${vals.length}`); }
+    const newHash = password ? await bcrypt.hash(password, 10) : null;
+    if (newHash) { vals.push(newHash); sets.push(`password_hash = $${vals.length}`); }
     if (editorId !== undefined) { vals.push(editorId || null); sets.push(`editor_id = $${vals.length}`); }
     if (sets.length) {
       vals.push(targetId);
       await pool.query(`update app_user set ${sets.join(", ")} where id = $${vals.length}`, vals);
     }
+    // switched off (or back on), or a new password: takes effect on their very
+    // next request (sessions signed in with the old password end)
+    if (active !== undefined || newHash) forgetActive(targetId);
+    if (newHash && isSelf) issueSession(res, { id: targetId, email: req.user.email, password_hash: newHash });
     if (password) {
       const { rows: who } = await pool.query("select coalesce(name, email) as n from app_user where id = $1", [targetId]);
       await logActivity({
@@ -287,8 +376,9 @@ usersRouter.patch("/users/:id", requireAdmin, async (req, res, next) => {
       });
     }
 
+    const superCol = st.on ? "u.is_super_admin" : "false";
     const { rows } = await pool.query(
-      `select u.id, u.email, u.name, u.active, u.editor_id, m.role
+      `select u.id, u.email, u.name, u.active, u.editor_id, m.role, ${superCol} as "isSuperAdmin"
        from app_user u join membership m on m.user_id = u.id and m.workspace_id = $1
        where u.id = $2`,
       [req.workspaceId, targetId],
@@ -315,6 +405,12 @@ usersRouter.delete("/users/:id", requireAdmin, async (req, res, next) => {
     if (!rows.length) return res.status(404).json({ error: "User not found in this workspace." });
     if (rows[0].role === "admin" && (await adminCount(req.workspaceId)) <= 1) {
       return res.status(409).json({ error: "This is the last admin — promote someone else first." });
+    }
+    if (rows[0].role === "admin") {
+      const st = await superState(req.workspaceId);
+      if (!(await isSuperUser(req.user.sub, st))) return res.status(403).json({ error: SUPER_ONLY });
+      const targetSuper = st.on && !!(await pool.query("select is_super_admin from app_user where id = $1", [targetId])).rows[0]?.is_super_admin;
+      if (targetSuper && st.count <= 1) return res.status(409).json({ error: LAST_SUPER });
     }
     await pool.query(
       "delete from membership where workspace_id = $1 and user_id = $2",

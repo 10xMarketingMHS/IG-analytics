@@ -1,7 +1,7 @@
 import { useEffect } from "react";
 import { toast } from "sonner";
+import { useAlertGate } from "@/lib/notify-prefs";
 import { useAuth } from "@/lib/auth-context";
-import { api } from "@/lib/api";
 import type { Task } from "@/lib/types";
 
 const SEEN_KEY_PREFIX = "pulse-seen-tasks-";
@@ -34,49 +34,36 @@ export function noteTaskSeen(userId: string, taskId: string) {
   writeSeen(userId, seen);
 }
 
-// Polls the caller's own assigned tasks and toasts (bottom-right, via the
-// app's shared <Toaster/>) for any that showed up since the last poll — a
-// new assignment, whether admin-assigned, auto-created from a post, or
-// claimed by someone else's action. Mounted once in the app shell so it
-// fires from any page, not just the Task Board. The very first poll on a
-// given browser just establishes a baseline — no toast storm for work that
-// already existed before this session started.
-export function useTaskAssignNotify() {
+// Toasts (bottom-right, via the app's shared <Toaster/>) for any task of
+// yours that showed up since the last look — a new assignment, whether
+// admin-assigned, auto-created from a post, or claimed by someone else's
+// action. Mounted once in the app shell so it fires from any page, not just the
+// Task Board, on the shared list of open tasks (lib/use-task-alerts.ts). The
+// very first look on a given browser just establishes a baseline — no toast
+// storm for work that already existed before this session started.
+export function useTaskAssignNotify(list: Task[] | null) {
   const { user } = useAuth();
+  const gate = useAlertGate();
 
   useEffect(() => {
-    if (!user?.editorId) return;
-    let cancelled = false;
-
-    async function poll() {
-      try {
-        const { tasks } = await api<{ tasks: Task[] }>("/tasks?assignee=me");
-        if (cancelled) return;
-        const key = SEEN_KEY_PREFIX + user!.id;
-        const isFirstEver = window.localStorage.getItem(key) === null;
-        const seen = readSeen(user!.id);
-        if (!isFirstEver) {
-          for (const t of tasks) {
-            if (seen.has(t.id)) continue;
-            // A task you created yourself isn't news to you.
-            if (t.created_by === user!.id) continue;
-            toast(`🔔 New task: "${t.title}"`, {
-              description: t.due_date ? `Due ${t.due_date}` : undefined,
-            });
-          }
-        }
-        tasks.forEach((t) => seen.add(t.id));
-        writeSeen(user!.id, seen);
-      } catch {
-        // Background nicety — stay silent on failure, next poll retries.
+    if (!user?.editorId || !list) return;
+    // Quiet hours: leave them unseen, so they show inside working hours.
+    if (!gate.off("assigned") && gate.held()) return;
+    const tasks = list.filter((t) => t.editor_id === user.editorId);
+    const key = SEEN_KEY_PREFIX + user.id;
+    const isFirstEver = window.localStorage.getItem(key) === null;
+    const seen = readSeen(user.id);
+    if (!isFirstEver && !gate.off("assigned")) {
+      for (const t of tasks) {
+        if (seen.has(t.id)) continue;
+        // A task you created yourself isn't news to you.
+        if (t.created_by === user.id) continue;
+        toast(`🔔 New task: "${t.title}"`, {
+          description: t.due_date ? `Due ${t.due_date}` : undefined,
+        });
       }
     }
-
-    poll();
-    const id = setInterval(poll, 45_000);
-    return () => {
-      cancelled = true;
-      clearInterval(id);
-    };
-  }, [user?.editorId, user?.id]);
+    tasks.forEach((t) => seen.add(t.id));
+    try { writeSeen(user.id, seen); } catch { /* private window */ }
+  }, [list, user?.editorId, user?.id]); // eslint-disable-line react-hooks/exhaustive-deps
 }

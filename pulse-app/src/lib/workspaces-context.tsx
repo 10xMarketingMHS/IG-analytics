@@ -97,7 +97,7 @@ export function WorkspacesProvider({ children }: { children: ReactNode }) {
     (id: string) => {
       if (id === activeId) return;
       setActiveWorkspaceId(id);
-      window.location.assign("/dashboard");
+      window.location.assign("/analytics");
     },
     [activeId],
   );
@@ -108,7 +108,7 @@ export function WorkspacesProvider({ children }: { children: ReactNode }) {
       body: JSON.stringify({ name }),
     });
     setActiveWorkspaceId(workspace.id);
-    window.location.assign("/dashboard");
+    window.location.assign("/analytics");
   }, []);
 
   const renameWorkspace = useCallback(

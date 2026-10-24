@@ -2,16 +2,21 @@ import { Router } from "express";
 import { z } from "zod";
 import { pool } from "../db.js";
 import { requireAdmin } from "../resolve-workspace.js";
+import { requireSuper } from "../super-admin.js";
+import { monthPenalties } from "../attendance.js";
+import { scoreMonthAll } from "../goal-score.js";
+import { SETTLE_DAYS } from "../leave-math.js";
 
 // Management Performance (points-based). Admin-only board + config; a self view
 // for My Day. The performance measure is Overall Performance % — the Earned
 // (80%) + Discipline (20%) split of Total Goal Points that Goal Setting's
 // Performance tab and My Day already use — banded EPI/MPI/LPI by % thresholds.
 //
-// IMPORTANT: computeScore() below MUST stay in lockstep with the frontend's
-// goalBreakdown() in pulse-app/src/lib/goal-points.ts. That is the canonical
-// 80/20 implementation; the server and app are separate packages and cannot
-// share the module, so this is a deliberate mirror — change both together.
+// IMPORTANT: what a month's work counts for (leave, the 150% per type, covered
+// work) is worked out once, in ../goal-score.js, for every screen. computeScore()
+// below only applies the 80/20 split, as the app's goalBreakdown() in
+// pulse-app/src/lib/goal-points.ts does with the same counted numbers — change
+// the two together.
 export const managementPerformanceRouter = Router();
 
 const DEFAULT_THRESHOLDS = { epiMinPct: 85, mpiMinPct: 75 };
@@ -24,9 +29,22 @@ const MAX_RATING_SUM = CRITERIA.length * 5; // 25
 const round1 = (n) => Math.round(n * 10) / 10;
 const round2 = (n) => Math.round(n * 100) / 100;
 
-function thisMonthFirst() {
-  const d = new Date();
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-01`;
+// This month, on India time (the server's own clock is UTC).
+function thisMonthFirst(offset = 0) {
+  const ist = new Date(Date.now() + 330 * 60_000);
+  return new Date(Date.UTC(ist.getUTCFullYear(), ist.getUTCMonth() + offset, 1)).toISOString().slice(0, 10);
+}
+// Days into a new month that last month stays live: ratings, leave and goal
+// fixes for it come in after it ends, so it's only stored (frozen) after this.
+// That is SETTLE_DAYS (leave-math.js), shared with leave: no approving or
+// cancelling leave in a month once it is frozen.
+// Is a month still computed live (this month, a future one, or last month
+// while it settles)? Only months past that are served from what was stored.
+function liveMonth(monthFirst) {
+  const m = String(monthFirst).slice(0, 7);
+  if (m >= thisMonthFirst().slice(0, 7)) return true;
+  const istDay = new Date(Date.now() + 330 * 60_000).getUTCDate();
+  return m === thisMonthFirst(-1).slice(0, 7) && istDay <= SETTLE_DAYS;
 }
 
 // First-of-month as 'YYYY-MM-DD' — pure string math, no DB round-trip.
@@ -50,24 +68,26 @@ function classify(pct, thr) {
   return pct >= thr.epiMinPct ? "EPI" : pct >= thr.mpiMinPct ? "MPI" : "LPI";
 }
 
-// Mirror of goal-points.ts goalBreakdown(). `rows`: [{ goalJC, actualJC, points }];
+// The Overall Score from a scored month (goal-score.js scoreMonth: goals cut
+// for approved leave, each type up to 150%, covered work on top): Earned is 80%
+// of what was reached, Discipline up to 20% of the goal points. Can pass 100%.
+// The app's goalBreakdown() (goal-points.ts) takes the same counted numbers.
 // `ratings`: object keyed by the 5 CRITERIA (null = unreviewed → full 5).
-// Returns null when Total Goal Points is 0 (no goals — no score to band).
-function computeScore(rows, ratings) {
-  const total = rows.reduce((s, r) => s + (r.goalJC ?? 0) * (r.points ?? 0), 0);
+// Returns null when there are no goal points (no goals — no score to band).
+// `penalty`: the month's attendance points lost (late, absent), taken off the
+// discipline points, never below 0.
+function computeScore(scored, ratings, penalty = 0) {
+  const total = scored?.goalPoints ?? 0;
   if (total <= 0) return null;
-  const earned = 0.8 * rows.reduce((s, r) => {
-    const comp = r.goalJC > 0 ? Math.min(1, r.actualJC / r.goalJC) : 0;
-    return s + comp * r.goalJC * r.points;
-  }, 0);
+  const earned = 0.8 * scored.reached;
   const potential = 0.8 * total;               // Earned ceiling — reference, not summed
   const ceiling = 0.2 * total;                 // Discipline bucket ceiling
   const ratingSum = CRITERIA.reduce((s, k) => s + (ratings?.[k] ?? 5), 0);
   const reviewed = CRITERIA.every((k) => ratings?.[k] != null);
-  const discipline = (ratingSum / MAX_RATING_SUM) * ceiling;
+  const discipline = Math.max(0, (ratingSum / MAX_RATING_SUM) * ceiling - (penalty || 0));
   const totalPoints = earned + discipline;
-  const goalTarget = rows.reduce((s, r) => s + (r.goalJC ?? 0), 0);
-  const achieved = rows.reduce((s, r) => s + (r.actualJC ?? 0), 0);
+  const goalTarget = Math.round(scored.goalTarget * 10) / 10;
+  const achieved = scored.achieved;
   return {
     total, earned, potential, discipline, totalPoints, reviewed,
     goalTarget, achieved,
@@ -75,40 +95,11 @@ function computeScore(rows, ratings) {
   };
 }
 
-// ---- Per-editor data for the board — SEPARATE simple queries, run in parallel.
+// ---- Per-editor data for the board (goals and jobs: ../goal-score.js) — SEPARATE simple queries, run in parallel.
 // Counter-intuitively this beats one big combined query here: the remote session
 // pooler answers a warm simple query in ~370ms but runs a big multi-CTE query
 // erratically (1–6s). With the whole pool kept warm (see db.js), 5 simple queries
 // in parallel land on 5 warm connections and finish together (~370ms). ----
-async function goalRowsByEditor(orgId, monthFirst) {
-  const { rows } = await pool.query(
-    `select g.editor_id, g.content_format_id, g.jc, cf.points
-       from editor_goal g join task_content_format cf on cf.id = g.content_format_id
-      where g.org_id = $1 and g.period_month = $2`,
-    [orgId, monthFirst],
-  );
-  const m = new Map();
-  for (const r of rows) {
-    if (!m.has(r.editor_id)) m.set(r.editor_id, []);
-    m.get(r.editor_id).push({ contentFormatId: r.content_format_id, goalJC: Number(r.jc), points: Number(r.points) });
-  }
-  return m;
-}
-
-async function actualsByEditorFormat(orgId, monthFirst) {
-  const { rows } = await pool.query(
-    `select editor_id, content_format_id, count(*)::int n
-       from task
-      where org_id = $1 and status = 'done' and content_format_id is not null
-        and completed_at >= $2 and completed_at < ($2::date + interval '1 month')
-      group by editor_id, content_format_id`,
-    [orgId, monthFirst],
-  );
-  const m = new Map();
-  for (const r of rows) m.set(`${r.editor_id}:${r.content_format_id}`, Number(r.n));
-  return m;
-}
-
 async function ratingsByEditor(orgId, monthFirst) {
   const { rows } = await pool.query(
     `select editor_id, ${CRITERIA.join(", ")} from editor_discipline_points where org_id = $1 and period_month = $2`,
@@ -142,14 +133,6 @@ async function activeEditorsWithThresholds(orgId) {
     ? { epiMinPct: Number(rows[0].epi), mpiMinPct: Number(rows[0].mpi), isDefault: !rows[0].has }
     : { ...DEFAULT_THRESHOLDS, isDefault: true };
   return { editors: rows, thr };
-}
-
-// Build one editor's computeScore() input rows from the shared maps.
-function rowsFor(editorId, goalMap, actualsMap) {
-  return (goalMap.get(editorId) ?? []).map((g) => ({
-    goalJC: g.goalJC, points: g.points,
-    actualJC: actualsMap.get(`${editorId}:${g.contentFormatId}`) ?? 0,
-  }));
 }
 
 // Assemble one editor's board/detail row from a computed score (or null).
@@ -243,33 +226,21 @@ const bgSnapshot = (orgId, monthFirst, rows, thr) =>
 // for the month — the minimal data computeScore needs, without pulling the whole
 // org (used by the /me self view).
 async function scoreForEditor(orgId, editorId, monthFirst) {
-  const [goalRes, ratingRes] = await Promise.all([
-    pool.query(
-      `with g as (
-          select content_format_id id, sum(jc)::int jc
-            from editor_goal where org_id=$1 and editor_id=$2 and period_month=$3 group by content_format_id
-        ), a as (
-          select content_format_id id, count(*)::int n
-            from task where org_id=$1 and editor_id=$2 and status='done' and content_format_id is not null
-              and completed_at>=$3 and completed_at<($3::date + interval '1 month') group by content_format_id
-        )
-        select cf.points, g.jc as goal, coalesce(a.n,0) as achieved
-          from g join task_content_format cf on cf.id = g.id
-          left join a on a.id = g.id`,
-      [orgId, editorId, monthFirst],
-    ),
+  const [scores, ratingRes] = await Promise.all([
+    scoreMonthAll(orgId, monthFirst, editorId),
     pool.query(`select ${CRITERIA.join(", ")} from editor_discipline_points where org_id=$1 and editor_id=$2 and period_month=$3`, [orgId, editorId, monthFirst]),
   ]);
-  const rows = goalRes.rows.map((r) => ({ goalJC: Number(r.goal), actualJC: Number(r.achieved), points: Number(r.points) }));
   const rr = ratingRes.rows[0];
   const ratings = rr ? Object.fromEntries(CRITERIA.map((k) => [k, rr[k] == null ? null : Number(rr[k])])) : null;
-  return computeScore(rows, ratings);
+  const pen = (await monthPenalties(orgId, String(monthFirst).slice(0, 7))).get(editorId) ?? 0;
+  return computeScore(scores.get(editorId), ratings, pen);
 }
 
 // ---------------------------------------------------------------------------
 // Thresholds config
 // ---------------------------------------------------------------------------
-managementPerformanceRouter.get("/management-performance/thresholds", requireAdmin, async (req, res, next) => {
+// readable by any member: Goals › Discipline labels its people by them
+managementPerformanceRouter.get("/management-performance/thresholds", async (req, res, next) => {
   try {
     res.json(await getThresholds(req.orgId));
   } catch (err) { next(err); }
@@ -280,7 +251,8 @@ const thresholdBody = z.object({
   mpiMinPct: z.number().positive().max(100),
 });
 
-managementPerformanceRouter.put("/management-performance/thresholds", requireAdmin, async (req, res, next) => {
+// Admins see the bands; only the Super Admin changes them.
+managementPerformanceRouter.put("/management-performance/thresholds", requireSuper("Only a Super Admin can change the performance bands."), async (req, res, next) => {
   try {
     const parsed = thresholdBody.safeParse(req.body);
     if (!parsed.success) return res.status(400).json({ error: "Invalid thresholds." });
@@ -335,8 +307,9 @@ const CUR_TTL_MS = 20_000;
 const PAST_TTL_MS = 10 * 60_000;
 const boardCache = new Map();   // `${orgId}:${monthFirst}` -> { data, ts }
 const detailCache = new Map();  // `${orgId}:${editorId}:${monthFirst}` -> { data, ts }
-const hotBoards = new Map();    // key -> orgId, current-month boards to keep warm
-const refreshing = new Set();   // keys with an in-flight background refresh
+const hotBoards = new Map();    // key -> { orgId, at }: current-month boards someone looked at lately
+const HOT_FOR_MS = 10 * 60_000;  // kept warm for 10 minutes after the last look
+const refreshing = new Map();   // key -> the refresh in flight (a second look waits for it)
 
 function cacheLookup(cache, key, ttl) {
   const hit = cache.get(key);
@@ -349,16 +322,21 @@ function invalidateOrg(orgId) {
 
 // Compute the board response for a month (no caching).
 async function computeBoard(orgId, monthFirst, isCurrent) {
-  const [edThr, goalMap, actualsMap, ratingMap, storedRows] = await Promise.all([
+  // A past month still settling is live: anything stored for it too early is
+  // dropped, so it's stored afresh once it settles.
+  if (isCurrent && String(monthFirst).slice(0, 7) < thisMonthFirst().slice(0, 7)) {
+    pool.query("delete from editor_monthly_performance where org_id = $1 and period_month = $2", [orgId, monthFirst]).catch(() => {});
+  }
+  const [edThr, scores, ratingMap, storedRows] = await Promise.all([
     activeEditorsWithThresholds(orgId),
-    goalRowsByEditor(orgId, monthFirst),
-    actualsByEditorFormat(orgId, monthFirst),
+    scoreMonthAll(orgId, monthFirst),
     ratingsByEditor(orgId, monthFirst),
     isCurrent
       ? Promise.resolve({ rows: [] })
       : pool.query("select * from editor_monthly_performance where org_id = $1 and period_month = $2", [orgId, monthFirst]),
   ]);
   const { editors, thr } = edThr;
+  const penalties = await monthPenalties(orgId, String(monthFirst).slice(0, 7));
   const stored = new Map(storedRows.rows.map((s) => [s.editor_id, s]));
   const rows = [];
   const toSnapshot = [];
@@ -366,7 +344,7 @@ async function computeBoard(orgId, monthFirst, isCurrent) {
     if (!isCurrent && stored.has(e.id)) {
       rows.push(rowFromStored(e, stored.get(e.id)));
     } else {
-      const row = scoreToRow(e, computeScore(rowsFor(e.id, goalMap, actualsMap), ratingMap.get(e.id)), thr);
+      const row = scoreToRow(e, computeScore(scores.get(e.id), ratingMap.get(e.id), penalties.get(e.id) ?? 0), thr);
       rows.push(row);
       if (!isCurrent) toSnapshot.push(row); // freeze past months only
     }
@@ -378,23 +356,27 @@ async function computeBoard(orgId, monthFirst, isCurrent) {
 // Recompute + cache one board, guarding against overlapping refreshes.
 async function refreshBoard(orgId, monthFirst, isCurrent) {
   const key = `${orgId}:${monthFirst}`;
-  if (refreshing.has(key)) return;
-  refreshing.add(key);
-  try {
-    const data = await computeBoard(orgId, monthFirst, isCurrent);
-    boardCache.set(key, { data, ts: Date.now() });
-    return data;
-  } finally {
-    refreshing.delete(key);
-  }
+  if (refreshing.has(key)) return refreshing.get(key);
+  const run = (async () => {
+    try {
+      const data = await computeBoard(orgId, monthFirst, isCurrent);
+      boardCache.set(key, { data, ts: Date.now() });
+      return data;
+    } finally {
+      refreshing.delete(key);
+    }
+  })();
+  refreshing.set(key, run);
+  return run;
 }
 
 managementPerformanceRouter.get("/management-performance", requireAdmin, async (req, res, next) => {
   try {
     const monthFirst = firstOfMonth(req.query.month || thisMonthFirst());
-    const isCurrent = monthFirst.slice(0, 7) === thisMonthFirst().slice(0, 7);
+    // live (not frozen) while it's this month, a future one, or last month settling
+    const isCurrent = liveMonth(monthFirst);
     const key = `${req.orgId}:${monthFirst}`;
-    if (isCurrent) hotBoards.set(key, req.orgId); // keep this board warm
+    if (isCurrent) hotBoards.set(key, { orgId: req.orgId, at: Date.now() }); // keep this board warm a while
 
     const c = cacheLookup(boardCache, key, isCurrent ? CUR_TTL_MS : PAST_TTL_MS);
     if (c) {
@@ -408,13 +390,13 @@ managementPerformanceRouter.get("/management-performance", requireAdmin, async (
 });
 
 // Keep recently-viewed current-month boards fresh in the background, so a user's
-// load reads a warm cache instead of paying the compute. Drops keys once their
-// month rolls over. Also keeps the DB pool warm via steady query traffic.
+// load reads a warm cache instead of paying the compute — for 10 minutes after
+// the last look, not around the clock. Drops keys once their month rolls over.
 setInterval(() => {
   const cur = thisMonthFirst();
-  for (const [key, orgId] of hotBoards) {
-    if (!key.endsWith(cur)) { hotBoards.delete(key); boardCache.delete(key); continue; }
-    refreshBoard(orgId, cur, true).catch(() => {});
+  for (const [key, hot] of hotBoards) {
+    if (!key.endsWith(cur) || Date.now() - hot.at > HOT_FOR_MS) { hotBoards.delete(key); continue; }
+    refreshBoard(hot.orgId, cur, true).catch(() => {});
   }
 }, CUR_TTL_MS).unref();
 
@@ -466,17 +448,17 @@ async function computeDetail(orgId, editorId, monthFirst, isCurrent) {
                    count(*) > 0 as has
               from performance_threshold where org_id = $1
           ), g as (
-            select content_format_id id, sum(jc)::int jc
+            select content_format_id id, sum(jc)::int jc, max((to_jsonb(editor_goal)->>'points')::numeric) pts
               from editor_goal where org_id = $1 and editor_id = $2 and period_month = $3
               group by content_format_id
           ), a as (
             select content_format_id id, count(*)::int n
               from task where org_id = $1 and editor_id = $2 and status = 'done'
                 and content_format_id is not null
-                and completed_at >= $3 and completed_at < ($3::date + interval '1 month')
+                and completed_at >= ($3::date)::timestamp at time zone 'Asia/Kolkata' and completed_at < ($3::date + interval '1 month')::timestamp at time zone 'Asia/Kolkata'
               group by content_format_id
           )
-          select cf.id, cf.name, cf.icon, cf.category, cf.metric_tier, cf.points,
+          select cf.id, cf.name, cf.icon, cf.category, cf.metric_tier, coalesce(g.pts, cf.points) as points,
                  coalesce(g.jc, 0) as goal, coalesce(a.n, 0) as achieved,
                  thr.epi::float epi, thr.mpi::float mpi, thr.has
             from task_content_format cf
@@ -507,6 +489,7 @@ async function computeDetail(orgId, editorId, monthFirst, isCurrent) {
     ]);
     const editor = erowsRes.rows[0];
     if (!editor) return null; // 404
+    const scored = (await scoreMonthAll(orgId, monthFirst, editorId)).get(editorId) ?? null;
     const breakdown = breakdownRes.rows;
     const history = historyRes.rows;
     const eodSessions = eodRes.rows;
@@ -518,25 +501,31 @@ async function computeDetail(orgId, editorId, monthFirst, isCurrent) {
     if (!isCurrent && storedRes.rows[0]) {
       current = rowFromStored(editor, storedRes.rows[0]);
     } else {
-      // Score inputs come straight from the breakdown (goal formats only) — no
-      // extra queries. Same numbers the board produces for this editor.
-      const scoreRows = breakdown.filter((b) => Number(b.goal) > 0)
-        .map((b) => ({ goalJC: Number(b.goal), actualJC: Number(b.achieved), points: Number(b.points) }));
       const rr = ratingRes.rows[0];
       const ratings = rr ? Object.fromEntries(CRITERIA.map((k) => [k, rr[k] == null ? null : Number(rr[k])])) : null;
-      current = scoreToRow(editor, computeScore(scoreRows, ratings), thr);
+      const pen = (await monthPenalties(orgId, String(monthFirst).slice(0, 7))).get(editor.id) ?? 0;
+      current = scoreToRow(editor, computeScore(scored, ratings, pen), thr);
       if (!isCurrent) bgSnapshot(orgId, monthFirst, [current], thr); // freeze past months only
     }
 
+    const typed = new Map((scored?.types ?? []).map((t) => [t.contentFormatId, t]));
     return {
       editor: { id: editor.id, name: editor.name, designation: editor.designation, imageUrl: editor.image_url },
       month: monthFirst.slice(0, 7),
       isCurrent,
       thresholds: thr,
       ...current,
+      // approved leave (goals cut for scoring) and covered work (counted on top)
+      leaveDays: scored?.leaveDays ?? 0,
+      workingDays: scored?.workingDays ?? 0,
+      coveredJobs: scored?.coveredJobs ?? 0,
+      coveredPoints: Math.round((scored?.coveredPoints ?? 0) * 100) / 100,
       taskBreakdown: breakdown.map((b) => ({
         contentFormatId: b.id, name: b.name, icon: b.icon, category: b.category,
         metricTier: b.metric_tier, points: Number(b.points), goal: Number(b.goal), achieved: Number(b.achieved),
+        goalAdjusted: typed.has(b.id) ? Math.round(typed.get(b.id).goal * 10) / 10 : Number(b.goal),
+        counted: typed.has(b.id) ? Math.round(typed.get(b.id).counted * 10) / 10 : 0,
+        covered: scored?.coveredByType?.[b.id] ?? 0,
       })),
       history,
       eodSessions: eodSessions.map((s) => ({ ...s, spanHours: s.spanHours == null ? null : Number(s.spanHours) })),
@@ -545,22 +534,26 @@ async function computeDetail(orgId, editorId, monthFirst, isCurrent) {
 
 async function refreshDetail(orgId, editorId, monthFirst, isCurrent) {
   const key = `${orgId}:${editorId}:${monthFirst}`;
-  if (refreshing.has(key)) return detailCache.get(key)?.data ?? null;
-  refreshing.add(key);
-  try {
-    const data = await computeDetail(orgId, editorId, monthFirst, isCurrent);
-    if (data) detailCache.set(key, { data, ts: Date.now() });
-    return data;
-  } finally {
-    refreshing.delete(key);
-  }
+  if (refreshing.has(key)) return refreshing.get(key);
+  const run = (async () => {
+    try {
+      const data = await computeDetail(orgId, editorId, monthFirst, isCurrent);
+      if (data) detailCache.set(key, { data, ts: Date.now() });
+      return data;
+    } finally {
+      refreshing.delete(key);
+    }
+  })();
+  refreshing.set(key, run);
+  return run;
 }
 
 managementPerformanceRouter.get("/management-performance/:editorId", requireAdmin, async (req, res, next) => {
   try {
     const editorId = req.params.editorId;
     const monthFirst = firstOfMonth(req.query.month || thisMonthFirst());
-    const isCurrent = monthFirst.slice(0, 7) === thisMonthFirst().slice(0, 7);
+    // live (not frozen) while it's this month, a future one, or last month settling
+    const isCurrent = liveMonth(monthFirst);
     const key = `${req.orgId}:${editorId}:${monthFirst}`;
 
     const c = cacheLookup(detailCache, key, isCurrent ? CUR_TTL_MS : PAST_TTL_MS);

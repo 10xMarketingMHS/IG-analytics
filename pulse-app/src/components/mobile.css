@@ -1,0 +1,170 @@
+/* Phones feel like an app: a tab bar along the bottom, a slim top bar, pop-ups
+   that rise from the bottom as sheets, an open conversation on the whole
+   screen, and none of the desktop-only touches (tap flash, zoom on typing,
+   hover lifts). Safe-area insets keep it clear of notches and home bars when
+   Pulse is added to the home screen. */
+.tabbar,.tab-fab{display:none}
+
+@media (max-width:768px){
+  /* --m-tab: the room the floating tab bar takes at the bottom */
+  /* --m-tab-gap: from the bottom edge to the tab bar, clear of the home bar */
+  :root{--m-top:calc(56px + env(safe-area-inset-top));--m-tab-gap:calc(6px + env(safe-area-inset-bottom) * .75);--m-tab:calc(64px + var(--m-tab-gap))}
+  html{-webkit-tap-highlight-color:transparent}
+  button,a,[role="button"],[role="tab"],label,select{touch-action:manipulation}
+
+  /* the top bar: the page name and a few actions; the menu lives in the tab bar */
+  .app .topbar{height:var(--m-top);padding:env(safe-area-inset-top) 10px 0 16px;gap:8px}
+  .app .topbar .menu-btn,.app .topbar .sub{display:none}
+  .app .topbar h1{font-size:22px;font-weight:800;letter-spacing:-.025em}
+
+  /* room above the tab bar */
+  .content{padding:16px 16px calc(var(--m-tab) + 24px)}
+  .break-widget{bottom:calc(var(--m-tab) + 12px)}
+
+  /* the tab bar: a floating pill above the bottom edge, New task as a round
+     button beside it (ClickUp-style) */
+  .tabbar{
+    --tab-bg:rgba(255,255,255,.86);--tab-line:rgba(30,20,80,.08);--tab-text:#6b6b75;
+    --tab-on:oklch(0.45 0.2 var(--acH));--tab-pill:oklch(0.9 0.07 var(--acH));--tab-alert:oklch(0.58 0.21 22);
+    --tab-sh:0 12px 32px -10px rgba(40,20,100,.32),0 2px 6px rgba(30,20,80,.08);
+    position:fixed;left:12px;right:12px;bottom:var(--m-tab-gap);z-index:150;
+    display:grid;grid-auto-flow:column;grid-auto-columns:minmax(0,1fr);gap:2px;height:64px;padding:6px;box-sizing:border-box;
+    border:1px solid var(--tab-line);border-radius:32px;background:var(--tab-bg);box-shadow:var(--tab-sh);
+    backdrop-filter:blur(20px) saturate(180%);-webkit-backdrop-filter:blur(20px) saturate(180%);
+    font-family:'Plus Jakarta Sans',system-ui,sans-serif
+  }
+  .tabbar.has-fab{right:86px}
+  html[data-theme="dark"] .tabbar{--tab-bg:rgba(22,19,36,.88);--tab-line:rgba(255,255,255,.09);--tab-text:#8b8b96;--tab-on:oklch(0.9 0.07 var(--acH));
+    --tab-pill:oklch(0.4 0.13 var(--acH));--tab-sh:0 14px 34px -10px rgba(0,0,0,.7),0 0 0 1px rgba(255,255,255,.03)}
+  .tab{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:2px;min-width:0;padding:0;border:0;border-radius:26px;background:transparent;
+    color:var(--tab-text);font:600 10px/1.2 'Plus Jakarta Sans',sans-serif;text-decoration:none;cursor:pointer;-webkit-user-select:none;user-select:none;
+    transition:background-color .2s,color .2s,transform .12s}
+  .tab-ic{position:relative;display:grid;place-items:center;width:100%;max-width:50px;height:30px;border-radius:15px;transition:background-color .2s}
+  .tab-ic svg{width:21px;height:21px}
+  .tab-l{max-width:100%;padding:0 2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .tab.on{color:var(--tab-on)}
+  .tab.on .tab-ic{background:var(--tab-pill)}
+  .tab.on .tab-l{font-weight:700}
+  .tab:active{transform:scale(.94)}
+  .tab:focus-visible{outline:2px solid var(--tab-on);outline-offset:-2px}
+  .tab-ic .badge{position:absolute;margin:0}
+  .tab-ic .badge.alert{top:-4px;right:2px;min-width:17px;height:17px;padding:0 4px;border-radius:9px;box-sizing:border-box;background:var(--tab-alert);color:#fff;
+    font:700 10px/17px 'Plus Jakarta Sans',sans-serif;text-align:center;box-shadow:0 0 0 2px var(--tab-bg)}
+  .tab-ic .badge.dot{top:2px;right:10px;width:8px;height:8px;padding:0;border-radius:50%;background:var(--tab-alert);box-shadow:0 0 0 2px var(--tab-bg)}
+  .tab-fab{position:fixed;right:12px;bottom:var(--m-tab-gap);z-index:150;width:64px;height:64px;display:grid;place-items:center;padding:0;border:0;
+    border-radius:50%;background:linear-gradient(135deg,oklch(0.56 0.22 var(--acH)),oklch(0.62 0.2 var(--acH2)));color:#fff;cursor:pointer;
+    box-shadow:0 14px 30px -10px oklch(0.5 0.22 var(--acH) / .75),0 2px 6px rgba(30,20,80,.12);transition:transform .12s}
+  .tab-fab svg{width:26px;height:26px;stroke-width:2.2}
+  .tab-fab:active{transform:scale(.92)}
+  .tab-fab:focus-visible{outline:2px solid oklch(0.55 0.2 var(--acH));outline-offset:3px}
+  /* End of Day lock: the places wait like the sidebar does; More still opens the menu */
+  .eod-lock .tabbar a.tab{pointer-events:none;filter:grayscale(100%);opacity:.6}
+  .eod-lock .tabbar a.tab.eod-live{pointer-events:auto;filter:none;opacity:1}
+
+  /* the full menu (More): a sheet that rises from the bottom, laid out like an
+     app's settings screen: you first, then search, then the places as rows on
+     rounded cards. What's already in the tab bar isn't repeated, and the tab
+     bar stays on top so More (or any tab) closes it. Drag the handle down or
+     tap outside to close it too. */
+  .app>aside.sb2{
+    --sb-w:100%;--m-sheet:oklch(0.97 0.012 var(--acH));--m-row:#fff;--m-tile:oklch(0.94 0.04 var(--acH));--m-tileIc:oklch(0.47 0.19 var(--acH));
+    --m-grab:rgba(30,20,80,.18);
+    top:auto;left:0;right:0;bottom:0;width:100%;height:auto;max-height:calc(100dvh - env(safe-area-inset-top) - 24px);
+    display:flex;flex-direction:column;overflow-x:hidden;overflow-y:auto;overscroll-behavior:contain;scrollbar-width:none;
+    padding:0 0 calc(var(--m-tab) + 14px);box-sizing:border-box;border:0;border-radius:26px 26px 0 0;background:var(--m-sheet);
+    backdrop-filter:none;-webkit-backdrop-filter:none;box-shadow:0 -16px 44px -12px rgba(20,10,60,.32);
+    transform:translateY(calc(100% + 24px));transition:transform .34s cubic-bezier(.2,.8,.2,1)}
+  .app>aside.sb2::-webkit-scrollbar{display:none}
+  .app.menu-open>aside.sb2{transform:none}
+  html[data-theme="dark"] .app>aside.sb2{--m-sheet:oklch(0.17 0.03 var(--acH));--m-row:oklch(0.225 0.035 var(--acH));--m-tile:oklch(0.31 0.07 var(--acH));
+    --m-tileIc:oklch(0.86 0.09 var(--acH));--m-grab:rgba(255,255,255,.22);box-shadow:0 -16px 44px -12px rgba(0,0,0,.7)}
+  .app.menu-open .tabbar,.app.menu-open .tab-fab{z-index:220}
+  /* the handle, the title and Close stay put while the menu scrolls */
+  .app .sb2-sheethead{position:sticky;top:0;z-index:2;order:0;flex:none;display:flex;align-items:center;gap:10px;padding:20px 16px 12px 20px;background:var(--m-sheet);touch-action:none}
+  .app .sb2-grab{position:absolute;top:8px;left:50%;width:38px;height:5px;margin-left:-19px;border-radius:3px;background:var(--m-grab)}
+  .app .sb2-sheethead b{flex:1;font-size:21px;font-weight:800;letter-spacing:-.02em;color:var(--sb-text)}
+  .app .sb2-sheetx{flex:none;width:34px;height:34px;display:grid;place-items:center;padding:0;border:0;border-radius:50%;background:var(--m-row);color:var(--sb-text2);cursor:pointer}
+  .app .sb2-sheetx:active{transform:scale(.92)}
+  /* desktop-only pieces: the brand row and collapse, New task (the round +
+     does it), the keyboard hint */
+  .app .sb2 .brand,.app .sb2-compose,.app .sb2-search kbd,.app .sb2 .in-tabbar{display:none}
+  /* you: a card with your photo, name and position; Settings and Sign out beside */
+  .app .sb2 .userchip{order:1;flex:none;margin:0 16px 12px;padding:12px 10px 12px 14px;gap:6px;border:0;border-radius:18px;background:var(--m-row)}
+  .app .sb2 .userchip-open{gap:12px!important}
+  .app .sb2 .avatar,.app .sb2 .avatar-ring.admin .avatar{width:46px;height:46px;font-size:17px}
+  .app .sb2 .userchip .nm{font-size:16px;font-weight:700}
+  .app .sb2 .userchip .rl{margin-top:2px;font-size:12.5px}
+  .app .sb2 .sb2-gear,.app .sb2 .logout{width:40px;height:40px;border-radius:50%;background:var(--m-sheet);color:var(--sb-text2)}
+  .app .sb2 .sb2-gear svg,.app .sb2 .logout svg{width:19px;height:19px}
+  /* search: a full-width field */
+  .app .sb2-tools{order:2;flex:none;padding:0 16px 16px}
+  .app .sb2-search{height:44px;padding:0 14px;gap:10px;border:0;border-radius:14px;background:var(--m-row);font-size:15px;box-shadow:none}
+  /* the places: a small title over each group, then rows on a rounded card */
+  .app .sb2 nav.side{order:3;flex:none;padding:0 16px;overflow:visible}
+  .app .sb2-group{gap:0;padding-bottom:16px}
+  .app .sb2 .navsec{height:auto;padding:0 6px 8px;font-size:11.5px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:var(--sb-text3)}
+  .app .sb2-secbtn{right:2px;bottom:5px;width:26px;height:26px}
+  .app .sb2-items{display:flex;flex-direction:column;border-radius:18px;background:var(--m-row);overflow:hidden}
+  .app .sb2 .navitem{min-height:54px;padding:0 44px 0 12px;gap:12px;border-radius:0;color:var(--sb-text);font-size:15px;font-weight:600;box-shadow:none}
+  .app .sb2 .navitem>.sb2-label:not(.sb2-plats){flex:1;width:auto;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .app .sb2 .navitem .ic{width:32px;height:32px;border-radius:10px}
+  .app .sb2 .navitem .ic:not(.sb2-chtile){background:var(--m-tile);color:var(--m-tileIc)}
+  .app .sb2 .navitem .ic svg{width:18px;height:18px}
+  .app .sb2 .navitem .ic.sb2-chtile{width:32px;height:32px;margin:0;border-radius:10px;font-size:11px}
+  /* a hairline between rows, from the label on, and a chevron at the end */
+  .app .sb2-items>.navitem+.navitem::before{content:"";position:absolute;top:0;left:56px;right:0;height:1px;background:var(--sb-line)}
+  .app .sb2-items>.navitem::after{content:"";position:absolute;right:20px;top:50%;width:7px;height:7px;margin-top:-4px;border:solid var(--sb-text3);border-width:2px 2px 0 0;
+    border-radius:1px;transform:rotate(45deg);opacity:.55}
+  .app .sb2 .navitem .badge{right:40px}
+  .app .sb2-plats{right:42px}
+  .app .sb2 .navitem:hover{background:transparent;color:var(--sb-text)}
+  .app .sb2 .navitem:active{background:var(--sb-hover)}
+  /* the page you're on: a soft tint, its icon filled with the accent */
+  .app .sb2 .navitem.active,.app .sb2 .navitem.active:hover{background:color-mix(in srgb,var(--sb-ac) 9%,var(--m-row));color:var(--sb-acText);filter:none;box-shadow:none}
+  .app .sb2 .navitem.active .ic:not(.sb2-chtile){background:var(--sb-acGrad);color:#fff}
+  .app .sb2 .navitem.active::after{border-color:var(--sb-acText);opacity:.8}
+  .app .sb2 .navitem.active .badge:not(.alert){color:var(--sb-acText)}
+  /* break time and the accent colour: cards of their own */
+  .app .sb2-break{order:4;flex:none;margin:0 16px 12px;padding:15px 16px;gap:10px;border:0;border-radius:18px;background:var(--m-row);font-size:14px;font-weight:600;color:var(--sb-text2)}
+  .app .sb2-accent{order:5;flex:none;margin:0 16px;padding:14px 16px 16px;gap:10px;border:0;border-radius:18px;background:var(--m-row);font-size:14px;font-weight:600;color:var(--sb-text2)}
+
+  /* pop-ups rise from the bottom as sheets */
+  .modal-overlay:not(.drawer){align-items:flex-end;padding:0}
+  .modal-overlay:not(.drawer)>.modal-card{margin:0;max-width:none;max-height:calc(100dvh - env(safe-area-inset-top) - 16px);overflow-y:auto;overscroll-behavior:contain;
+    border-radius:22px 22px 0 0;padding:28px 18px calc(20px + env(safe-area-inset-bottom));animation:m-sheet .32s cubic-bezier(.2,.8,.2,1)}
+  .modal-overlay:not(.drawer)>.modal-card::before{content:"";position:absolute;top:9px;left:50%;width:40px;height:4px;margin-left:-20px;border-radius:2px;background:var(--border)}
+  .modal-overlay:not(.drawer) .modal-close{top:12px;right:12px}
+  /* a task opened from a list fills the screen, as a page would in an app */
+  .task-panel.tp2.tp2-drawer{width:100%;max-width:none;margin:0;border:0;border-radius:0;padding-top:env(safe-area-inset-top)}
+
+  /* chat: the list sits above the tab bar; an open conversation takes the whole
+     screen with its own header and back button, like a messaging app */
+  .chat{height:calc(100dvh - var(--m-top) - var(--m-tab))!important}
+  .app:has(.chat.has-conv) .topbar,.app:has(.chat.has-conv) .tabbar,.app:has(.chat.has-conv) .tab-fab{display:none}
+  /* a task sheet (New task, or a task opened) takes the whole screen: its own
+     footer holds Create / Save, so the tab bar and + step aside */
+  .app:has(.tp2-scrim) .tabbar,.app:has(.tp2-scrim) .tab-fab{display:none}
+  .chat.has-conv{height:100dvh!important;padding-top:env(safe-area-inset-top);padding-bottom:env(safe-area-inset-bottom);box-sizing:border-box}
+
+  /* rows of tabs that don't fit swipe sideways instead of widening the page */
+  .seg{max-width:100%;overflow-x:auto;scrollbar-width:none;-webkit-overflow-scrolling:touch}
+  .seg::-webkit-scrollbar{display:none}
+  .seg>button{flex:none;white-space:nowrap}
+}
+/* the narrowest phones: the tab bar keeps its icons and drops the words */
+@media (max-width:340px){
+  .tab-l{display:none}
+  .tab-ic{height:30px}
+}
+@keyframes m-sheet{from{transform:translateY(100%)}to{transform:none}}
+
+/* touch screens: text fields large enough that iOS doesn't zoom the page
+   when you start typing */
+@media (pointer:coarse){
+  input:not([type="checkbox"]):not([type="radio"]):not([type="range"]):not([type="color"]),select,textarea{font-size:16px!important}
+}
+@media (prefers-reduced-motion:reduce){
+  .modal-overlay:not(.drawer)>.modal-card{animation:none}
+  .app>aside.sb2{transition:none}
+  .tab-ic{transition:none}
+}

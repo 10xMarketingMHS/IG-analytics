@@ -21,17 +21,27 @@ export type NavItem = {
   // An adminOnly item may also be shown to holders of this permission grant
   // (Settings → Access) — e.g. Add Post for a create_post grantee.
   permission?: "create_post" | "goal_setting_access";
+  // Team Chat: carries the unread/mention badge, and is hidden from anyone
+  // chat isn't for (viewers).
+  chatBadge?: boolean;
+  // Inbox: carries how many requests wait on you
+  inboxBadge?: boolean;
 };
 
 export const NAV_ITEMS: NavItem[] = [
-  // "My Day" — a personalized daily brief (what needs *your* attention),
+  // "Home" — a personalized daily brief (what needs *your* attention),
   // distinct from Dashboard, which shows the same org-wide analytics to
-  // everyone. Route stays /home; only the display name changed.
-  { title: "My Day", href: "/home", icon: "🏠", section: "Home" },
-  { title: "Dashboard", href: "/dashboard", icon: "📊", section: "Analytics" },
+  // everyone. Shown as "My Day" until 2026-10-17; the route was always /home.
+  { title: "Home", href: "/home", icon: "🏠", section: "Home" },
+  // Inbox — everything waiting on you (leave, permissions, corrections,
+  // hand-overs, reviews, tasks to accept, password resets) and what you sent.
+  { title: "Inbox", href: "/inbox", icon: "📥", section: "Home", inboxBadge: true },
+  { title: "Team Chat", href: "/chat", icon: "💬", section: "Home", chatBadge: true },
+  // Analytics — the Dashboard and Top Performers merged into one page with an
+  // Overview tab and a Top performers tab (/dashboard and /top redirect here).
   // Insights, Trends, Reports — hidden from the sidebar per request; routes/
   // pages still exist (see App.tsx, PAGE_META below), just not linked.
-  { title: "Top Performers", href: "/top", icon: "🥇", section: "Analytics" },
+  { title: "Analytics", href: "/analytics", icon: "📈", section: "Analytics" },
   { title: "Leaderboard", href: "/leaderboard", icon: "🏆", section: "Analytics" },
   { title: "Task Board", href: "/tasks", icon: "✅", section: "Tasks" },
   // My Team — admin-only: everyone ranked for a date range, with their tasks.
@@ -42,7 +52,7 @@ export const NAV_ITEMS: NavItem[] = [
   { title: "Add Post", href: "/posts/new", icon: "➕", section: "Manage", adminOnly: true, permission: "create_post" },
   // Goals — admin-only manual goal-tracking dashboard (its own page, not a
   // Settings tab). Any admin can see and manage any goal.
-  { title: "Goals", href: "/goals-board", icon: "🎯", section: "Manage", adminOnly: true },
+  { title: "Goals", href: "/goals-board", icon: "🎯", section: "Manage" },
   { title: "Posts", href: "/posts", icon: "🗂️", section: "Manage", showBadge: true },
   // Task Settings, Channels, and Teams are tabs inside Settings now, not
   // separate sidebar links — one place for all admin configuration.
@@ -51,24 +61,25 @@ export const NAV_ITEMS: NavItem[] = [
 
 // Page title + subtitle shown in the topbar, keyed by pathname.
 export const PAGE_META: Record<string, [string, string]> = {
-  "/home": ["My Day", "What needs your attention today"],
-  "/dashboard": ["Dashboard", "Live analytics from your content data"],
-  "/metrics": ["Social & Ads Pipeline", "Who's working on which Social post or Ad, and where it stands"],
+  "/home": ["Home", "What needs your attention today"],
+  "/inbox": ["Inbox", "Everything waiting on you, and what you sent"],
+  "/leave": ["Leave", "Casual leave (CL) and sick leave (SL)"],
+  "/chat": ["Team Chat", "Channels for the team, direct messages for one-to-one"],
+  "/analytics/": ["Format analytics", "Total performance across all posts of one format"],
+  "/analytics": ["Analytics", "Content performance across your channels and platforms"],
+  "/metrics": ["Social & Ads Pipeline", "Every reel, carousel and ad in production. Stages are read-only here — move work on the Task Board."],
   "/insights": ["Insights", "What your data is telling you — computed automatically"],
   "/trends": ["Trends", "How your content is performing over time, and platform vs platform"],
-  "/top": ["Top Performers", "Your best-performing content, ranked separately for each platform"],
   "/leaderboard": ["Editor Leaderboard", "Editor performance & rankings from published posts"],
   "/reports": ["Reports", "Export and share performance summaries"],
   "/posts/new": ["Add Post", "Create the post record now — log its metrics after you publish"],
   "/posts": ["Posts", "Your content database — replaces the Manual Entry sheet"],
-  "/goals-board": ["Goals", "Track your team's revenue, project and custom goals — updated manually"],
+  "/goals-board": ["Goals", "This month's goals by content type, and how far along they are"],
   "/channels": ["Channels & Platforms", "Manage channels, platforms, and Instagram sync — all in one place"],
   "/tasks": ["Task Management", "Assign and track your team's daily tasks"],
-  "/my-team": ["My Team", "Everyone ranked for the dates you pick, with each person's tasks and progress"],
+  "/my-team": ["My Team", "Who is working right now, everyone ranked for the dates you pick, and the roster"],
   "/social-media": ["Social Media", "Work generated by your posts, tracked per account — claim it or see who's on it"],
   "/task-rules": ["Task Settings", "Content formats and how many hours each should take, per person or org-wide"],
   "/activity": ["Activity", "Updates on your tasks and the team, newest first"],
-  "/teams": ["Teams", "Roster, hierarchy, and login access — one place for everyone on the team"],
-  "/settings": ["Settings", "Content taxonomy, task rules, channels, and your team — all in one place"],
-  "/analytics": ["Format analytics", "Total performance across all posts of one format"],
+  "/settings": ["Settings", "How Pulse works for your team — calendar, channels, content, tasks, scoring and access"],
 };

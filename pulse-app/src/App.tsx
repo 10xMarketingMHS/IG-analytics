@@ -18,18 +18,20 @@ import { Modal } from "@/components/modal";
 import { Toaster } from "@/components/ui/sonner";
 import { LoginPage } from "@/pages/login";
 import { HomePage } from "@/pages/home";
-import { DashboardPage } from "@/pages/dashboard";
+import { AnalyticsPage } from "@/pages/analytics";
 import { lazy, Suspense } from "react";
 import { InsightsPage } from "@/pages/insights";
 // Trends pulls in Recharts (heavy) — load it only when visited.
 const TrendsPage = lazy(() => import("@/pages/trends").then((m) => ({ default: m.TrendsPage })));
-import { TopPerformersPage } from "@/pages/top-performers";
 import { MetricsPage } from "@/pages/metrics";
 import { ReportsPage } from "@/pages/reports";
 import { PostsPage } from "@/pages/posts";
 import { TasksPage } from "@/pages/tasks";
 import { SocialMediaPage } from "@/pages/social-media";
 import { ActivityPage } from "@/pages/activity";
+import { InboxPage } from "@/pages/inbox";
+import { LeavePage } from "@/pages/leave";
+import { ChatPage } from "@/pages/chat";
 import { AddPostPage } from "@/pages/add-post";
 import { BulkAddPostPage } from "@/pages/bulk-add-post";
 import { useWorkspaces } from "@/lib/workspaces-context";
@@ -37,7 +39,7 @@ import { useWorkspaces } from "@/lib/workspaces-context";
 // page (see settings.tsx) — /task-rules, /channels, /teams still route here
 // so any old link keeps working, just pre-selecting the matching tab.
 import { SettingsPage } from "@/pages/settings";
-import { GoalsTrackerPage } from "@/pages/goals-tracker";
+import { GoalsPage } from "@/pages/goals";
 import { FormatAnalyticsPage } from "@/pages/format-analytics";
 import { LeaderboardPage } from "@/pages/leaderboard";
 import { MyTeamPage } from "@/pages/my-team";
@@ -92,7 +94,11 @@ function AppRoutes() {
         <Route element={<ProtectedRoute />}>
           <Route element={<AppShell />}>
             <Route path="/home" element={<HomePage />} />
-            <Route path="/dashboard" element={<DashboardPage />} />
+            <Route path="/inbox" element={<InboxPage />} />
+            <Route path="/leave" element={<LeavePage />} />
+            {/* Dashboard and Top Performers live on as the two tabs of Analytics. */}
+            <Route path="/analytics" element={<AnalyticsPage />} />
+            <Route path="/dashboard" element={<Navigate to="/analytics" replace />} />
             <Route path="/metrics" element={<MetricsPage />} />
             <Route path="/insights" element={<InsightsPage />} />
             <Route
@@ -104,7 +110,7 @@ function AppRoutes() {
               }
             />
             <Route path="/leaderboard" element={<LeaderboardPage />} />
-            <Route path="/top" element={<TopPerformersPage />} />
+            <Route path="/top" element={<Navigate to="/analytics?tab=top" replace />} />
             <Route path="/reports" element={<ReportsPage />} />
             <Route path="/posts" element={<PostsPage />} />
             {/* Channels, Task Settings, Teams all live inside Settings now — these
@@ -117,13 +123,17 @@ function AppRoutes() {
             <Route path="/task-rules" element={<SettingsPage />} />
             <Route path="/social-media" element={<SocialMediaPage />} />
             <Route path="/activity" element={<ActivityPage />} />
+            <Route path="/chat" element={<ChatPage />} />
             {/* Direct visits (no background) still render the form. */}
             <Route path="/posts/new" element={<AddPostGate><BulkAddPostPage /></AddPostGate>} />
             <Route path="/posts/:id/edit" element={<AddPostPage />} />
             <Route path="/analytics/:type" element={<FormatAnalyticsPage />} />
             <Route path="/settings" element={<SettingsPage />} />
-            <Route path="/goals-board" element={<GoalsTrackerPage />} />
-            <Route path="/teams" element={<SettingsPage />} />
+            {/* Goals: Team goals, Org goals (the old Goals board), Set goals and Discipline. */}
+            <Route path="/goals-board" element={<GoalsPage />} />
+            {/* Old Goal Setting link — each person's goals are now Goals › Set goals. */}
+            <Route path="/goals" element={<Navigate to="/goals-board?tab=set" replace />} />
+            <Route path="/teams" element={<Navigate to="/my-team?tab=roster" replace />} />
           </Route>
         </Route>
 
@@ -150,7 +160,8 @@ export function App() {
             <AppRoutes />
           </WorkspacesProvider>
         </AuthProvider>
-        <Toaster />
+        {/* on phones, toasts rise above the tab bar (components/mobile.css) */}
+        <Toaster mobileOffset={{ bottom: "calc(var(--m-tab, 0px) + 12px)" }} />
       </BrowserRouter>
     </ThemeProvider>
   );

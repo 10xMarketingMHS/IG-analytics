@@ -30,8 +30,8 @@ async function planCandidates(orgId, editorId, userId) {
   const { rows } = await pool.query(
     `select t.id, t.title, t.status, t.accepted, t.pending_note, t.on_hold, t.due_date,
             cf.name as format, w.name as channel,
-            (t.created_by = $3 and t.created_at::date = current_date) as "addedToday",
-            (current_date - t.due_date) as "daysLate"
+            (t.created_by = $3 and (t.created_at at time zone 'Asia/Kolkata')::date = (now() at time zone 'Asia/Kolkata')::date) as "addedToday",
+            ((now() at time zone 'Asia/Kolkata')::date - t.due_date) as "daysLate"
        from task t
        left join task_content_format cf on cf.id = t.content_format_id
        left join workspace w on w.id = t.channel_id
@@ -64,7 +64,7 @@ async function planFor(orgId, editorId, date) {
               where s.editor_id = p.editor_id and s.date = p.date) as "startedAt"
        from sod_plan p
        join editor e on e.id = p.editor_id
-      where p.org_id = $1 and p.editor_id = $2 and p.date = coalesce($3::date, current_date)`,
+      where p.org_id = $1 and p.editor_id = $2 and p.date = coalesce($3::date, (now() at time zone 'Asia/Kolkata')::date)`,
     [orgId, editorId, date],
   );
   return rows[0] ?? null;
@@ -79,7 +79,7 @@ sodRouter.get("/sod/today", async (req, res, next) => {
     const eid = await callerEditorId(req);
     if (req.role !== "editor" || !eid) return res.json({ required: false, plan: null, startedAt: null, candidates: [] });
     const { rows: first } = await pool.query(
-      "select min(started_at) as started_at from eod_session where editor_id = $1 and date = current_date",
+      "select min(started_at) as started_at from eod_session where editor_id = $1 and date = (now() at time zone 'Asia/Kolkata')::date",
       [eid],
     );
     res.json({
@@ -109,7 +109,7 @@ sodRouter.post("/sod", async (req, res, next) => {
     const eid = await callerEditorId(req);
     if (!eid) return res.status(400).json({ error: "Your login isn't linked to a team member." });
     const { rowCount: started } = await pool.query(
-      "select 1 from eod_session where editor_id = $1 and date = current_date", [eid],
+      "select 1 from eod_session where editor_id = $1 and date = (now() at time zone 'Asia/Kolkata')::date", [eid],
     );
     if (!started) return res.status(400).json({ error: "Press Start Work first." });
 
@@ -121,7 +121,7 @@ sodRouter.post("/sod", async (req, res, next) => {
     const note = parsed.data.note || null;
     const { rows } = await pool.query(
       `insert into sod_plan (org_id, editor_id, date, note, tasks)
-       values ($1, $2, current_date, $3, $4::jsonb)
+       values ($1, $2, (now() at time zone 'Asia/Kolkata')::date, $3, $4::jsonb)
        on conflict (editor_id, date) do update
          set tasks = excluded.tasks, note = excluded.note, submitted_at = now()
        returning (xmax = 0) as first`,

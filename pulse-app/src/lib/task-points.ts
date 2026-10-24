@@ -5,6 +5,13 @@ import type { Editor, Task } from "@/lib/types";
 // Excluded (not scored as zero) at every aggregation, here and in leaderboard.tsx.
 export const isScorableTask = (t: Task): boolean => t.task_type !== "admin";
 
+// Who takes part in the Task Points rankings. Everyone does until a Super
+// Admin switches them out on Team › Roster (editor.in_task_score = false) —
+// say a Manager or Team Lead — and they can be switched back in any time.
+// People left out keep their tasks; they just aren't ranked. Applied at every
+// ranking: here, in leaderboard.tsx and in team-panel.tsx.
+export const countsInTaskScore = (e: Pick<Editor, "in_task_score">): boolean => e.in_task_score !== false;
+
 // ---- Points Formula (locked spec) ----
 // base_points is an admin-set value per content format (Reels/Poster/etc. —
 // see Settings → Task Settings → Points per format), independent of that
@@ -87,16 +94,19 @@ export function taskPoints(t: Task): number {
 // volume completed (more tasks finished for the same score ranks higher).
 type RankRow = { editorId: string; points: number; completed: number };
 
+function rowInRange(editorId: string, tasks: Task[], fromYmd: string, toYmd: string): RankRow {
+  const own = tasks.filter((t) => {
+    if (t.editor_id !== editorId || !t.completed_at || !isScorableTask(t)) return false;
+    const day = ymd(new Date(t.completed_at));
+    return day >= fromYmd && day <= toYmd;
+  });
+  return { editorId, points: own.reduce((s, t) => s + taskPoints(t), 0), completed: own.length };
+}
+
 function rankRowsInRange(editors: Editor[], tasks: Task[], fromYmd: string, toYmd: string): RankRow[] {
   return editors
-    .map((e) => {
-      const own = tasks.filter((t) => {
-        if (t.editor_id !== e.id || !t.completed_at || !isScorableTask(t)) return false;
-        const day = ymd(new Date(t.completed_at));
-        return day >= fromYmd && day <= toYmd;
-      });
-      return { editorId: e.id, points: own.reduce((s, t) => s + taskPoints(t), 0), completed: own.length };
-    })
+    .filter(countsInTaskScore)
+    .map((e) => rowInRange(e.id, tasks, fromYmd, toYmd))
     .sort((a, b) => b.points - a.points || b.completed - a.completed);
 }
 
@@ -121,16 +131,20 @@ export function topEditorsInRange(
 // back (even at 0), but `rank` is null until they've actually completed
 // something in that window — matching how the Media House Leaders board
 // itself only ranks editors with completed work, everyone else sits unranked.
+// Someone left out of the task score (countsInTaskScore) still sees their own
+// points, with `counted` false and never a rank.
 export function myRankInRange(
   editors: Editor[],
   tasks: Task[],
   fromYmd: string,
   toYmd: string,
   editorId: string | null,
-): { points: number; completed: number; rank: number | null; totalRanked: number } {
+): { points: number; completed: number; rank: number | null; totalRanked: number; counted: boolean } {
   const rows = rankRowsInRange(editors, tasks, fromYmd, toYmd);
   const ranked = rows.filter((r) => r.completed > 0);
-  const mine = editorId ? rows.find((r) => r.editorId === editorId) : undefined;
-  const rank = mine && mine.completed > 0 ? ranked.findIndex((r) => r.editorId === editorId) + 1 : null;
-  return { points: mine?.points ?? 0, completed: mine?.completed ?? 0, rank, totalRanked: ranked.length };
+  const me = editorId ? editors.find((e) => e.id === editorId) : undefined;
+  const counted = !me || countsInTaskScore(me);
+  const mine = editorId ? (counted ? rows.find((r) => r.editorId === editorId) : rowInRange(editorId, tasks, fromYmd, toYmd)) : undefined;
+  const rank = counted && mine && mine.completed > 0 ? ranked.findIndex((r) => r.editorId === editorId) + 1 : null;
+  return { points: mine?.points ?? 0, completed: mine?.completed ?? 0, rank, totalRanked: ranked.length, counted };
 }
