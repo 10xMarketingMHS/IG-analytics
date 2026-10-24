@@ -189,6 +189,7 @@ div.hw-timer-title{cursor:default}
 .sd-btn:disabled{opacity:.6;cursor:default}
 .sd-link{padding:0;border:0;background:transparent;color:var(--md-acText);font:600 12.5px 'Plus Jakarta Sans',sans-serif;cursor:pointer;white-space:nowrap}
 .sd-link:hover:not(:disabled){text-decoration:underline}
+.sd-link.warn{color:var(--md-warn)}
 .sd-faint{font-size:12px;color:var(--md-text3)}
 .sd-corr{display:flex;align-items:center;flex-wrap:wrap;gap:8px 10px;padding:10px 12px;border-radius:12px;background:var(--md-sunk);font-size:12.5px}
 .sd-corr input{height:32px;padding:0 8px;border:1px solid var(--md-line);border-radius:8px;background:var(--md-panel);color:var(--md-text);font:500 12.5px 'Plus Jakarta Sans',sans-serif}

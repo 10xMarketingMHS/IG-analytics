@@ -124,6 +124,15 @@ export async function readSettings(orgId) {
 }
 
 export const attendanceReady = () => hasColumn("attendance", "id");
+// Why a late start (20261102120000_attendance_late_note).
+export const lateNoteReady = () => hasColumn("attendance", "late_note");
+// A late start waits for its reason: checked in after the grace period (late —
+// a morning permission or not — half-day absent or absent), not excused or
+// marked by a lead, and nothing said yet.
+export function lateNoteNeeded(row) {
+  return !!row?.checkInAt && ["late", "half_absent", "absent"].includes(row.status)
+    && !(row.excused && row.reason !== "permission") && !row.markedBy && !row.lateNote;
+}
 
 // Home role from the position (Team › Roster): Manager and Asst. Manager get
 // the Manager Home, Team Lead the Team lead Home, everyone else the Editor

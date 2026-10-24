@@ -146,7 +146,8 @@ function attendanceNotice(a: Activity, myEditorId: string | null | undefined): s
   switch (a.verb) {
     case "attendance_nudge": return mine ? `${who} nudged you to start your day` : null;
     case "attendance_no_sod": return mine ? "You haven't started your day yet — tap Start day on Home" : a.summary;
-    case "attendance_correction": return mine ? null : `${who} ${a.summary.charAt(0).toLowerCase()}${a.summary.slice(1)}`;
+    case "attendance_correction": case "attendance_late_reason":
+      return mine ? null : `${who} ${a.summary.charAt(0).toLowerCase()}${a.summary.slice(1)}`;
     case "attendance_marked": case "attendance_excused": case "attendance_correction_answered": case "attendance_undone":
       return mine ? `${who} ${a.summary.charAt(0).toLowerCase()}${a.summary.slice(1)}` : null;
     default: return null;

@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from "react";
 import { api, ApiError } from "@/lib/api";
 import { whileVisible } from "@/lib/visible-poll";
 import { notifyTasksChanged } from "@/lib/task-events";
+import type { AttRow } from "@/lib/use-attendance";
 
 // 7h 40m / 45m — a length of time, not a clock time.
 export function fmtDuration(seconds: number): string {
@@ -95,6 +96,8 @@ export function useEod() {
   const [unlinked, setUnlinked] = useState(false);
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
+  // a late start waiting for its reason: the dialog (components/late-reason.tsx) is open
+  const [lateAsk, setLateAsk] = useState<AttRow | null>(null);
   // The just-ended day's summary. Held here (not inside a page) so it can render
   // ABOVE the gate — ending re-locks the app, so a page-level card would unmount
   // before it's seen.
@@ -135,8 +138,12 @@ export function useEod() {
     setBusy(true);
     try {
       try {
-        const d = await api<{ session: EodSession }>("/attendance/check-in", { method: "POST", body: JSON.stringify(plan ? { plan } : {}) });
+        const d = await api<{ session: EodSession; attendance?: AttRow; lateNoteNeeded?: boolean }>(
+          "/attendance/check-in", { method: "POST", body: JSON.stringify(plan ? { plan } : {}) },
+        );
         setSession(d.session);
+        // started after the grace period: ask why, from whichever Start day button it was
+        if (d.lateNoteNeeded && d.attendance) setLateAsk(d.attendance);
       } catch (e) {
         if (!(e instanceof ApiError && e.status === 409)) throw e;
         const d = await api<{ session: EodSession }>("/eod/start", { method: "POST" });
@@ -148,6 +155,14 @@ export function useEod() {
     } finally {
       setBusy(false);
     }
+  }, []);
+
+  // Why late: asked again (Home, until it's answered), and sent to the lead.
+  const askLateReason = useCallback((row: AttRow) => setLateAsk(row), []);
+  const sendLateReason = useCallback(async (note: string) => {
+    await api("/attendance/late-reason", { method: "POST", body: JSON.stringify({ note }) });
+    setLateAsk(null);
+    window.dispatchEvent(new Event("pulse:attendance-changed"));
   }, []);
 
   // End day: the wrap-up note, then the work session closes and the summary
@@ -250,6 +265,7 @@ export function useEod() {
 
   return {
     session, unlinked, loading, busy, summary, start, end, checkOut, undoStart, clearSummary, refresh,
+    lateAsk, askLateReason, sendLateReason,
     eodOpen, openEod, closeEod, signOutAfter, clearSignOutAfter, saveNotes,
     sod, planOpen, setPlanOpen, openSod, refreshSod, saveSod,
   };

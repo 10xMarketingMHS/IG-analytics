@@ -19,6 +19,8 @@ type Cell = {
   status: ShownStatus | null;
   row: {
     checkInAt: string | null; lateMinutes: number; excused: boolean; reason: string | null; autoMarked?: boolean;
+    // why a late start, in their words
+    lateNote?: string | null;
   } | null;
 };
 // A half day of leave is judged on the half they work: missed, or a late start.
@@ -118,7 +120,7 @@ function TeamMonth({ editors }: { editors: Editor[] | null }) {
                       const day = `${Number(d.date.slice(8))} ${shortMon}`;
                       const off = !d.working ? (d.weekday === 0 ? "Sunday" : "Office closed") : d.future ? "upcoming" : null;
                       const tip = off ? `${day} · ${off}`
-                        : c.status ? `${day} · ${c.row?.excused ? "On time (late excused)" : LABEL[c.status]}${c.row?.checkInAt ? ` · in ${clockTime(c.row.checkInAt)}` : ""}${c.status === "late" && c.row?.lateMinutes ? ` · +${c.row.lateMinutes}m` : ""}${c.row?.reason ? ` · ${c.row.reason}` : ""}${halfNote(c) ? ` · ${halfNote(c)}` : ""}`
+                        : c.status ? `${day} · ${c.row?.excused ? "On time (late excused)" : LABEL[c.status]}${c.row?.checkInAt ? ` · in ${clockTime(c.row.checkInAt)}` : ""}${c.status === "late" && c.row?.lateMinutes ? ` · +${c.row.lateMinutes}m` : ""}${c.row?.reason ? ` · ${c.row.reason}` : ""}${halfNote(c) ? ` · ${halfNote(c)}` : ""}${c.row?.lateNote ? ` · “${c.row.lateNote}”` : ""}`
                         : `${day} · no record`;
                       return <span key={d.date} className={"ta-cell" + (c.status ? " c-" + c.status : "") + (off ? " off" : "") + (d.today ? " today" : "")} title={tip} />;
                     })}

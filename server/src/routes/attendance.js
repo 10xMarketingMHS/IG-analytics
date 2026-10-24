@@ -7,7 +7,8 @@ import { capacityFor, LUNCH_MIN, TEA_MIN, normalizeCalendar } from "../work-cale
 import { startSession, endSession, pauseDayTimers } from "./eod.js";
 import {
   applyEveningPermission, applyMorningPermission, attendancePeople, giveBackPermission, attendanceReady, callerScope, canSee, classify, closingFor, judgeHalfDay,
-  istAt, istNow, leavePenalties, minutesOf, openingFor, penaltyOf, permissionsReady, permissionsThisMonth, readSettings, syncAttendance, weekdayOf,
+  istAt, istNow, lateNoteNeeded, lateNoteReady, leavePenalties, minutesOf, openingFor, penaltyOf, permissionsReady, permissionsThisMonth, readSettings,
+  syncAttendance, weekdayOf,
 } from "../attendance.js";
 import {
   LeaveError, WORKED, balances, createLeave, dropLeaveDay, isApprover, leaveReady, leaveRules, requestWords, restoreLeaveDay, workedLeaveDay,
@@ -25,8 +26,13 @@ const ROW_COLS = `id, editor_id as "editorId", date::text as date, check_in_at a
   correction_at as "correctionAt", correction_note as "correctionNote", correction_status as "correctionStatus"`;
 
 // with the approved leave a day belongs to, once the database has leave
-// (20261030120000_leave)
-const rowCols = async () => ROW_COLS + ((await leaveReady()) ? `, leave_request_id as "leaveRequestId"` : "");
+// (20261030120000_leave), and why a late start (20261102120000_attendance_late_note)
+const rowCols = async () => ROW_COLS
+  + ((await leaveReady()) ? `, leave_request_id as "leaveRequestId"` : "")
+  + ((await lateNoteReady()) ? `, late_note as "lateNote"` : "");
+// Does this day still wait for its late reason (and can the database keep one)?
+const needsLateNote = async (row) => !!row && (await lateNoteReady()) && lateNoteNeeded(row);
+const lateWords = (m) => (m >= 60 ? `${Math.floor(m / 60)}h ${m % 60}m` : `${m}m`);
 
 async function ready(res) {
   if (await attendanceReady()) return true;
@@ -122,7 +128,8 @@ attendanceRouter.get("/attendance/today", async (req, res, next) => {
       date: today.ymd, now: new Date().toISOString(),
       opening: open, closing: closingFor(cal, today.ymd),
       settings: att, role: caller.role, scope: caller.scope,
-      checksIn, me, team,
+      // lateNoteNeeded: started late and hasn't said why yet (the Start day dialog asks)
+      checksIn, me: me ? { ...me, lateNoteNeeded: await needsLateNote(me) } : null, team,
       permissions: permReady ? { perMonth: att.permissionsPerMonth, mine: myPerms, left: Math.max(0, att.permissionsPerMonth - myPerms.length) } : null,
       leave: leaveOn ? {
         year, counting: !!leaveRules(att).countingSince, balance: myBal.get(caller.editorId) ?? null,
@@ -152,7 +159,8 @@ attendanceRouter.post("/attendance/check-in", async (req, res, next) => {
         "update attendance set plan_note = coalesce($2, plan_note), check_out_at = null, updated_at = now() where id = $1",
         [existing.id, plan],
       );
-      return res.json({ attendance: await rowFor(caller.editorId, today.ymd), session });
+      const again = await rowFor(caller.editorId, today.ymd);
+      return res.json({ attendance: again, session, lateNoteNeeded: await needsLateNote(again) });
     }
     const at = session?.startedAt ?? new Date();
     const c = classify(at, today.ymd, cal, att);
@@ -189,7 +197,38 @@ attendanceRouter.post("/attendance/check-in", async (req, res, next) => {
       summary: row.status === "late" ? `Started their day ${row.lateMinutes}m late` : "Started their day",
       meta: { date: today.ymd, status: row.status },
     });
-    res.status(201).json({ attendance: row, session, penalty: penaltyOf(row, att) });
+    // a late start: the app asks why at once (POST /attendance/late-reason)
+    res.status(201).json({ attendance: row, session, penalty: penaltyOf(row, att), lateNoteNeeded: await needsLateNote(row) });
+  } catch (err) { next(err); }
+});
+
+// POST /attendance/late-reason { note } — why today's start was late. The app
+// asks as soon as Start day lands after the grace period; the lead sees it on
+// Team today, Team › Attendance and in their activity.
+attendanceRouter.post("/attendance/late-reason", async (req, res, next) => {
+  const parsed = z.object({ note: z.string().trim().min(2).max(300) }).safeParse(req.body ?? {});
+  if (!parsed.success) return res.status(400).json({ error: "Write a few words about why you started late." });
+  try {
+    if (!(await ready(res))) return;
+    if (!(await lateNoteReady())) {
+      return res.status(409).json({ error: "Late reasons need a database update first — ask whoever runs the database to apply 20261102120000_attendance_late_note." });
+    }
+    const caller = await callerScope(req);
+    if (!caller.editorId) return res.status(400).json({ error: "Your account isn't linked to a team member." });
+    const today = istNow();
+    const row = await rowFor(caller.editorId, today.ymd);
+    if (!row?.checkInAt) return res.status(400).json({ error: "You haven't started your day." });
+    await pool.query("update attendance set late_note = $2, updated_at = now() where id = $1", [row.id, parsed.data.note]);
+    const how = row.status === "absent" ? "late (counts as absent)"
+      : row.status === "half_absent" ? "late (half-day absent)"
+      : row.excused && row.reason === "permission" ? `${lateWords(row.lateMinutes)} late (morning permission)`
+      : row.lateMinutes ? `${lateWords(row.lateMinutes)} late` : "late";
+    await logActivity({
+      orgId: req.orgId, actorId: req.user.sub, verb: "attendance_late_reason", entityType: "editor", entityId: caller.editorId,
+      summary: `Started ${how}: “${parsed.data.note}”`,
+      meta: { date: today.ymd, status: row.status },
+    });
+    res.json({ attendance: await rowFor(caller.editorId, today.ymd) });
   } catch (err) { next(err); }
 });
 
@@ -229,11 +268,13 @@ attendanceRouter.post("/attendance/undo-check-in", async (req, res, next) => {
     const absent = att.autoAbsentEnabled && opens && today.minutes >= minutesOf(att.autoAbsentAt);
     const halfAbsent = !absent && att.autoAbsentEnabled && att.halfDayReady !== false && opens && today.minutes >= minutesOf(att.halfDayAt);
     const alerted = today.minutes >= minutesOf(att.noSodAlertAt);
+    // the late reason goes with the start it explained
+    const noNote = (await lateNoteReady()) ? ", late_note = null" : "";
     if (leadMark) {
-      await pool.query("update attendance set check_in_at = null, late_minutes = 0, updated_at = now() where id = $1 and check_in_at is not null", [cur.id]);
+      await pool.query(`update attendance set check_in_at = null, late_minutes = 0${noNote}, updated_at = now() where id = $1 and check_in_at is not null`, [cur.id]);
     } else if (absent || halfAbsent || alerted || cur.planNote || cur.correctionStatus) {
       await pool.query(
-        `update attendance set check_in_at = null, late_minutes = 0, excused = false, reason = null, marked_by = null,
+        `update attendance set check_in_at = null, late_minutes = 0, excused = false, reason = null, marked_by = null${noNote},
            status = $2, auto_marked = $3, updated_at = now() where id = $1 and check_in_at is not null`,
         [cur.id, absent ? "absent" : halfAbsent ? "half_absent" : "no_sod", absent || halfAbsent],
       );
@@ -800,6 +841,7 @@ attendanceRouter.get("/attendance/month", async (req, res, next) => {
           status: s,
           row: r ? {
             checkInAt: r.checkInAt, lateMinutes: r.lateMinutes, excused: r.excused, reason: r.reason, autoMarked: r.autoMarked,
+            lateNote: r.lateNote ?? null,
           } : null,
         };
       });

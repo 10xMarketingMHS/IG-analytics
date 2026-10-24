@@ -3,14 +3,23 @@ import { useEod } from "@/lib/use-eod";
 import { useOrg } from "@/lib/use-org";
 import { useWorkspaces } from "@/lib/workspaces-context";
 import { useAuth } from "@/lib/auth-context";
+import { LateReasonDialog } from "@/components/late-reason";
 
 // One shared EOD state for the whole authenticated shell — so the root gate, the
 // End EOD button on My Day, and the summary card all read/drive the same session.
 type EodCtx = ReturnType<typeof useEod>;
 const Ctx = createContext<EodCtx | null>(null);
 
+// It also holds the "why are you starting late?" dialog, so every Start day
+// button gets it.
 export function EodProvider({ children }: { children: ReactNode }) {
-  return <Ctx.Provider value={useEod()}>{children}</Ctx.Provider>;
+  const v = useEod();
+  return (
+    <Ctx.Provider value={v}>
+      {children}
+      {v.lateAsk && <LateReasonDialog row={v.lateAsk} onSend={v.sendLateReason} />}
+    </Ctx.Provider>
+  );
 }
 
 export function useEodState(): EodCtx {

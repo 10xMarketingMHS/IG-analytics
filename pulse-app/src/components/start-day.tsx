@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 import { api, ApiError } from "@/lib/api";
 import { useEodState } from "@/lib/eod-context";
+import { useAuth } from "@/lib/auth-context";
 import { clockTime } from "@/lib/time-format";
 import { Icon } from "@/components/icon";
 import { minutesOf, type AttToday } from "@/lib/use-attendance";
@@ -44,7 +45,8 @@ export function StartDaySection({
   onOpenReports: () => void;
   onOpenTask: (id: string) => void;
 }) {
-  const { session, loading: dayLoading, start, checkOut, undoStart, busy, openSod, refresh } = useEodState();
+  const { session, loading: dayLoading, start, checkOut, undoStart, busy, openSod, refresh, lateAsk, askLateReason } = useEodState();
+  const { user } = useAuth();
   const [plan, setPlan] = useState("");
   const [corrOpen, setCorrOpen] = useState(false);
   const [corrTime, setCorrTime] = useState("");
@@ -71,6 +73,15 @@ export function StartDaySection({
     const id = setInterval(() => setNowMs(Date.now()), 30_000);
     return () => clearInterval(id);
   }, []);
+  // A late start nobody said why about yet (the page reloaded, or the day was
+  // started some other way): ask once on Home; the bar keeps a link to it.
+  const lateDue = !preview && !user?.viewingAs && !!att?.me?.lateNoteNeeded;
+  const askedOnce = useRef(false);
+  useEffect(() => {
+    if (!lateDue || lateAsk || askedOnce.current || !att?.me) return;
+    askedOnce.current = true;
+    askLateReason(att.me);
+  }, [lateDue, lateAsk, att?.me, askLateReason]);
 
   const s = att?.settings;
   const me = att?.me ?? null;
@@ -280,9 +291,10 @@ export function StartDaySection({
             {inAt ? `Checked in ${clockTime(inAt)}` : "Checked in"}
             {late ? " · late start" : missed ? "" : byPermission ? " · morning permission used" : me?.excused ? " · late excused" : " · nice, on time"}
           </b>
-          <span>{me?.planNote ? `Plan: ${me.planNote}` : "No plan added"}{me?.correctionStatus === "pending" && me.correctionAt ? ` · correction to ${clockTime(me.correctionAt)} waiting on your lead` : ""}{permLine ? ` · ${permLine}` : ""}</span>
+          <span>{me?.planNote ? `Plan: ${me.planNote}` : "No plan added"}{me?.lateNote ? ` · Late: “${me.lateNote}”` : ""}{me?.correctionStatus === "pending" && me.correctionAt ? ` · correction to ${clockTime(me.correctionAt)} waiting on your lead` : ""}{permLine ? ` · ${permLine}` : ""}</span>
         </div>
         <span className="sd-grow" />
+        {lateDue && me && <button type="button" className="sd-link warn" onClick={() => askLateReason(me)}>Say why you're late</button>}
         <button type="button" className="sd-link" onClick={openSod} title="Pick today's tasks and copy the Start of Day report for WhatsApp">Start of Day</button>
         <button type="button" className="sd-link" onClick={onOpenReports}>My reports</button>
         {askLink}

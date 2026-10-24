@@ -20,6 +20,10 @@ export type AttRow = {
   correctionAt: string | null; correctionNote: string | null; correctionStatus: "pending" | "approved" | "declined" | null;
   // the approved leave this day belongs to (kept when they check in anyway)
   leaveRequestId?: string | null;
+  // why a late start, in the person's words (once the database has it)
+  lateNote?: string | null;
+  // your own day only: started late and hasn't said why yet
+  lateNoteNeeded?: boolean;
 };
 export type AttSettings = {
   requireSod: boolean; graceMinutes: number; noSodAlertAt: string; autoAbsentAt: string; autoAbsentEnabled: boolean;

@@ -309,7 +309,7 @@ export type ActivityVerb =
   | "held" | "resumed" | "accepted" | "password_reset_requested" | "password_reset" | "sod_submitted"
   // Attendance (Start day, a lead's marks, nudges, corrections, the no-SOD alert)
   | "attendance_check_in" | "attendance_no_sod" | "attendance_nudge" | "attendance_marked" | "attendance_excused"
-  | "attendance_undone" | "attendance_correction" | "attendance_correction_answered"
+  | "attendance_undone" | "attendance_correction" | "attendance_correction_answered" | "attendance_late_reason"
   // Hand over (components/handover.tsx)
   | "handover_offered" | "handover_accepted" | "handover_declined" | "handover_cancelled" | "handover_escalated" | "handover_moved"
   // Leave: CL and SL (components/leave-ask.tsx)

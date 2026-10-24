@@ -670,9 +670,13 @@ function AttendW({ c }: { c: HomeCtx }) {
     switch (p.status) {
       case "on_time": return `In ${r?.checkInAt ? clockTime(r.checkInAt) : "—"}${r?.excused ? " · late excused" : r?.markedBy ? " · marked by lead" : ""}`;
       case "late": return `In ${r?.checkInAt ? clockTime(r.checkInAt) : "—"} · +${r?.lateMinutes ?? 0}m · −${p.penalty} pt${p.penalty === 1 ? "" : "s"}`;
+      case "permission": return `In ${r?.checkInAt ? clockTime(r.checkInAt) : "—"} · +${r?.lateMinutes ?? 0}m · morning permission`;
+      case "half_absent": return r?.checkInAt
+        ? `In ${clockTime(r.checkInAt)} · +${r.lateMinutes}m${p.penalty ? ` · −${p.penalty} pts` : ""}`
+        : `Not in by ${at(s.halfDayAt ?? "11:30")}${p.penalty ? ` · −${p.penalty} pts` : ""}`;
       case "no_sod": return `${r?.alertSentAt ? `Alert sent ${clockTime(r.alertSentAt)}` : `Office opened ${att.opening ? at(att.opening) : ""}`}${s.autoAbsentEnabled ? ` · absent at ${at(s.autoAbsentAt)}` : ""}`;
       case "waiting": return att.opening ? `Grace until ${at(minutesToHHMM(toMin(att.opening) + s.graceMinutes))}` : "Office closed today";
-      case "absent": return `${r?.reason ? r.reason : r?.markedBy ? "Marked by lead" : `Auto-marked at ${at(s.autoAbsentAt)}`}${p.penalty ? ` · −${p.penalty} pts` : ""}`;
+      case "absent": return `${r?.checkInAt && !r.markedBy ? `In ${clockTime(r.checkInAt)}` : r?.reason ? r.reason : r?.markedBy ? "Marked by lead" : `Auto-marked at ${at(s.autoAbsentAt)}`}${p.penalty ? ` · −${p.penalty} pts` : ""}`;
       case "half_day": {
         const kind = r?.reason === "CL" || r?.reason === "SL" || r?.reason === "unpaid" ? `Half day · ${r.reason}` : r?.reason || "Half-day leave";
         // the half they work: missed, or a late start
@@ -717,7 +721,7 @@ function AttendW({ c }: { c: HomeCtx }) {
           return (
             <div key={p.editorId} className="hw-att-row">
               <Face editor={ed} name={p.name} size={30} />
-              <span className="hw-li-txt"><b>{p.name}</b><span>{meta(p)}</span></span>
+              <span className="hw-li-txt"><b>{p.name}</b><span>{meta(p)}{r?.lateNote ? ` · “${r.lateNote}”` : ""}</span></span>
               <span className={"hw-pill " + pill.t}>{pill.l}</span>
               <span className="hw-att-acts">
                 {/* requests (permissions, corrections) are answered in the Inbox */}
