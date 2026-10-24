@@ -6,7 +6,8 @@
    the light theme, a deep one with light words in the dark. Right: the form.
    Colours follow the accent the person picked (--acH). */
 /* full screen: the art fills the left (a small inset), the form the right */
-.lg{position:fixed;inset:0;z-index:200;overflow:auto;
+/* (lg-screen, not lg: "lg" is the large size of avatars, bars and numbers elsewhere) */
+.lg-screen{position:fixed;inset:0;z-index:200;overflow:auto;
   background:radial-gradient(45% 55% at 95% 100%,oklch(0.75 0.13 calc(var(--acH) - 70) / .1),transparent 70%),var(--panel)}
 .lg-card{min-height:100%;display:grid;grid-template-columns:minmax(0,1.1fr) minmax(0,1fr);gap:12px;padding:14px}
 
@@ -124,7 +125,7 @@ html[data-theme="dark"] .lg-play:hover{background:rgba(255,255,255,.92);color:ok
 
 /* one column: the art becomes a banner above the form */
 @media (max-width:880px){
-  .lg{padding:16px;place-items:start center}
+  .lg-screen{padding:16px;place-items:start center}
   .lg-card{grid-template-columns:minmax(0,1fr);min-height:0;border-radius:26px}
   .lg-art{min-height:330px;padding:22px 22px 24px}
   .lg-game{min-height:150px;margin:6px -22px 10px}
@@ -135,7 +136,7 @@ html[data-theme="dark"] .lg-play:hover{background:rgba(255,255,255,.92);color:ok
   .lg-logo{display:none}
 }
 @media (max-width:480px){
-  .lg{padding:10px}
+  .lg-screen{padding:10px}
   .lg-card{padding:8px;border-radius:22px}
   .lg-art{min-height:300px;border-radius:16px}
   .lg-game{min-height:140px}

@@ -155,7 +155,7 @@ export function LoginPage() {
   }
 
   return (
-    <div className="lg">
+    <div className="lg-screen">
       <div className="lg-card">
         <div className="lg-art" ref={art}>
           <div className="lg-light" aria-hidden="true">
