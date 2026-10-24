@@ -676,7 +676,7 @@ function AttendW({ c }: { c: HomeCtx }) {
         : `Not in by ${at(s.halfDayAt ?? "11:30")}${p.penalty ? ` · −${p.penalty} pts` : ""}`;
       case "no_sod": return `${r?.alertSentAt ? `Alert sent ${clockTime(r.alertSentAt)}` : `Office opened ${att.opening ? at(att.opening) : ""}`}${s.autoAbsentEnabled ? ` · absent at ${at(s.autoAbsentAt)}` : ""}`;
       case "waiting": return att.opening ? `Grace until ${at(minutesToHHMM(toMin(att.opening) + s.graceMinutes))}` : "Office closed today";
-      case "absent": return `${r?.checkInAt && !r.markedBy ? `In ${clockTime(r.checkInAt)}` : r?.reason ? r.reason : r?.markedBy ? "Marked by lead" : `Auto-marked at ${at(s.autoAbsentAt)}`}${p.penalty ? ` · −${p.penalty} pts` : ""}`;
+      case "absent": return `${r?.checkInAt && !r.markedBy ? `In ${clockTime(r.checkInAt)}${r.afterHours ? " (after hours)" : ""}` : r?.reason ? r.reason : r?.markedBy ? "Marked by lead" : `Auto-marked at ${at(s.autoAbsentAt)}`}${p.penalty ? ` · −${p.penalty} pts` : ""}`;
       case "half_day": {
         const kind = r?.reason === "CL" || r?.reason === "SL" || r?.reason === "unpaid" ? `Half day · ${r.reason}` : r?.reason || "Half-day leave";
         // the half they work: missed, or a late start

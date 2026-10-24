@@ -24,6 +24,8 @@ export type AttRow = {
   lateNote?: string | null;
   // your own day only: started late and hasn't said why yet
   lateNoteNeeded?: boolean;
+  // started after the office closed: the closing time ("HH:MM"), the office hours missed
+  afterHours?: string | null;
 };
 export type AttSettings = {
   requireSod: boolean; graceMinutes: number; noSodAlertAt: string; autoAbsentAt: string; autoAbsentEnabled: boolean;

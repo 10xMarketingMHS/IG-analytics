@@ -12,6 +12,11 @@ export function fmtDuration(seconds: number): string {
 }
 
 export type EodSession = { id: string; date: string; startedAt: string; endedAt: string | null };
+
+// Start day outside office hours, answered "Not now": nothing started (callers stay quiet).
+export class StartCancelled extends Error {
+  constructor() { super("Not started."); }
+}
 export type EodSummary = {
   date: string;
   status: "not_started" | "active" | "completed";
@@ -98,6 +103,8 @@ export function useEod() {
   const [busy, setBusy] = useState(false);
   // a late start waiting for its reason: the dialog (components/late-reason.tsx) is open
   const [lateAsk, setLateAsk] = useState<AttRow | null>(null);
+  // Start day outside office hours, waiting on "do you want to continue?" (the server's words)
+  const [outsideAsk, setOutsideAsk] = useState<{ message: string; answer: (go: boolean) => void } | null>(null);
   // The just-ended day's summary. Held here (not inside a page) so it can render
   // ABOVE the gate — ending re-locks the app, so a page-level card would unmount
   // before it's seen.
@@ -133,14 +140,28 @@ export function useEod() {
 
   // Start day (attendance check-in) opens the work session, as Start Work did.
   // Before the attendance database change is applied it falls back to plain
-  // Start Work. Tells Home and the widgets that the day changed.
+  // Start Work. Outside office hours the server asks first (428): the
+  // "continue?" dialog, then again with the yes — "Not now" throws
+  // StartCancelled. Tells Home and the widgets that the day changed.
   const start = useCallback(async (plan?: string) => {
     setBusy(true);
     try {
+      const checkIn = (outsideHours = false) => api<{ session: EodSession; attendance?: AttRow; lateNoteNeeded?: boolean }>(
+        "/attendance/check-in", { method: "POST", body: JSON.stringify({ ...(plan ? { plan } : {}), ...(outsideHours ? { outsideHours } : {}) }) },
+      );
       try {
-        const d = await api<{ session: EodSession; attendance?: AttRow; lateNoteNeeded?: boolean }>(
-          "/attendance/check-in", { method: "POST", body: JSON.stringify(plan ? { plan } : {}) },
-        );
+        let d: Awaited<ReturnType<typeof checkIn>>;
+        try {
+          d = await checkIn();
+        } catch (e) {
+          if (!(e instanceof ApiError && e.status === 428)) throw e;
+          setBusy(false);
+          const go = await new Promise<boolean>((answer) => setOutsideAsk({ message: e.message, answer }));
+          setOutsideAsk(null);
+          if (!go) throw new StartCancelled();
+          setBusy(true);
+          d = await checkIn(true);
+        }
         setSession(d.session);
         // started after the grace period: ask why, from whichever Start day button it was
         if (d.lateNoteNeeded && d.attendance) setLateAsk(d.attendance);
@@ -265,7 +286,7 @@ export function useEod() {
 
   return {
     session, unlinked, loading, busy, summary, start, end, checkOut, undoStart, clearSummary, refresh,
-    lateAsk, askLateReason, sendLateReason,
+    lateAsk, askLateReason, sendLateReason, outsideAsk,
     eodOpen, openEod, closeEod, signOutAfter, clearSignOutAfter, saveNotes,
     sod, planOpen, setPlanOpen, openSod, refreshSod, saveSod,
   };

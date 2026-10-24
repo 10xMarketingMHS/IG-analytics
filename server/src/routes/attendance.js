@@ -6,8 +6,8 @@ import { logActivity } from "../activity.js";
 import { capacityFor, LUNCH_MIN, TEA_MIN, normalizeCalendar } from "../work-calendar.js";
 import { startSession, endSession, pauseDayTimers } from "./eod.js";
 import {
-  applyEveningPermission, applyMorningPermission, attendancePeople, giveBackPermission, attendanceReady, callerScope, canSee, classify, closingFor, judgeHalfDay,
-  istAt, istNow, lateNoteNeeded, lateNoteReady, leavePenalties, minutesOf, openingFor, penaltyOf, permissionsReady, permissionsThisMonth, readSettings,
+  afterHoursOf, applyEveningPermission, applyMorningPermission, attendancePeople, giveBackPermission, attendanceReady, callerScope, canSee, classify, closingFor, judgeHalfDay,
+  istAt, istNow, lateNoteNeeded, lateNoteReady, leavePenalties, minutesOf, openingFor, outsideHoursNow, penaltyOf, permissionsReady, permissionsThisMonth, readSettings,
   syncAttendance, weekdayOf,
 } from "../attendance.js";
 import {
@@ -129,7 +129,8 @@ attendanceRouter.get("/attendance/today", async (req, res, next) => {
       opening: open, closing: closingFor(cal, today.ymd),
       settings: att, role: caller.role, scope: caller.scope,
       // lateNoteNeeded: started late and hasn't said why yet (the Start day dialog asks)
-      checksIn, me: me ? { ...me, lateNoteNeeded: await needsLateNote(me) } : null, team,
+      checksIn, me: me ? { ...withAfterHours(me, cal), lateNoteNeeded: await needsLateNote(me) } : null,
+      team: team && team.map((t) => ({ ...t, row: withAfterHours(t.row, cal) })),
       permissions: permReady ? { perMonth: att.permissionsPerMonth, mine: myPerms, left: Math.max(0, att.permissionsPerMonth - myPerms.length) } : null,
       leave: leaveOn ? {
         year, counting: !!leaveRules(att).countingSince, balance: myBal.get(caller.editorId) ?? null,
@@ -141,8 +142,11 @@ attendanceRouter.get("/attendance/today", async (req, res, next) => {
 
 // POST /attendance/check-in { plan } — Start day: check in, classify on time /
 // late, and open the work session (unlocks the app, like Start Work did).
+// Outside office hours (past closing, or a day the office is closed) it waits
+// for a yes first: 428 with what starting now means, then again with
+// { outsideHours: true }. (Not 409: the app takes that as "no attendance yet".)
 attendanceRouter.post("/attendance/check-in", async (req, res, next) => {
-  const parsed = z.object({ plan: z.string().trim().max(1000).optional() }).safeParse(req.body ?? {});
+  const parsed = z.object({ plan: z.string().trim().max(1000).optional(), outsideHours: z.boolean().optional() }).safeParse(req.body ?? {});
   if (!parsed.success) return res.status(400).json({ error: "That plan couldn't be read." });
   try {
     if (!(await ready(res))) return;
@@ -150,8 +154,12 @@ attendanceRouter.post("/attendance/check-in", async (req, res, next) => {
     if (!caller.editorId) return res.status(400).json({ error: "Your account isn't linked to a team member." });
     const { cal, att } = await readSettings(req.orgId);
     const today = istNow();
-    const { session } = await startSession(req.orgId, caller.editorId);
     const existing = await rowFor(caller.editorId, today.ymd);
+    const outside = outsideHoursNow(cal, today);
+    if (outside && !parsed.data.outsideHours) {
+      return res.status(428).json({ error: outsideWords(outside, existing, att), outsideHours: outside });
+    }
+    const { session } = await startSession(req.orgId, caller.editorId);
     const plan = parsed.data.plan || null;
     if (existing?.checkInAt) {
       // Already in today — Start day again after closing it reopens the day.
@@ -160,10 +168,12 @@ attendanceRouter.post("/attendance/check-in", async (req, res, next) => {
         [existing.id, plan],
       );
       const again = await rowFor(caller.editorId, today.ymd);
-      return res.json({ attendance: again, session, lateNoteNeeded: await needsLateNote(again) });
+      return res.json({ attendance: withAfterHours(again, cal), session, lateNoteNeeded: await needsLateNote(again) });
     }
     const at = session?.startedAt ?? new Date();
     const c = classify(at, today.ymd, cal, att);
+    // in after closing: the office hours were missed (absent), and a day of leave stays leave
+    const after = !!afterHoursOf(cal, today.ymd, at);
     const checkIn = (q) => q.query(
       `insert into attendance (org_id, editor_id, date, check_in_at, status, late_minutes, plan_note)
        values ($1, $2, $3, $4, $5, $6, $7)
@@ -171,34 +181,39 @@ attendanceRouter.post("/attendance/check-in", async (req, res, next) => {
          check_in_at = excluded.check_in_at,
          status = case when (attendance.marked_by is not null and attendance.status in ('on_time', 'half_day', 'absent'))
                          or (attendance.auto_marked and attendance.status in ('absent', 'half_absent'))
+                         or ($8::boolean and attendance.status in ('leave', 'half_day'))
                        then attendance.status else excluded.status end,
-         late_minutes = excluded.late_minutes,
+         late_minutes = case when $8::boolean and attendance.status in ('leave', 'half_day') then attendance.late_minutes else excluded.late_minutes end,
          auto_marked = attendance.auto_marked and attendance.status in ('absent', 'half_absent'),
-         marked_by = case when attendance.status = 'leave' then null else attendance.marked_by end,
+         marked_by = case when attendance.status = 'leave' and not $8::boolean then null else attendance.marked_by end,
          plan_note = coalesce(excluded.plan_note, attendance.plan_note), updated_at = now()
        where attendance.check_in_at is null`,
-      [req.orgId, caller.editorId, today.ymd, at, c.status, c.lateMinutes, plan],
+      [req.orgId, caller.editorId, today.ymd, at, c.status, c.lateMinutes, plan, after],
     );
     // on a whole day of approved leave: checked in, given back and on time, all at once
-    const leaveDay = existing?.status === "leave" && !!existing.leaveRequestId;
+    // (not after closing: the leave covered the office hours)
+    const leaveDay = !after && existing?.status === "leave" && !!existing.leaveRequestId;
     // after the half-day time only the afternoon goes back (the morning stays leave)
     const afterHalf = att.halfDayReady !== false && today.minutes >= minutesOf(att.halfDayAt);
     const worked = leaveDay ? await workedLeaveDay(existing, checkIn, { afterHalf }) : null;
     if (!leaveDay) await checkIn(pool);
-    if (existing?.status === "leave" && existing?.markedBy) await leaveWorked(req, caller.editorId, today.ymd, !!worked, afterHalf);
+    if (existing?.status === "leave" && existing?.markedBy && !after) await leaveWorked(req, caller.editorId, today.ymd, !!worked, afterHalf);
     // a half day of leave: judged on the half they work
     const now = await rowFor(caller.editorId, today.ymd);
     if (now?.status === "half_day" && now.leaveRequestId) await judgeHalfDay(pool, now.id, cal, att);
-    // (a leave day worked after all isn't late with a permission: no permission is used)
-    if (!worked) await applyMorningPermission(req.orgId, caller.editorId, today.ymd, att, req.user.sub);
+    // (a leave day worked after all isn't late with a permission: no permission is used,
+    // nor one after closing — a morning permission doesn't cover the whole day)
+    if (!worked && !after) await applyMorningPermission(req.orgId, caller.editorId, today.ymd, att, req.user.sub);
     const row = await rowFor(caller.editorId, today.ymd);
     await logActivity({
       orgId: req.orgId, actorId: req.user.sub, verb: "attendance_check_in", entityType: "editor", entityId: caller.editorId,
-      summary: row.status === "late" ? `Started their day ${row.lateMinutes}m late` : "Started their day",
-      meta: { date: today.ymd, status: row.status },
+      summary: after ? `Started their day after office hours, at ${clockOf(new Date(at))}`
+        : row.status === "late" ? `Started their day ${row.lateMinutes}m late` : "Started their day",
+      meta: { date: today.ymd, status: row.status, ...(after ? { afterHours: true } : {}) },
     });
-    // a late start: the app asks why at once (POST /attendance/late-reason)
-    res.status(201).json({ attendance: row, session, penalty: penaltyOf(row, att), lateNoteNeeded: await needsLateNote(row) });
+    // a late start: the app asks why at once (POST /attendance/late-reason) — after
+    // closing, why they weren't in during office hours
+    res.status(201).json({ attendance: withAfterHours(row, cal), session, penalty: penaltyOf(row, att), lateNoteNeeded: await needsLateNote(row) });
   } catch (err) { next(err); }
 });
 
@@ -219,16 +234,20 @@ attendanceRouter.post("/attendance/late-reason", async (req, res, next) => {
     const row = await rowFor(caller.editorId, today.ymd);
     if (!row?.checkInAt) return res.status(400).json({ error: "You haven't started your day." });
     await pool.query("update attendance set late_note = $2, updated_at = now() where id = $1", [row.id, parsed.data.note]);
+    const { cal } = await readSettings(req.orgId);
+    const after = afterHoursOf(cal, today.ymd, row.checkInAt);
     const how = row.status === "absent" ? "late (counts as absent)"
       : row.status === "half_absent" ? "late (half-day absent)"
       : row.excused && row.reason === "permission" ? `${lateWords(row.lateMinutes)} late (morning permission)`
       : row.lateMinutes ? `${lateWords(row.lateMinutes)} late` : "late";
     await logActivity({
       orgId: req.orgId, actorId: req.user.sub, verb: "attendance_late_reason", entityType: "editor", entityId: caller.editorId,
-      summary: `Started ${how}: “${parsed.data.note}”`,
+      summary: after
+        ? `Not in during office hours — started at ${clockOf(new Date(row.checkInAt))}${row.status === "absent" ? ", counts as absent" : ""}: “${parsed.data.note}”`
+        : `Started ${how}: “${parsed.data.note}”`,
       meta: { date: today.ymd, status: row.status },
     });
-    res.json({ attendance: await rowFor(caller.editorId, today.ymd) });
+    res.json({ attendance: withAfterHours(await rowFor(caller.editorId, today.ymd), cal) });
   } catch (err) { next(err); }
 });
 
@@ -409,6 +428,21 @@ function clockOf(d) {
   const t = new Date(d.getTime() + 330 * 60_000);
   const h = t.getUTCHours();
   return `${h % 12 || 12}:${String(t.getUTCMinutes()).padStart(2, "0")} ${h >= 12 ? "PM" : "AM"}`;
+}
+// "18:00" → "6:00 PM"
+const clockOfHHMM = (hhmm) => clockOf(new Date(`1970-01-01T${String(hhmm).padStart(5, "0")}:00+05:30`));
+// A row with afterHours: the closing time when it started after closing, else null.
+const withAfterHours = (row, cal) => (row ? { ...row, afterHours: afterHoursOf(cal, row.date ?? istNow().ymd, row.checkInAt) } : row);
+// Start day outside office hours: what the "continue?" says starting now means.
+function outsideWords(outside, existing, att) {
+  const first = outside.closedToday ? "The office is closed today." : `The office closed at ${clockOfHHMM(outside.closedAt)}.`;
+  if (existing?.checkInAt) return `${first} Do you want to start again and keep working outside office hours?`;
+  if (outside.closedToday) return `${first} Do you want to work on your day off?`;
+  const what = existing?.status === "leave" ? "Today stays as your leave."
+    : existing?.status === "half_day" ? "The half you were meant to work counts as missed."
+    : att.autoAbsentEnabled ? "Today counts as absent, and you'll be asked why you weren't in during office hours."
+    : "It counts as a late start, and you'll be asked why.";
+  return `${first} Starting now is work outside office hours. ${what} Do you want to continue?`;
 }
 
 async function leadTarget(req, res) {

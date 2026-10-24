@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 import { api, ApiError } from "@/lib/api";
 import { useEodState } from "@/lib/eod-context";
+import { StartCancelled } from "@/lib/use-eod";
 import { useAuth } from "@/lib/auth-context";
 import { clockTime } from "@/lib/time-format";
 import { Icon } from "@/components/icon";
@@ -86,6 +87,7 @@ export function StartDaySection({
   const s = att?.settings;
   const me = att?.me ?? null;
   const open = att?.opening ?? null;
+  const close = att?.closing ?? null;
   const graceMin = s?.graceMinutes ?? 10;
   // Permissions this month (null before the database has them).
   const perms = att?.permissions ?? null;
@@ -129,6 +131,7 @@ export function StartDaySection({
     const late = open ? nowMin - minutesOf(open) : 0;
     const lateText = late >= 60 ? `${Math.floor(late / 60)}h ${late % 60}m` : `${late}m`;
     const sub = !open ? { t: "The office is closed today", tone: "" }
+      : close && nowMin >= minutesOf(close) ? { t: `The office closed at ${clockTime(atToday(close))} · starting now is after office hours${autoMarks ? " (counts as absent)" : ""}`, tone: "bad" }
       : late < 0 ? { t: `Office opens at ${clockTime(atToday(open))} · you're early`, tone: "good" }
       : late <= graceMin ? { t: `Office opened at ${clockTime(atToday(open))} · you're on time`, tone: "good" }
       : autoMarks && nowMin >= minutesOf(absentAt) ? { t: `Starting now counts as absent (after ${clockTime(atToday(absentAt))})`, tone: "bad" }
@@ -143,10 +146,13 @@ export function StartDaySection({
       try {
         await start(plan.trim() || undefined);
         const lateNow = open ? nowMin - minutesOf(open) : 0;
+        const afterClose = !!open && !!close && nowMin >= minutesOf(close);
         const covered = open && lateNow > graceMin && perms && perms.left > 0 && !(autoMarks && nowMin >= minutesOf(halfAt));
-        toast.success(`Day started at ${clockTime(new Date())}${covered ? " · morning permission used" : open && lateNow > graceMin ? " · marked late" : ""}`);
+        toast.success(`Day started at ${clockTime(new Date())}${afterClose ? " · after office hours" : covered ? " · morning permission used" : open && lateNow > graceMin ? " · marked late" : ""}`);
         setPlan("");
       } catch (e) {
+        // "Not now" to working outside office hours: nothing started, nothing to say
+        if (e instanceof StartCancelled) return;
         toast.error(e instanceof ApiError ? e.message : "Couldn't start your day. Check your connection and try again.");
       }
     }
@@ -289,12 +295,12 @@ export function StartDaySection({
         <div className="sd-barmain">
           <b>
             {inAt ? `Checked in ${clockTime(inAt)}` : "Checked in"}
-            {late ? " · late start" : missed ? "" : byPermission ? " · morning permission used" : me?.excused ? " · late excused" : " · nice, on time"}
+            {me?.afterHours ? " · after office hours" : late ? " · late start" : missed ? "" : byPermission ? " · morning permission used" : me?.excused ? " · late excused" : " · nice, on time"}
           </b>
-          <span>{me?.planNote ? `Plan: ${me.planNote}` : "No plan added"}{me?.lateNote ? ` · Late: “${me.lateNote}”` : ""}{me?.correctionStatus === "pending" && me.correctionAt ? ` · correction to ${clockTime(me.correctionAt)} waiting on your lead` : ""}{permLine ? ` · ${permLine}` : ""}</span>
+          <span>{me?.planNote ? `Plan: ${me.planNote}` : "No plan added"}{me?.lateNote ? ` · ${me.afterHours ? "Not in" : "Late"}: “${me.lateNote}”` : ""}{me?.correctionStatus === "pending" && me.correctionAt ? ` · correction to ${clockTime(me.correctionAt)} waiting on your lead` : ""}{permLine ? ` · ${permLine}` : ""}</span>
         </div>
         <span className="sd-grow" />
-        {lateDue && me && <button type="button" className="sd-link warn" onClick={() => askLateReason(me)}>Say why you're late</button>}
+        {lateDue && me && <button type="button" className="sd-link warn" onClick={() => askLateReason(me)}>{me.afterHours ? "Say why you weren't in" : "Say why you're late"}</button>}
         <button type="button" className="sd-link" onClick={openSod} title="Pick today's tasks and copy the Start of Day report for WhatsApp">Start of Day</button>
         <button type="button" className="sd-link" onClick={onOpenReports}>My reports</button>
         {askLink}

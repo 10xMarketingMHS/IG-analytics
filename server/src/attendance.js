@@ -101,6 +101,22 @@ export function closingFor(cal, ymd) {
   return c.wdTo;
 }
 
+// A start after the office closed, on a day it opened: the office hours were
+// missed — absent (classify), with the app asking why — and nothing meant for
+// a late start applies: no morning permission, no leave day given back.
+// The closing time ("HH:MM"), or null.
+export function afterHoursOf(cal, ymd, at) {
+  const close = openingFor(cal, ymd) ? closingFor(cal, ymd) : null;
+  return close && at && istMinutes(at) >= minutesOf(close) ? close : null;
+}
+// Right now outside office hours, for Start day's "continue?": past closing,
+// or a day the office is closed. (Not before opening: an early start is on time.)
+export function outsideHoursNow(cal, today) {
+  if (!openingFor(cal, today.ymd)) return { closedToday: true, closedAt: null };
+  const close = closingFor(cal, today.ymd);
+  return close && today.minutes >= minutesOf(close) ? { closedToday: false, closedAt: close } : null;
+}
+
 // The org's settings, kept for a few seconds: one page load reads them from
 // several requests (each a trip to the remote database). Saving them
 // (routes/org.js, routes/home.js) clears this at once.
@@ -198,6 +214,8 @@ export function classify(checkInAt, ymd, cal, att) {
   const open = openingFor(cal, ymd);
   if (!open) return { status: "on_time", lateMinutes: 0 };
   const late = Math.max(0, Math.round((new Date(checkInAt).getTime() - istAt(ymd, open).getTime()) / 60_000));
+  // in only after closing: the office hours missed (late, where absences aren't marked by Pulse)
+  if (afterHoursOf(cal, ymd, checkInAt)) return att.autoAbsentEnabled ? { status: "absent", lateMinutes: 0 } : { status: "late", lateMinutes: late };
   if (late <= att.graceMinutes) return { status: "on_time", lateMinutes: 0 };
   const at = istMinutes(checkInAt);
   if (att.autoAbsentEnabled && at >= minutesOf(att.autoAbsentAt)) return { status: "absent", lateMinutes: late };
@@ -238,7 +256,8 @@ export async function judgeHalfDay(q, rowId, cal, att) {
   if (!open) return;
   const morning = a.half === "second";
   const late = Math.max(0, Math.round((new Date(a.check_in_at).getTime() - istAt(a.date, morning ? open : att.halfDayAt).getTime()) / 60_000));
-  const missed = morning && att.autoAbsentEnabled && istMinutes(a.check_in_at) >= minutesOf(att.halfDayAt);
+  // (in only after closing: whichever half it was, it was missed)
+  const missed = att.autoAbsentEnabled && (!!afterHoursOf(cal, a.date, a.check_in_at) || (morning && istMinutes(a.check_in_at) >= minutesOf(att.halfDayAt)));
   await q.query(
     "update attendance set late_minutes = $2, auto_marked = $3, updated_at = now() where id = $1",
     [rowId, missed || late <= att.graceMinutes ? 0 : late, missed],
@@ -400,6 +419,7 @@ export async function syncAttendance(orgId) {
     );
     for (const s of started) {
       const c = classify(s.first, today.ymd, cal, att);
+      const after = !!afterHoursOf(cal, today.ymd, s.first);
       const { rows: before } = await pool.query(
         `select id, status, check_in_at, leave_request_id as "leaveRequestId" from attendance where editor_id = $1 and date = $2`,
         [s.editor_id, today.ymd],
@@ -411,18 +431,19 @@ export async function syncAttendance(orgId) {
            check_in_at = excluded.check_in_at,
            status = case when (attendance.marked_by is not null and attendance.status in ('on_time', 'half_day', 'absent'))
                            or (attendance.auto_marked and attendance.status in ('absent', 'half_absent'))
+                           or ($7::boolean and attendance.status in ('leave', 'half_day'))
                          then attendance.status else excluded.status end,
-           late_minutes = excluded.late_minutes,
+           late_minutes = case when $7::boolean and attendance.status in ('leave', 'half_day') then attendance.late_minutes else excluded.late_minutes end,
            auto_marked = attendance.auto_marked and attendance.status in ('absent', 'half_absent'),
-           marked_by = case when attendance.status = 'leave' then null else attendance.marked_by end,
+           marked_by = case when attendance.status = 'leave' and not $7::boolean then null else attendance.marked_by end,
            updated_at = now()
          where attendance.check_in_at is null`,
-        [orgId, s.editor_id, today.ymd, s.first, c.status, c.lateMinutes],
+        [orgId, s.editor_id, today.ymd, s.first, c.status, c.lateMinutes, after],
       );
       // a whole day of approved leave worked after all: checked in, back to the
-      // balance and on time, together
+      // balance and on time, together (not after closing: the leave covered the day)
       const b = before[0];
-      if (b && !b.check_in_at && b.status === "leave" && b.leaveRequestId) {
+      if (b && !b.check_in_at && b.status === "leave" && b.leaveRequestId && !after) {
         const { workedLeaveDay } = await import("./leave.js");
         const afterHalf = att.halfDayReady !== false && istMinutes(s.first) >= minutesOf(att.halfDayAt);
         const worked = await workedLeaveDay(b, checkIn, { afterHalf });
@@ -432,7 +453,7 @@ export async function syncAttendance(orgId) {
         await checkIn(pool);
         if (b?.status === "half_day" && b.leaveRequestId && !b.check_in_at) await judgeHalfDay(pool, b.id, cal, att);
       }
-      await applyMorningPermission(orgId, s.editor_id, today.ymd, att, null);
+      if (!after) await applyMorningPermission(orgId, s.editor_id, today.ymd, att, null);
     }
 
     const open = openingFor(cal, today.ymd);
