@@ -34,30 +34,37 @@ const EYE_OFF = (
   </svg>
 );
 
-// Pointer → CSS variables on the art panel, eased so the light glides:
-// --mx/--my where the glow sits, and data-lit while the pointer is over the
-// panel. Still for reduced motion.
+// The light under the pointer: the glow (.lg-glow) glides after it, eased the
+// same at any frame rate and moved with a transform, so following the pointer
+// repaints nothing; data-lit while the pointer is over the panel. Still (at
+// its resting place) for reduced motion.
 function usePointerLight(ref: React.RefObject<HTMLDivElement | null>) {
   useEffect(() => {
     const el = ref.current;
-    if (!el || window.matchMedia("(prefers-reduced-motion: reduce)").matches) return;
-    const REST = { x: 0.3, y: 0.42 };
+    const glow = el?.querySelector<HTMLElement>(".lg-glow");
+    if (!el || !glow || window.matchMedia("(prefers-reduced-motion: reduce)").matches) return;
+    const REST = { x: 0.3, y: 0.42 };                    // where the CSS puts it
     const t = { ...REST }, c = { ...t };
-    let raf = 0;
+    let w = el.clientWidth, h = el.clientHeight, raf = 0, last = 0;
     const paint = () => {
-      el.style.setProperty("--mx", `${(c.x * 100).toFixed(2)}%`);
-      el.style.setProperty("--my", `${(c.y * 100).toFixed(2)}%`);
+      glow.style.transform = `translate3d(${((c.x - REST.x) * w).toFixed(1)}px,${((c.y - REST.y) * h).toFixed(1)}px,0)`;
     };
-    const tick = () => {
+    const tick = (now: number) => {
+      const dt = last ? Math.min(0.05, (now - last) / 1000) : 1 / 60;
+      last = now;
+      const k = 1 - Math.exp(-6 * dt);
       let moving = false;
-      for (const k of ["x", "y"] as const) {
-        c[k] += (t[k] - c[k]) * 0.09;
-        if (Math.abs(t[k] - c[k]) > 0.0008) moving = true;
+      for (const key of ["x", "y"] as const) {
+        c[key] += (t[key] - c[key]) * k;
+        if (Math.abs(t[key] - c[key]) > 0.0005) moving = true;
       }
       paint();
-      raf = moving ? requestAnimationFrame(tick) : 0;
+      if (moving) raf = requestAnimationFrame(tick);
+      else { raf = 0; last = 0; }
     };
     const go = () => { if (!raf) raf = requestAnimationFrame(tick); };
+    const ro = new ResizeObserver(() => { w = el.clientWidth; h = el.clientHeight; paint(); });
+    ro.observe(el);
     const clamp = (v: number) => Math.min(1, Math.max(0, v));
     const onMove = (e: PointerEvent) => {
       const r = el.getBoundingClientRect();
@@ -75,6 +82,7 @@ function usePointerLight(ref: React.RefObject<HTMLDivElement | null>) {
       window.removeEventListener("pointermove", onMove);
       document.documentElement.removeEventListener("pointerleave", onLeave);
       cancelAnimationFrame(raf);
+      ro.disconnect();
     };
   }, [ref]);
 }

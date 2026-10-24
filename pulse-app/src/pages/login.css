@@ -1,6 +1,7 @@
 /* Sign in (login.tsx), full screen. Left: rings of small coloured dashes
-   turning slowly and stepping aside around the pointer (particle-field.tsx),
-   a soft light under the pointer (--mx/--my, set by usePointerLight), the mini
+   turning slowly, spreading around the pointer, their colours travelling round
+   on their own (particle-field.tsx), a soft light gliding after the pointer
+   (usePointerLight), the mini
    game (pulse-run.tsx) and the words — a near-white panel with dark words in
    the light theme, a deep one with light words in the dark. Right: the form.
    Colours follow the accent the person picked (--acH). */
@@ -35,11 +36,15 @@ html[data-theme="dark"] .lg-art{
 .lg-particles{position:absolute;inset:0;width:100%;height:100%;display:block;transition:opacity .45s ease}
 /* while a round is on, the dashes step back */
 .lg-art:has(.lg-game[data-on]) .lg-particles{opacity:.35}
-/* the light under the pointer: soft always, stronger while the pointer is on the panel */
-.lg-glow{position:absolute;inset:0;opacity:.5;transition:opacity .5s ease;
-  background:radial-gradient(circle 240px at var(--mx,30%) var(--my,42%),oklch(0.78 0.14 var(--acH) / .2),transparent 72%)}
+/* the light under the pointer: soft always, stronger while the pointer is on the panel.
+   Moved with a transform (usePointerLight) from its resting place here; its colour turns slowly on its own */
+.lg-glow{position:absolute;left:30%;top:42%;width:360px;height:360px;margin:-180px 0 0 -180px;border-radius:50%;
+  opacity:.5;will-change:transform;transition:opacity .5s ease;animation:lg-hue 16s ease-in-out infinite alternate;
+  background:radial-gradient(closest-side,oklch(0.78 0.14 var(--acH) / .22),transparent)}
 html[data-theme="dark"] .lg-glow{mix-blend-mode:screen;
-  background:radial-gradient(circle 240px at var(--mx,30%) var(--my,42%),oklch(0.75 0.16 calc(var(--acH) + 20) / .32),transparent 72%)}
+  background:radial-gradient(closest-side,oklch(0.75 0.16 calc(var(--acH) + 20) / .34),transparent)}
+/* from blue round to pink and orange, the dashes' own colours (never through green) */
+@keyframes lg-hue{from{filter:hue-rotate(-45deg)}to{filter:hue-rotate(70deg)}}
 .lg-art[data-lit] .lg-glow{opacity:1}
 .lg-grain{position:absolute;inset:0;opacity:.05;mix-blend-mode:overlay;
   background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.85' numOctaves='2' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E")}
@@ -140,5 +145,5 @@ html[data-theme="dark"] .lg-play:hover{background:rgba(255,255,255,.92);color:ok
   .lg-sub{margin-bottom:22px}
 }
 @media (prefers-reduced-motion:reduce){
-  .lg-glow{transition:none}
+  .lg-glow{transition:none;animation:none}
 }
