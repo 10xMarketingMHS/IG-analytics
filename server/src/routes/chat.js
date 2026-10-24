@@ -5,6 +5,7 @@ import { isOrgAdmin } from "../permissions.js";
 import { isActiveLogin } from "../auth.js";
 import { reviewContext, routeReview } from "../review-route.js";
 import { canSeeTask, editorRanks, taskViewer } from "../hierarchy.js";
+import { hasColumn } from "../schema-flags.js";
 
 // Team chat — channels, direct messages, threads, reactions, @mentions and task
 // links (see the team_chat migration). Everyone who works in the org (an admin or
@@ -21,6 +22,10 @@ export const chatRouter = Router();
 const Uuid = z.string().uuid();
 const MAX_BODY = 4000;
 const DM_MAX_PEOPLE = 8;
+// Starred, muted, pins and saved messages need 20261103120000_chat_extras;
+// until it's in, chat works as before and those parts answer 409.
+const extrasReady = () => hasColumn("chat_member", "starred");
+const NEEDS_EXTRAS = "This needs a database update first — ask whoever runs the database to apply 20261103120000_chat_extras.";
 
 // ---------------------------------------------------------------------------
 // People
@@ -184,10 +189,14 @@ const isGeneral = (c) => c.kind === "channel" && c.name.toLowerCase() === "gener
 // channels they could join — with what's unread in each. Unread counts only
 // top-level messages (thread replies are announced to the thread instead);
 // mentions count anywhere, replies included.
+// Starred and muted are each person's own; a muted conversation still counts a
+// mention by name (not @channel / @here).
 async function listChannels(orgId, me) {
+  const extras = await extrasReady();
   const { rows } = await pool.query(
     `select c.id, c.kind, c.name, c.topic, c.is_private, c.created_by, c.created_at, c.last_message_at,
             cm.user_id is not null as joined, cm.last_read_at,
+            ${extras ? "coalesce(cm.starred, false) as starred, coalesce(cm.muted, false) as muted," : ""}
             coalesce((select array_agg(x.user_id) from chat_member x where x.channel_id = c.id), '{}') as member_ids,
             case when cm.user_id is null then 0 else (
               select count(*)::int from chat_message m
@@ -198,6 +207,7 @@ async function listChannels(orgId, me) {
               select count(*)::int from chat_message m
                where m.channel_id = c.id and m.deleted_at is null
                  and m.author_id is distinct from $2 and $2 = any(m.mentions)
+                 ${extras ? "and (not cm.muted or m.body like '%<@' || $2::text || '>%')" : ""}
                  and m.created_at > coalesce(cm.last_read_at, cm.joined_at)) end as mentions
        from chat_channel c
        left join chat_member cm on cm.channel_id = c.id and cm.user_id = $2
@@ -232,10 +242,16 @@ chatRouter.get("/chat/state", async (req, res, next) => {
     await ensureGeneral(req);
     const { rows: people } = await orgPeople(req.orgId);
     const channels = await listChannels(req.orgId, req.user.sub);
+    const extras = await extrasReady();
+    const saved = extras
+      ? (await pool.query("select message_id from chat_saved where user_id = $1 order by created_at desc limit 500", [req.user.sub])).rows.map((r) => r.message_id)
+      : [];
     res.json({
       me: req.user.sub,
       people,
       channels,
+      extras,
+      saved,
       canCreateChannel: await canCreateChannel(req),
       isAdmin: await isOrgAdmin(req.orgId, req.user.sub),
       online: onlineIn(req.orgId),
@@ -389,6 +405,72 @@ chatRouter.post("/chat/channels/:id/members", async (req, res, next) => {
   }
 });
 
+// Take someone out of a channel — whoever made it, or an admin, as long as
+// they're in it themselves. Everyone stays in #general; you leave yourself
+// with Leave. Out of a private channel, they can't read it any more.
+chatRouter.delete("/chat/channels/:id/members/:userId", async (req, res, next) => {
+  try {
+    const c = await visibleChannel(req, req.params.id);
+    if (!c || c.kind !== "channel") return res.status(404).json({ error: "Channel not found" });
+    if (isGeneral(c)) return res.status(400).json({ error: "Everyone stays in #general." });
+    if (!c.joined || !(await canManageChannel(req, c))) {
+      return res.status(403).json({ error: "Only whoever made this channel, or an admin in it, can remove people." });
+    }
+    const who = req.params.userId;
+    if (who === req.user.sub) return res.status(400).json({ error: "Use Leave channel to leave it yourself." });
+    if (!Uuid.safeParse(who).success) return res.status(404).json({ error: "They aren't in this channel." });
+    const { rowCount } = await pool.query("delete from chat_member where channel_id = $1 and user_id = $2", [c.id, who]);
+    if (!rowCount) return res.status(404).json({ error: "They aren't in this channel." });
+    send(who, { type: "channels" });
+    await notifyChannel(c.id, { type: "channels" });
+    res.status(204).end();
+  } catch (err) {
+    next(err);
+  }
+});
+
+// Your own star and mute on a conversation you're in.
+chatRouter.post("/chat/channels/:id/prefs", async (req, res, next) => {
+  const parsed = z.object({ starred: z.boolean().optional(), muted: z.boolean().optional() }).safeParse(req.body ?? {});
+  if (!parsed.success) return res.status(400).json({ error: "That change couldn't be read." });
+  try {
+    if (!(await extrasReady())) return res.status(409).json({ error: NEEDS_EXTRAS });
+    const c = await visibleChannel(req, req.params.id);
+    if (!c) return res.status(404).json({ error: "Conversation not found" });
+    if (!c.joined) return res.status(403).json({ error: "Join it first." });
+    await pool.query(
+      "update chat_member set starred = coalesce($3, starred), muted = coalesce($4, muted) where channel_id = $1 and user_id = $2",
+      [c.id, req.user.sub, parsed.data.starred ?? null, parsed.data.muted ?? null],
+    );
+    send(req.user.sub, { type: "channels" });
+    res.status(204).end();
+  } catch (err) {
+    next(err);
+  }
+});
+
+// "Priya is typing…": passed on to the others in the conversation, at most
+// every couple of seconds per person, and never kept.
+const typingAt = new Map(); // "user|channel|parent" -> ms
+chatRouter.post("/chat/channels/:id/typing", async (req, res, next) => {
+  const parsed = z.object({ parentId: Uuid.nullable().optional() }).safeParse(req.body ?? {});
+  if (!parsed.success) return res.status(400).json({ error: "Which thread?" });
+  try {
+    const key = `${req.user.sub}|${req.params.id}|${parsed.data.parentId ?? ""}`;
+    const now = Date.now();
+    if (now - (typingAt.get(key) ?? 0) < 2000) return res.status(204).end();
+    const c = await visibleChannel(req, req.params.id);
+    if (!c || !c.joined) return res.status(404).json({ error: "Conversation not found" });
+    typingAt.set(key, now);
+    if (typingAt.size > 5000) for (const [k, t] of typingAt) if (now - t > 10_000) typingAt.delete(k);
+    const event = { type: "typing", channelId: c.id, parentId: parsed.data.parentId ?? null, userId: req.user.sub };
+    for (const id of await memberIds(c.id)) if (id !== req.user.sub) send(id, event);
+    res.status(204).end();
+  } catch (err) {
+    next(err);
+  }
+});
+
 // Open a direct message with one or more people (a group DM past one). The same
 // set of people always gets the same conversation back.
 chatRouter.post("/chat/dm", async (req, res, next) => {
@@ -428,12 +510,24 @@ chatRouter.post("/chat/dm", async (req, res, next) => {
 
 const MENTION_RE = /<@([0-9a-f-]{36})>/g;
 const TASK_RE = /<task:([0-9a-f-]{36})>/g;
+// @channel: everyone in the conversation; @here: everyone in it who's online.
+const BROADCAST_RE = /<!(channel|here)>/g;
 
 // The people and tasks a message points at, kept only when they're real
-// members of this org — a forged id never reaches the stored lists.
-async function refsIn(orgId, body) {
+// members of this org — a forged id never reaches the stored lists. @channel
+// and @here become everyone they reach (in this conversation, not you), so
+// they count and notify like a mention.
+async function refsIn(orgId, body, channel, authorId) {
   const { byId } = await orgPeople(orgId);
-  const mentions = [...new Set([...body.matchAll(MENTION_RE)].map((m) => m[1]))].filter((id) => byId.has(id));
+  const named = new Set([...body.matchAll(MENTION_RE)].map((m) => m[1]));
+  const wide = new Set([...body.matchAll(BROADCAST_RE)].map((m) => m[1]));
+  if (channel && wide.size) {
+    const here = new Set(onlineIn(orgId));
+    for (const id of await memberIds(channel.id)) {
+      if (id !== authorId && (wide.has("channel") || here.has(id))) named.add(id);
+    }
+  }
+  const mentions = [...named].filter((id) => byId.has(id));
   const wanted = [...new Set([...body.matchAll(TASK_RE)].map((m) => m[1]))];
   let taskIds = [];
   if (wanted.length) {
@@ -519,6 +613,9 @@ async function hydrate(orgId, rows) {
       lastReplyAt: r.last_reply_at,
       replyUserIds: repliersOf.get(r.id) ?? [],
       reactions: deleted ? [] : reactionsOf.get(r.id) ?? [],
+      // pinned to the conversation (once the database has pins)
+      pinnedAt: deleted ? null : r.pinned_at ?? null,
+      pinnedBy: deleted ? null : r.pinned_by ?? null,
     };
   });
   return { messages, tasks };
@@ -579,12 +676,38 @@ async function broadcastMessage(orgId, row, { isNew = false, extra = [] } = {}) 
 }
 
 // Top-level messages, newest page first: `before` is a message id to page back
-// from (the oldest one already on screen).
+// from (the oldest one already on screen). `around`: a page with that message
+// in the middle (Jump, from search, pins and saved) — hasNewer says the
+// newest messages aren't in it.
 chatRouter.get("/chat/channels/:id/messages", async (req, res, next) => {
   try {
     const c = await visibleChannel(req, req.params.id);
     if (!c) return res.status(404).json({ error: "Conversation not found" });
     const limit = Math.min(Math.max(Number(req.query.limit) || 50, 1), 100);
+    const around = req.query.around && Uuid.safeParse(req.query.around).success ? req.query.around : null;
+    if (around) {
+      const half = Math.floor(limit / 2);
+      const { rows: [ref] } = await pool.query(
+        "select created_at from chat_message where id = $1 and channel_id = $2 and parent_id is null",
+        [around, c.id],
+      );
+      if (ref) {
+        const [{ rows: older }, { rows: newer }] = await Promise.all([
+          pool.query(
+            "select * from chat_message where channel_id = $1 and parent_id is null and created_at <= $2 order by created_at desc limit $3",
+            [c.id, ref.created_at, half + 2],
+          ),
+          pool.query(
+            "select * from chat_message where channel_id = $1 and parent_id is null and created_at > $2 order by created_at asc limit $3",
+            [c.id, ref.created_at, half + 1],
+          ),
+        ]);
+        const hasMore = older.length > half + 1, hasNewer = newer.length > half;
+        const page = [...older.slice(0, half + 1).reverse(), ...newer.slice(0, half)];
+        const h = await hydrate(req.orgId, page);
+        return res.json({ ...h, tasks: await cardsFor(req, h.tasks), hasMore, hasNewer });
+      }
+    }
     const before = req.query.before && Uuid.safeParse(req.query.before).success ? req.query.before : null;
     const { rows } = await pool.query(
       `select * from chat_message
@@ -639,7 +762,7 @@ chatRouter.post("/chat/channels/:id/messages", async (req, res, next) => {
         return res.status(400).json({ error: "That thread isn't in this conversation." });
       }
     }
-    const { mentions, taskIds } = await refsIn(req.orgId, body);
+    const { mentions, taskIds } = await refsIn(req.orgId, body, c, req.user.sub);
 
     const client = await pool.connect();
     let row;
@@ -694,7 +817,7 @@ chatRouter.patch("/chat/messages/:id", async (req, res, next) => {
     const c = row && !row.deleted_at && (await visibleChannel(req, row.channel_id));
     if (!c) return res.status(404).json({ error: "Message not found" });
     if (row.author_id !== req.user.sub) return res.status(403).json({ error: "You can only edit your own messages." });
-    const { mentions, taskIds } = await refsIn(req.orgId, parsed.data.body);
+    const { mentions, taskIds } = await refsIn(req.orgId, parsed.data.body, c, req.user.sub);
     const { rows: [updated] } = await pool.query(
       `update chat_message set body = $2, mentions = $3::uuid[], task_ids = $4::uuid[], edited_at = now()
         where id = $1 returning *`,
@@ -718,12 +841,15 @@ chatRouter.delete("/chat/messages/:id", async (req, res, next) => {
       return res.status(403).json({ error: "You can only delete your own messages." });
     }
     await pool.query("delete from chat_reaction where message_id = $1", [row.id]);
+    const extras = await extrasReady();
+    if (extras) await pool.query("delete from chat_saved where message_id = $1", [row.id]);
     const { rows: [deleted] } = await pool.query(
-      `update chat_message set deleted_at = now(), body = '', mentions = '{}', task_ids = '{}'
+      `update chat_message set deleted_at = now(), body = '', mentions = '{}', task_ids = '{}'${extras ? ", pinned_at = null, pinned_by = null" : ""}
         where id = $1 returning *`,
       [row.id],
     );
     await broadcastMessage(req.orgId, deleted);
+    if (extras && row.pinned_at) await notifyChannel(row.channel_id, { type: "pins", channelId: row.channel_id });
     res.status(204).end();
   } catch (err) {
     next(err);
@@ -750,6 +876,112 @@ chatRouter.post("/chat/messages/:id/reactions", async (req, res, next) => {
       );
     }
     res.json(await broadcastMessage(req.orgId, row));
+  } catch (err) {
+    next(err);
+  }
+});
+
+// Pin a message to its conversation (or take it off) — anyone in it.
+chatRouter.post("/chat/messages/:id/pin", async (req, res, next) => {
+  const parsed = z.object({ pinned: z.boolean() }).safeParse(req.body ?? {});
+  if (!parsed.success) return res.status(400).json({ error: "Pin or unpin?" });
+  try {
+    if (!(await extrasReady())) return res.status(409).json({ error: NEEDS_EXTRAS });
+    const row = await messageRow(req.params.id);
+    const c = row && !row.deleted_at && (await visibleChannel(req, row.channel_id));
+    if (!c) return res.status(404).json({ error: "Message not found" });
+    if (!c.joined) return res.status(403).json({ error: "Join it first." });
+    const { rows: [updated] } = await pool.query(
+      "update chat_message set pinned_at = case when $2 then coalesce(pinned_at, now()) end, pinned_by = case when $2 then coalesce(pinned_by, $3) end where id = $1 returning *",
+      [row.id, parsed.data.pinned, req.user.sub],
+    );
+    const out = await broadcastMessage(req.orgId, updated);
+    await notifyChannel(c.id, { type: "pins", channelId: c.id });
+    res.json(out);
+  } catch (err) {
+    next(err);
+  }
+});
+
+// A conversation's pinned messages, last pinned first.
+chatRouter.get("/chat/channels/:id/pins", async (req, res, next) => {
+  try {
+    if (!(await extrasReady())) return res.json({ messages: [], tasks: {} });
+    const c = await visibleChannel(req, req.params.id);
+    if (!c) return res.status(404).json({ error: "Conversation not found" });
+    const { rows } = await pool.query(
+      "select * from chat_message where channel_id = $1 and pinned_at is not null and deleted_at is null order by pinned_at desc limit 100",
+      [c.id],
+    );
+    const h = await hydrate(req.orgId, rows);
+    res.json({ ...h, tasks: await cardsFor(req, h.tasks) });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// Save a message for later (or stop) — only yours.
+chatRouter.post("/chat/messages/:id/save", async (req, res, next) => {
+  const parsed = z.object({ saved: z.boolean() }).safeParse(req.body ?? {});
+  if (!parsed.success) return res.status(400).json({ error: "Save or remove?" });
+  try {
+    if (!(await extrasReady())) return res.status(409).json({ error: NEEDS_EXTRAS });
+    const row = await messageRow(req.params.id);
+    if (!row || row.deleted_at || !(await visibleChannel(req, row.channel_id))) {
+      return res.status(404).json({ error: "Message not found" });
+    }
+    if (parsed.data.saved) {
+      await pool.query("insert into chat_saved (user_id, message_id) values ($1, $2) on conflict do nothing", [req.user.sub, row.id]);
+    } else {
+      await pool.query("delete from chat_saved where user_id = $1 and message_id = $2", [req.user.sub, row.id]);
+    }
+    res.status(204).end();
+  } catch (err) {
+    next(err);
+  }
+});
+
+// Readable for you: a conversation you're in, or a public channel. (Archived
+// ones don't show.)
+const READABLE = `c.org_id = $1 and c.archived_at is null
+  and (exists (select 1 from chat_member cm where cm.channel_id = c.id and cm.user_id = $2) or (c.kind = 'channel' and not c.is_private))`;
+
+// Your saved messages, last saved first — only those you can still read (out
+// of a private channel, its messages drop out).
+chatRouter.get("/chat/saved", async (req, res, next) => {
+  try {
+    if (!(await extrasReady())) return res.json({ messages: [], tasks: {} });
+    const { rows } = await pool.query(
+      `select m.* from chat_saved s
+         join chat_message m on m.id = s.message_id and m.deleted_at is null
+         join chat_channel c on c.id = m.channel_id
+        where s.user_id = $2 and ${READABLE}
+        order by s.created_at desc limit 200`,
+      [req.orgId, req.user.sub],
+    );
+    const h = await hydrate(req.orgId, rows);
+    res.json({ ...h, tasks: await cardsFor(req, h.tasks) });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// Search what people wrote, in every conversation you can read: newest first.
+chatRouter.get("/chat/search", async (req, res, next) => {
+  const q = typeof req.query.q === "string" ? req.query.q.trim() : "";
+  if (q.length < 2) return res.status(400).json({ error: "Type at least two letters." });
+  if (q.length > 100) return res.status(400).json({ error: "Keep the search under 100 characters." });
+  try {
+    const like = `%${q.replace(/[\\%_]/g, "\\$&")}%`;
+    const { rows } = await pool.query(
+      `select m.* from chat_message m
+         join chat_channel c on c.id = m.channel_id
+        where m.deleted_at is null and m.body ilike $3 escape '\\' and ${READABLE}
+        order by m.created_at desc limit 40`,
+      [req.orgId, req.user.sub, like],
+    );
+    const h = await hydrate(req.orgId, rows);
+    res.json({ ...h, tasks: await cardsFor(req, h.tasks) });
   } catch (err) {
     next(err);
   }

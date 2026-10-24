@@ -287,3 +287,41 @@ html[data-theme="dark"] .chat{
   .cp-emoji{grid-template-columns:repeat(7,32px)}
   .tc{max-width:100%}
 }
+
+/* Batch 1: pins, saved, star and mute, typing, drafts, @channel / @here, search */
+.msg-flags{display:flex;flex-wrap:wrap;gap:10px;margin:0 0 2px}
+.msg-flag{display:inline-flex;align-items:center;gap:4px;font-size:11.5px;font-weight:600;color:var(--cx-text3)}
+.msg-flag .ic{width:12px;height:12px}
+.msg-flag.pin{color:var(--cx-warn)}
+.msg-flag.saved{color:var(--cx-acText)}
+.msg.pinned{background:color-mix(in srgb,var(--cx-warnSoft) 30%,transparent)}
+/* Jump: the message lights up, then settles */
+.msg.focus{animation:msg-focus 2.6s ease-out}
+@keyframes msg-focus{0%,45%{background:var(--cx-acSoft);box-shadow:inset 3px 0 0 var(--cx-ac)}100%{background:transparent;box-shadow:none}}
+.msg-tools button.on{color:var(--cx-acText)}
+.chat .iconbtn.on{color:var(--cx-acText);background:var(--cx-acSoft)}
+.chat .iconbtn.on.star{color:#c98a00;background:color-mix(in srgb,#f5b800 18%,transparent)}
+.chat .iconbtn.on.star .ic{fill:currentColor}
+.cv-typing{flex:none;height:18px;padding:0 22px;font-size:11.5px;font-style:italic;color:var(--cx-text3);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.cl-draft,.cl-muted{display:inline-grid;place-items:center;color:var(--cx-text3);flex:none}
+.cl-draft .ic,.cl-muted .ic{width:13px;height:13px}
+.cl-row.muted{color:var(--cx-text3)}
+.cl-searchall{color:var(--cx-acText);font-weight:600}
+.chat-mention.all{color:var(--cx-warn);background:var(--cx-warnSoft)}
+.cp-suggest-all{width:24px;height:24px;border-radius:6px;display:grid;place-items:center;background:var(--cx-acSoft);color:var(--cx-acText);font-weight:800;flex:none}
+.chat-member-acts{margin-left:auto;display:inline-flex;gap:6px}
+/* messages listed in a dialog (pins, saved, search): dialogs sit outside .chat, so they use the app's own colours */
+.chat-hits{display:flex;flex-direction:column;gap:6px;max-height:min(60vh,520px);overflow-y:auto}
+.chat-hit{display:flex;gap:10px;padding:10px 12px;border:1px solid var(--border);border-radius:11px;background:var(--panel2)}
+.chat-hit-main{flex:1;min-width:0;display:flex;flex-direction:column;gap:3px}
+.chat-hit-head{display:flex;flex-wrap:wrap;align-items:baseline;gap:2px 8px;font-size:13px}
+.chat-hit-body{font-size:13px;line-height:1.5;white-space:pre-wrap;overflow-wrap:anywhere;color:var(--text);max-height:7.5em;overflow:hidden}
+.chat-hit-body .chat-mention{color:var(--accent-ink);background:var(--accent-weak);border-radius:4px;padding:0 3px;font-weight:600}
+.chat-hit-body .chat-taskchip{border:1px solid var(--border);background:var(--panel);color:var(--text);font:500 12px ui-monospace,monospace;border-radius:4px;padding:0 5px}
+.chat-hit-body code{font-size:12px;background:var(--panel);border:1px solid var(--border);border-radius:4px;padding:1px 5px}
+.chat-hit-body a{color:var(--accent-ink)}
+.chat-hit-acts{display:flex;flex-direction:column;gap:6px;align-items:flex-end;flex:none}
+.chat-search-big{display:flex;align-items:center;gap:8px;height:40px;padding:0 12px;border:1px solid var(--border);border-radius:10px;background:var(--panel2);color:var(--muted)}
+.chat-search-big:focus-within{border-color:var(--accent)}
+.chat-search-big input{flex:1;min-width:0;border:0;outline:0;background:transparent;color:var(--text);font-size:14px;font-family:inherit}
+.chat-search-big .ic,.chat-hits .ic{fill:none;stroke:currentColor;stroke-width:2;stroke-linecap:round;stroke-linejoin:round;flex:none}

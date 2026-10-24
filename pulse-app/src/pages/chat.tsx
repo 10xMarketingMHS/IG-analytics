@@ -20,7 +20,9 @@ import { clockTime, dateTime } from "@/lib/time-format";
 
 // Team Chat — Slack-style: conversations on the left, the open one in the
 // middle, a thread on the right. The open conversation and thread live in the
-// URL (?c=…&t=…), so a notice's "Open" and the browser's Back both work.
+// URL (?c=…&t=…, and &m=… to jump to one message), so a notice's "Open" and the
+// browser's Back both work. Starred and Saved head the list; each conversation
+// can be muted, has its pins, and keeps your unsent draft.
 
 const QUICK_REACTIONS = ["👍", "❤️", "😂", "🎉", "🙏", "👀", "✅", "🔥"];
 // One click from the hover bar, as in the redesign.
@@ -29,6 +31,28 @@ const COMPOSER_EMOJI = ["😀", "😂", "😊", "😍", "🤔", "😅", "😮", 
 const GROUP_GAP_MS = 5 * 60 * 1000;
 const STATUS_LABEL: Record<string, string> = { todo: "To Do", in_progress: "In progress", review: "In review", done: "Done" };
 const SECTIONS_KEY = "pulse-chat-closed-sections";
+// Unsent text, per person and conversation (and thread), in this browser.
+const DRAFT_PREFIX = "pulse-chat-draft:";
+const draftKeyFor = (me: string, channelId: string, parentId?: string | null) => `${DRAFT_PREFIX}${me}:${channelId}${parentId ? ":" + parentId : ""}`;
+type Draft = { t: string; p: [string, string][] };
+function readDraft(key: string): Draft | null {
+  try { const d = JSON.parse(window.localStorage.getItem(key) ?? "null"); return d && typeof d.t === "string" ? d : null; } catch { return null; }
+}
+function writeDraft(key: string, text: string, picked: Map<string, string>) {
+  try {
+    if (text.trim()) window.localStorage.setItem(key, JSON.stringify({ t: text, p: [...picked] }));
+    else window.localStorage.removeItem(key);
+  } catch { /* fine, just not kept */ }
+  window.dispatchEvent(new Event("pulse:chat-drafts"));
+}
+// "Priya is typing…", "Priya and Arun are typing…", "Several people are typing…"
+function typingLine(ids: string[], people: Map<string, ChatPerson>) {
+  const names = ids.map((id) => people.get(id)?.name?.split(" ")[0] ?? "Someone");
+  if (!names.length) return "";
+  if (names.length === 1) return `${names[0]} is typing…`;
+  if (names.length === 2) return `${names[0]} and ${names[1]} are typing…`;
+  return "Several people are typing…";
+}
 
 const errText = (err: unknown) => (err instanceof ApiError ? err.message : "Something went wrong — try again.");
 
@@ -87,6 +111,8 @@ function encodeBody(text: string, people: ChatPerson[], picked: Map<string, stri
   for (const p of [...people].sort((a, b) => b.name.length - a.name.length)) {
     out = out.replace(new RegExp(`@${escapeRe(p.name)}(?![\\w])`, "gi"), `<@${p.id}>`);
   }
+  // @channel: everyone in the conversation; @here: everyone in it who's online
+  out = out.replace(/(^|[^\w<])@(channel|here)(?![\w-])/gi, (_m, pre, w) => `${pre}<!${w.toLowerCase()}>`);
   return out.trim();
 }
 
@@ -117,13 +143,19 @@ const I = {
   lock: svg(<><rect x="5" y="11" width="14" height="10" rx="2" /><path d="M8 11V7a4 4 0 0 1 8 0v4" /></>, 15),
   back: svg(<path d="M15 18 9 12l6-6" />),
   close: svg(<path d="M18 6 6 18M6 6l12 12" />),
+  star: svg(<path d="m12 3 2.7 5.6 6.1.9-4.4 4.3 1 6.1L12 17l-5.4 2.9 1-6.1L3.2 9.5l6.1-.9Z" />, 17),
+  bell: svg(<><path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9" /><path d="M10.3 21a1.9 1.9 0 0 0 3.4 0" /></>, 17),
+  bellOff: svg(<><path d="M8.7 3A6 6 0 0 1 18 8c0 2.7.4 4.6 1 6M17 17H3s3-2 3-9a4.7 4.7 0 0 1 .3-1.7" /><path d="M10.3 21a1.9 1.9 0 0 0 3.4 0M3 3l18 18" /></>, 17),
+  pin: svg(<><path d="M12 17v5" /><path d="M9 3h6l-1 6 3 4H7l3-4Z" /></>, 16),
+  bookmark: svg(<path d="M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z" />, 16),
+  pencil: svg(<path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z" />, 13),
 };
 
 // ---------------------------------------------------------------------------
 // Message text
 // ---------------------------------------------------------------------------
 
-const TOKEN_RE = /(<@[0-9a-f-]{36}>|<task:[0-9a-f-]{36}>|https?:\/\/[^\s<]+|`[^`\n]+`|(?<![\w*])\*[^*\n]+\*(?![\w*])|(?<![\w])_[^_\n]+_(?![\w])|(?<![\w~])~[^~\n]+~(?![\w~]))/g;
+const TOKEN_RE = /(<@[0-9a-f-]{36}>|<!(?:channel|here)>|<task:[0-9a-f-]{36}>|https?:\/\/[^\s<]+|`[^`\n]+`|(?<![\w*])\*[^*\n]+\*(?![\w*])|(?<![\w])_[^_\n]+_(?![\w])|(?<![\w~])~[^~\n]+~(?![\w~]))/g;
 
 function MessageText({ body, people, tasks, me, onOpenTask }: {
   body: string; people: Map<string, ChatPerson>; tasks: Record<string, ChatTask>; me: string; onOpenTask: (id: string) => void;
@@ -141,6 +173,8 @@ function MessageText({ body, people, tasks, me, onOpenTask }: {
     if (tok.startsWith("<@")) {
       const id = tok.slice(2, -1);
       parts.push(<span key={k++} className={"chat-mention" + (id === me ? " me" : "")}>@{people.get(id)?.name ?? "someone"}</span>);
+    } else if (tok.startsWith("<!")) {
+      parts.push(<span key={k++} className="chat-mention all">@{tok.slice(2, -1)}</span>);
     } else if (tok.startsWith("<task:")) {
       const id = tok.slice(6, -1);
       const t = tasks[id];
@@ -244,7 +278,13 @@ type Suggest =
   | { kind: "@"; start: number; query: string; items: ChatPerson[]; active: number }
   | { kind: "#"; start: number; query: string; items: ChatTask[]; active: number };
 
-function Composer({ people, me, placeholder, initialText = "", initialPicked, autoFocus, onSubmit, onCancel, compact }: {
+// @channel and @here, offered with people when you type @
+const BROADCASTS: ChatPerson[] = [
+  { id: "!channel", name: "channel", image_url: null, color: null, designation: "Notify everyone in this conversation" },
+  { id: "!here", name: "here", image_url: null, color: null, designation: "Notify everyone here who's online" },
+];
+
+function Composer({ people, me, placeholder, initialText = "", initialPicked, autoFocus, onSubmit, onCancel, compact, draftKey, onTyping, broadcast }: {
   people: ChatPerson[];
   me: string;
   placeholder: string;
@@ -255,12 +295,27 @@ function Composer({ people, me, placeholder, initialText = "", initialPicked, au
   onCancel?: () => void;
   // The edit box inside a message: no formatting bar or footer extras.
   compact?: boolean;
+  // keep unsent text here (this browser) until it's sent
+  draftKey?: string;
+  // called as you type (the conversation tells the others, a few seconds at a time)
+  onTyping?: () => void;
+  // offer @channel / @here
+  broadcast?: boolean;
 }) {
-  const [text, setText] = useState(initialText);
+  const draft = useMemo(() => (draftKey ? readDraft(draftKey) : null), [draftKey]);
+  const [text, setText] = useState(draft?.t ?? initialText);
   const [busy, setBusy] = useState(false);
   const [suggest, setSuggest] = useState<Suggest | null>(null);
   const [emojiOpen, setEmojiOpen] = useState(false);
-  const picked = useRef(new Map(initialPicked ?? []));
+  const picked = useRef(new Map(draft?.p ?? initialPicked ?? []));
+  // the draft is written a moment after the last keystroke
+  const draftTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+  useEffect(() => {
+    if (!draftKey) return;
+    clearTimeout(draftTimer.current);
+    draftTimer.current = setTimeout(() => writeDraft(draftKey, text, picked.current), 300);
+    return () => clearTimeout(draftTimer.current);
+  }, [draftKey, text]);
   const ref = useRef<HTMLTextAreaElement>(null);
   const taskSearch = useRef(0);
 
@@ -284,7 +339,8 @@ function Composer({ people, me, placeholder, initialText = "", initialPicked, au
     if (at) {
       const query = at[2];
       const q = query.toLowerCase();
-      const items = people.filter((p) => p.id !== me && p.name.toLowerCase().includes(q)).slice(0, 7);
+      const wide = broadcast ? BROADCASTS.filter((b) => b.name.startsWith(q)) : [];
+      const items = [...wide, ...people.filter((p) => p.id !== me && p.name.toLowerCase().includes(q))].slice(0, 7);
       setSuggest(items.length ? { kind: "@", start: caret - query.length - 1, query, items, active: 0 } : null);
       return;
     }
@@ -381,6 +437,7 @@ function Composer({ people, me, placeholder, initialText = "", initialPicked, au
       await onSubmit(body);
       setText("");
       picked.current.clear();
+      if (draftKey) { clearTimeout(draftTimer.current); writeDraft(draftKey, "", picked.current); }
       setSuggest(null);
       setEmojiOpen(false);
     } catch (err) {
@@ -432,8 +489,8 @@ function Composer({ people, me, placeholder, initialText = "", initialPicked, au
             suggest.items.map((p, i) => (
               <button key={p.id} type="button" className={"cp-suggest-row" + (i === suggest.active ? " on" : "")}
                 onMouseDown={(e) => { e.preventDefault(); pick(i); }}>
-                <PersonAvatar person={p} size={24} />
-                <b>{p.name}</b>
+                {p.id.startsWith("!") ? <span className="cp-suggest-all">@</span> : <PersonAvatar person={p} size={24} />}
+                <b>{p.id.startsWith("!") ? `@${p.name}` : p.name}</b>
                 {p.designation && <span className="chat-faint">{p.designation}</span>}
               </button>
             ))
@@ -470,7 +527,7 @@ function Composer({ people, me, placeholder, initialText = "", initialPicked, au
           rows={1}
           value={text}
           placeholder={placeholder}
-          onChange={(e) => { setText(e.target.value); lookFor(e.target.value, e.target.selectionStart); }}
+          onChange={(e) => { setText(e.target.value); lookFor(e.target.value, e.target.selectionStart); if (e.target.value.trim()) onTyping?.(); }}
           onKeyDown={onKeyDown}
           onBlur={() => setTimeout(() => setSuggest(null), 150)}
           maxLength={4000}
@@ -484,7 +541,7 @@ function Composer({ people, me, placeholder, initialText = "", initialPicked, au
               <button type="button" title="Link a task" aria-label="Link a task" onMouseDown={keep} onClick={() => insert("#")}>{I.hash}</button>
             </div>
           )}
-          <span className="cp-hint">{compact ? "Enter to save · Esc to cancel" : "@ mention · # link a task · Shift+Enter new line"}</span>
+          <span className="cp-hint">{compact ? "Enter to save · Esc to cancel" : `@ mention${broadcast ? " (@channel, @here)" : ""} · # link a task · Shift+Enter new line`}</span>
           {onCancel && <button type="button" className="tc-btn" onClick={onCancel}>Cancel</button>}
           <button type="button" className={"cp-send" + (text.trim() ? " ready" : "")} disabled={busy || !text.trim()} onClick={submit} aria-label={compact ? "Save" : "Send"} title={compact ? "Save" : "Send"}>
             {compact ? "Save" : I.send}
@@ -515,6 +572,12 @@ type ConvCtx = {
   onUpdated: (m: ChatMessage) => void;
   canModerate: boolean;
   canResolve: (t: ChatTask) => boolean;
+  // stars, mutes, pins and saved messages are in the database
+  extras: boolean;
+  // you're in this conversation (pin needs it)
+  joined: boolean;
+  // the message to show (search, pins, saved: Jump)
+  focusId?: string | null;
 };
 
 function MessageItem({ m, compact, ctx, onReply, inThread }: {
@@ -525,6 +588,8 @@ function MessageItem({ m, compact, ctx, onReply, inThread }: {
   inThread?: boolean;
 }) {
   const { me, people, tasks, onOpenTask, canModerate } = ctx;
+  const chat = useChat();
+  const saved = chat.saved.has(m.id);
   const [editing, setEditing] = useState(false);
   const [picker, setPicker] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
@@ -552,6 +617,24 @@ function MessageItem({ m, compact, ctx, onReply, inThread }: {
     setEditing(false);
   }
 
+  async function pin(on: boolean) {
+    try {
+      const out = await api<{ message: ChatMessage }>(`/chat/messages/${m.id}/pin`, { method: "POST", body: JSON.stringify({ pinned: on }) });
+      ctx.onUpdated(out.message);
+      toast.success(on ? "Pinned to this conversation." : "Unpinned.");
+    } catch (err) {
+      toast.error(errText(err));
+    }
+  }
+  async function save(on: boolean) {
+    try {
+      await chat.toggleSaved(m.id, on);
+      toast.success(on ? "Saved for later." : "Removed from Saved.");
+    } catch (err) {
+      toast.error(errText(err));
+    }
+  }
+
   async function remove() {
     setConfirmDelete(false);
     try {
@@ -569,11 +652,17 @@ function MessageItem({ m, compact, ctx, onReply, inThread }: {
   }, [linked, tasks]);
 
   return (
-    <div className={"msg" + (compact ? " compact" : "") + (m.mentions.includes(me) ? " mentions-me" : "")}>
+    <div id={`msg-${m.id}`} className={"msg" + (compact ? " compact" : "") + (m.mentions.includes(me) ? " mentions-me" : "") + (m.pinnedAt ? " pinned" : "") + (ctx.focusId === m.id ? " focus" : "")}>
       <div className="msg-gutter">
         {compact ? <span className="msg-time-hover">{timeOf(m.createdAt).replace(/\s?[AP]M$/i, "")}</span> : <PersonAvatar person={author} name="Former member" size={36} />}
       </div>
       <div className="msg-main">
+        {(m.pinnedAt || saved) && !m.deleted && (
+          <div className="msg-flags">
+            {m.pinnedAt && <span className="msg-flag pin">{I.pin} Pinned{m.pinnedBy ? ` by ${m.pinnedBy === me ? "you" : people.get(m.pinnedBy)?.name ?? "someone"}` : ""}</span>}
+            {saved && <span className="msg-flag saved">{I.bookmark} Saved for later</span>}
+          </div>
+        )}
         {!compact && (
           <div className="msg-head">
             <b title={author?.designation || undefined}>{author?.name ?? "Former member"}</b>
@@ -643,6 +732,12 @@ function MessageItem({ m, compact, ctx, onReply, inThread }: {
               <span className="msg-tools-sep" aria-hidden="true" />
               <button type="button" title="React" aria-label="React" onClick={() => setPicker(true)}>{I.smile}</button>
               {onReply && !inThread && <button type="button" title="Reply in thread" aria-label="Reply in thread" onClick={onReply}>{I.reply}</button>}
+              {ctx.extras && (
+                <button type="button" className={saved ? "on" : undefined} title={saved ? "Remove from Saved" : "Save for later"} aria-label={saved ? "Remove from Saved" : "Save for later"} aria-pressed={saved} onClick={() => save(!saved)}>{I.bookmark}</button>
+              )}
+              {ctx.extras && ctx.joined && (
+                <button type="button" className={m.pinnedAt ? "on" : undefined} title={m.pinnedAt ? "Unpin" : "Pin to this conversation"} aria-label={m.pinnedAt ? "Unpin" : "Pin to this conversation"} aria-pressed={!!m.pinnedAt} onClick={() => pin(!m.pinnedAt)}>{I.pin}</button>
+              )}
               {mine && <button type="button" title="Edit" aria-label="Edit" onClick={() => setEditing(true)}>{I.edit}</button>}
               {(mine || canModerate) && <button type="button" title="Delete" aria-label="Delete" className="danger" onClick={() => setConfirmDelete(true)}>{I.trash}</button>}
             </>
@@ -736,18 +831,26 @@ function Faces({ ids, people, max = 3, size = 24 }: { ids: string[]; people: Map
 // The open conversation
 // ---------------------------------------------------------------------------
 
-function Conversation({ channel, ctx, threadId, onOpenThread, onInfo, onBack }: {
+function Conversation({ channel, ctx, threadId, focusId, onOpenThread, onInfo, onPins, onLatest, onBack }: {
   channel: ChatChannel;
   ctx: ConvCtx;
   threadId: string | null;
+  // open around this message (search, pins, saved: Jump)
+  focusId: string | null;
   onOpenThread: (id: string) => void;
   onInfo: () => void;
+  onPins: () => void;
+  onLatest: () => void;
   onBack: () => void;
 }) {
   const chat = useChat();
   const { me, people } = ctx;
   const [messages, setMessages] = useState<ChatMessage[] | null>(null);
   const [hasMore, setHasMore] = useState(false);
+  // opened around an older message: the newest aren't loaded (Jump to latest)
+  const [hasNewer, setHasNewer] = useState(false);
+  const hasNewerRef = useRef(false);
+  hasNewerRef.current = hasNewer;
   const [loadingOlder, setLoadingOlder] = useState(false);
   const [joining, setJoining] = useState(false);
   // Where you'd read up to when you opened it — the "New" line stays put while
@@ -759,6 +862,17 @@ function Conversation({ channel, ctx, threadId, onOpenThread, onInfo, onBack }: 
   const mergeTasks = ctx.mergeTasks;
 
   const load = useCallback(async () => {
+    if (focusId) {
+      const out = await api<{ messages: ChatMessage[]; tasks: Record<string, ChatTask>; hasMore: boolean; hasNewer?: boolean }>(
+        `/chat/channels/${channel.id}/messages?limit=50&around=${focusId}`,
+      );
+      mergeTasks(out.tasks);
+      scroll.atBottom.current = false;
+      setMessages(out.messages);
+      setHasMore(out.hasMore);
+      setHasNewer(!!out.hasNewer);
+      return;
+    }
     const out = await api<{ messages: ChatMessage[]; tasks: Record<string, ChatTask>; hasMore: boolean }>(`/chat/channels/${channel.id}/messages?limit=50`);
     mergeTasks(out.tasks);
     setMessages((prev) => {
@@ -768,7 +882,18 @@ function Conversation({ channel, ctx, threadId, onOpenThread, onInfo, onBack }: 
       return next;
     });
     setHasMore((h) => h || out.hasMore);
-  }, [channel.id, mergeTasks]);
+  }, [channel.id, mergeTasks, focusId]);
+
+  // Jump: the message in the middle of the screen, lit up for a moment.
+  const focused = useRef(false);
+  useLayoutEffect(() => {
+    if (!focusId || focused.current || !messages) return;
+    const el = document.getElementById(`msg-${focusId}`);
+    if (!el) return;
+    focused.current = true;
+    el.scrollIntoView({ block: "center" });
+    scroll.atBottom.current = false;
+  }, [focusId, messages, scroll.atBottom]);
 
   useEffect(() => {
     load().catch((err) => { toast.error(errText(err)); setMessages([]); });
@@ -778,7 +903,8 @@ function Conversation({ channel, ctx, threadId, onOpenThread, onInfo, onBack }: 
     if (e.type === "resync") { load().catch(() => {}); return; }
     if (e.type !== "message" || e.message.channelId !== channel.id || e.message.parentId) return;
     mergeTasks(e.tasks);
-    setMessages((prev) => (prev ? upsert(prev, e.message) : prev));
+    // around an older message, a brand-new one waits for Jump to latest
+    setMessages((prev) => (!prev ? prev : hasNewerRef.current && !prev.some((x) => x.id === e.message.id) ? prev : upsert(prev, e.message)));
   }), [chat, channel.id, load, mergeTasks]);
 
   useEffect(() => {
@@ -789,7 +915,7 @@ function Conversation({ channel, ctx, threadId, onOpenThread, onInfo, onBack }: 
   // Read = the newest message has been on screen in a visible tab.
   const newest = messages?.[messages.length - 1];
   const markIfSeen = useCallback(() => {
-    if (!newest || !channel.joined || document.hidden || !scroll.atBottom.current) return;
+    if (!newest || !channel.joined || document.hidden || !scroll.atBottom.current || hasNewerRef.current) return;
     if (lastMarked.current === newest.id && channel.unread === 0 && channel.mentions === 0) return;
     lastMarked.current = newest.id;
     chat.markRead(channel.id, newest.id);
@@ -833,8 +959,29 @@ function Conversation({ channel, ctx, threadId, onOpenThread, onInfo, onBack }: 
       method: "POST", body: JSON.stringify({ body }),
     });
     mergeTasks(out.tasks);
+    // sent from an older stretch: back to the latest, where it is
+    if (hasNewerRef.current) { onLatest(); return; }
     scroll.atBottom.current = true;
     setMessages((prev) => (prev ? upsert(prev, out.message) : [out.message]));
+  }
+
+  // tell the others you're typing (the server passes it on, every few seconds at most)
+  const lastTyping = useRef(0);
+  const typingNow = useCallback(() => {
+    const now = Date.now();
+    if (now - lastTyping.current < 3000) return;
+    lastTyping.current = now;
+    api(`/chat/channels/${channel.id}/typing`, { method: "POST", body: JSON.stringify({}) }).catch(() => {});
+  }, [channel.id]);
+  const typers = typingLine(chat.typing[`${channel.id}|`] ?? [], people);
+
+  async function prefs(p: { starred?: boolean; muted?: boolean }) {
+    try {
+      await chat.setPrefs(channel.id, p);
+      if (p.muted !== undefined) toast.success(p.muted ? "Muted: no badge or notices here, except when someone @mentions you by name." : "Unmuted.");
+    } catch (err) {
+      toast.error(errText(err));
+    }
   }
 
   async function join() {
@@ -850,7 +997,7 @@ function Conversation({ channel, ctx, threadId, onOpenThread, onInfo, onBack }: 
   }
 
   const onUpdated = useCallback((m: ChatMessage) => setMessages((prev) => (prev ? upsert(prev, m) : prev)), []);
-  const convCtx = useMemo(() => ({ ...ctx, onUpdated }), [ctx, onUpdated]);
+  const convCtx = useMemo(() => ({ ...ctx, onUpdated, joined: channel.joined, focusId }), [ctx, onUpdated, channel.joined, focusId]);
 
   const title = channelTitle(channel, people, me);
   const others = channel.member_ids.filter((id) => id !== me);
@@ -878,6 +1025,17 @@ function Conversation({ channel, ctx, threadId, onOpenThread, onInfo, onBack }: 
             <Faces ids={channel.member_ids} people={people} size={20} />
             <b>{channel.member_ids.length}</b>
           </button>
+        )}
+        {ctx.extras && channel.joined && (
+          <>
+            <button type="button" className={"iconbtn" + (channel.starred ? " on star" : "")} onClick={() => prefs({ starred: !channel.starred })}
+              title={channel.starred ? "Unstar" : "Star: keep it at the top of your list"} aria-label={channel.starred ? "Unstar" : "Star"} aria-pressed={!!channel.starred}>{I.star}</button>
+            <button type="button" className={"iconbtn" + (channel.muted ? " on" : "")} onClick={() => prefs({ muted: !channel.muted })}
+              title={channel.muted ? "Unmute" : "Mute: no badge or notices, except @mentions of you"} aria-label={channel.muted ? "Unmute" : "Mute"} aria-pressed={!!channel.muted}>{channel.muted ? I.bellOff : I.bell}</button>
+          </>
+        )}
+        {ctx.extras && (
+          <button type="button" className="iconbtn" onClick={onPins} title="Pinned messages" aria-label="Pinned messages">{I.pin}</button>
         )}
         <button type="button" className="iconbtn" onClick={onInfo} title="Details" aria-label="Details">{I.info}</button>
       </header>
@@ -912,18 +1070,24 @@ function Conversation({ channel, ctx, threadId, onOpenThread, onInfo, onBack }: 
           </>
         )}
       </div>
-      {scroll.awayWithNew && (
+      {hasNewer ? (
+        <button type="button" className="cv-jump" onClick={onLatest}>Jump to the latest messages</button>
+      ) : scroll.awayWithNew && (
         <button type="button" className="cv-jump" onClick={scroll.toBottom}>New messages below</button>
       )}
 
+      <div className="cv-typing" aria-live="polite">{typers}</div>
       {channel.joined ? (
         <Composer
           key={channel.id}
           people={[...people.values()]}
           me={me}
           placeholder={channel.kind === "dm" ? `Message ${title}` : `Message #${channel.name}`}
-          autoFocus
+          autoFocus={!focusId}
           onSubmit={send}
+          draftKey={draftKeyFor(me, channel.id)}
+          onTyping={typingNow}
+          broadcast={channel.kind === "channel" || channel.member_ids.length > 2}
         />
       ) : (
         <div className="cv-joinbar">
@@ -939,9 +1103,11 @@ function Conversation({ channel, ctx, threadId, onOpenThread, onInfo, onBack }: 
 // Thread panel
 // ---------------------------------------------------------------------------
 
-function ThreadPanel({ channel, parentId, ctx, onClose }: {
+function ThreadPanel({ channel, parentId, focusId, ctx, onClose }: {
   channel: ChatChannel;
   parentId: string;
+  // a reply to show (search, pins, saved: Jump)
+  focusId: string | null;
   ctx: ConvCtx;
   onClose: () => void;
 }) {
@@ -990,7 +1156,26 @@ function ThreadPanel({ channel, parentId, ctx, onClose }: {
     if (m.id === parentId) setParent(m);
     else setReplies((prev) => (prev ? upsert(prev, m) : prev));
   }, [parentId]);
-  const threadCtx = useMemo(() => ({ ...ctx, onUpdated }), [ctx, onUpdated]);
+  const threadCtx = useMemo(() => ({ ...ctx, onUpdated, joined: channel.joined, focusId }), [ctx, onUpdated, channel.joined, focusId]);
+
+  const focused = useRef(false);
+  useLayoutEffect(() => {
+    if (!focusId || focused.current || !replies) return;
+    const el = document.getElementById(`msg-${focusId}`);
+    if (!el) return;
+    focused.current = true;
+    el.scrollIntoView({ block: "center" });
+    scroll.atBottom.current = false;
+  }, [focusId, replies, scroll.atBottom]);
+
+  const lastTyping = useRef(0);
+  const typingNow = useCallback(() => {
+    const now = Date.now();
+    if (now - lastTyping.current < 3000) return;
+    lastTyping.current = now;
+    api(`/chat/channels/${channel.id}/typing`, { method: "POST", body: JSON.stringify({ parentId }) }).catch(() => {});
+  }, [channel.id, parentId]);
+  const typers = typingLine(chat.typing[`${channel.id}|${parentId}`] ?? [], ctx.people);
 
   return (
     <aside className="th">
@@ -1015,8 +1200,11 @@ function ThreadPanel({ channel, parentId, ctx, onClose }: {
           </>
         )}
       </div>
+      <div className="cv-typing" aria-live="polite">{typers}</div>
       {channel.joined && parent && !parent.deleted && (
-        <Composer key={parentId} people={[...ctx.people.values()]} me={ctx.me} placeholder="Reply…" autoFocus onSubmit={send} />
+        <Composer key={parentId} people={[...ctx.people.values()]} me={ctx.me} placeholder="Reply…" autoFocus={!focusId} onSubmit={send}
+          draftKey={draftKeyFor(ctx.me, channel.id, parentId)} onTyping={typingNow}
+          broadcast={channel.kind === "channel" || channel.member_ids.length > 2} />
       )}
     </aside>
   );
@@ -1030,28 +1218,78 @@ function readClosed(): Record<string, boolean> {
   try { return JSON.parse(window.localStorage.getItem(SECTIONS_KEY) ?? "{}"); } catch { return {}; }
 }
 
-function ConvList({ activeId, onOpen, onNewChannel, onBrowse, onNewDm, onDmWith }: {
+// Re-reads which conversations have an unsent draft whenever one changes.
+function useDraftIds(me: string) {
+  const read = useCallback(() => {
+    const ids = new Set<string>();
+    try {
+      const pre = `${DRAFT_PREFIX}${me}:`;
+      for (let i = 0; i < window.localStorage.length; i++) {
+        const k = window.localStorage.key(i);
+        if (k?.startsWith(pre) && !k.slice(pre.length).includes(":")) ids.add(k.slice(pre.length));
+      }
+    } catch { /* none */ }
+    return ids;
+  }, [me]);
+  const [ids, setIds] = useState<Set<string>>(read);
+  useEffect(() => {
+    const on = () => setIds(read());
+    on();
+    window.addEventListener("pulse:chat-drafts", on);
+    window.addEventListener("storage", on);
+    return () => { window.removeEventListener("pulse:chat-drafts", on); window.removeEventListener("storage", on); };
+  }, [read]);
+  return ids;
+}
+
+function ConvList({ activeId, onOpen, onNewChannel, onBrowse, onNewDm, onDmWith, onSaved, onSearch }: {
   activeId: string | null;
   onOpen: (id: string) => void;
   onNewChannel: () => void;
   onBrowse: () => void;
   onNewDm: () => void;
   onDmWith: (personId: string) => void;
+  onSaved: () => void;
+  onSearch: (q: string) => void;
 }) {
-  const { state, people, online } = useChat();
+  const { state, people, online, saved } = useChat();
   const [q, setQ] = useState("");
   const [closed, setClosed] = useState<Record<string, boolean>>(readClosed);
+  const drafts = useDraftIds(state?.me ?? "");
   if (!state) return null;
   const me = state.me;
   const query = q.trim().toLowerCase();
   const match = (s: string) => !query || s.toLowerCase().includes(query);
 
+  // Starred conversations sit in their own section at the top.
+  const starred = state.channels
+    .filter((c) => c.starred && c.joined && (c.kind === "channel" || dmVisible(c, me)) && match(channelTitle(c, people, me)))
+    .sort((a, b) => channelTitle(a, people, me).localeCompare(channelTitle(b, people, me)));
   const channels = state.channels
-    .filter((c) => c.kind === "channel" && c.joined && match(c.name ?? ""))
+    .filter((c) => c.kind === "channel" && c.joined && !c.starred && match(c.name ?? ""))
     .sort((a, b) => (a.name === "general" ? -1 : b.name === "general" ? 1 : (a.name ?? "").localeCompare(b.name ?? "")));
   const dms = state.channels
-    .filter((c) => dmVisible(c, me) && match(channelTitle(c, people, me)))
+    .filter((c) => dmVisible(c, me) && !c.starred && match(channelTitle(c, people, me)))
     .sort((a, b) => (b.last_message_at ?? b.created_at).localeCompare(a.last_message_at ?? a.created_at));
+  // One row of the list: a channel or a DM, muted ones quiet, with its draft and counts.
+  const row = (c: ChatChannel) => {
+    const others = c.member_ids.filter((id) => id !== me);
+    const solo = c.kind === "dm" && others.length === 1 ? people.get(others[0]) : undefined;
+    const count = c.muted ? c.mentions : c.kind === "dm" ? c.unread : c.mentions > 0 ? c.mentions : c.unread;
+    const loud = c.mentions > 0 || (c.kind === "dm" && !c.muted);
+    const draft = drafts.has(c.id) && c.id !== activeId;
+    return (
+      <button key={c.id} type="button" className={"cl-row" + (c.id === activeId ? " active" : "") + (c.unread && !c.muted ? " unread" : "") + (c.muted ? " muted" : "")} onClick={() => onOpen(c.id)}>
+        {c.kind === "dm"
+          ? solo ? <PersonAvatar person={solo} size={20} online={online.has(solo.id)} /> : <span className="cl-group">{others.length}</span>
+          : <span className="cl-ic">{c.is_private ? I.lock : "#"}</span>}
+        <span className="cl-name">{c.kind === "dm" ? channelTitle(c, people, me) : c.name}</span>
+        {draft && <span className="cl-draft" title="Unsent draft">{I.pencil}</span>}
+        {c.muted && <span className="cl-muted" title="Muted">{I.bellOff}</span>}
+        {count > 0 && <span className={"cl-count" + (loud ? "" : " quiet")}>{count}</span>}
+      </button>
+    );
+  };
   const browsable = state.channels.filter((c) => c.kind === "channel" && !c.joined).length;
   // While searching, people you don't have a one-to-one with yet.
   const withDm = new Set(state.channels.filter((c) => c.kind === "dm" && c.member_ids.length === 2).flatMap((c) => c.member_ids));
@@ -1089,22 +1327,36 @@ function ConvList({ activeId, onOpen, onNewChannel, onBrowse, onNewDm, onDmWith 
       </div>
       <label className="cl-search">
         {I.search}
-        <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Find a channel or person" aria-label="Find a channel or person" />
+        <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Find a channel, person or message" aria-label="Find a channel, person or message"
+          onKeyDown={(e) => { if (e.key === "Enter" && q.trim().length >= 2) onSearch(q.trim()); }} />
       </label>
 
       <div className="cl-scroll">
+        {query.length >= 2 && (
+          <button type="button" className="cl-row cl-searchall" onClick={() => onSearch(q.trim())}>
+            <span className="cl-ic">{I.search}</span>
+            <span className="cl-name">Search messages for “{q.trim()}”</span>
+          </button>
+        )}
+        {state.extras && !query && (
+          <button type="button" className="cl-row" onClick={onSaved}>
+            <span className="cl-ic">{I.bookmark}</span>
+            <span className="cl-name">Saved for later</span>
+            {saved.size > 0 && <span className="cl-count quiet">{saved.size}</span>}
+          </button>
+        )}
+        {starred.length > 0 && (
+          <>
+            {sectionHead("starred", "Starred")}
+            {open("starred") && starred.map(row)}
+          </>
+        )}
         {sectionHead("channels", "Channels", state.canCreateChannel
           ? <button type="button" className="iconbtn sm" title="New channel" aria-label="New channel" onClick={onNewChannel}>{I.plus}</button>
           : undefined)}
         {open("channels") && (
           <>
-            {channels.map((c) => (
-              <button key={c.id} type="button" className={"cl-row" + (c.id === activeId ? " active" : "") + (c.unread ? " unread" : "")} onClick={() => onOpen(c.id)}>
-                <span className="cl-ic">{c.is_private ? I.lock : "#"}</span>
-                <span className="cl-name">{c.name}</span>
-                {(c.mentions > 0 || c.unread > 0) && <span className={"cl-count" + (c.mentions > 0 ? "" : " quiet")}>{c.mentions > 0 ? c.mentions : c.unread}</span>}
-              </button>
-            ))}
+            {channels.map(row)}
             {!query && (
               <button type="button" className="cl-row quiet" onClick={onBrowse}>
                 <span className="cl-ic">{I.plus}</span>
@@ -1117,17 +1369,7 @@ function ConvList({ activeId, onOpen, onNewChannel, onBrowse, onNewDm, onDmWith 
         {sectionHead("dms", "Direct messages", <button type="button" className="iconbtn sm" title="New message" aria-label="New message" onClick={onNewDm}>{I.plus}</button>)}
         {open("dms") && (
           <>
-            {dms.map((c) => {
-              const others = c.member_ids.filter((id) => id !== me);
-              const solo = others.length === 1 ? people.get(others[0]) : undefined;
-              return (
-                <button key={c.id} type="button" className={"cl-row" + (c.id === activeId ? " active" : "") + (c.unread ? " unread" : "")} onClick={() => onOpen(c.id)}>
-                  {solo ? <PersonAvatar person={solo} size={20} online={online.has(solo.id)} /> : <span className="cl-group">{others.length}</span>}
-                  <span className="cl-name">{channelTitle(c, people, me)}</span>
-                  {c.unread > 0 && <span className="cl-count">{c.unread}</span>}
-                </button>
-              );
-            })}
+            {dms.map(row)}
             {!query && dms.length === 0 && (
               <button type="button" className="cl-row quiet" onClick={onNewDm}>
                 <span className="cl-ic">{I.compose}</span>
@@ -1149,7 +1391,7 @@ function ConvList({ activeId, onOpen, onNewChannel, onBrowse, onNewDm, onDmWith 
             ))}
           </>
         )}
-        {query && channels.length === 0 && dms.length === 0 && newPeople.length === 0 && (
+        {query && starred.length === 0 && channels.length === 0 && dms.length === 0 && newPeople.length === 0 && query.length < 2 && (
           <div className="cl-empty">Nothing matches “{q.trim()}”.</div>
         )}
       </div>
@@ -1329,6 +1571,122 @@ function BrowseModal({ onClose, onOpen }: { onClose: () => void; onOpen: (id: st
   );
 }
 
+// Messages listed outside their conversation (pins, saved, search): who, where,
+// when, the text, and Jump (plus Unpin / Remove where it applies).
+function MessageList({ messages, tasks, empty, action, onJump }: {
+  messages: ChatMessage[] | null;
+  tasks: Record<string, ChatTask>;
+  empty: string;
+  action?: (m: ChatMessage) => ReactNode;
+  onJump: (m: ChatMessage) => void;
+}) {
+  const { state, people } = useChat();
+  const me = state?.me ?? "";
+  if (!messages) return <Loader />;
+  if (!messages.length) return <div className="cp-suggest-empty" style={{ padding: "18px 4px" }}>{empty}</div>;
+  return (
+    <div className="chat-hits">
+      {messages.map((m) => {
+        const author = people.get(m.authorId ?? "");
+        const ch = state?.channels.find((c) => c.id === m.channelId);
+        return (
+          <div key={m.id} className="chat-hit">
+            <PersonAvatar person={author} name="Former member" size={30} />
+            <div className="chat-hit-main">
+              <div className="chat-hit-head">
+                <b>{author?.name ?? "Former member"}</b>
+                <span className="chat-faint">{ch ? channelTitle(ch, people, me) : "a conversation"}{m.parentId ? " · in a thread" : ""} · {dayLabel(m.createdAt)} {timeOf(m.createdAt)}</span>
+              </div>
+              <div className="chat-hit-body"><MessageText body={m.body} people={people} tasks={tasks} me={me} onOpenTask={() => onJump(m)} /></div>
+            </div>
+            <div className="chat-hit-acts">
+              {action?.(m)}
+              <button type="button" className="btn btn-sm" onClick={() => onJump(m)}>Jump</button>
+            </div>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+function PinsModal({ channel, onClose, onJump }: { channel: ChatChannel; onClose: () => void; onJump: (m: ChatMessage) => void }) {
+  const chat = useChat();
+  const [list, setList] = useState<{ messages: ChatMessage[]; tasks: Record<string, ChatTask> } | null>(null);
+  const load = useCallback(() => {
+    api<{ messages: ChatMessage[]; tasks: Record<string, ChatTask> }>(`/chat/channels/${channel.id}/pins`)
+      .then(setList).catch((err) => { toast.error(errText(err)); setList({ messages: [], tasks: {} }); });
+  }, [channel.id]);
+  useEffect(() => { load(); }, [load]);
+  useEffect(() => chat.subscribe((e) => { if ((e.type === "pins" && e.channelId === channel.id) || e.type === "resync") load(); }), [chat, channel.id, load]);
+  async function unpin(m: ChatMessage) {
+    try {
+      await api(`/chat/messages/${m.id}/pin`, { method: "POST", body: JSON.stringify({ pinned: false }) });
+      load();
+    } catch (err) {
+      toast.error(errText(err));
+    }
+  }
+  return (
+    <Modal title={`Pinned in ${channelTitle(channel, chat.people, chat.state?.me ?? "")}`} onClose={onClose} wide>
+      <MessageList messages={list?.messages ?? null} tasks={list?.tasks ?? {}} empty="Nothing pinned yet. Hover a message and press the pin to keep it here for everyone."
+        onJump={onJump} action={channel.joined ? (m) => <button type="button" className="btn btn-sm" onClick={() => unpin(m)}>Unpin</button> : undefined} />
+    </Modal>
+  );
+}
+
+function SavedModal({ onClose, onJump }: { onClose: () => void; onJump: (m: ChatMessage) => void }) {
+  const chat = useChat();
+  const [list, setList] = useState<{ messages: ChatMessage[]; tasks: Record<string, ChatTask> } | null>(null);
+  useEffect(() => {
+    api<{ messages: ChatMessage[]; tasks: Record<string, ChatTask> }>("/chat/saved")
+      .then(setList).catch((err) => { toast.error(errText(err)); setList({ messages: [], tasks: {} }); });
+  }, []);
+  async function remove(m: ChatMessage) {
+    try {
+      await chat.toggleSaved(m.id, false);
+      setList((l) => (l ? { ...l, messages: l.messages.filter((x) => x.id !== m.id) } : l));
+    } catch (err) {
+      toast.error(errText(err));
+    }
+  }
+  return (
+    <Modal title="Saved for later" onClose={onClose} wide>
+      <p className="chat-faint" style={{ margin: "0 0 10px" }}>Only you see what you save.</p>
+      <MessageList messages={list?.messages ?? null} tasks={list?.tasks ?? {}} empty="Nothing saved. Hover a message and press the bookmark to keep it here."
+        onJump={onJump} action={(m) => <button type="button" className="btn btn-sm" onClick={() => remove(m)}>Remove</button>} />
+    </Modal>
+  );
+}
+
+function SearchModal({ initial, onClose, onJump }: { initial: string; onClose: () => void; onJump: (m: ChatMessage) => void }) {
+  const [q, setQ] = useState(initial);
+  const [found, setFound] = useState<{ messages: ChatMessage[]; tasks: Record<string, ChatTask> } | null>(null);
+  const ticket = useRef(0);
+  useEffect(() => {
+    const term = q.trim();
+    const mine = ++ticket.current;
+    if (term.length < 2) { setFound({ messages: [], tasks: {} }); return; }
+    setFound(null);
+    const t = setTimeout(() => {
+      api<{ messages: ChatMessage[]; tasks: Record<string, ChatTask> }>(`/chat/search?q=${encodeURIComponent(term)}`)
+        .then((r) => { if (mine === ticket.current) setFound(r); })
+        .catch((err) => { if (mine === ticket.current) { toast.error(errText(err)); setFound({ messages: [], tasks: {} }); } });
+    }, 250);
+    return () => clearTimeout(t);
+  }, [q]);
+  return (
+    <Modal title="Search messages" onClose={onClose} wide>
+      <label className="chat-search-big">
+        {I.search}
+        <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Words from a message" aria-label="Search messages" autoFocus maxLength={100} />
+      </label>
+      <p className="chat-faint" style={{ margin: "8px 0 10px" }}>In every conversation you can read: your channels and DMs, and the public channels.</p>
+      <MessageList messages={found?.messages ?? null} tasks={found?.tasks ?? {}} empty={q.trim().length < 2 ? "Type at least two letters." : "No messages match."} onJump={onJump} />
+    </Modal>
+  );
+}
+
 function InfoModal({ channel, onClose, onLeft }: { channel: ChatChannel; onClose: () => void; onLeft: () => void }) {
   const { state, people, online, refresh } = useChat();
   const me = state?.me ?? "";
@@ -1339,7 +1697,10 @@ function InfoModal({ channel, onClose, onLeft }: { channel: ChatChannel; onClose
   const [adding, setAdding] = useState(false);
   const [toAdd, setToAdd] = useState<Set<string>>(new Set());
   const [busy, setBusy] = useState(false);
+  // asked once more before someone is taken out
+  const [removing, setRemoving] = useState<string | null>(null);
   const members = channel.member_ids.map((id) => people.get(id)).filter((p): p is ChatPerson => !!p).sort((a, b) => a.name.localeCompare(b.name));
+  const canRemove = canManage && channel.joined && !isGeneral;
 
   async function run(fn: () => Promise<unknown>, done?: () => void) {
     setBusy(true);
@@ -1356,6 +1717,10 @@ function InfoModal({ channel, onClose, onLeft }: { channel: ChatChannel; onClose
   const save = () => run(() => api(`/chat/channels/${channel.id}`, { method: "PATCH", body: JSON.stringify({ name: isGeneral ? undefined : tidyName(name), topic }) }), () => toast.success("Saved"));
   const add = () => run(() => api(`/chat/channels/${channel.id}/members`, { method: "POST", body: JSON.stringify({ userIds: [...toAdd] }) }), () => { setAdding(false); setToAdd(new Set()); });
   const leave = () => run(() => api(`/chat/channels/${channel.id}/leave`, { method: "POST" }), onLeft);
+  const remove = (p: ChatPerson) => run(() => api(`/chat/channels/${channel.id}/members/${p.id}`, { method: "DELETE" }), () => {
+    setRemoving(null);
+    toast.success(`${p.name} is out of #${channel.name}.${channel.is_private ? " They can't see it any more." : ""}`);
+  });
   const archive = () => run(() => api(`/chat/channels/${channel.id}`, { method: "PATCH", body: JSON.stringify({ archived: true }) }), onLeft);
 
   return (
@@ -1397,6 +1762,16 @@ function InfoModal({ channel, onClose, onLeft }: { channel: ChatChannel; onClose
             <div key={p.id} className="chat-member">
               <PersonAvatar person={p} size={30} online={online.has(p.id)} />
               <span><b>{p.name}</b>{p.id === me && <span className="chat-faint"> (you)</span>}{p.designation && <span className="chat-faint"> · {p.designation}</span>}</span>
+              {canRemove && p.id !== me && (
+                removing === p.id ? (
+                  <span className="chat-member-acts">
+                    <button type="button" className="btn btn-sm" disabled={busy} onClick={() => setRemoving(null)}>Keep</button>
+                    <button type="button" className="btn btn-primary btn-sm" disabled={busy} onClick={() => remove(p)}>Remove</button>
+                  </span>
+                ) : (
+                  <button type="button" className="btn btn-sm chat-member-acts" onClick={() => setRemoving(p.id)} title={`Take ${p.name} out of this channel`}>Remove</button>
+                )
+              )}
             </div>
           ))}
         </div>
@@ -1467,8 +1842,11 @@ export function ChatPage() {
   const [params, setParams] = useSearchParams();
   const channelId = params.get("c");
   const threadId = params.get("t");
+  // a message to show (search, pins, saved: Jump)
+  const focusId = params.get("m");
   const [tasks, setTasks] = useState<Record<string, ChatTask>>({});
-  const [dialog, setDialog] = useState<null | "channel" | "dm" | "browse" | "info">(null);
+  const [dialog, setDialog] = useState<null | "channel" | "dm" | "browse" | "info" | "pins" | "saved" | "search">(null);
+  const [searchFor, setSearchFor] = useState("");
   const [openTaskId, setOpenTaskId] = useState<string | null>(null);
   const fitRef = useFitHeight(!!state && available);
 
@@ -1497,6 +1875,12 @@ export function ChatPage() {
   const open = useCallback((id: string) => { setDialog(null); setParams({ c: id }); }, [setParams]);
   const openThread = useCallback((id: string) => { if (channelId) setParams({ c: channelId, t: id }); }, [channelId, setParams]);
   const closeThread = useCallback(() => { if (channelId) setParams({ c: channelId }); }, [channelId, setParams]);
+  // Jump to a message: its conversation, around it (a reply: in its thread).
+  const jump = useCallback((m: ChatMessage) => {
+    setDialog(null);
+    setParams(m.parentId ? { c: m.channelId, t: m.parentId, m: m.id } : { c: m.channelId, m: m.id });
+  }, [setParams]);
+  const latest = useCallback(() => { if (channelId) setParams(threadId ? { c: channelId, t: threadId } : { c: channelId }); }, [channelId, threadId, setParams]);
   const closeTask = useCallback(() => setOpenTaskId(null), []);
   const dmWith = useCallback(async (personId: string) => {
     try {
@@ -1526,7 +1910,9 @@ export function ChatPage() {
     onUpdated: () => {},
     canModerate: channel?.kind === "channel" && !!state?.isAdmin,
     canResolve,
-  }), [me, people, tasks, mergeTasks, channel?.kind, state?.isAdmin, canResolve]);
+    extras: !!state?.extras,
+    joined: !!channel?.joined,
+  }), [me, people, tasks, mergeTasks, channel?.kind, channel?.joined, state?.isAdmin, state?.extras, canResolve]);
 
   if (!available) {
     return <div className="card pad" style={{ maxWidth: 520 }}>Team chat is for admins and editors. Ask an admin if you need access.</div>;
@@ -1555,15 +1941,21 @@ export function ChatPage() {
         onBrowse={() => setDialog("browse")}
         onNewDm={() => setDialog("dm")}
         onDmWith={dmWith}
+        onSaved={() => setDialog("saved")}
+        onSearch={(q) => { setSearchFor(q); setDialog("search"); }}
       />
       {channel ? (
         <Conversation
-          key={channel.id}
+          // a jump (or back to the latest) starts it afresh around the right messages
+          key={`${channel.id}:${threadId ? "" : focusId ?? ""}`}
           channel={channel}
           ctx={ctx}
           threadId={threadId}
+          focusId={threadId ? null : focusId}
           onOpenThread={openThread}
           onInfo={() => setDialog("info")}
+          onPins={() => setDialog("pins")}
+          onLatest={latest}
           onBack={() => setParams({})}
         />
       ) : (
@@ -1575,11 +1967,14 @@ export function ChatPage() {
           </div>
         </section>
       )}
-      {channel && threadId && <ThreadPanel key={threadId} channel={channel} parentId={threadId} ctx={ctx} onClose={closeThread} />}
+      {channel && threadId && <ThreadPanel key={`${threadId}:${focusId ?? ""}`} channel={channel} parentId={threadId} focusId={focusId} ctx={ctx} onClose={closeThread} />}
 
       {dialog === "channel" && <NewChannelModal onClose={() => setDialog(null)} onCreated={open} />}
       {dialog === "dm" && <NewDmModal onClose={() => setDialog(null)} onOpened={open} />}
       {dialog === "browse" && <BrowseModal onClose={() => setDialog(null)} onOpen={open} />}
+      {dialog === "pins" && channel && <PinsModal channel={channel} onClose={() => setDialog(null)} onJump={jump} />}
+      {dialog === "saved" && <SavedModal onClose={() => setDialog(null)} onJump={jump} />}
+      {dialog === "search" && <SearchModal initial={searchFor} onClose={() => setDialog(null)} onJump={jump} />}
       {dialog === "info" && channel && (
         <InfoModal channel={channel} onClose={() => setDialog(null)} onLeft={() => { setDialog(null); if (general) open(general.id); }} />
       )}

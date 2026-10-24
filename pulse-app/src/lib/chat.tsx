@@ -32,6 +32,10 @@ export type ChatChannel = {
   member_ids: string[];
   unread: number;
   mentions: number;
+  // yours (once the database has them): listed first / no badge or notice
+  // except a mention by name
+  starred?: boolean;
+  muted?: boolean;
 };
 
 export type ChatReaction = { emoji: string; userIds: string[] };
@@ -50,6 +54,9 @@ export type ChatMessage = {
   lastReplyAt: string | null;
   replyUserIds: string[];
   reactions: ChatReaction[];
+  // pinned to the conversation, and by whom
+  pinnedAt?: string | null;
+  pinnedBy?: string | null;
 };
 
 export type ChatTask = {
@@ -84,6 +91,10 @@ export type ChatEvent =
   | { type: "channels" }
   | { type: "read"; channelId: string }
   | { type: "presence"; userId: string; online: boolean }
+  // someone is writing (shown for a few seconds)
+  | { type: "typing"; channelId: string; parentId: string | null; userId: string }
+  // a conversation's pins changed
+  | { type: "pins"; channelId: string }
   // Not from the server: the stream came back after a drop, so anything open
   // should refetch what it may have missed.
   | { type: "resync" };
@@ -95,6 +106,10 @@ type ChatState = {
   canCreateChannel: boolean;
   isAdmin: boolean;
   online: string[];
+  // stars, mutes, pins and saved messages are in the database
+  extras?: boolean;
+  // the messages you saved
+  saved?: string[];
 };
 
 type Viewing = { channelId: string | null; threadId: string | null };
@@ -114,6 +129,13 @@ type ChatContextValue = {
   subscribe: (fn: (e: ChatEvent) => void) => () => void;
   setViewing: (v: Viewing) => void;
   markRead: (channelId: string, messageId: string) => void;
+  // your saved messages, and saving or unsaving one
+  saved: Set<string>;
+  toggleSaved: (messageId: string, on: boolean) => Promise<void>;
+  // your star or mute on a conversation
+  setPrefs: (channelId: string, prefs: { starred?: boolean; muted?: boolean }) => Promise<void>;
+  // who's typing, by "channelId|parentId" (parentId empty for the conversation itself)
+  typing: Record<string, string[]>;
 };
 
 const ChatContext = createContext<ChatContextValue | null>(null);
@@ -148,6 +170,7 @@ export function taskLabel(t: Pick<ChatTask, "sid" | "ad_id" | "svid" | "pid" | "
 // notices and the edit box.
 export function toPlain(body: string, people: Map<string, ChatPerson>, tasks: Record<string, ChatTask>) {
   return body
+    .replace(/<!(channel|here)>/g, (_m, w) => `@${w}`)
     .replace(/<@([0-9a-f-]{36})>/g, (_m, id) => `@${people.get(id)?.name ?? "someone"}`)
     .replace(/<task:([0-9a-f-]{36})>/g, (_m, id) => (tasks[id] ? `#${taskLabel(tasks[id])}` : "#task"));
 }
@@ -188,6 +211,9 @@ export function ChatProvider({ children }: { children: ReactNode }) {
   const viewing = useRef<Viewing>({ channelId: null, threadId: null });
   const stateRef = useRef<ChatState | null>(null);
   stateRef.current = state;
+  const [saved, setSaved] = useState<Set<string>>(new Set());
+  // "channelId|parentId" -> userId -> until when it shows
+  const [typingUntil, setTypingUntil] = useState<Record<string, Record<string, number>>>({});
 
   const [loadError, setLoadError] = useState<string | null>(null);
   const refresh = useCallback(async () => {
@@ -195,6 +221,7 @@ export function ChatProvider({ children }: { children: ReactNode }) {
       const s = await api<ChatState>("/chat/state");
       setState(s);
       setOnline(new Set(s.online));
+      setSaved(new Set(s.saved ?? []));
       setAvailable(true);
       setLoadError(null);
     } catch (err) {
@@ -222,6 +249,20 @@ export function ChatProvider({ children }: { children: ReactNode }) {
   const handle = useCallback((e: ChatEvent) => {
     const s = stateRef.current;
     if (e.type === "channels" || e.type === "read") refreshSoon();
+    if (e.type === "typing" && s && e.userId !== s.me) {
+      const key = `${e.channelId}|${e.parentId ?? ""}`;
+      setTypingUntil((prev) => ({ ...prev, [key]: { ...prev[key], [e.userId]: Date.now() + 5000 } }));
+    }
+    // a message from them: they've stopped typing there
+    if (e.type === "message" && e.isNew && e.message.authorId) {
+      const key = `${e.message.channelId}|${e.message.parentId ?? ""}`;
+      const who = e.message.authorId;
+      setTypingUntil((prev) => {
+        if (!prev[key]?.[who]) return prev;
+        const { [who]: _gone, ...rest } = prev[key];
+        return { ...prev, [key]: rest };
+      });
+    }
     if (e.type === "presence") {
       setOnline((prev) => {
         const next = new Set(prev);
@@ -236,7 +277,9 @@ export function ChatProvider({ children }: { children: ReactNode }) {
       const visible = document.visibilityState === "visible";
       const seeingChannel = visible && viewing.current.channelId === m.channelId;
       const seeingThread = visible && !!m.parentId && viewing.current.threadId === m.parentId;
-      const mentionsMe = m.mentions.includes(s.me);
+      // muted: only a mention by name gets through (not @channel / @here)
+      const byName = m.body.includes(`<@${s.me}>`);
+      const mentionsMe = m.mentions.includes(s.me) && (!ch?.muted || byName);
       if (ch && ch.joined) {
         patchChannel(ch.id, (c) => ({
           ...c,
@@ -247,7 +290,7 @@ export function ChatProvider({ children }: { children: ReactNode }) {
       }
       const inMyThread = !!m.parentId && (e.threadUserIds ?? []).includes(s.me);
       const isDm = ch?.kind === "dm";
-      const worthSaying = mentionsMe || (isDm && !m.parentId) || inMyThread;
+      const worthSaying = mentionsMe || (!ch?.muted && ((isDm && !m.parentId) || inMyThread));
       const alreadyThere = m.parentId ? seeingThread : seeingChannel;
       if (worthSaying && !alreadyThere) {
         const who = peopleRef.current.get(m.authorId ?? "")?.name ?? "Someone";
@@ -311,12 +354,62 @@ export function ChatProvider({ children }: { children: ReactNode }) {
     api(`/chat/channels/${channelId}/read`, { method: "POST", body: JSON.stringify({ messageId }) }).catch(() => {});
   }, [patchChannel]);
 
+  // Typing shows for a few seconds after the last keystroke.
+  useEffect(() => {
+    if (!Object.keys(typingUntil).length) return;
+    const id = setInterval(() => {
+      const now = Date.now();
+      setTypingUntil((prev) => {
+        let changed = false;
+        const next: Record<string, Record<string, number>> = {};
+        for (const [key, who] of Object.entries(prev)) {
+          const live = Object.fromEntries(Object.entries(who).filter(([, t]) => t > now));
+          if (Object.keys(live).length !== Object.keys(who).length) changed = true;
+          if (Object.keys(live).length) next[key] = live; else changed = true;
+        }
+        return changed ? next : prev;
+      });
+    }, 1000);
+    return () => clearInterval(id);
+  }, [typingUntil]);
+  const typing = useMemo(
+    () => Object.fromEntries(Object.entries(typingUntil).map(([key, who]) => [key, Object.keys(who)])),
+    [typingUntil],
+  );
+
+  const toggleSaved = useCallback(async (messageId: string, on: boolean) => {
+    const flip = (yes: boolean) => setSaved((prev) => {
+      const next = new Set(prev);
+      if (yes) next.add(messageId); else next.delete(messageId);
+      return next;
+    });
+    flip(on);
+    try {
+      await api(`/chat/messages/${messageId}/save`, { method: "POST", body: JSON.stringify({ saved: on }) });
+    } catch (err) {
+      flip(!on);
+      throw err;
+    }
+  }, []);
+
+  const setPrefs = useCallback(async (channelId: string, prefs: { starred?: boolean; muted?: boolean }) => {
+    patchChannel(channelId, (c) => ({ ...c, ...prefs }));
+    try {
+      await api(`/chat/channels/${channelId}/prefs`, { method: "POST", body: JSON.stringify(prefs) });
+    } catch (err) {
+      refresh();
+      throw err;
+    }
+  }, [patchChannel, refresh]);
+
   const totals = useMemo(() => {
     let alerts = 0;
     let unread = 0;
     for (const c of state?.channels ?? []) {
       if (!c.joined) continue;
       alerts += c.mentions;
+      // muted: no badge, only mentions by name (counted above)
+      if (c.muted) continue;
       if (c.kind === "dm") alerts += Math.max(c.unread - c.mentions, 0);
       else unread += c.unread;
     }
@@ -330,8 +423,8 @@ export function ChatProvider({ children }: { children: ReactNode }) {
   }, [totals.alerts]);
 
   const value = useMemo<ChatContextValue>(() => ({
-    available, state, loadError, people, online, totals, refresh, subscribe, setViewing, markRead,
-  }), [available, state, loadError, people, online, totals, refresh, subscribe, setViewing, markRead]);
+    available, state, loadError, people, online, totals, refresh, subscribe, setViewing, markRead, saved, toggleSaved, setPrefs, typing,
+  }), [available, state, loadError, people, online, totals, refresh, subscribe, setViewing, markRead, saved, toggleSaved, setPrefs, typing]);
 
   return <ChatContext.Provider value={value}>{children}</ChatContext.Provider>;
 }
