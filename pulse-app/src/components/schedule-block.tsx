@@ -2,14 +2,15 @@ import { useEffect, useState } from "react";
 import { toast } from "sonner";
 import { api, ApiError } from "@/lib/api";
 import { useResource } from "@/lib/use-resource";
-import { STAGE_WORDS, clockWords, dayWords, type TaskSchedule } from "@/lib/schedule";
+import { STAGE_WORDS, clockWords, dayWords, leftTone, leftWords, linksDueAt, linksDueWords, useNow, type TaskSchedule } from "@/lib/schedule";
 import type { Editor, Task, Taxonomy } from "@/lib/types";
 import "./schedule-block.css";
 
 // The Scheduling part of an approved Social task's window
 // (server/src/routes/scheduling.js): it waits in the schedulers' shared list;
 // setting its post date takes it; then each platform's link is pasted — each
-// becomes a post on the same SID, with the task's brand, title, date and editor. Only the post's own details
+// becomes a post on the same SID, with the task's brand, title, date and editor. Two days after the
+// post date, by 11:59 PM, the links are due: a countdown shows from the moment the date is set. Only the post's own details
 // (pillar, content type, format, avatar) are asked, once, started from the
 // last post's. Hidden for tasks that aren't in scheduling.
 
@@ -29,20 +30,27 @@ export function ScheduleBlock({ task, onChanged }: { task: Task; editors?: Edito
   const [time, setTime] = useState("");
   useEffect(() => { setDate(s?.postOn ?? ""); setTime(s?.postTime ?? ""); }, [s?.postOn, s?.postTime]);
   const [busy, setBusy] = useState(false);
+  const now = useNow();
   if (!s) return null;
 
   const stage = s.stage ?? "to_schedule";
   const when = s.postOn ? `${dayWords(s.postOn)}${s.postTime ? `, ${clockWords(s.postTime)}` : ""}` : "";
   const who = s.mine ? "you" : s.schedulerName ?? "a scheduler";
   const live = (s.posts ?? []).map((p) => p.platformName).filter(Boolean).join(" and ");
+  // the links' countdown, from the moment the date is set until they're in
+  const dueBy = s.postOn ? linksDueWords(s.postOn) : "";
+  const left = s.postOn ? linksDueAt(s.postOn).getTime() - now : 0;
+  const timing = (stage === "scheduled" || stage === "links_due") && !!s.postOn;
   const say = stage === "to_schedule"
     ? (!s.schedulerId
       ? (s.canSchedule ? "Approved and in the schedulers' list. Set the day it goes out to take it; Echo reminds you on the day." : "Approved. Waiting for a scheduler to take it.")
       : s.canSchedule ? "Approved. Pick the day it goes out; Echo reminds you on the day." : `Approved. Waiting for ${who} to set the post date.`)
     : stage === "scheduled"
-      ? `Goes out on ${when}. ${s.canSchedule ? `Once it's up, paste its links here; Echo asks for them on ${dayWords(s.linksDueOn!)}.` : `Its links are due on ${dayWords(s.linksDueOn!)}.`}`
+      ? `Goes out on ${when}. ${s.canSchedule ? `Once it's up, paste its links here, by ${dueBy}.` : `Its links are due by ${dueBy}.`}`
       : stage === "links_due"
-        ? (s.canSchedule ? `Posted on ${when}? Paste each platform's link below.` : `Posted on ${when}; waiting for ${who} to add its links.`)
+        ? (s.canSchedule
+          ? (left < 0 ? `Posted on ${when}? Its links were due by ${dueBy}: paste them below now.` : `Posted on ${when}? Paste each platform's link below, by ${dueBy}.`)
+          : `Posted on ${when}; waiting for ${who} to add its links, due by ${dueBy}.`)
         : `Live on ${live}. Its numbers sync into Analytics and ${task.editor_name ?? "the editor"}'s performance.`;
   const open = (s.platforms ?? []).filter((p) => !(s.posts ?? []).some((x) => x.platformId === p.platformId));
   const dateChanged = date !== (s.postOn ?? "") || time !== (s.postTime ?? "");
@@ -66,6 +74,12 @@ export function ScheduleBlock({ task, onChanged }: { task: Task; editors?: Edito
       <div className="sch-head">
         <b>Scheduling</b>
         <span className={"sch-pill " + stage}>{STAGE_WORDS[stage]}</span>
+        {timing && (
+          <span className={"sch-timer " + leftTone(left)} title={`Links due by ${dueBy}`}>
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" aria-hidden="true"><circle cx="12" cy="13" r="8" /><path d="M12 9v4l2.5 2.5M9.5 2.5h5" /></svg>
+            Links {leftWords(left)}
+          </span>
+        )}
         <span className="sch-grow" />
         {s.canChangeScheduler ? (
           <label className="sch-who">Scheduler

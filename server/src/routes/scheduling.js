@@ -9,7 +9,7 @@ import { hasColumn } from "../schema-flags.js";
 import { validYmd } from "../leave-math.js";
 import { callerEditorId, nextBrandTaskRef, nextTaskRef, taskSelect } from "./tasks.js";
 import {
-  LINK_AFTER_DAYS, NEEDS_SCHED_DB, addDaysYmd, isScheduler, sameLink, scheduleFormat, scheduleStage, schedulerIds, schedulingReady,
+  LINK_AFTER_DAYS, NEEDS_SCHED_DB, addDaysYmd, isScheduler, linksDueAt, sameLink, scheduleFormat, scheduleStage, schedulerIds, schedulingReady,
 } from "../scheduling.js";
 
 // Scheduling approved Social tasks (../scheduling.js). The schedulers — anyone
@@ -90,6 +90,9 @@ async function scheduleView(req, t, w) {
     schedulerId: t.scheduler_id, schedulerName: t.scheduler_name, mine: !!w.me && w.me === t.scheduler_id,
     postOn: t.post_on, postTime: t.post_time,
     linksDueOn: t.post_on ? addDaysYmd(t.post_on, LINK_AFTER_DAYS) : null,
+    // the links' deadline, and whether it has passed with none in
+    linksDueAt: t.post_on ? linksDueAt(t.post_on) : null,
+    linksLate: !!t.post_on && !posts.rows.length && Date.now() > Date.parse(linksDueAt(t.post_on)),
     canSchedule, canChangeScheduler: !!t.schedule_from && t.status === "done" && w.lead,
     schedulers, platforms: platforms.rows, posts: posts.rows, defaults,
   };

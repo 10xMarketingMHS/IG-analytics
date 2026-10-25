@@ -4,7 +4,7 @@ import { Loader } from "@/components/loader";
 import { useEditors } from "@/lib/use-editors";
 import { useWorkspaces } from "@/lib/workspaces-context";
 import { gradFor, initialsOf } from "@/lib/editor-visuals";
-import { STAGE_WORDS, clockWords, dayWords, scheduleStage, type SchedStage } from "@/lib/schedule";
+import { STAGE_WORDS, clockWords, dayWords, leftTone, leftWords, linksDueAt, scheduleStage, useNow, type SchedStage } from "@/lib/schedule";
 import { TaskPanel } from "@/pages/tasks";
 import type { Task } from "@/lib/types";
 import "./pipeline.css";
@@ -13,14 +13,14 @@ import "./scheduling.css";
 // Scheduling — for this month's schedulers (anyone with a Schedule goal) and
 // the Managers and Team Leads: every approved reel, carousel and post, in one shared list. Setting a
 // task's post date takes it (it leaves the others' list); once it's up, its
-// links go in the task window's Scheduling part, and each becomes a post on the
-// same SID. Data: GET /scheduling (server/src/routes/scheduling.js).
+// links go in the task window's Scheduling part — two days for them, counted
+// down beside the date — and each becomes a post on the same SID. Data: GET /scheduling (server/src/routes/scheduling.js).
 
 type Data = { tasks: Task[]; me: string | null; lead: boolean; scheduler: boolean };
 const TABS: { key: SchedStage; color: string; empty: string }[] = [
   { key: "to_schedule", color: "oklch(0.72 0.15 65)", empty: "Nothing waiting. Approved reels, carousels and posts arrive here." },
-  { key: "scheduled", color: "oklch(0.62 0.13 230)", empty: "Nothing scheduled yet. Set a post date on one waiting to be scheduled." },
-  { key: "links_due", color: "oklch(0.62 0.19 25)", empty: "No links due. Two days after a post date, it waits here for its links." },
+  { key: "scheduled", color: "oklch(0.62 0.13 230)", empty: "Nothing scheduled ahead. Set a post date on one waiting to be scheduled." },
+  { key: "links_due", color: "oklch(0.62 0.19 25)", empty: "No links due. From its post day, a post waits here for its links: two days to paste them." },
   { key: "live", color: "oklch(0.58 0.12 185)", empty: "Nothing live in the last 60 days yet." },
 ];
 const ACTION: Record<SchedStage, string> = { to_schedule: "Set date", scheduled: "Open", links_due: "Add links", live: "View" };
@@ -49,6 +49,11 @@ export function SchedulingPage() {
   const edOf = (id: string | null) => (editors ?? []).find((e) => e.id === id) ?? null;
   const openTask = openId ? (data?.tasks ?? []).find((t) => t.id === openId) ?? null : null;
   const color = TABS.find((x) => x.key === tab)!.color;
+  const now = useNow();
+  // the open task's tab follows it: set its date and the list goes with it to
+  // Scheduled (or Waiting for links), so closing the window shows it there
+  const openStage = openTask ? scheduleStage(openTask) ?? "to_schedule" : null;
+  useEffect(() => { if (openStage) setTab(openStage); }, [openStage]);
 
   if (error) return <section className="screen pp"><div className="pp-card sch-empty">{error}</div></section>;
   if (!data) return <section className="screen"><Loader label="Loading…" /></section>;
@@ -94,7 +99,13 @@ export function SchedulingPage() {
                   <b>{ed?.name ?? t.editor_name ?? "—"}</b>
                 </span>
                 <span className="pp-faint">{shortDay(t.completed_at)}</span>
-                <span>{t.post_on ? <>{dayWords(t.post_on)}{t.post_time ? <small className="pp-faint"> · {clockWords(t.post_time)}</small> : null}</> : <span className="pp-faint">—</span>}</span>
+                <span className="sch-on">
+                  {t.post_on ? <span>{dayWords(t.post_on)}{t.post_time ? <small className="pp-faint"> · {clockWords(t.post_time)}</small> : null}</span> : <span className="pp-faint">—</span>}
+                  {t.post_on && (tab === "scheduled" || tab === "links_due") && (() => {
+                    const left = linksDueAt(t.post_on).getTime() - now;
+                    return <small className={"sch-left " + leftTone(left)}>Links {leftWords(left)}</small>;
+                  })()}
+                </span>
                 <span className="sch-act">
                   {tab !== "to_schedule" && <span className="pp-faint">{t.scheduler_id === data.me ? "You" : t.scheduler_name ?? "Not taken"}</span>}
                   <button type="button" className="sch-btn" onClick={(e) => { e.stopPropagation(); setOpenId(t.id); }}>{ACTION[tab]}</button>

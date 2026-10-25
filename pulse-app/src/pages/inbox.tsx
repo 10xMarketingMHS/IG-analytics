@@ -6,6 +6,7 @@ import { useAuth } from "@/lib/auth-context";
 import { Avatar } from "@/lib/editor-visuals";
 import { relTime } from "@/lib/activity-meta";
 import { clockTime } from "@/lib/time-format";
+import { leftWords } from "@/lib/schedule";
 import { notifyTasksChanged } from "@/lib/task-events";
 import { attendanceAction } from "@/lib/use-attendance";
 import { cancelLeave, decideByWords, decideLeave, detailOf, fmtDates } from "@/lib/use-leave";
@@ -154,9 +155,9 @@ export function InboxPage() {
       case "schedule":
         what = <>{i.ref && <span className="ib-ref">{i.ref}</span>}{i.title}</>;
         who = <Person name={i.name} imageUrl={i.imageUrl} kind="schedule" />;
-        details = <span className="ib-faint">{i.step === "date" ? "Approved: set its post date"
-          : i.step === "post" ? `Post it today${i.postTime ? `, ${clockTime(new Date(`${i.postOn}T${i.postTime}:00`))}` : ""}`
-          : "Posted? Add its links"}</span>;
+        details = <span className={i.step === "links" && i.late ? "ib-late" : "ib-faint"}>{i.step === "date" ? "Approved: set its post date"
+          : i.step === "post" ? `Post it today${i.postTime ? `, ${clockTime(new Date(`${i.postOn}T${i.postTime}:00`))}` : ""}${i.linksDueAt ? ` · links ${leftWords(Date.parse(i.linksDueAt) - Date.now())}` : ""}`
+          : `Posted? Add its links${i.linksDueAt ? ` · ${leftWords(Date.parse(i.linksDueAt) - Date.now())}` : ""}`}</span>;
         open = () => openTask(i.taskId);
         acts = btn(i.step === "links" ? "Add links" : "Open", () => openTask(i.taskId), "pri");
         break;

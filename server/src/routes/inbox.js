@@ -7,7 +7,7 @@ import { decideBy } from "../leave-math.js";
 import { isOrgAdmin } from "../permissions.js";
 import { withReview } from "../review-route.js";
 import { handoverFeed } from "./handover.js";
-import { LINK_AFTER_DAYS, addDaysYmd, schedulingReady } from "../scheduling.js";
+import { LINK_AFTER_DAYS, addDaysYmd, linksDueAt, schedulingReady } from "../scheduling.js";
 
 // The Inbox: everything waiting on you, in one place, and what you sent that's
 // still waiting on someone else.
@@ -17,7 +17,7 @@ import { LINK_AFTER_DAYS, addDaysYmd, schedulingReady } from "../scheduling.js";
 //     you; work waiting for your review; tasks given to you (or sent back to
 //     you) to accept; for
 //     admins, forgotten-password requests; approved social work for you to
-//     schedule — set its date, post it on the day, add its links after.
+//     schedule — set its date, post it on the day, add its links after (two days for them).
 //   sent — your leave and permissions waiting for a lead, hand-overs you
 //     offered, your work waiting for review.
 // Answering uses the usual routes (attendance, handover, tasks); this only
@@ -153,11 +153,13 @@ inboxRouter.get("/inbox", async (req, res, next) => {
         .map((t) => ({ kind: "review", key: `review:${t.id}`, at: t.review_started_at, taskId: t.id, title: t.title, ref: t.ref, name: t.editorName, imageUrl: t.imageUrl })),
       ...toAccept.rows.map((t) => ({ kind: "accept", key: `accept:${t.id}`, at: t.at, taskId: t.id, title: t.title, ref: t.ref, due: t.due, name: t.fromName })),
       ...resets.rows.map((r) => ({ kind: "reset", key: `reset:${r.userId}`, at: r.at, userId: r.userId, name: r.name })),
-      // to schedule: no date yet · post it: the day itself · links: from LINK_AFTER_DAYS on (in between, it waits)
+      // to schedule: no date yet · post it: the day itself · links: the days after, until they're in (before the day, it waits)
       ...toSchedule.rows.flatMap((t) => {
-        const step = !t.postOn ? "date" : t.postOn === today ? "post" : today >= addDaysYmd(t.postOn, LINK_AFTER_DAYS) ? "links" : null;
+        const step = !t.postOn ? "date" : t.postOn === today ? "post" : today > t.postOn ? "links" : null;
+        const dueAt = t.postOn ? linksDueAt(t.postOn) : null;
         return step ? [{ kind: "schedule", key: `schedule:${t.id}:${step}`, at: t.at, taskId: t.id, title: t.title, ref: t.ref, step,
           postOn: t.postOn, postTime: t.postTime, linksDueOn: t.postOn ? addDaysYmd(t.postOn, LINK_AFTER_DAYS) : null,
+          linksDueAt: dueAt, late: !!dueAt && Date.now() > Date.parse(dueAt),
           name: t.editorName, imageUrl: t.imageUrl }] : [];
       }),
     ];

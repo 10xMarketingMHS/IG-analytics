@@ -6,7 +6,7 @@ import { hasColumn } from "./schema-flags.js";
 // time: Reels, Carousel, Post — not Thumbnail; a task with no type stays out)
 // goes into one shared list for the schedulers — anyone with a
 // Schedule goal this month (Goals › Set goals). Whoever sets its post date
-// takes it; they post it, and LINK_AFTER_DAYS later paste each platform's link —
+// takes it; they post it, and within LINK_AFTER_DAYS paste each platform's link —
 // each link becomes a post on the same SID (routes/scheduling.js), and the
 // scheduling counts as one Schedule job of theirs. The editor's credit is the
 // approval itself, as before.
@@ -14,8 +14,10 @@ import { hasColumn } from "./schema-flags.js";
 export const schedulingReady = async () => (await hasColumn("post", "from_task_id")) && hasColumn("task_content_format", "to_scheduling");
 export const NEEDS_SCHED_DB = "Scheduling needs a database update first — ask whoever runs the database to apply 20261104120000_task_scheduling.";
 
-// The links are asked for this many days after the post date (the numbers have settled).
+// Two days to paste the links once it's out: they're due by 11:59 PM (IST) on
+// the post date + LINK_AFTER_DAYS. The countdown runs from the moment the date is set.
 export const LINK_AFTER_DAYS = 2;
+export const linksDueAt = (postOn) => `${addDaysYmd(postOn, LINK_AFTER_DAYS)}T23:59:59+05:30`;
 
 const todayIst = () => new Date(Date.now() + 330 * 60_000).toISOString().slice(0, 10);
 export function addDaysYmd(ymd, n) {
@@ -25,13 +27,13 @@ export function addDaysYmd(ymd, n) {
 }
 
 // Where a task stands in scheduling, or null when it isn't in it:
-// to_schedule (no date yet) · scheduled (date set) · links_due (LINK_AFTER_DAYS
-// past the date, no link) · live (a link is in). t: schedule_from, post_on, linked_posts.
+// to_schedule (no date yet) · scheduled (date set, before the day) · links_due
+// (from the post day on, no link yet) · live (a link is in). t: schedule_from, post_on, linked_posts.
 export function scheduleStage(t, today = todayIst()) {
   if (!t?.schedule_from || t.status !== "done") return null;
   if ((t.linked_posts ?? 0) > 0) return "live";
   if (!t.post_on) return "to_schedule";
-  return today >= addDaysYmd(t.post_on, LINK_AFTER_DAYS) ? "links_due" : "scheduled";
+  return today >= t.post_on ? "links_due" : "scheduled";
 }
 
 // The org's Schedule content type — the goal that makes someone a scheduler,

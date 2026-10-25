@@ -9,6 +9,10 @@
 .sch-pill.links_due{background:var(--tb-badSoft);color:var(--tb-bad)}
 .sch-pill.live{background:var(--tb-goodSoft);color:var(--tb-good)}
 .sch-grow{flex:1}
+.sch-timer{display:inline-flex;align-items:center;gap:5px;height:22px;padding:0 9px;border-radius:999px;font-size:11.5px;font-weight:700;
+  background:var(--tb-sunk);color:var(--tb-text2);font-variant-numeric:tabular-nums;white-space:nowrap}
+.sch-timer.soon{background:var(--tb-warnSoft);color:var(--tb-warn)}
+.sch-timer.late{background:var(--tb-badSoft);color:var(--tb-bad)}
 .sch-who{display:inline-flex;align-items:center;gap:6px;font-size:12px;color:var(--tb-text3)}
 .sch-who b{color:var(--tb-text)}
 .sch select,.sch input{height:32px;padding:0 9px;border:1px solid var(--tb-line);border-radius:9px;background:var(--tb-solid);color:var(--tb-text);
