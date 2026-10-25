@@ -540,9 +540,9 @@ function AppShellInner() {
         </div>
         <div className="brand">
           {user?.isSuperAdmin && !user.viewingAs ? (
-            <button type="button" className="logo echo-logo" onClick={() => setViewAsOpen(true)} title="View Echo as someone (test)" aria-label="View Echo as someone"><EchoMark /></button>
+            <button type="button" className="logo echo-logo em-hover" onClick={() => setViewAsOpen(true)} title="View Echo as someone (test)" aria-label="View Echo as someone"><EchoMark /></button>
           ) : (
-            <div className="logo echo-logo"><EchoMark /></div>
+            <div className="logo echo-logo em-hover"><EchoMark /></div>
           )}
           <div className="sb2-label sb2-brandtx">
             <b>Echo</b>
