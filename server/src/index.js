@@ -18,6 +18,7 @@ import { platformsRouter } from "./routes/platforms.js";
 import { tasksRouter } from "./routes/tasks.js";
 import { schedulingRouter } from "./routes/scheduling.js";
 import { adUploadsRouter } from "./routes/ad-uploads.js";
+import { animusRouter } from "./routes/animus.js";
 import { handoverRouter } from "./routes/handover.js";
 import { leaderboardRouter } from "./routes/leaderboard.js";
 import { taskRulesRouter } from "./routes/task-rules.js";
@@ -78,6 +79,8 @@ app.use(cookieParser());
 app.get("/api/health", (_req, res) => res.json({ ok: true }));
 
 app.use("/api/auth", authRouter);
+// Animus, server to server with its own key — before the sign-in routes
+app.use("/api/animus", animusRouter);
 
 // Workspace list/create/rename — not scoped to a single workspace.
 app.use("/api", requireAuth, workspacesRouter);

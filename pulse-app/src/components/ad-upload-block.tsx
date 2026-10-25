@@ -10,7 +10,8 @@ import "./ad-upload-block.css";
 // The Ad uploads part of an approved Ad task's window (server/src/routes/ad-uploads.js):
 // which ads it became, recorded by the Managers and Team Leads — the AD numbers
 // Animus gave it, or the names another team sends back. Hidden for tasks that
-// aren't in the list. Everyone who can open the task sees the ads.
+// aren't in the list. Everyone who can open the task sees the ads; the ones
+// Animus sent back (server/src/routes/animus.js) say so.
 
 const errText = (e: unknown, fallback: string) => (e instanceof ApiError ? e.message : fallback);
 
@@ -64,6 +65,7 @@ export function AdUploadBlock({ task, onChanged }: { task: Task; onChanged: () =
           {ads.map((a) => (
             <span key={a.id} className="adu-ad" title={`${a.source === "animus" ? "Sent by Animus" : `Recorded by ${a.byName ?? "someone"}`}, ${new Date(a.createdAt).toLocaleDateString("en-IN", { day: "numeric", month: "short" })}`}>
               <b>{a.ref}</b>
+              {a.source === "animus" && <em className="adu-src">Animus</em>}
               {s.canRecord && (
                 <button type="button" aria-label={`Take ${a.ref} off`} disabled={busy}
                   onClick={() => { if (window.confirm(`Take ${a.ref} off this task?`)) call(`/tasks/${task.id}/ads/${a.id}`, { method: "DELETE" }, `${a.ref} taken off.`); }}>×</button>

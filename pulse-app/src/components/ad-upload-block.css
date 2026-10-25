@@ -6,6 +6,7 @@
 .adu-ad{display:inline-flex;align-items:center;gap:4px;height:28px;padding:0 4px 0 10px;border:1px solid var(--tb-line);border-radius:8px;background:var(--tb-solid);
   font-size:12.5px;font-variant-numeric:tabular-nums}
 .adu-ad b{font-weight:700;font-family:'Geist Mono',ui-monospace,monospace;font-size:12px}
+.adu-src{padding:1px 6px;border-radius:5px;background:var(--tb-acSoft);color:var(--tb-acText);font-size:10.5px;font-weight:700;font-style:normal}
 .adu-ad button{width:20px;height:20px;border:0;border-radius:6px;background:transparent;color:var(--tb-text3);font-size:15px;line-height:1;cursor:pointer}
 .adu-ad button:hover{background:var(--tb-badSoft);color:var(--tb-bad)}
 .adu-add{display:flex;gap:8px}

@@ -6,7 +6,7 @@ import { requireActiveEod } from "./eod.js";
 import { mayOpenTask, taskViewer } from "../hierarchy.js";
 import { logActivity } from "../activity.js";
 import { taskSelect } from "./tasks.js";
-import { NEEDS_UPLOADS_DB, adRefOf, uploadStage, uploadsReady } from "../ad-uploads.js";
+import { NEEDS_UPLOADS_DB, recordAds, uploadStage, uploadsReady } from "../ad-uploads.js";
 
 // Ad uploads (../ad-uploads.js): approved Ad work waits here for the Managers
 // and Team Leads — the leads by position (Team › Roster), and the Super Admin —
@@ -108,35 +108,11 @@ adUploadsRouter.post("/tasks/:id/ads", requireEditor, requireActiveEod, async (r
     const t = await taskRow(req.orgId, req.params.id);
     if (!t) return res.status(404).json({ error: "Task not found." });
     if (!t.upload_from || t.status !== "done" || !t.channel_id) return res.status(409).json({ error: "This task isn't waiting for its ads." });
-    // one of each, tidied (AD numbers as Animus writes them)
-    const refs = [...new Map(parsed.data.refs.map(adRefOf).filter(Boolean).map((r) => [r.toLowerCase(), r])).values()];
-    // an ad belongs to one piece of work: say which one already has it
-    const { rows: taken } = await pool.query(
-      `select a.ad_ref, a.task_id, ${REF} as ref, t.title from task_ad a join task t on t.id = a.task_id
-        where a.workspace_id = $1 and lower(a.ad_ref) = any($2::text[])`,
-      [t.channel_id, refs.map((r) => r.toLowerCase())],
-    );
-    const mine = taken.filter((x) => x.task_id === t.id).map((x) => x.ad_ref.toLowerCase());
-    const other = taken.find((x) => x.task_id !== t.id);
-    if (other) return res.status(409).json({ error: `${other.ad_ref} is already recorded on ${other.ref} “${other.title}”.` });
-    const fresh = refs.filter((r) => !mine.includes(r.toLowerCase()));
-    if (fresh.length) {
-      await pool.query(
-        `insert into task_ad (org_id, workspace_id, task_id, ad_ref, source, created_by)
-         select $1, $2, $3, r, 'manual', $5 from unnest($4::text[]) as r`,
-        [req.orgId, t.channel_id, t.id, fresh, req.user.sub],
-      );
-      await logActivity({
-        orgId: req.orgId, actorId: req.user.sub, verb: "ad_recorded", entityType: "task", entityId: t.id, channelId: t.channel_id,
-        summary: `Recorded ${fresh.join(", ")} for ${t.ref} “${t.title}”`,
-        meta: { ads: fresh },
-      });
-    }
-    res.status(fresh.length ? 201 : 200).json(await view(t, true));
-  } catch (err) {
-    if (err.code === "23505") return res.status(409).json({ error: "One of those ads was just recorded on another task." });
-    next(err);
-  }
+    // an ad belongs to one piece of work: with one already on another, record none and say which
+    const r = await recordAds({ orgId: req.orgId, task: t, refs: parsed.data.refs, source: "manual", userId: req.user.sub, allOrNothing: true });
+    if (r.clash.length) return res.status(409).json({ error: `${r.clash[0].ad} is already recorded on ${r.clash[0].on}.` });
+    res.status(r.added.length ? 201 : 200).json(await view(t, true));
+  } catch (err) { next(err); }
 });
 
 adUploadsRouter.delete("/tasks/:id/ads/:adId", requireEditor, requireActiveEod, async (req, res, next) => {

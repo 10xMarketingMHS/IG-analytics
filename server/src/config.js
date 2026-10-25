@@ -40,6 +40,12 @@ const EnvSchema = z.object({
   // Restrict this key in Google Cloud Console (HTTP-referrer or IP restriction
   // + API restriction limited to "YouTube Data API v3"); never leave it open.
   YOUTUBE_API_KEY: z.string().optional(),
+  // Animus (the VSL team's ads register) picks approved Ad work from Echo and
+  // sends back the AD numbers it became (routes/animus.js). The shared key
+  // Animus sends; without it those endpoints are off. Long and random.
+  ANIMUS_KEY: z.string().min(24).optional(),
+  // Which organisation Animus works with, when there's more than one.
+  ANIMUS_ORG_ID: z.string().uuid().optional(),
 });
 
 const parsed = EnvSchema.safeParse(process.env);
