@@ -67,17 +67,16 @@ html[data-theme="dark"]{--logo-ink:oklch(0.82 0.11 var(--acH));--logo-wave:oklch
 .echo-mark .em-e{fill:var(--logo-ink)}
 .echo-mark .em-w{fill:none;stroke:var(--logo-wave);stroke-linecap:round}
 /* loading: the large signal goes out first, the small one after, both fading before the next round */
-.echo-mark.em-anim .em-sig{animation:1.8s linear infinite}
-.echo-mark.em-anim .em-l{animation-name:em-large}
-.echo-mark.em-anim .em-s{animation-name:em-small}
+/* (each with its name in the shorthand: a nameless one is minified to animation:none in the build) */
+.echo-mark.em-anim .em-l{animation:em-large 1.8s linear infinite}
+.echo-mark.em-anim .em-s{animation:em-small 1.8s linear infinite}
 @keyframes em-large{0%{transform:translateX(-14px);opacity:0}12%{transform:translateX(0);opacity:1}48%{transform:translateX(44px);opacity:.85}65%,100%{transform:translateX(68px);opacity:0}}
 @keyframes em-small{0%,18%{transform:translateX(-14px);opacity:0}30%{transform:translateX(0);opacity:1}66%{transform:translateX(44px);opacity:.85}83%,100%{transform:translateX(68px);opacity:0}}
 /* a mark that plays while pointed at (the sidebar logo): from where the large signal is
    already in place (12% in), so nothing blinks out first */
-.em-hover:is(:hover,:focus-visible) .echo-mark .em-sig{animation:1.8s linear -.216s infinite}
-.em-hover:is(:hover,:focus-visible) .echo-mark .em-l{animation-name:em-large}
-.em-hover:is(:hover,:focus-visible) .echo-mark .em-s{animation-name:em-small}
-@media (prefers-reduced-motion:reduce){.echo-mark.em-anim .em-sig,.em-hover .echo-mark .em-sig{animation:none!important}}
+.em-hover:is(:hover,:focus-visible) .echo-mark .em-l{animation:em-large 1.8s linear -.216s infinite}
+.em-hover:is(:hover,:focus-visible) .echo-mark .em-s{animation:em-small 1.8s linear -.216s infinite}
+@media (prefers-reduced-motion:reduce){.echo-mark .em-sig{animation:none!important}}
 .brand b{font-size:14.5px;letter-spacing:-.3px}
 .brand small{display:block;font-size:10px;color:var(--muted);font-weight:500}
 nav.side{padding:7px 10px 9px;display:flex;flex-direction:column;gap:2px;flex:1;min-height:0;overflow-y:auto;
