@@ -7,6 +7,7 @@ import { decideBy } from "../leave-math.js";
 import { isOrgAdmin } from "../permissions.js";
 import { withReview } from "../review-route.js";
 import { handoverFeed } from "./handover.js";
+import { LINK_AFTER_DAYS, addDaysYmd, schedulingReady } from "../scheduling.js";
 
 // The Inbox: everything waiting on you, in one place, and what you sent that's
 // still waiting on someone else.
@@ -15,7 +16,8 @@ import { handoverFeed } from "./handover.js";
 //     (leads and managers); hand-overs offered to you or climbed to
 //     you; work waiting for your review; tasks given to you (or sent back to
 //     you) to accept; for
-//     admins, forgotten-password requests.
+//     admins, forgotten-password requests; approved social work for you to
+//     schedule — set its date, post it on the day, add its links after.
 //   sent — your leave and permissions waiting for a lead, hand-overs you
 //     offered, your work waiting for review.
 // Answering uses the usual routes (attendance, handover, tasks); this only
@@ -34,10 +36,11 @@ async function namesOf(ids) {
 inboxRouter.get("/inbox", async (req, res, next) => {
   try {
     const today = istNow().ymd;
-    const [caller, viewer, ranks, handovers, attOn, permOn, leaveOn, admin] = await Promise.all([
+    const [caller, viewer, ranks, handovers, attOn, permOn, leaveOn, admin, schedOn] = await Promise.all([
       callerScope(req), taskViewer(req), editorRanks(req.orgId), handoverFeed(req),
       attendanceReady(), permissionsReady(), leaveReady(),
       req.role === "admin" ? true : isOrgAdmin(req.orgId, req.user.sub),
+      schedulingReady(),
     ]);
     const me = caller.editorId;
     // people whose requests you answer: below you (whoever sees all: everyone but you)
@@ -48,7 +51,7 @@ inboxRouter.get("/inbox", async (req, res, next) => {
     const who = new Map(people.map((p) => [p.id, p]));
     const person = (id) => ({ editorId: id, name: who.get(id)?.name ?? "Someone", imageUrl: who.get(id)?.imageUrl ?? null });
 
-    const [leaves, perms, corrections, review, toAccept, myLeave, myPerms, resets] = await Promise.all([
+    const [leaves, perms, corrections, review, toAccept, myLeave, myPerms, resets, toSchedule] = await Promise.all([
       leaveOn && isApprover(caller)
         ? pool.query(`select ${LEAVE_COLS} from leave_request where org_id = $1 and status = 'pending' and editor_id is distinct from $2 order by date_from`, [req.orgId, me])
         : none,
@@ -113,6 +116,17 @@ inboxRouter.get("/inbox", async (req, res, next) => {
           [req.orgId],
         )
         : none,
+      // approved social work you schedule that has no link yet (../scheduling.js)
+      schedOn && me
+        ? pool.query(
+          `select t.id, t.title, ${REF} as ref, t.post_on::text as "postOn", to_char(t.post_time, 'HH24:MI') as "postTime",
+                  t.schedule_from as "at", e.name as "editorName", e.image_url as "imageUrl"
+             from task t left join editor e on e.id = t.editor_id
+            where t.org_id = $1 and t.scheduler_id = $2 and t.schedule_from is not null and t.status = 'done'
+              and not exists (select 1 from post p where p.from_task_id = t.id and p.deleted_at is null)`,
+          [req.orgId, me],
+        )
+        : none,
     ]);
     // each asker's balance this year, beside their request
     const [reviewed, bal] = await Promise.all([
@@ -139,6 +153,13 @@ inboxRouter.get("/inbox", async (req, res, next) => {
         .map((t) => ({ kind: "review", key: `review:${t.id}`, at: t.review_started_at, taskId: t.id, title: t.title, ref: t.ref, name: t.editorName, imageUrl: t.imageUrl })),
       ...toAccept.rows.map((t) => ({ kind: "accept", key: `accept:${t.id}`, at: t.at, taskId: t.id, title: t.title, ref: t.ref, due: t.due, name: t.fromName })),
       ...resets.rows.map((r) => ({ kind: "reset", key: `reset:${r.userId}`, at: r.at, userId: r.userId, name: r.name })),
+      // to schedule: no date yet · post it: the day itself · links: from LINK_AFTER_DAYS on (in between, it waits)
+      ...toSchedule.rows.flatMap((t) => {
+        const step = !t.postOn ? "date" : t.postOn === today ? "post" : today >= addDaysYmd(t.postOn, LINK_AFTER_DAYS) ? "links" : null;
+        return step ? [{ kind: "schedule", key: `schedule:${t.id}:${step}`, at: t.at, taskId: t.id, title: t.title, ref: t.ref, step,
+          postOn: t.postOn, postTime: t.postTime, linksDueOn: t.postOn ? addDaysYmd(t.postOn, LINK_AFTER_DAYS) : null,
+          name: t.editorName, imageUrl: t.imageUrl }] : [];
+      }),
     ];
     const sent = [
       ...myLeave.rows.map((l) => ({ kind: "leave", key: `leave:${l.id}`, at: l.createdAt, leave: { ...l, decideBy: decideBy(l.from, today) } })),

@@ -30,11 +30,12 @@ const KINDS: { k: Kind; label: string; tag: string }[] = [
   { k: "handover", label: "Hand-overs", tag: "HAND-OVER" },
   { k: "review", label: "Reviews", tag: "REVIEW" },
   { k: "accept", label: "To accept", tag: "TO ACCEPT" },
+  { k: "schedule", label: "To post", tag: "TO POST" },
   { k: "reset", label: "Password resets", tag: "PASSWORD" },
 ];
 const ORDER = new Map(KINDS.map((x, i) => [x.k, i]));
 const TAG = new Map(KINDS.map((x) => [x.k, x.tag]));
-const ICON: Record<Kind, string> = { leave: "🌴", permission: "⏱️", correction: "🕘", handover: "🔁", review: "👀", accept: "📥", reset: "🔑" };
+const ICON: Record<Kind, string> = { leave: "🌴", permission: "⏱️", correction: "🕘", handover: "🔁", review: "👀", accept: "📥", schedule: "🗓️", reset: "🔑" };
 const day = (ymd: string) => new Date(`${ymd}T12:00:00`).toLocaleDateString("en-IN", { day: "numeric", month: "short" });
 const n1 = (n: number) => (Number.isInteger(n) ? String(n) : n.toFixed(1));
 
@@ -150,6 +151,15 @@ export function InboxPage() {
         open = () => openTask(i.taskId);
         acts = btn("Open", () => openTask(i.taskId), "pri");
         break;
+      case "schedule":
+        what = <>{i.ref && <span className="ib-ref">{i.ref}</span>}{i.title}</>;
+        who = <Person name={i.name} imageUrl={i.imageUrl} kind="schedule" />;
+        details = <span className="ib-faint">{i.step === "date" ? "Approved: set its post date"
+          : i.step === "post" ? `Post it today${i.postTime ? `, ${clockTime(new Date(`${i.postOn}T${i.postTime}:00`))}` : ""}`
+          : "Posted? Add its links"}</span>;
+        open = () => openTask(i.taskId);
+        acts = btn(i.step === "links" ? "Add links" : "Open", () => openTask(i.taskId), "pri");
+        break;
       case "reset":
         what = <>Forgot their password</>;
         who = <Person name={i.name} kind="reset" />;
@@ -223,7 +233,8 @@ export function InboxPage() {
 // when it's empty.
 const WORDS: Record<Kind, [string, string]> = {
   leave: ["leave request", "leave requests"], permission: ["permission", "permissions"], correction: ["correction", "corrections"],
-  handover: ["hand-over", "hand-overs"], review: ["review", "reviews"], accept: ["task to accept", "tasks to accept"], reset: ["password reset", "password resets"],
+  handover: ["hand-over", "hand-overs"], review: ["review", "reviews"], accept: ["task to accept", "tasks to accept"],
+  schedule: ["post to schedule", "posts to schedule"], reset: ["password reset", "password resets"],
 };
 export function InboxCard() {
   const { user } = useAuth();

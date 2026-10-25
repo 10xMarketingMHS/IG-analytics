@@ -264,6 +264,14 @@ export type Task = {
   post_permalink: string | null;
   platform_key: "instagram" | "facebook" | "youtube" | string | null;
   platform_name: string | null;
+  // Scheduling after approval (lib/schedule.ts): who posts it, since when it's
+  // theirs (null: not in scheduling), its post date and how many posts its links made.
+  scheduler_id?: string | null;
+  scheduler_name?: string | null;
+  schedule_from?: string | null;
+  post_on?: string | null;
+  post_time?: string | null;
+  linked_posts?: number;
 };
 
 // GET/POST /break/* — one editor's shared daily break budget (see
@@ -314,7 +322,9 @@ export type ActivityVerb =
   | "handover_offered" | "handover_accepted" | "handover_declined" | "handover_cancelled" | "handover_escalated" | "handover_moved"
   // Leave: CL and SL (components/leave-ask.tsx)
   | "leave_asked" | "leave_approved" | "leave_declined" | "leave_cancelled" | "leave_topped_up" | "leave_allowance_set"
-  | "leave_counting_started" | "leave_rules_changed" | "attendance_leave_worked";
+  | "leave_counting_started" | "leave_rules_changed" | "attendance_leave_worked"
+  // Scheduling approved social work (components/schedule-block.tsx)
+  | "schedule_ready" | "schedule_set" | "schedule_linked";
 
 export type Activity = {
   id: string;

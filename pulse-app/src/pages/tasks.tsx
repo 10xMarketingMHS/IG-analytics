@@ -24,6 +24,7 @@ import { toast } from "sonner";
 import type { Task, TaskStatus, TaskPriority, TaskType, TaskMeta, TaskAttachment, TaskReviewLogEntry, ContentFormatDef, Editor, Subtask, TaskComment } from "@/lib/types";
 import "./tasks-board.css";
 import { HandoverBlock, HandoverInbox, HandoverPill, useHandovers } from "@/components/handover";
+import { ScheduleBlock } from "@/components/schedule-block";
 import { clockTime, clockTimeShort, dateTime } from "@/lib/time-format";
 
 function relTime(iso: string) {
@@ -2534,6 +2535,8 @@ export function TaskPanel({ mode, task, canWrite, editors, channels, onClose, on
           )}
           {/* Hand over your own task, answer one offered to you, or move one on */}
           <HandoverBlock task={t} onChanged={onChanged} />
+          {/* approved social work: its scheduler sets the date and pastes the links */}
+          {t.schedule_from && <ScheduleBlock task={t} editors={editors} onChanged={onChanged} />}
           {!ro && briefRo && (
             <div className="hint tp-locked">
               🔒 {isDoneTask ? "This task is completed — only an admin can change it."

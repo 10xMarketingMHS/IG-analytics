@@ -10,6 +10,7 @@ import { canSeeTask, editorRanks, mayOpenTask, seesEditor, taskViewer } from "..
 import { closePendingHandovers } from "../handover.js";
 import { hasColumn } from "../schema-flags.js";
 import { coverFrom } from "../goal-score.js";
+import { enterScheduling, leaveScheduling, schedulingReady } from "../scheduling.js";
 
 export const tasksRouter = Router();
 
@@ -140,6 +141,11 @@ const SELECT = `
          (t.created_by is not null and exists (
             select 1 from app_user cu where cu.id = t.created_by and cu.editor_id = t.editor_id)) as self_created,
          t.content_type, t.platforms, t.attachments, t.delivery_link,
+         -- Scheduling after approval (../scheduling.js), read through to_jsonb so
+         -- it works before 20261104120000_task_scheduling; linked_posts: taskSelect()
+         (to_jsonb(t)->>'scheduler_id')::uuid as scheduler_id, (to_jsonb(t)->>'schedule_from')::timestamptz as schedule_from,
+         to_jsonb(t)->>'post_on' as post_on, left(to_jsonb(t)->>'post_time', 5) as post_time, se.name as scheduler_name,
+         /*linked_posts*/0 as linked_posts,
          e.name as editor_name, e.image_url as editor_image,
          coalesce(hu.name, hu.email) as held_by_name,
          -- The assignee's break, so the client can offset the countdown by
@@ -155,11 +161,19 @@ const SELECT = `
          (select count(*)::int from subtask s where s.task_id = t.id and s.done) as subtask_done
     from task t
     left join editor e on e.id = t.editor_id
+    left join editor se on se.id = (to_jsonb(t)->>'scheduler_id')::uuid
     left join workspace w on w.id = t.channel_id
     left join post p on p.id = t.post_id
     left join platform pl on pl.id = p.platform_id
     left join task_content_format cf on cf.id = t.content_format_id
     left join app_user hu on hu.id = t.held_by`;
+
+// SELECT, with how many posts were made from each task's links (once the database has them).
+async function taskSelect() {
+  return (await schedulingReady())
+    ? SELECT.replace("/*linked_posts*/0", "(select count(*)::int from post fp where fp.from_task_id = t.id and fp.deleted_at is null)")
+    : SELECT;
+}
 
 // Time-budget resolution (Phase 1): an editor's own rule for a format wins,
 // else the org-wide default, else no budget (task just has no timer).
@@ -286,7 +300,7 @@ tasksRouter.get("/tasks", async (req, res, next) => {
     // Admin sees all). The list, who's asking and everyone's rank are read together.
     const [{ rows }, viewer, ranks] = await Promise.all([
       pool.query(
-        `${SELECT} where ${clauses.join(" and ")}
+        `${await taskSelect()} where ${clauses.join(" and ")}
          order by t.due_date asc nulls last, t.created_at desc`,
         params,
       ),
@@ -445,7 +459,7 @@ tasksRouter.post("/tasks", requireEditor, requireActiveEod, async (req, res, nex
     if (typeof d.reviewLinkRequired === "boolean" && (await canAssignTasks(req))) {
       await pool.query("update task set review_link_required = $2 where id = $1", [rows[0].id, d.reviewLinkRequired]);
     }
-    const { rows: full } = await pool.query(`${SELECT} where t.id = $1`, [rows[0].id]);
+    const { rows: full } = await pool.query(`${await taskSelect()} where t.id = $1`, [rows[0].id]);
     await logActivity({
       orgId: req.orgId,
       actorId: req.user.sub,
@@ -989,8 +1003,12 @@ tasksRouter.patch("/tasks/:id", requireEditor, requireActiveEod, async (req, res
     if (prior.status !== "done" && finalStatus === "done" && finalRecurrence !== "none") {
       await spawnNextOccurrence(req.params.id, finalRecurrence);
     }
+    // Approved social work goes on to its brand's scheduler (../scheduling.js);
+    // reopened before any link went in, it comes back off.
+    const toScheduler = prior.status !== "done" && finalStatus === "done" ? await enterScheduling(req.params.id) : null;
+    if (prior.status === "done" && finalStatus !== "done") await leaveScheduling(req.params.id);
 
-    const { rows: full } = await pool.query(`${SELECT} where t.id = $1`, [req.params.id]);
+    const { rows: full } = await pool.query(`${await taskSelect()} where t.id = $1`, [req.params.id]);
     // Log the moment a task is marked complete.
     if (prior.status !== "done" && finalStatus === "done") {
       await logActivity({
@@ -1001,6 +1019,14 @@ tasksRouter.patch("/tasks/:id", requireEditor, requireActiveEod, async (req, res
         entityId: full[0].id,
         channelId: full[0].channel_id,
         summary: selfClosed ? `Completed task “${full[0].title}” (no review needed)` : `Approved task “${full[0].title}”`,
+      });
+    }
+    // ...and its scheduler is told it's theirs to post
+    if (toScheduler) {
+      await logActivity({
+        orgId: req.orgId, actorId: req.user.sub, verb: "schedule_ready", entityType: "task", entityId: full[0].id, channelId: full[0].channel_id,
+        summary: `${full[0].sid ?? full[0].tid} “${full[0].title}” is approved: set its post date`,
+        meta: { notifyEditorIds: [toScheduler] },
       });
     }
     // Handed to someone else — the new assignee needs to know.
@@ -1103,7 +1129,7 @@ tasksRouter.post("/tasks/:id/accept", requireEditor, requireActiveEod, async (re
         [req.params.id, req.orgId, prior.budget_hours != null ? effectiveStart : null],
       );
     }
-    const { rows: full } = await pool.query(`${SELECT} where t.id = $1`, [req.params.id]);
+    const { rows: full } = await pool.query(`${await taskSelect()} where t.id = $1`, [req.params.id]);
     await logActivity({
       orgId: req.orgId, actorId: req.user.sub, verb: "accepted", entityType: "task", entityId: full[0].id, channelId: full[0].channel_id,
       summary: `Accepted task “${full[0].title}”`,

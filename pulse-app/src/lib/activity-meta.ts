@@ -46,6 +46,9 @@ export const VERB_META: Record<ActivityVerb, { icon: string; cls: string }> = {
   leave_counting_started: { icon: "▶️", cls: "v-editor" },
   leave_rules_changed: { icon: "⚙️", cls: "v-editor" },
   attendance_leave_worked: { icon: "💼", cls: "v-editor" },
+  schedule_ready: { icon: "🗓️", cls: "v-post" },
+  schedule_set: { icon: "📅", cls: "v-post" },
+  schedule_linked: { icon: "🚀", cls: "v-post" },
 };
 
 export function relTime(iso: string) {

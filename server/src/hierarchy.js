@@ -58,6 +58,8 @@ export function canSeeTask(viewer, ranks, t) {
   if (viewer.seesAll) return true;
   if (!t.editor_id || t.editor_id === viewer.editorId) return true;
   if (t.created_by === viewer.userId || t.assigned_by === viewer.userId) return true;
+  // the one who schedules it after approval (../scheduling.js)
+  if (t.scheduler_id && t.scheduler_id === viewer.editorId) return true;
   return (ranks.get(t.editor_id) ?? 3) >= viewer.rank;
 }
 
@@ -66,7 +68,7 @@ export function canSeeTask(viewer, ranks, t) {
 export async function mayOpenTask(req, taskId) {
   const viewer = await taskViewer(req);
   if (viewer.seesAll) return true;
-  const { rows } = await pool.query("select editor_id, created_by, assigned_by from task where id = $1 and org_id = $2", [taskId, req.orgId]);
+  const { rows } = await pool.query("select editor_id, created_by, assigned_by, (to_jsonb(task)->>'scheduler_id')::uuid as scheduler_id from task where id = $1 and org_id = $2", [taskId, req.orgId]);
   if (!rows.length) return true;
   return canSeeTask(viewer, await editorRanks(req.orgId), rows[0]);
 }
