@@ -3,8 +3,7 @@ import { z } from "zod";
 import { pool } from "../db.js";
 import { requireEditor } from "../resolve-workspace.js";
 import { requireActiveEod } from "./eod.js";
-import { isOrgAdmin } from "../permissions.js";
-import { mayOpenTask } from "../hierarchy.js";
+import { mayOpenTask, taskViewer } from "../hierarchy.js";
 import { logActivity } from "../activity.js";
 import { hasColumn } from "../schema-flags.js";
 import { validYmd } from "../leave-math.js";
@@ -18,8 +17,10 @@ import {
 // date takes it (it leaves the others' list). They post it and paste each
 // platform's link: each becomes a post with the task's brand, title, date and
 // editor, on the same SID, and the scheduling counts as one Schedule job of
-// theirs (a completed Schedule task, made once). An admin may do any of it, or
-// hand a task to another scheduler.
+// theirs (a completed Schedule task, made once). The leads — Managers, Asst.
+// Managers and Team Leads by position (Team › Roster), and the Super Admin —
+// see everyone's, may do any of it, and hand a task to another scheduler.
+// Nobody else sees Scheduling, admins included.
 //   GET   /scheduling/access     may the caller see the list (the sidebar's Scheduling)
 //   GET   /scheduling            the list: the shared one, and what the caller took
 //   GET   /tasks/:id/schedule    where one task stands, what can be done
@@ -28,14 +29,14 @@ import {
 export const schedulingRouter = Router();
 
 const REF = "coalesce(t.sid, t.tid)";
-const isAdmin = async (req) => req.role === "admin" || (await isOrgAdmin(req.orgId, req.user.sub));
 const dayWords = (ymd) => new Date(`${ymd}T12:00:00Z`).toLocaleDateString("en-IN", { day: "numeric", month: "short", timeZone: "UTC" });
 const clockWords = (hhmm) => { const [h, m] = hhmm.split(":").map(Number); return `${h % 12 || 12}:${String(m).padStart(2, "0")} ${h >= 12 ? "PM" : "AM"}`; };
 
-// who's asking: their roster id, admin or not, a scheduler this month or not
+// who's asking: their roster id, a lead or not (Team Lead or above: the
+// hierarchy's rank 0–2, or the Super Admin), a scheduler this month or not
 async function who(req) {
-  const [me, admin] = await Promise.all([callerEditorId(req), isAdmin(req)]);
-  return { me, admin, scheduler: await isScheduler(req.orgId, me) };
+  const [me, viewer] = await Promise.all([callerEditorId(req), taskViewer(req)]);
+  return { me, lead: viewer.seesAll || viewer.rank <= 2, scheduler: await isScheduler(req.orgId, me) };
 }
 
 async function taskRow(orgId, taskId) {
@@ -50,9 +51,9 @@ async function taskRow(orgId, taskId) {
 }
 // a task in scheduling may be opened by the schedulers, whoever's work it was
 async function mayOpen(req, t, w) {
-  return (!!t.schedule_from && (w.admin || w.scheduler || w.me === t.scheduler_id)) || (await mayOpenTask(req, t.id));
+  return (!!t.schedule_from && (w.lead || w.scheduler || w.me === t.scheduler_id)) || (await mayOpenTask(req, t.id));
 }
-const canAct = (t, w) => !!t.schedule_from && t.status === "done" && (w.admin || (!!w.me && w.me === t.scheduler_id) || (!t.scheduler_id && w.scheduler));
+const canAct = (t, w) => !!t.schedule_from && t.status === "done" && (w.lead || (!!w.me && w.me === t.scheduler_id) || (!t.scheduler_id && w.scheduler));
 
 // Where a task stands in scheduling and what the caller may do there.
 async function scheduleView(req, t, w) {
@@ -71,7 +72,7 @@ async function scheduleView(req, t, w) {
         [t.channel_id],
       )
       : { rows: [] },
-    w.admin ? schedulerIds(req.orgId).then(async (ids) => (ids.length
+    w.lead ? schedulerIds(req.orgId).then(async (ids) => (ids.length
       ? (await pool.query("select id, name from editor where id = any($1::uuid[]) order by name", [ids])).rows : [])) : [],
   ]);
   const canSchedule = canAct(t, w);
@@ -89,7 +90,7 @@ async function scheduleView(req, t, w) {
     schedulerId: t.scheduler_id, schedulerName: t.scheduler_name, mine: !!w.me && w.me === t.scheduler_id,
     postOn: t.post_on, postTime: t.post_time,
     linksDueOn: t.post_on ? addDaysYmd(t.post_on, LINK_AFTER_DAYS) : null,
-    canSchedule, canChangeScheduler: !!t.schedule_from && t.status === "done" && w.admin,
+    canSchedule, canChangeScheduler: !!t.schedule_from && t.status === "done" && w.lead,
     schedulers, platforms: platforms.rows, posts: posts.rows, defaults,
   };
 }
@@ -98,17 +99,17 @@ schedulingRouter.get("/scheduling/access", async (req, res, next) => {
   try {
     if (!(await schedulingReady())) return res.json({ allowed: false, scheduler: false });
     const w = await who(req);
-    res.json({ allowed: w.admin || w.scheduler, scheduler: w.scheduler });
+    res.json({ allowed: w.lead || w.scheduler, scheduler: w.scheduler });
   } catch (err) { next(err); }
 });
 
-// The list: everything waiting in the shared list, what the caller took (an
-// admin: everyone's), and what went live in the last 60 days.
+// The list: everything waiting in the shared list, what the caller took (a
+// lead: everyone's), and what went live in the last 60 days.
 schedulingRouter.get("/scheduling", async (req, res, next) => {
   try {
     if (!(await schedulingReady())) return res.status(409).json({ error: NEEDS_SCHED_DB });
     const w = await who(req);
-    if (!w.admin && !w.scheduler) return res.status(403).json({ error: "Scheduling is for the people with a Schedule goal this month." });
+    if (!w.lead && !w.scheduler) return res.status(403).json({ error: "Scheduling is for the people with a Schedule goal this month." });
     const { rows } = await pool.query(
       `${await taskSelect()}
         where t.org_id = $1 and t.status = 'done' and t.schedule_from is not null
@@ -116,9 +117,9 @@ schedulingRouter.get("/scheduling", async (req, res, next) => {
           and (not exists (select 1 from post fp where fp.from_task_id = t.id and fp.deleted_at is null)
                or t.schedule_from > now() - interval '60 days')
         order by t.post_on nulls first, t.schedule_from`,
-      [req.orgId, w.admin, w.me],
+      [req.orgId, w.lead, w.me],
     );
-    res.json({ tasks: rows, me: w.me, admin: w.admin, scheduler: w.scheduler });
+    res.json({ tasks: rows, me: w.me, lead: w.lead, scheduler: w.scheduler });
   } catch (err) { next(err); }
 });
 
@@ -155,7 +156,7 @@ schedulingRouter.patch("/tasks/:id/schedule", requireEditor, requireActiveEod, a
     const push = (col, v) => { params.push(v); sets.push(`${col} = $${params.length}`); };
     let handedTo = null;
     if (d.schedulerId !== undefined && (d.schedulerId ?? null) !== t.scheduler_id) {
-      if (!w.admin) return res.status(403).json({ error: "Only an admin can hand it to another scheduler." });
+      if (!w.lead) return res.status(403).json({ error: "Only a Manager or Team Lead can hand it to another scheduler." });
       if (d.schedulerId && !(await schedulerIds(req.orgId)).includes(d.schedulerId)) {
         return res.status(400).json({ error: "Pick someone with a Schedule goal this month (Goals › Set goals)." });
       }
@@ -165,10 +166,10 @@ schedulingRouter.patch("/tasks/:id/schedule", requireEditor, requireActiveEod, a
     const postOn = d.postOn !== undefined ? d.postOn : t.post_on;
     if (d.postOn !== undefined) {
       push("post_on", d.postOn);
-      // setting the date takes it (unless an admin is handing it to someone); clearing it gives it back to the list
+      // setting the date takes it (unless a lead is handing it to someone); clearing it gives it back to the list
       if (d.schedulerId === undefined) {
         if (d.postOn && !t.scheduler_id && w.me) push("scheduler_id", w.me);
-        if (!d.postOn && !w.admin) push("scheduler_id", null);
+        if (!d.postOn && !w.lead) push("scheduler_id", null);
       }
     }
     // a time only goes with a date

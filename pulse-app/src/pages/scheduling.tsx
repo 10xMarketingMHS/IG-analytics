@@ -11,12 +11,12 @@ import "./pipeline.css";
 import "./scheduling.css";
 
 // Scheduling — for this month's schedulers (anyone with a Schedule goal) and
-// admins: every approved reel, carousel and post, in one shared list. Setting a
+// the Managers and Team Leads: every approved reel, carousel and post, in one shared list. Setting a
 // task's post date takes it (it leaves the others' list); once it's up, its
 // links go in the task window's Scheduling part, and each becomes a post on the
 // same SID. Data: GET /scheduling (server/src/routes/scheduling.js).
 
-type Data = { tasks: Task[]; me: string | null; admin: boolean; scheduler: boolean };
+type Data = { tasks: Task[]; me: string | null; lead: boolean; scheduler: boolean };
 const TABS: { key: SchedStage; color: string; empty: string }[] = [
   { key: "to_schedule", color: "oklch(0.72 0.15 65)", empty: "Nothing waiting. Approved reels, carousels and posts arrive here." },
   { key: "scheduled", color: "oklch(0.62 0.13 230)", empty: "Nothing scheduled yet. Set a post date on one waiting to be scheduled." },
@@ -57,7 +57,7 @@ export function SchedulingPage() {
       <div className="pp-top">
         <div className="pp-title">
           <h1>Scheduling</h1>
-          <span>{data.admin && !data.scheduler ? "Everyone's scheduling, for admins." : "Set a post date to take one. Once it's up, paste its links in the task."}</span>
+          <span>{data.lead && !data.scheduler ? "Everyone's scheduling, for the Managers and Team Leads." : "Set a post date to take one. Once it's up, paste its links in the task."}</span>
         </div>
         <span className="pp-grow" />
         <div className="pp-seg" role="tablist" aria-label="Stage">

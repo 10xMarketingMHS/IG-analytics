@@ -43,7 +43,7 @@ export type TaskSchedule = {
   stage?: SchedStage | null;
   // who took it (null: still in the shared list), and whether that's you
   schedulerId?: string | null; schedulerName?: string | null; mine?: boolean;
-  // for an admin handing it on: this month's schedulers
+  // for a Manager or Team Lead handing it on: this month's schedulers
   schedulers?: { id: string; name: string }[];
   postOn?: string | null; postTime?: string | null; linksDueOn?: string | null;
   canSchedule?: boolean; canChangeScheduler?: boolean;

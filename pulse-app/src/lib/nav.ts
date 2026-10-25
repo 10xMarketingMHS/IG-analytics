@@ -26,7 +26,7 @@ export type NavItem = {
   chatBadge?: boolean;
   // Inbox: carries how many requests wait on you
   inboxBadge?: boolean;
-  // Scheduling: only for this month's schedulers (a Schedule goal) and admins
+  // Scheduling: only for this month's schedulers (a Schedule goal), Managers and Team Leads
   schedulerOnly?: boolean;
 };
 

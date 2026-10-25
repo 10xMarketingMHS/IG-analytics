@@ -333,7 +333,7 @@ function AppShellInner() {
   const navigate = useNavigate();
   // the sidebar's posts number: just the count (not every post), re-read on moving between pages
   const { data: postCountData, refetch: refetchPostCount } = useResource<{ count: number }>("/posts/count");
-  // Scheduling shows for this month's schedulers (a Schedule goal) and admins
+  // Scheduling shows for this month's schedulers (a Schedule goal), Managers and Team Leads
   const { data: schedAccess } = useResource<{ allowed: boolean }>("/scheduling/access");
   useEffect(() => { refetchPostCount().catch(() => {}); }, [location.pathname]); // eslint-disable-line react-hooks/exhaustive-deps
   const postCount = postCountData?.count ?? null;
