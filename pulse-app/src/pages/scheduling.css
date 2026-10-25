@@ -1,0 +1,13 @@
+/* Scheduling (scheduling.tsx), on the Social & Ads Pipeline's look (pipeline.css: .pp tokens and table). */
+.sch-page .pp-grid{min-width:960px}
+.sch-page .pp-th,.sch-page .pp-tr{grid-template-columns:minmax(240px,1fr) 100px 140px 150px 90px 130px 170px}
+.sch-dot{display:inline-block;width:8px;height:8px;border-radius:50%}
+.sch-brand{font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.sch-work{color:var(--pp-acText);font-weight:600;text-decoration:none}
+.sch-work:hover{text-decoration:underline}
+.sch-act{display:flex;align-items:center;justify-content:flex-end;gap:10px;min-width:0}
+.sch-act .pp-faint{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.sch-btn{flex:none;height:28px;padding:0 12px;border:1px solid var(--pp-line);border-radius:9px;background:var(--pp-solid);color:var(--pp-text);
+  font-family:'Plus Jakarta Sans',sans-serif;font-size:12px;font-weight:700;cursor:pointer}
+.sch-btn:hover{border-color:var(--pp-ac);color:var(--pp-acText)}
+.sch-empty{padding:28px 18px;text-align:center;color:var(--pp-text3);font-size:13px}

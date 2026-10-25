@@ -7,9 +7,9 @@ import type { Editor, Task, Taxonomy } from "@/lib/types";
 import "./schedule-block.css";
 
 // The Scheduling part of an approved Social task's window
-// (server/src/routes/scheduling.js): its scheduler sets the post date, posts it,
-// then pastes each platform's link — each becomes a post on the same SID, with
-// the task's brand, title, date and editor. Only the post's own details
+// (server/src/routes/scheduling.js): it waits in the schedulers' shared list;
+// setting its post date takes it; then each platform's link is pasted — each
+// becomes a post on the same SID, with the task's brand, title, date and editor. Only the post's own details
 // (pillar, content type, format, avatar) are asked, once, started from the
 // last post's. Hidden for tasks that aren't in scheduling.
 
@@ -22,7 +22,7 @@ const tileOf = (key: string | null, name: string | null) => {
 };
 const errText = (e: unknown, fallback: string) => (e instanceof ApiError ? e.message : fallback);
 
-export function ScheduleBlock({ task, editors, onChanged }: { task: Task; editors: Editor[]; onChanged: () => void }) {
+export function ScheduleBlock({ task, onChanged }: { task: Task; editors?: Editor[]; onChanged: () => void }) {
   const { data, refetch } = useResource<TaskSchedule>(`/tasks/${task.id}/schedule`);
   const s = data?.ready && data.inFlow ? data : null;
   const [date, setDate] = useState("");
@@ -33,10 +33,12 @@ export function ScheduleBlock({ task, editors, onChanged }: { task: Task; editor
 
   const stage = s.stage ?? "to_schedule";
   const when = s.postOn ? `${dayWords(s.postOn)}${s.postTime ? `, ${clockWords(s.postTime)}` : ""}` : "";
-  const who = s.schedulerName ?? "its scheduler";
+  const who = s.mine ? "you" : s.schedulerName ?? "a scheduler";
   const live = (s.posts ?? []).map((p) => p.platformName).filter(Boolean).join(" and ");
   const say = stage === "to_schedule"
-    ? (s.canSchedule ? "Approved. Pick the day it goes out; Echo reminds you on the day." : `Approved. Waiting for ${who} to set the post date.`)
+    ? (!s.schedulerId
+      ? (s.canSchedule ? "Approved and in the schedulers' list. Set the day it goes out to take it; Echo reminds you on the day." : "Approved. Waiting for a scheduler to take it.")
+      : s.canSchedule ? "Approved. Pick the day it goes out; Echo reminds you on the day." : `Approved. Waiting for ${who} to set the post date.`)
     : stage === "scheduled"
       ? `Goes out on ${when}. ${s.canSchedule ? `Once it's up, paste its links here; Echo asks for them on ${dayWords(s.linksDueOn!)}.` : `Its links are due on ${dayWords(s.linksDueOn!)}.`}`
       : stage === "links_due"
@@ -68,12 +70,13 @@ export function ScheduleBlock({ task, editors, onChanged }: { task: Task; editor
         {s.canChangeScheduler ? (
           <label className="sch-who">Scheduler
             <select value={s.schedulerId ?? ""} disabled={busy} aria-label="Who schedules it"
-              onChange={(e) => save({ schedulerId: e.target.value || null }, "Scheduler changed.")}>
-              {!s.schedulerId && <option value="">No one</option>}
-              {editors.filter((e) => e.active || e.id === s.schedulerId).map((e) => <option key={e.id} value={e.id}>{e.name}</option>)}
+              onChange={(e) => save({ schedulerId: e.target.value || null }, e.target.value ? "Handed to them." : "Back in the shared list.")}>
+              <option value="">Not taken (shared list)</option>
+              {(s.schedulers ?? []).concat(s.schedulerId && !(s.schedulers ?? []).some((x) => x.id === s.schedulerId) ? [{ id: s.schedulerId, name: s.schedulerName ?? "Scheduler" }] : [])
+                .map((e) => <option key={e.id} value={e.id}>{e.name}</option>)}
             </select>
           </label>
-        ) : <span className="sch-who">Scheduler <b>{s.schedulerName ?? "no one yet"}</b></span>}
+        ) : <span className="sch-who">Scheduler <b>{s.mine ? "You" : s.schedulerName ?? "not taken yet"}</b></span>}
       </div>
       <p className="sch-say">{say}</p>
 
@@ -83,7 +86,7 @@ export function ScheduleBlock({ task, editors, onChanged }: { task: Task; editor
           <label>Time <small>(optional)</small><input type="time" value={time} disabled={!date} onChange={(e) => setTime(e.target.value)} /></label>
           {dateChanged && (
             <button type="button" className="btn btn-primary btn-sm" disabled={busy}
-              onClick={() => save({ postOn: date || null, postTime: date && time ? time : null }, date ? `Set to post on ${dayWords(date)}.` : "Post date cleared.")}>
+              onClick={() => save({ postOn: date || null, postTime: date && time ? time : null }, date ? `Set to post on ${dayWords(date)}.${s.schedulerId ? "" : " It's yours now."}` : "Post date cleared. It's back in the shared list.")}>
               {busy ? "Saving…" : date ? "Save date" : "Clear date"}
             </button>
           )}

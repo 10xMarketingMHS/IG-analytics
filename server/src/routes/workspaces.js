@@ -24,7 +24,7 @@ workspacesRouter.get("/workspaces", async (req, res, next) => {
     )).rows.map((r) => r.org_id);
 
     const { rows } = await pool.query(
-      `select w.id, w.name, w.logo_url, (to_jsonb(w)->>'scheduler_id')::uuid as scheduler_id,
+      `select w.id, w.name, w.logo_url,
               case when w.org_id = any($2::uuid[]) then 'admin'::membership_role else m.role end as role,
               coalesce((
                 select array_agg(g.permission_key)

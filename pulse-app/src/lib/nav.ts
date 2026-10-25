@@ -26,6 +26,8 @@ export type NavItem = {
   chatBadge?: boolean;
   // Inbox: carries how many requests wait on you
   inboxBadge?: boolean;
+  // Scheduling: only for this month's schedulers (a Schedule goal) and admins
+  schedulerOnly?: boolean;
 };
 
 export const NAV_ITEMS: NavItem[] = [
@@ -47,6 +49,8 @@ export const NAV_ITEMS: NavItem[] = [
   // My Team — admin-only: everyone ranked for a date range, with their tasks.
   { title: "My Team", href: "/my-team", icon: "🏅", section: "Tasks", adminOnly: true },
   { title: "Social & Ads Pipeline", href: "/metrics", icon: "🎬", section: "Tasks" },
+  // Scheduling — approved reels, carousels and posts for the schedulers to date and link.
+  { title: "Scheduling", href: "/scheduling", icon: "🗓️", section: "Tasks", schedulerOnly: true },
   // Social Media, Activity — hidden from the sidebar per request; routes/
   // pages still exist.
   { title: "Add Post", href: "/posts/new", icon: "➕", section: "Manage", adminOnly: true, permission: "create_post" },
@@ -67,6 +71,7 @@ export const PAGE_META: Record<string, [string, string]> = {
   "/chat": ["Team Chat", "Channels for the team, direct messages for one-to-one"],
   "/analytics/": ["Format analytics", "Total performance across all posts of one format"],
   "/analytics": ["Analytics", "Content performance across your channels and platforms"],
+  "/scheduling": ["Scheduling", "Approved reels, carousels and posts: set the post date, then paste each link"],
   "/metrics": ["Social & Ads Pipeline", "Every reel, carousel and ad in production. Stages are read-only here — move work on the Task Board."],
   "/insights": ["Insights", "What your data is telling you — computed automatically"],
   "/trends": ["Trends", "How your content is performing over time, and platform vs platform"],

@@ -49,7 +49,7 @@ import type { Activity } from "@/lib/types";
 // that isn't placed here lands at the end of Operations.
 const SIDEBAR_GROUPS: { label: string; hrefs: string[] }[] = [
   { label: "Workspace", hrefs: ["/home", "/inbox", "/chat", "/tasks", "/analytics"] },
-  { label: "Operations", hrefs: ["/metrics", "/posts", "/leaderboard", "/goals-board", "/my-team"] },
+  { label: "Operations", hrefs: ["/metrics", "/scheduling", "/posts", "/leaderboard", "/goals-board", "/my-team"] },
 ];
 const OFF_SIDEBAR = new Set(["/settings", "/posts/new"]);
 // Before Start Work an editor can still open these — the Workspace group, plus
@@ -333,6 +333,8 @@ function AppShellInner() {
   const navigate = useNavigate();
   // the sidebar's posts number: just the count (not every post), re-read on moving between pages
   const { data: postCountData, refetch: refetchPostCount } = useResource<{ count: number }>("/posts/count");
+  // Scheduling shows for this month's schedulers (a Schedule goal) and admins
+  const { data: schedAccess } = useResource<{ allowed: boolean }>("/scheduling/access");
   useEffect(() => { refetchPostCount().catch(() => {}); }, [location.pathname]); // eslint-disable-line react-hooks/exhaustive-deps
   const postCount = postCountData?.count ?? null;
   const { unread, items: activityItems } = useUnreadActivity();
@@ -402,7 +404,8 @@ function AppShellInner() {
   const leadsPeople = !isAdmin && homeRoleOf(myEd?.designation, false) !== "editor"
     && seesTeamAttendance(myEd?.designation, false, orgSettings?.attendance?.teamView);
   const canSee = (i: NavItem) => (!i.adminOnly || isAdmin || (!!i.permission && hasPermission(i.permission)) || (i.href === "/my-team" && leadsPeople))
-    && (!i.chatBadge || chatAvailable);
+    && (!i.chatBadge || chatAvailable)
+    && (!i.schedulerOnly || !!schedAccess?.allowed);
   const placed = new Set(SIDEBAR_GROUPS.flatMap((g) => g.hrefs));
   const sideGroups = SIDEBAR_GROUPS.map((g, gi) => ({
     label: g.label,

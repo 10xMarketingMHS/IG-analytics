@@ -10,7 +10,7 @@ import { canSeeTask, editorRanks, mayOpenTask, seesEditor, taskViewer } from "..
 import { closePendingHandovers } from "../handover.js";
 import { hasColumn } from "../schema-flags.js";
 import { coverFrom } from "../goal-score.js";
-import { enterScheduling, leaveScheduling, schedulingReady } from "../scheduling.js";
+import { enterScheduling, leaveScheduling, schedulerIds, schedulingReady } from "../scheduling.js";
 
 export const tasksRouter = Router();
 
@@ -169,7 +169,7 @@ const SELECT = `
     left join app_user hu on hu.id = t.held_by`;
 
 // SELECT, with how many posts were made from each task's links (once the database has them).
-async function taskSelect() {
+export async function taskSelect() {
   return (await schedulingReady())
     ? SELECT.replace("/*linked_posts*/0", "(select count(*)::int from post fp where fp.from_task_id = t.id and fp.deleted_at is null)")
     : SELECT;
@@ -1003,9 +1003,9 @@ tasksRouter.patch("/tasks/:id", requireEditor, requireActiveEod, async (req, res
     if (prior.status !== "done" && finalStatus === "done" && finalRecurrence !== "none") {
       await spawnNextOccurrence(req.params.id, finalRecurrence);
     }
-    // Approved social work goes on to its brand's scheduler (../scheduling.js);
-    // reopened before any link went in, it comes back off.
-    const toScheduler = prior.status !== "done" && finalStatus === "done" ? await enterScheduling(req.params.id) : null;
+    // Approved social work goes into the schedulers' shared list (../scheduling.js);
+    // reopened before any link went in, it comes back out.
+    const toScheduling = prior.status !== "done" && finalStatus === "done" ? await enterScheduling(req.params.id) : false;
     if (prior.status === "done" && finalStatus !== "done") await leaveScheduling(req.params.id);
 
     const { rows: full } = await pool.query(`${await taskSelect()} where t.id = $1`, [req.params.id]);
@@ -1021,12 +1021,12 @@ tasksRouter.patch("/tasks/:id", requireEditor, requireActiveEod, async (req, res
         summary: selfClosed ? `Completed task “${full[0].title}” (no review needed)` : `Approved task “${full[0].title}”`,
       });
     }
-    // ...and its scheduler is told it's theirs to post
-    if (toScheduler) {
+    // ...and this month's schedulers are told it's ready
+    if (toScheduling) {
       await logActivity({
         orgId: req.orgId, actorId: req.user.sub, verb: "schedule_ready", entityType: "task", entityId: full[0].id, channelId: full[0].channel_id,
-        summary: `${full[0].sid ?? full[0].tid} “${full[0].title}” is approved: set its post date`,
-        meta: { notifyEditorIds: [toScheduler] },
+        summary: `${full[0].sid ?? full[0].tid} “${full[0].title}” is approved and ready to schedule`,
+        meta: { notifyEditorIds: await schedulerIds(req.orgId) },
       });
     }
     // Handed to someone else — the new assignee needs to know.

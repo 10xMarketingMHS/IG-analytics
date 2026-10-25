@@ -1,4 +1,5 @@
 import { pool } from "./db.js";
+import { isScheduler } from "./scheduling.js";
 import { isOrgAdmin } from "./permissions.js";
 import { EDITOR_TITLES, positionKey } from "./attendance.js";
 import { isSuperUser, superState } from "./super-admin.js";
@@ -68,7 +69,14 @@ export function canSeeTask(viewer, ranks, t) {
 export async function mayOpenTask(req, taskId) {
   const viewer = await taskViewer(req);
   if (viewer.seesAll) return true;
-  const { rows } = await pool.query("select editor_id, created_by, assigned_by, (to_jsonb(task)->>'scheduler_id')::uuid as scheduler_id from task where id = $1 and org_id = $2", [taskId, req.orgId]);
+  const { rows } = await pool.query(
+    `select editor_id, created_by, assigned_by, (to_jsonb(task)->>'scheduler_id')::uuid as scheduler_id,
+            (to_jsonb(task)->>'schedule_from') is not null as in_scheduling
+       from task where id = $1 and org_id = $2`,
+    [taskId, req.orgId],
+  );
   if (!rows.length) return true;
-  return canSeeTask(viewer, await editorRanks(req.orgId), rows[0]);
+  if (canSeeTask(viewer, await editorRanks(req.orgId), rows[0])) return true;
+  // approved work in scheduling: open to this month's schedulers (./scheduling.js)
+  return rows[0].in_scheduling && (await isScheduler(req.orgId, viewer.editorId));
 }

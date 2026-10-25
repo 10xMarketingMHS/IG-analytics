@@ -1,8 +1,9 @@
 import { ymd } from "@/lib/task-points";
 
-// Scheduling an approved Social task (server/src/scheduling.js): the brand's
-// scheduler sets the post date, posts it, and LINK_AFTER_DAYS later pastes each
-// platform's link — each link becomes a post on the same SID.
+// Scheduling an approved Social task (server/src/scheduling.js): it goes into
+// one shared list for this month's schedulers (anyone with a Schedule goal);
+// whoever sets its post date takes it, posts it, and LINK_AFTER_DAYS later
+// pastes each platform's link — each link becomes a post on the same SID.
 
 export type SchedStage = "to_schedule" | "scheduled" | "links_due" | "live";
 export const LINK_AFTER_DAYS = 2;
@@ -40,8 +41,10 @@ export type TaskSchedule = {
   ready: boolean;
   inFlow?: boolean;
   stage?: SchedStage | null;
-  schedulerId?: string | null; schedulerName?: string | null;
-  brandSchedulerId?: string | null; brandSchedulerName?: string | null;
+  // who took it (null: still in the shared list), and whether that's you
+  schedulerId?: string | null; schedulerName?: string | null; mine?: boolean;
+  // for an admin handing it on: this month's schedulers
+  schedulers?: { id: string; name: string }[];
   postOn?: string | null; postTime?: string | null; linksDueOn?: string | null;
   canSchedule?: boolean; canChangeScheduler?: boolean;
   platforms?: { platformId: string; key: string; name: string }[];

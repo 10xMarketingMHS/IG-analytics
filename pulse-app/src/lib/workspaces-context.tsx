@@ -32,8 +32,6 @@ export type Workspace = {
   id: string;
   name: string;
   logo_url: string | null;
-  // who schedules this brand's approved social work (Settings › Channels)
-  scheduler_id?: string | null;
   role?: "admin" | "editor" | "viewer";
   // Active grants the current user holds in this workspace's org.
   permissions?: PermissionKey[];

@@ -2,7 +2,6 @@ import { useEffect, useMemo, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import { useWorkspaces } from "@/lib/workspaces-context";
 import { useResource } from "@/lib/use-resource";
-import { useEditors } from "@/lib/use-editors";
 import { api, ApiError, API_BASE } from "@/lib/api";
 import { toast } from "sonner";
 import { Modal } from "@/components/modal";
@@ -184,24 +183,6 @@ export function ChannelsSection() {
       refetchConns();
     } catch (e) {
       toast.error(e instanceof ApiError ? e.message : "Could not delete channel.");
-    }
-  }
-
-  // Each brand's scheduler: its approved social work goes to them to post and link
-  // (components/schedule-block.tsx). Only people with a login can be one.
-  const { editors } = useEditors();
-  const { data: userData } = useResource<{ users: { editor_id: string | null; active: boolean }[] }>("/users");
-  const withLogin = useMemo(() => {
-    const ids = userData ? new Set(userData.users.filter((u) => u.active && u.editor_id).map((u) => u.editor_id)) : null;
-    return (editors ?? []).filter((e) => e.active && (!ids || ids.has(e.id)));
-  }, [editors, userData]);
-  async function setScheduler(id: string, editorId: string | null) {
-    try {
-      await api(`/workspaces/${id}/scheduler`, { method: "PUT", body: JSON.stringify({ editorId }) });
-      await refresh();
-      toast.success(editorId ? "Scheduler set. This brand's approved social work goes to them from now on." : "No scheduler: posts are added with Add Post.");
-    } catch (e) {
-      toast.error(e instanceof ApiError ? e.message : "Couldn't set the scheduler.");
     }
   }
 
@@ -554,20 +535,6 @@ export function ChannelsSection() {
               {canManage && workspaces.length > 1 && (
                 <button type="button" className="st-btn sm danger" onClick={() => deleteChannel(w.id, w.name)}>{SI.trash}Delete channel</button>
               )}
-            </div>
-            <div className="st-row">
-              <span className="st-label">
-                <b>Scheduler</b>
-                <small>Approved social work for {w.name} goes to them: they set the post date and paste each link</small>
-              </span>
-              {canManage ? (
-                <select className="st-in" value={w.scheduler_id ?? ""} aria-label={`Scheduler for ${w.name}`}
-                  onChange={(e) => setScheduler(w.id, e.target.value || null)}>
-                  <option value="">No one (posts are added with Add Post)</option>
-                  {withLogin.concat((editors ?? []).filter((e) => e.id === w.scheduler_id && !withLogin.some((x) => x.id === e.id)))
-                    .map((e) => <option key={e.id} value={e.id}>{e.name}{e.designation ? ` · ${e.designation}` : ""}</option>)}
-                </select>
-              ) : <span className="st-note">{(editors ?? []).find((e) => e.id === w.scheduler_id)?.name ?? "No one"}</span>}
             </div>
             {platforms.length === 0
               ? <div className="st-row"><span className="st-note">No platforms are set up on the server yet.</span></div>
