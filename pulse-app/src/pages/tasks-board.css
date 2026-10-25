@@ -552,3 +552,13 @@ html[data-theme="dark"] .task-panel-scrim.tp2-scrim{background:rgba(0,0,0,.55)}
 }
 @keyframes tb-mopen{from{opacity:0;transform:translateY(-6px)}to{opacity:1;transform:none}}
 @media (prefers-reduced-motion:reduce){.tb .task-col.m-open{animation:none}.tb-mtile{transition:none}}
+
+/* Review: approve or send back from the foot of the task window */
+.tp2-dfoot.tp2-review{align-items:center;background:var(--tb-solid)}
+.tp2-dfoot.tp2-review.open{flex-direction:column;align-items:stretch;gap:10px}
+.tp2-review-say{flex:1;min-width:0;display:flex;align-items:flex-start;gap:8px;color:var(--tb-text2)}
+.tp2-review-acts{flex:none;display:flex;justify-content:flex-end;gap:8px}
+.tp2-backnote{width:100%;min-height:58px;resize:vertical;padding:9px 11px;border:1px solid var(--tb-line);border-radius:10px;background:var(--tb-sunk);
+  color:var(--tb-text);font-family:inherit;font-size:13px;line-height:1.45}
+.tp2-backnote:focus{outline:none;border-color:var(--tb-ac)}
+@media (max-width:520px){.tp2-dfoot.tp2-review{flex-direction:column;align-items:stretch}}

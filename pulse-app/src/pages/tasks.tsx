@@ -2082,6 +2082,11 @@ export function TaskPanel({ mode, task, canWrite, editors, channels, onClose, on
   // server check); everyone else who can open the panel sees it read-only.
   const isOwnerTask = !!user?.editorId && task?.editor_id === user.editorId;
   const canResolve = !!task && task.status === "review" && !!task.can_review && !isOwnerTask;
+  // A reviewer approves or sends back from the foot of the window, where reading it ends
+  // (sending back takes a note: what needs fixing).
+  const [backOpen, setBackOpen] = useState(false);
+  const [backNote, setBackNote] = useState("");
+  const [resolving, setResolving] = useState(false);
   // Who may change what — mirrors the server (PATCH /tasks/:id):
   //  - a completed task is frozen as approved; only an admin changes it;
   //  - the brief (title, description, brand, type, dates, priority, repeat)
@@ -2222,6 +2227,25 @@ export function TaskPanel({ mode, task, canWrite, editors, channels, onClose, on
       toast.success(approving ? `Approved “${task.title}”.` : "Saved.");
     }
     catch (e) { toast.error(e instanceof ApiError ? e.message : "Couldn't save."); }
+  }
+  async function approve() {
+    setResolving(true);
+    try { await patch({ status: "done" }); } finally { setResolving(false); }
+  }
+  async function sendBack() {
+    if (!task || !backNote.trim()) return;
+    setResolving(true);
+    try {
+      await api(`/tasks/${task.id}`, { method: "PATCH", body: JSON.stringify({ status: "in_progress", reviewNote: backNote.trim() }) });
+      onChanged();
+      setBackOpen(false);
+      setBackNote("");
+      toast.success(`Sent back to ${task.editor_name ?? "the editor"} for rework.`);
+    } catch (e) {
+      toast.error(e instanceof ApiError ? e.message : "Couldn't send it back.");
+    } finally {
+      setResolving(false);
+    }
   }
   // Draft-update in create mode; inline PATCH in edit mode.
   function set(localKey: string, apiKey: string, value: unknown) {
@@ -2573,7 +2597,31 @@ export function TaskPanel({ mode, task, canWrite, editors, channels, onClose, on
           <TaskHistory taskId={t.id} title={t.title} />
           <Comments taskId={t.id} readOnly={ro} />
         </div>
-        {rule && <div className="tp2-dfoot">{TB_ICON.info}<span>{rule}</span></div>}
+        {canResolve ? (
+          <div className={"tp2-dfoot tp2-review" + (backOpen ? " open" : "")}>
+            {backOpen ? (
+              <>
+                <textarea className="tp2-backnote" rows={2} autoFocus maxLength={2000} value={backNote}
+                  placeholder={`What does ${t.editor_name ?? "the editor"} need to fix before sending it again?`} aria-label="What needs fixing"
+                  onChange={(e) => setBackNote(e.target.value)} />
+                <div className="tp2-review-acts">
+                  <button type="button" className="btn" onClick={() => { setBackOpen(false); setBackNote(""); }}>Cancel</button>
+                  <button type="button" className="btn btn-primary" disabled={resolving || !backNote.trim()} onClick={sendBack}>
+                    {resolving ? "Sending…" : "Send back"}
+                  </button>
+                </div>
+              </>
+            ) : (
+              <>
+                <span className="tp2-review-say">{TB_ICON.info}<span>Reviewed the work? Approve it, or send it back with a note.</span></span>
+                <div className="tp2-review-acts">
+                  <button type="button" className="btn" disabled={resolving} onClick={() => setBackOpen(true)}>↩ Send back</button>
+                  <button type="button" className="btn btn-primary" disabled={resolving} onClick={approve}>{resolving ? "Approving…" : "✓ Approve"}</button>
+                </div>
+              </>
+            )}
+          </div>
+        ) : rule && <div className="tp2-dfoot">{TB_ICON.info}<span>{rule}</span></div>}
       </aside>
     </div>
   );
