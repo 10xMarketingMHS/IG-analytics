@@ -11,7 +11,7 @@ import { MultiSelect, type Opt } from "@/components/multi-select";
 import { rangeFor, inRange, labelFor, type RangeKey } from "@/lib/date-range";
 import { channelTile, gradFor, initialsOf } from "@/lib/editor-visuals";
 import { IC, PLATFORM_AB, PLATFORM_COLOR, RangePicker, shortDate } from "@/pages/analytics";
-import type { Post, Platform } from "@/lib/types";
+import type { Account, Post, Platform } from "@/lib/types";
 import "./analytics.css";
 import "./posts.css";
 
@@ -102,19 +102,29 @@ function toggleSet<T>(setter: React.Dispatch<React.SetStateAction<Set<T>>>, val:
 export function PostsPage() {
   const { taxonomy } = useTaxonomy();
   const { editors } = useEditors();
-  const { workspaces } = useWorkspaces();
+  const { workspaces, isAdmin } = useWorkspaces();
   const navigate = useNavigate();
   const location = useLocation();
 
   // Cross-channel content database so Channel / Platform / Collab filters work.
   const { data: postData, refetch } = useResource<{ posts: P[] }>("/posts?channel=all");
   const { data: platData } = useResource<{ platforms: Platform[] }>("/platforms");
+  // each channel's platforms, as dots on its chip
+  const { data: acctData } = useResource<{ accounts: Account[] }>("/accounts?channel=all");
+  const platformsOf = useMemo(() => {
+    const m = new Map<string, Set<string>>();
+    for (const a of acctData?.accounts ?? []) {
+      if (!m.has(a.channel_id)) m.set(a.channel_id, new Set());
+      m.get(a.channel_id)!.add(a.platform_key);
+    }
+    return m;
+  }, [acctData]);
   const posts = postData?.posts ?? null;
 
   const [query, setQuery] = useState("");
   const [status, setStatus] = useState<Status>("all");
   const [types, setTypes] = useState<Set<string>>(new Set());
-  // The sidebar's Channels list opens Posts filtered to that channel.
+  // The channel chips (and a link that passes { channel }) filter to one channel.
   const [channelIds, setChannelIds] = useState<Set<string>>(() => {
     const ch = (location.state as { channel?: string } | null)?.channel;
     return new Set(ch ? [ch] : []);
@@ -301,6 +311,34 @@ export function PostsPage() {
 
   return (
     <section className="screen an pst">
+      {/* The channels (they were in the sidebar): one click shows that channel's
+          posts, again to show them all; the Channel filter below stays in step */}
+      {workspaces.length > 0 && (
+        <div className="pst-chans" role="group" aria-label="Channels">
+          <button type="button" className={"pst-chan all" + (channelIds.size === 0 ? " on" : "")} aria-pressed={channelIds.size === 0}
+            onClick={() => setChannelIds(new Set())}>
+            All channels<span className="pst-count">{scoped.length}</span>
+          </button>
+          {workspaces.map((w) => {
+            const on = channelIds.has(w.id);
+            return (
+              <button key={w.id} type="button" className={"pst-chan" + (on ? " on" : "")} aria-pressed={on} title={`${w.name}: see its posts`}
+                onClick={() => setChannelIds(on && channelIds.size === 1 ? new Set() : new Set([w.id]))}>
+                <span className="pst-tile" style={w.logo_url ? undefined : { background: channelTile(w.id) }}>
+                  {w.logo_url ? <img src={w.logo_url} alt="" /> : initialsOf(w.name)}
+                </span>
+                {w.name}
+                <span className="pst-chan-plats" aria-hidden="true">
+                  {[...(platformsOf.get(w.id) ?? [])].map((k) => <i key={k} style={{ background: PLATFORM_COLOR[k] ?? "currentColor" }} />)}
+                </span>
+                <span className="pst-count">{counts.channel[w.id] ?? 0}</span>
+              </button>
+            );
+          })}
+          {isAdmin && <button type="button" className="pst-chan-edit" onClick={() => navigate("/channels")}>Edit channels</button>}
+        </div>
+      )}
+
       {/* Search, dates, columns */}
       <div className="an-bar">
         <label className="pst-search">

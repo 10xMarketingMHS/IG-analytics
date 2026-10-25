@@ -84,3 +84,18 @@ html[data-theme="dark"] .pst-st.planned{background:oklch(0.3 0.06 75);color:oklc
 .pst-del{width:28px;height:28px;display:grid;place-items:center;padding:0;border:0;border-radius:8px;background:transparent;color:var(--an-text3);cursor:pointer}
 .pst-del:hover,.pst-del:focus-visible{background:var(--an-badSoft);color:var(--an-bad)}
 .pst-empty td{padding:28px 18px;text-align:center;color:var(--an-text3)}
+
+/* the channels (they were in the sidebar): a chip per brand, its platforms as dots */
+.pst-chans{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.pst-chan{display:inline-flex;align-items:center;gap:8px;height:36px;padding:0 10px 0 7px;border:1px solid var(--an-line);border-radius:11px;background:var(--an-panel);
+  color:var(--an-text);font-family:'Plus Jakarta Sans',sans-serif;font-size:13px;font-weight:600;cursor:pointer;transition:border-color .15s,background-color .15s}
+.pst-chan.all{padding-left:12px}
+.pst-chan:hover{border-color:var(--an-text3)}
+.pst-chan.on{border-color:var(--an-ac);background:var(--an-acSoft);color:var(--an-acText)}
+.pst-chan.on .pst-count{background:var(--an-solid);color:var(--an-acText)}
+.pst-chan .pst-tile{overflow:hidden}
+.pst-chan .pst-tile img{width:100%;height:100%;object-fit:cover}
+.pst-chan-plats{display:inline-flex;gap:3px}
+.pst-chan-plats i{width:6px;height:6px;border-radius:50%}
+.pst-chan-edit{margin-left:2px;padding:0 4px;border:0;background:none;color:var(--an-acText);font-family:'Plus Jakarta Sans',sans-serif;font-size:12.5px;font-weight:600;cursor:pointer}
+.pst-chan-edit:hover{text-decoration:underline}

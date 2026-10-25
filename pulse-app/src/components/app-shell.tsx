@@ -38,11 +38,10 @@ import { OnlineNow } from "@/components/online-now";
 import { EchoMark } from "@/components/echo-logo";
 import { navIcon, SIGN_OUT_ICON, RAIL_ICON, COMPOSE_ICON, SEARCH_ICON, PLUS_ICON, BREAK_ICON, GEAR_ICON, MORE_ICON, CLOSE_ICON } from "@/components/nav-icons";
 import { JumpPalette, type JumpItem } from "@/components/jump-palette";
-import { channelTile, initialsOf } from "@/lib/editor-visuals";
 import "./sidebar.css";
 import "./mobile.css";
 import "./sheet.css";
-import type { Account, Activity } from "@/lib/types";
+import type { Activity } from "@/lib/types";
 
 // The sidebar's groups, as in the redesign. Items still come from NAV_ITEMS
 // with their own access rules; Settings lives on the gear by your name and
@@ -64,7 +63,6 @@ const RAIL_KEY = "pulse-sidebar-rail";
 // The phone tab bar has ~54px a tab: two names go short there (the sidebar and
 // page titles keep them in full).
 const TAB_SHORT: Record<string, string> = { "/chat": "Chat", "/tasks": "Tasks" };
-const PLATFORM_DOT: Record<string, string> = { instagram: "#e1306c", facebook: "#1877f2", youtube: "#ff0033" };
 
 // Break time used today, for anyone whose breaks are tracked (an employee
 // who's clocked in, or anyone on a break right now) — the same people the
@@ -439,16 +437,6 @@ function AppShellInner() {
       if (moved > 70) setMenuOpen(false);
     },
   };
-  // Channels: each brand with a dot per platform it posts to.
-  const { data: acctData } = useResource<{ accounts: Account[] }>("/accounts?channel=all");
-  const platformsOf = useMemo(() => {
-    const m = new Map<string, Set<string>>();
-    for (const a of acctData?.accounts ?? []) {
-      if (!m.has(a.channel_id)) m.set(a.channel_id, new Set());
-      m.get(a.channel_id)!.add(a.platform_key);
-    }
-    return m;
-  }, [acctData]);
   const addPostItem = NAV_ITEMS.find((i) => i.href === "/posts/new");
   const settingsItem = NAV_ITEMS.find((i) => i.href === "/settings");
   const jumpItems: JumpItem[] = [
@@ -596,34 +584,6 @@ function AppShellInner() {
               </div>
             </div>
           ))}
-          {workspaces.length > 0 && (
-            <div className="sb2-group sb2-channels">
-              <div className="navsec">
-                <span className="sb2-label">Channels</span>
-                {isAdmin && (
-                  <NavLink to="/channels" className="sb2-secbtn" title="Add or edit channels" aria-label="Add or edit channels" onClick={() => setMenuOpen(false)}>{PLUS_ICON}</NavLink>
-                )}
-              </div>
-              <div className="sb2-items">
-              {workspaces.map((w) => (
-                <button key={w.id} type="button" className="navitem sb2-channel" title={rail ? w.name : `${w.name} — see its posts`}
-                  aria-disabled={eodLocked ? true : undefined}
-                  onClick={() => {
-                    if (eodLocked) { setLockAsk({ title: `${w.name}'s posts`, href: "/posts", state: { channel: w.id } }); return; }
-                    setMenuOpen(false); navigate("/posts", { state: { channel: w.id } });
-                  }}>
-                  <span className="ic sb2-chtile" style={w.logo_url ? undefined : { backgroundColor: channelTile(w.id) }}>
-                    {w.logo_url ? <img src={w.logo_url} alt="" /> : initialsOf(w.name)}
-                  </span>
-                  <span className="sb2-label">{w.name}</span>
-                  <span className="sb2-plats sb2-label">
-                    {[...(platformsOf.get(w.id) ?? [])].map((p) => <span key={p} title={p} style={{ background: PLATFORM_DOT[p] ?? "currentColor" }} />)}
-                  </span>
-                </button>
-              ))}
-              </div>
-            </div>
-          )}
         </nav>
         <SidebarBreak />
         <AccentRow />
