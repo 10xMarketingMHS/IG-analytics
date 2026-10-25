@@ -3,6 +3,7 @@ import { Navigate, useNavigate, useSearchParams } from "react-router-dom";
 import { useAuth, ApiError } from "@/lib/auth-context";
 import { api, noAnswer } from "@/lib/api";
 import { EchoRun } from "@/components/echo-run";
+import { EchoMark } from "@/components/echo-logo";
 import { ParticleField } from "@/components/particle-field";
 import { useTheme } from "@/components/theme-provider";
 import "./login.css";
@@ -163,7 +164,7 @@ export function LoginPage() {
             <span className="lg-glow" />
             <span className="lg-grain" />
           </div>
-          <span className="lg-mark" aria-hidden="true">◐</span>
+          <span className="lg-mark" aria-hidden="true"><EchoMark /></span>
           <EchoRun />
           <div className="lg-pitch">
             <span>Echo</span>
@@ -181,7 +182,7 @@ export function LoginPage() {
             ))}
           </div>
           <div className="lg-form">
-            <span className="logo lg-logo" aria-hidden="true">◐</span>
+            <EchoMark className="lg-logo" />
             <h1>{forgot ? "Forgot your password?" : "Welcome back"}</h1>
             <p className="lg-sub">
               {forgot ? "Your admin will set a temporary password for you." : "Sign in to Echo to pick up where you left off."}

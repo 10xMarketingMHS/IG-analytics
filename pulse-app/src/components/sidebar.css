@@ -58,6 +58,10 @@ html[data-theme="dark"] .app>aside.sb2{
 /* brand + collapse */
 .sb2 .brand{position:relative;gap:10px;padding:14px 12px 10px 14px;transition:padding var(--sb-t) var(--sb-ease)}
 .sb2 .logo{flex:none;width:30px;height:30px;border-radius:9px;font-size:14px;font-weight:800;background:var(--sb-acGrad);box-shadow:0 6px 14px -6px oklch(0.55 0.22 var(--acH) / .6)}
+/* the Echo mark itself, no tile; the name beside it in the mark's ink */
+.sb2 .logo.echo-logo{width:34px;padding:0;border:0;background:none;box-shadow:none;border-radius:6px}
+.sb2 .logo.echo-logo .echo-mark{width:34px;height:auto}
+.sb2 .brand .sb2-brandtx b{color:var(--logo-ink);font-weight:800}
 .sb2-brandtx{flex:none;width:calc(var(--sb-w) - 106px);min-width:0;overflow:hidden;line-height:1.2}
 .sb2 .brand b{display:block;font-size:14px;font-weight:700;letter-spacing:-.01em;color:var(--sb-text);white-space:nowrap}
 .sb2 .brand small{margin-top:1px;font-size:11px;font-weight:500;color:var(--sb-text3);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}

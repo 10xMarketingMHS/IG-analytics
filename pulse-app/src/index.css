@@ -57,6 +57,22 @@ a{color:inherit}
 .app>aside{background:var(--panel);border-right:1px solid var(--border);display:flex;flex-direction:column;position:sticky;top:0;height:100vh}
 .brand{display:flex;align-items:center;gap:10px;padding:16px 16px 12px}
 .logo{width:34px;height:34px;border-radius:10px;background:var(--grad);display:grid;place-items:center;color:#fff;font-size:16px;box-shadow:0 6px 18px rgba(124,58,237,.45)}
+
+/* The Echo mark (components/echo-logo.tsx): the E in the accent's deep tone,
+   the signals in its light one — the other way round on dark backgrounds — so
+   it follows the accent picked in the theme menu. */
+:root{--logo-ink:oklch(0.46 0.21 var(--acH));--logo-wave:oklch(0.77 0.12 var(--acH))}
+html[data-theme="dark"]{--logo-ink:oklch(0.82 0.11 var(--acH));--logo-wave:oklch(0.62 0.17 var(--acH))}
+.echo-mark{display:block;overflow:visible}
+.echo-mark .em-e{fill:var(--logo-ink)}
+.echo-mark .em-w{fill:none;stroke:var(--logo-wave);stroke-linecap:round}
+/* loading: the large signal goes out first, the small one after, both fading before the next round */
+.echo-mark.em-anim .em-sig{animation:1.8s linear infinite}
+.echo-mark.em-anim .em-l{animation-name:em-large}
+.echo-mark.em-anim .em-s{animation-name:em-small}
+@keyframes em-large{0%{transform:translateX(-14px);opacity:0}12%{transform:translateX(0);opacity:1}48%{transform:translateX(44px);opacity:.85}65%,100%{transform:translateX(68px);opacity:0}}
+@keyframes em-small{0%,18%{transform:translateX(-14px);opacity:0}30%{transform:translateX(0);opacity:1}66%{transform:translateX(44px);opacity:.85}83%,100%{transform:translateX(68px);opacity:0}}
+@media (prefers-reduced-motion:reduce){.echo-mark.em-anim .em-sig{animation:none}}
 .brand b{font-size:14.5px;letter-spacing:-.3px}
 .brand small{display:block;font-size:10px;color:var(--muted);font-weight:500}
 nav.side{padding:7px 10px 9px;display:flex;flex-direction:column;gap:2px;flex:1;min-height:0;overflow-y:auto;
@@ -1622,13 +1638,8 @@ button.nt-row:hover,button.nt-row:focus-visible{background:var(--panel2)}
   opacity:1; transition:opacity 400ms ease;
 }
 .boot-splash--fading{opacity:0}
-/* contain, never cover — the clip is 16:9 with centered logo text; cropping on
-   a non-16:9 window would clip the wordmark. */
-.boot-splash-video{
-  width:100%; height:100%;
-  object-fit:contain;
-  display:block;
-}
+/* the Echo mark, its signals going out (components/echo-logo.tsx) */
+.boot-splash-mark{width:min(120px,30vw);height:auto}
 
 /* ---- Branded loading animation (shared <Loader>) ---- */
 /* The alpha clip composites over whatever's behind it. Full-screen variant is
@@ -1636,7 +1647,7 @@ button.nt-row:hover,button.nt-row:focus-visible{background:var(--panel2)}
    into a page/section placeholder. */
 .loader{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:10px;padding:28px 16px;min-height:120px}
 .loader--full{position:fixed;inset:0;background:var(--bg);z-index:50;padding:0}
-.loader-video{height:auto;display:block;max-width:60vw}
+.loader-mark{height:auto;max-width:40vw}
 .loader-label{font-size:13px;color:var(--muted);letter-spacing:.2px}
 
 /* ==== Goals — admin goal-tracking dashboard (Settings › Goals) ==== */

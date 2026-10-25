@@ -35,6 +35,7 @@ import { SodModal } from "@/components/sod-modal";
 import { useTheme, ACCENTS } from "@/components/theme-provider";
 import { ChatProvider, useChat } from "@/lib/chat";
 import { OnlineNow } from "@/components/online-now";
+import { EchoMark } from "@/components/echo-logo";
 import { navIcon, SIGN_OUT_ICON, RAIL_ICON, COMPOSE_ICON, SEARCH_ICON, PLUS_ICON, BREAK_ICON, GEAR_ICON, MORE_ICON, CLOSE_ICON } from "@/components/nav-icons";
 import { JumpPalette, type JumpItem } from "@/components/jump-palette";
 import { channelTile, initialsOf } from "@/lib/editor-visuals";
@@ -539,9 +540,9 @@ function AppShellInner() {
         </div>
         <div className="brand">
           {user?.isSuperAdmin && !user.viewingAs ? (
-            <button type="button" className="logo" onClick={() => setViewAsOpen(true)} title="View Echo as someone (test)" aria-label="View Echo as someone">◐</button>
+            <button type="button" className="logo echo-logo" onClick={() => setViewAsOpen(true)} title="View Echo as someone (test)" aria-label="View Echo as someone"><EchoMark /></button>
           ) : (
-            <div className="logo">◐</div>
+            <div className="logo echo-logo"><EchoMark /></div>
           )}
           <div className="sb2-label sb2-brandtx">
             <b>Echo</b>
