@@ -47,15 +47,19 @@ export function doneByType(tasks: Task[], editorId: string, from: string, to: st
   return m;
 }
 
+// Job counts to one decimal: a review period's target is half a goal (2.5), and
+// adding or taking such numbers leaves float dust (17.099999999999998).
+export const tenths = (n: number) => Math.round(n * 10) / 10;
+
 export function goalLines(rows: PerfRow[], per: Period, halfCounts?: Map<string, number>): GoalLine[] {
   return rows
     .map((r) => {
       // the goal after approved leave, like the leaderboard and Management Performance
       const goal = r.goalAdjusted ?? r.goalJC;
-      const first = Math.round((goal / 2) * 10) / 10;
-      const target = per === "h1" ? first : per === "h2" ? Math.round((goal - first) * 10) / 10 : goal;
+      const first = tenths(goal / 2);
+      const target = per === "h1" ? first : per === "h2" ? tenths(goal - first) : tenths(goal);
       const done = per === "m" ? r.actualJC : halfCounts?.get(r.contentFormatId) ?? 0;
-      return { id: r.contentFormatId, name: r.name, month: goal, target, done };
+      return { id: r.contentFormatId, name: r.name, month: tenths(goal), target, done };
     })
     .filter((l) => l.target > 0);
 }
@@ -63,8 +67,8 @@ export function goalLines(rows: PerfRow[], per: Period, halfCounts?: Map<string,
 // Achievement counts each goal only up to its own target, so overdoing one
 // type can't hide a miss on another (the same rule as the goal score).
 export function achievement(lines: GoalLine[]) {
-  const target = lines.reduce((s, l) => s + l.target, 0);
-  const done = lines.reduce((s, l) => s + Math.min(l.done, l.target), 0);
+  const target = tenths(lines.reduce((s, l) => s + l.target, 0));
+  const done = tenths(lines.reduce((s, l) => s + Math.min(l.done, l.target), 0));
   return { target, done, x: target ? done / target : 0, missed: lines.filter((l) => l.done < l.target).length };
 }
 

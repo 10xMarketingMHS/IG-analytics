@@ -11,7 +11,7 @@ import { gradFor } from "@/lib/editor-visuals";
 import { ymd } from "@/lib/task-points";
 import { DISCIPLINE_CRITERIA, goalBreakdown, type Ratings } from "@/lib/goal-points";
 import {
-  achievement, bandOf, currentPeriod, doneByType, goalLines, monthName, pctText, periodBounds, periodLabel,
+  achievement, bandOf, currentPeriod, doneByType, goalLines, monthName, pctText, periodBounds, periodLabel, tenths,
   type GoalLine, type PerfRow, type Period,
 } from "@/lib/goal-periods";
 import type { Editor } from "@/lib/types";
@@ -145,7 +145,7 @@ function TeamGoals({ month, isCurrent, focusId, selfOnly }: { month: string; isC
 
   const sorted = [...people].sort((a, b) => b.x - a.x || a.editor.name.localeCompare(b.editor.name));
   const sel = people.find((p) => p.editor.id === selId) ?? [...people].sort((a, b) => a.x - b.x)[0] ?? null;
-  const TT = people.reduce((s, p) => s + p.target, 0), TD = people.reduce((s, p) => s + p.done, 0);
+  const TT = tenths(people.reduce((s, p) => s + p.target, 0)), TD = tenths(people.reduce((s, p) => s + p.done, 0));
   const allLines = people.reduce((s, p) => s + p.lines.length, 0), missed = people.reduce((s, p) => s + p.missed, 0);
   const label = periodLabel(month, per);
   const kpis = [
@@ -164,7 +164,7 @@ function TeamGoals({ month, isCurrent, focusId, selfOnly }: { month: string; isC
       if (l.done < l.target) a.short.push(p.editor);
       m.set(l.id, a);
     }
-    return [...m.values()].map((a) => ({ ...a, x: a.t ? a.d / a.t : 1 })).sort((a, b) => a.x - b.x);
+    return [...m.values()].map((a) => ({ ...a, t: tenths(a.t), d: tenths(a.d), x: a.t ? a.d / a.t : 1 })).sort((a, b) => a.x - b.x);
   }, [people]);
 
   async function onExport() {
@@ -277,7 +277,7 @@ function TeamGoals({ month, isCurrent, focusId, selfOnly }: { month: string; isC
                           return (
                             <div key={l.id} className="gl-tr">
                               <b>{l.name}</b><span className="num gl-muted">{l.month}</span><span className="num">{l.target}</span><b className="num">{l.done}</b>
-                              <span className={"num " + (ok ? "gl-muted" : "bad")}>{Math.max(0, l.target - l.done)}</span>
+                              <span className={"num " + (ok ? "gl-muted" : "bad")}>{tenths(Math.max(0, l.target - l.done))}</span>
                               <span className="gl-prog"><span className="gl-track sm"><span className={"gl-fill " + tone} style={{ width: `${Math.min(100, x * 100)}%` }} /></span><b className={tone}>{pctText(x)}</b></span>
                               <span><span className={"gl-tag " + (ok ? "good" : "bad")}>{ok ? "Achieved" : "Not achieved"}</span></span>
                             </div>
@@ -302,7 +302,7 @@ function TeamGoals({ month, isCurrent, focusId, selfOnly }: { month: string; isC
                         <b>{a.name}</b>
                         <span className="gl-prog"><span className="gl-track"><span className={"gl-fill " + tone} style={{ width: `${Math.min(100, a.x * 100)}%` }} /></span><b className={tone}>{pctText(a.x)}</b></span>
                         <span className="num">{a.d} / {a.t}</span>
-                        <span className={"num " + (a.t - a.d ? "bad" : "gl-muted")}>{a.t - a.d}</span>
+                        <span className={"num " + (a.t > a.d ? "bad" : "gl-muted")}>{tenths(a.t - a.d)}</span>
                         <span className="gl-short">
                           {a.short.slice(0, 5).map((e) => <span key={e.id} title={e.name}><Face editor={e} size="sm" /></span>)}
                           <em>{a.short.length ? `${a.short.length} short` : "All met"}</em>
