@@ -127,7 +127,13 @@ export async function ensureBootstrapped() {
   try {
     await client.query("BEGIN");
 
-    const hash = await bcrypt.hash(config.ADMIN_PASSWORD, 10);
+    // Written only when ADMIN_PASSWORD differs from the saved one. A fresh hash
+    // on every start ended this login's sessions each time the server
+    // restarted (a session carries a fingerprint of the hash it signed in
+    // with, auth.js), so every deploy signed the Super Admin out.
+    const { rows: saved } = await client.query("select password_hash from app_user where id = $1", [config.ADMIN_USER_ID]);
+    const same = !!saved[0]?.password_hash && (await bcrypt.compare(config.ADMIN_PASSWORD, saved[0].password_hash).catch(() => false));
+    const hash = same ? saved[0].password_hash : await bcrypt.hash(config.ADMIN_PASSWORD, 10);
     await client.query(
       `insert into app_user (id, email, name, password_hash, active)
        values ($1, $2, 'Admin', $3, true)
