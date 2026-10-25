@@ -2,14 +2,16 @@ import { pool } from "./db.js";
 import { hasColumn } from "./schema-flags.js";
 
 // Social tasks after approval (20261104120000_task_scheduling). An approved
-// Social task goes into one shared list for the schedulers — anyone with a
+// Social task whose type is ticked "Goes to Scheduling" (Settings › Tasks &
+// time: Reels, Carousel, Post — not Thumbnail; a task with no type stays out)
+// goes into one shared list for the schedulers — anyone with a
 // Schedule goal this month (Goals › Set goals). Whoever sets its post date
 // takes it; they post it, and LINK_AFTER_DAYS later paste each platform's link —
 // each link becomes a post on the same SID (routes/scheduling.js), and the
 // scheduling counts as one Schedule job of theirs. The editor's credit is the
 // approval itself, as before.
 
-export const schedulingReady = () => hasColumn("post", "from_task_id");
+export const schedulingReady = async () => (await hasColumn("post", "from_task_id")) && hasColumn("task_content_format", "to_scheduling");
 export const NEEDS_SCHED_DB = "Scheduling needs a database update first — ask whoever runs the database to apply 20261104120000_task_scheduling.";
 
 // The links are asked for this many days after the post date (the numbers have settled).
@@ -57,17 +59,41 @@ export async function isScheduler(orgId, editorId) {
   return !!editorId && (await schedulerIds(orgId)).includes(editorId);
 }
 
-// Just approved (or closed without review): a Social task — not one made from a
-// post, which is a post already — goes into the schedulers' shared list.
-// True when it did.
+// Just approved (or closed without review): a Social task of a type that goes
+// to Scheduling — not one made from a post, which is a post already — goes into
+// the schedulers' shared list. True when it did.
 export async function enterScheduling(taskId) {
   if (!(await schedulingReady())) return false;
   const { rowCount } = await pool.query(
     `update task set schedule_from = now(), scheduler_id = null, post_on = null, post_time = null
-      where id = $1 and task_type = 'social' and post_id is null and schedule_from is null`,
+      where id = $1 and task_type = 'social' and post_id is null and schedule_from is null
+        and exists (select 1 from task_content_format f where f.id = task.content_format_id and f.to_scheduling)`,
     [taskId],
   );
   return rowCount > 0;
+}
+
+// A type's tick changed (Settings › Tasks & time), and the list follows it.
+// Ticked: this month's approved Social work of the type comes in, as the
+// database update brought it in. Unticked: what's waiting untaken goes out —
+// work someone took, or that has its links, stays with them.
+export async function followTypeTick(orgId, formatId, on) {
+  if (!(await schedulingReady())) return 0;
+  const { rowCount } = on
+    ? await pool.query(
+      `update task set schedule_from = completed_at, scheduler_id = null, post_on = null, post_time = null
+        where org_id = $1 and content_format_id = $2 and task_type = 'social' and post_id is null and status = 'done'
+          and schedule_from is null and completed_at is not null
+          and completed_at >= (date_trunc('month', now() at time zone 'Asia/Kolkata') at time zone 'Asia/Kolkata')`,
+      [orgId, formatId],
+    )
+    : await pool.query(
+      `update task set schedule_from = null, post_on = null, post_time = null
+        where org_id = $1 and content_format_id = $2 and schedule_from is not null and scheduler_id is null
+          and not exists (select 1 from post p where p.from_task_id = task.id and p.deleted_at is null)`,
+      [orgId, formatId],
+    );
+  return rowCount;
 }
 
 // Reopened before any link went in: out of scheduling (its date and taker with

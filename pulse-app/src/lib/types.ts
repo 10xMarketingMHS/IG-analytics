@@ -159,6 +159,9 @@ export type ContentFormatDef = {
   metric_tier: "key" | "critical" | null;
   // Must a task of this type carry a delivery link before going to review?
   review_link_required: boolean;
+  // Does an approved Social task of this type go to Scheduling? Missing until
+  // the scheduling database update is applied.
+  to_scheduling?: boolean;
   // Project-type-only (category='project'): duration bounds a project's Due
   // Date; metrics_description is free-form documentation only (no scoring use).
   duration_days?: number | null;

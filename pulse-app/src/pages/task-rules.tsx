@@ -9,7 +9,8 @@ import { SI, Stepper, Toggle, fmtHours } from "@/pages/settings-ui";
 
 // Settings › Tasks & time (Pulse Redesign v5): every task type in one list,
 // grouped Social / Ads / Service / Project — its icon, name, category, whether
-// it needs a delivery link for review, its Key/Critical metric tag, points and
+// it needs a delivery link for review, whether approved Social work of it goes
+// to Scheduling, its Key/Critical metric tag, points and
 // time budget (a project type has a duration in days instead). Each change
 // saves on its own a moment after the last click. Below: breaks and the task
 // rules everyone works by. Admins or the task_settings grant.
@@ -92,11 +93,11 @@ export function TaskRulesSection() {
       toast.error(err instanceof ApiError ? err.message : "Could not clear that time.");
     }
   }
-  async function patchFormat(id: string, patch: Record<string, unknown>, errorMsg: string, okMsg?: string) {
+  async function patchFormat(id: string, patch: Record<string, unknown>, errorMsg: string, okMsg?: string | ((r: { schedulingMoved?: number }) => string)) {
     try {
-      await api(`/content-formats/${id}`, { method: "PATCH", body: JSON.stringify(patch) });
+      const r = await api<{ schedulingMoved?: number }>(`/content-formats/${id}`, { method: "PATCH", body: JSON.stringify(patch) });
       await refetchFormats();
-      if (okMsg) toast.success(okMsg);
+      if (okMsg) toast.success(typeof okMsg === "function" ? okMsg(r) : okMsg);
     } catch (err) {
       toast.error(err instanceof ApiError ? err.message : errorMsg);
     }
@@ -153,6 +154,7 @@ export function TaskRulesSection() {
         <div className="st-tt-head" aria-hidden="true">
           <span>Type</span>
           <span className="st-c-link">Link</span>
+          <span className="st-c-sched">Schedule</span>
           <span className="st-c-metric">Metric</span>
           <span className="st-c-pts">Points</span>
           <span className="st-c-time">Time</span>
@@ -181,6 +183,12 @@ export function TaskRulesSection() {
                   onMetric={(metric_tier) => patchFormat(f.id, { metric_tier }, "Could not update the metric tag.", "Metric tag saved.")}
                   onLink={(review_link_required) => patchFormat(f.id, { review_link_required }, "Could not update the review link setting.",
                     review_link_required ? "A link is now needed for review." : "No link needed for review now.")}
+                  onSched={(to_scheduling) => patchFormat(f.id, { to_scheduling }, "Could not update the scheduling setting.", ({ schedulingMoved: n = 0 }) => {
+                    const tasks = `${n} approved task${n === 1 ? "" : "s"}`;
+                    return to_scheduling
+                      ? `Approved ${f.name} work now goes to Scheduling.${n ? ` ${tasks} from this month added to the list.` : ""}`
+                      : `${f.name} no longer goes to Scheduling.${n ? ` ${tasks} waiting untaken left the list.` : ""}`;
+                  })}
                   onHours={(hours) => setRule(f.id, null, hours)}
                   onClearHours={() => { const r = globalFor(f); if (r) removeRule(r.id); }}
                   onDuration={(duration_days) => patchFormat(f.id, { duration_days }, "Could not save the duration.", "Duration saved.")}
@@ -202,7 +210,8 @@ export function TaskRulesSection() {
         </div>
       </section>
       <span className="st-note">
-        Link — a task of this type can't go to review without a delivery link (untick it for scheduling, data or technical work). Points — on or
+        Link — a task of this type can't go to review without a delivery link (untick it for scheduling, data or technical work). Schedule — an approved
+        Social task of this type goes to Scheduling, for its post date and links (untick it for thumbnails and other work that isn't posted on its own). Points — on or
         before the due date earns them in full, 1 day late half, 2 days none, 3 or more costs them back. Removing a type doesn't touch tasks already using it.
       </span>
 
@@ -280,10 +289,10 @@ function IconPicker({ value, onPick }: { value: string; onPick: (icon: string) =
   );
 }
 
-// One task type: icon, name (click to rename), link toggle, metric tag, points
-// and time (or duration). Every field saves on its own.
+// One task type: icon, name (click to rename), link toggle, scheduling toggle
+// (Social types), metric tag, points and time (or duration). Every field saves on its own.
 function TypeRow({
-  format, rule, canPoints, onCategory, onIcon, onRename, onPoints, onMetric, onLink, onHours, onClearHours, onDuration, onMetrics, onRemove,
+  format, rule, canPoints, onCategory, onIcon, onRename, onPoints, onMetric, onLink, onSched, onHours, onClearHours, onDuration, onMetrics, onRemove,
 }: {
   format: ContentFormatDef;
   rule: TaskTimeRule | null;
@@ -294,6 +303,7 @@ function TypeRow({
   onPoints: (points: number) => void;
   onMetric: (tier: "key" | "critical" | null) => void;
   onLink: (required: boolean) => void;
+  onSched: (on: boolean) => void;
   onHours: (hours: number) => void;
   onClearHours: () => void;
   onDuration: (days: number | null) => void;
@@ -350,6 +360,12 @@ function TypeRow({
       <span className="st-c-link">
         <span className="st-mlabel">Link</span>
         <Toggle on={format.review_link_required} onChange={onLink} label={`${format.name} needs a delivery link for review`} />
+      </span>
+      <span className="st-c-sched">
+        {format.category === "social" && format.to_scheduling !== undefined ? (
+          <><span className="st-mlabel">Schedule</span>
+            <Toggle on={format.to_scheduling} onChange={onSched} label={`Approved ${format.name} work goes to Scheduling`} /></>
+        ) : <span className="st-note" style={{ justifyContent: "center" }} title={format.category === "social" ? "Needs the scheduling database update" : "Only Social work is scheduled"}>—</span>}
       </span>
       <span className="st-c-metric">
         {!isProject && <span className="st-mlabel">Metric</span>}
