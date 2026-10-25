@@ -1,5 +1,6 @@
 import "./async-errors.js"; // first: async route errors go to the error handler, never crash the server
 import express from "express";
+import compression from "compression";
 import cors from "cors";
 import cookieParser from "cookie-parser";
 import path from "node:path";
@@ -58,6 +59,14 @@ app.use((_req, res, next) => {
   next();
 });
 
+// Everything sent is compressed (brotli or gzip, whichever the browser takes):
+// the app's files and every API answer go out several times smaller — the
+// hosting plan counts bandwidth. Not the chat's live stream (it must go out
+// as it's written; it says no-transform too), nor anything under 1 KB.
+app.use(compression({
+  filter: (req, res) => !String(req.headers.accept || "").includes("text/event-stream") && compression.filter(req, res),
+}));
+
 // In dev the frontend port can vary (auto-assigned), so reflect any origin.
 // In production the frontend is same-origin, so CORS is effectively a no-op.
 app.use(cors({ origin: config.NODE_ENV === "production" ? config.CORS_ORIGIN : true, credentials: true }));
@@ -108,12 +117,20 @@ if (config.NODE_ENV === "production") {
     path.dirname(fileURLToPath(import.meta.url)),
     "../../pulse-app/dist",
   );
-  app.use(express.static(dist));
+  // Browsers keep the built files in /assets for a year: each one's name
+  // changes with its content, so a deploy brings new names, never stale code.
+  // index.html is checked every time, so a deploy shows at once.
+  app.use(express.static(dist, {
+    setHeaders(res, file) {
+      if (file.includes(`${path.sep}assets${path.sep}`)) res.setHeader("Cache-Control", "public, max-age=31536000, immutable");
+      else if (file.endsWith(".html")) res.setHeader("Cache-Control", "no-cache");
+    },
+  }));
   // SPA fallback: any non-API GET returns index.html so client-side routing
   // (React Router) works on refresh/deep links.
   app.get("*", (req, res, next) => {
     if (req.path.startsWith("/api")) return next();
-    res.sendFile(path.join(dist, "index.html"));
+    res.sendFile(path.join(dist, "index.html"), { cacheControl: false, headers: { "Cache-Control": "no-cache" } });
   });
 }
 
