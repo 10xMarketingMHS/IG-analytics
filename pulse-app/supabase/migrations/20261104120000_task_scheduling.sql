@@ -13,11 +13,12 @@ alter table public.task add column if not exists post_on date;
 alter table public.task add column if not exists post_time time;
 create index if not exists task_scheduling_idx on public.task(scheduler_id) where schedule_from is not null;
 
--- Which task types go to Scheduling once approved: the Social ones that are
--- posted (Reels, Carousel, Post…), not Thumbnails. Set once, the first time this
--- runs; after that it's Settings › Tasks & time.
+-- Which task types go on once approved: the Social ones that are posted
+-- (Reels, Carousel, Post…) to Scheduling, not Thumbnails; every Ads type to Ad
+-- uploads (20261106120000_ad_uploads). Set once, the first time this runs;
+-- after that it's Settings › Tasks & time.
 alter table public.task_content_format add column if not exists to_scheduling boolean;
-update public.task_content_format set to_scheduling = coalesce(category = 'social' and lower(name) not like '%thumbnail%', false)
+update public.task_content_format set to_scheduling = coalesce((category = 'social' and lower(name) not like '%thumbnail%') or category = 'ad', false)
  where to_scheduling is null;
 alter table public.task_content_format alter column to_scheduling set default false;
 alter table public.task_content_format alter column to_scheduling set not null;

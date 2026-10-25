@@ -25,6 +25,7 @@ import { InsightsPage } from "@/pages/insights";
 const TrendsPage = lazy(() => import("@/pages/trends").then((m) => ({ default: m.TrendsPage })));
 import { MetricsPage } from "@/pages/metrics";
 import { SchedulingPage } from "@/pages/scheduling";
+import { AdUploadsPage } from "@/pages/ad-uploads";
 import { ReportsPage } from "@/pages/reports";
 import { PostsPage } from "@/pages/posts";
 import { TasksPage } from "@/pages/tasks";
@@ -102,6 +103,7 @@ function AppRoutes() {
             <Route path="/dashboard" element={<Navigate to="/analytics" replace />} />
             <Route path="/metrics" element={<MetricsPage />} />
             <Route path="/scheduling" element={<SchedulingPage />} />
+            <Route path="/ad-uploads" element={<AdUploadsPage />} />
             <Route path="/insights" element={<InsightsPage />} />
             <Route
               path="/trends"

@@ -49,6 +49,8 @@ export const VERB_META: Record<ActivityVerb, { icon: string; cls: string }> = {
   schedule_ready: { icon: "🗓️", cls: "v-post" },
   schedule_set: { icon: "📅", cls: "v-post" },
   schedule_linked: { icon: "🚀", cls: "v-post" },
+  ad_recorded: { icon: "📣", cls: "v-post" },
+  ad_unrecorded: { icon: "↩️", cls: "v-post" },
 };
 
 export function relTime(iso: string) {

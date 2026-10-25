@@ -154,7 +154,7 @@ export function TaskRulesSection() {
         <div className="st-tt-head" aria-hidden="true">
           <span>Type</span>
           <span className="st-c-link">Link</span>
-          <span className="st-c-sched">Schedule</span>
+          <span className="st-c-sched">Next step</span>
           <span className="st-c-metric">Metric</span>
           <span className="st-c-pts">Points</span>
           <span className="st-c-time">Time</span>
@@ -183,11 +183,12 @@ export function TaskRulesSection() {
                   onMetric={(metric_tier) => patchFormat(f.id, { metric_tier }, "Could not update the metric tag.", "Metric tag saved.")}
                   onLink={(review_link_required) => patchFormat(f.id, { review_link_required }, "Could not update the review link setting.",
                     review_link_required ? "A link is now needed for review." : "No link needed for review now.")}
-                  onSched={(to_scheduling) => patchFormat(f.id, { to_scheduling }, "Could not update the scheduling setting.", ({ schedulingMoved: n = 0 }) => {
+                  onSched={(to_scheduling) => patchFormat(f.id, { to_scheduling }, "Could not update the next step.", ({ schedulingMoved: n = 0 }) => {
                     const tasks = `${n} approved task${n === 1 ? "" : "s"}`;
+                    const list = f.category === "ad" ? "Ad uploads" : "Scheduling";
                     return to_scheduling
-                      ? `Approved ${f.name} work now goes to Scheduling.${n ? ` ${tasks} from this month added to the list.` : ""}`
-                      : `${f.name} no longer goes to Scheduling.${n ? ` ${tasks} waiting untaken left the list.` : ""}`;
+                      ? `Approved ${f.name} work now goes to ${list}.${n ? ` ${tasks} from this month added to the list.` : ""}`
+                      : `${f.name} no longer goes to ${list}.${n ? ` ${tasks} still waiting left the list.` : ""}`;
                   })}
                   onHours={(hours) => setRule(f.id, null, hours)}
                   onClearHours={() => { const r = globalFor(f); if (r) removeRule(r.id); }}
@@ -210,8 +211,9 @@ export function TaskRulesSection() {
         </div>
       </section>
       <span className="st-note">
-        Link — a task of this type can't go to review without a delivery link (untick it for scheduling, data or technical work). Schedule — an approved
-        Social task of this type goes to Scheduling, for its post date and links (untick it for thumbnails and other work that isn't posted on its own). Points — on or
+        Link — a task of this type can't go to review without a delivery link (untick it for scheduling, data or technical work). Next step — an approved
+        Social task of this type goes to Scheduling, for its post date and links (untick it for thumbnails and other work that isn't posted on its own); an approved
+        Ads task goes to Ad uploads, for the ad numbers it became. Points — on or
         before the due date earns them in full, 1 day late half, 2 days none, 3 or more costs them back. Removing a type doesn't touch tasks already using it.
       </span>
 
@@ -362,10 +364,12 @@ function TypeRow({
         <Toggle on={format.review_link_required} onChange={onLink} label={`${format.name} needs a delivery link for review`} />
       </span>
       <span className="st-c-sched">
-        {format.category === "social" && format.to_scheduling !== undefined ? (
-          <><span className="st-mlabel">Schedule</span>
-            <Toggle on={format.to_scheduling} onChange={onSched} label={`Approved ${format.name} work goes to Scheduling`} /></>
-        ) : <span className="st-note" style={{ justifyContent: "center" }} title={format.category === "social" ? "Needs the scheduling database update" : "Only Social work is scheduled"}>—</span>}
+        {(format.category === "social" || format.category === "ad") && format.to_scheduling !== undefined ? (
+          <><span className="st-mlabel">{format.category === "ad" ? "Ad uploads" : "Scheduling"}</span>
+            <Toggle on={format.to_scheduling} onChange={onSched}
+              label={`Approved ${format.name} work goes to ${format.category === "ad" ? "Ad uploads" : "Scheduling"}`} /></>
+        ) : <span className="st-note" style={{ justifyContent: "center" }}
+          title={format.category === "social" || format.category === "ad" ? "Needs the scheduling database update" : "Only Social and Ads work goes on after approval"}>—</span>}
       </span>
       <span className="st-c-metric">
         {!isProject && <span className="st-mlabel">Metric</span>}

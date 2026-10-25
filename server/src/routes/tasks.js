@@ -11,6 +11,7 @@ import { closePendingHandovers } from "../handover.js";
 import { hasColumn } from "../schema-flags.js";
 import { coverFrom } from "../goal-score.js";
 import { enterScheduling, leaveScheduling, schedulerIds, schedulingReady } from "../scheduling.js";
+import { enterUploads, leaveUploads, uploadsReady } from "../ad-uploads.js";
 
 export const tasksRouter = Router();
 
@@ -146,6 +147,8 @@ const SELECT = `
          (to_jsonb(t)->>'scheduler_id')::uuid as scheduler_id, (to_jsonb(t)->>'schedule_from')::timestamptz as schedule_from,
          to_jsonb(t)->>'post_on' as post_on, left(to_jsonb(t)->>'post_time', 5) as post_time, se.name as scheduler_name,
          /*linked_posts*/0 as linked_posts,
+         -- Ad uploads after approval (../ad-uploads.js), the same way: ad_count: taskSelect()
+         (to_jsonb(t)->>'upload_from')::timestamptz as upload_from, /*ad_count*/0 as ad_count,
          e.name as editor_name, e.image_url as editor_image,
          coalesce(hu.name, hu.email) as held_by_name,
          -- The assignee's break, so the client can offset the countdown by
@@ -170,9 +173,10 @@ const SELECT = `
 
 // SELECT, with how many posts were made from each task's links (once the database has them).
 export async function taskSelect() {
-  return (await schedulingReady())
-    ? SELECT.replace("/*linked_posts*/0", "(select count(*)::int from post fp where fp.from_task_id = t.id and fp.deleted_at is null)")
-    : SELECT;
+  let s = SELECT;
+  if (await schedulingReady()) s = s.replace("/*linked_posts*/0", "(select count(*)::int from post fp where fp.from_task_id = t.id and fp.deleted_at is null)");
+  if (await uploadsReady()) s = s.replace("/*ad_count*/0", "(select count(*)::int from task_ad ta where ta.task_id = t.id)");
+  return s;
 }
 
 // Time-budget resolution (Phase 1): an editor's own rule for a format wins,
@@ -1007,6 +1011,9 @@ tasksRouter.patch("/tasks/:id", requireEditor, requireActiveEod, async (req, res
     // reopened before any link went in, it comes back out.
     const toScheduling = prior.status !== "done" && finalStatus === "done" ? await enterScheduling(req.params.id) : false;
     if (prior.status === "done" && finalStatus !== "done") await leaveScheduling(req.params.id);
+    // ...and approved Ad work into Ad uploads (../ad-uploads.js), the same way
+    if (prior.status !== "done" && finalStatus === "done") await enterUploads(req.params.id);
+    if (prior.status === "done" && finalStatus !== "done") await leaveUploads(req.params.id);
 
     const { rows: full } = await pool.query(`${await taskSelect()} where t.id = $1`, [req.params.id]);
     // Log the moment a task is marked complete.

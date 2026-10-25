@@ -49,7 +49,7 @@ import type { Activity } from "@/lib/types";
 // that isn't placed here lands at the end of Operations.
 const SIDEBAR_GROUPS: { label: string; hrefs: string[] }[] = [
   { label: "Workspace", hrefs: ["/home", "/inbox", "/chat", "/tasks", "/analytics"] },
-  { label: "Operations", hrefs: ["/metrics", "/scheduling", "/posts", "/leaderboard", "/goals-board", "/my-team"] },
+  { label: "Operations", hrefs: ["/metrics", "/scheduling", "/ad-uploads", "/posts", "/leaderboard", "/goals-board", "/my-team"] },
 ];
 const OFF_SIDEBAR = new Set(["/settings", "/posts/new"]);
 // Before Start Work an editor can still open these — the Workspace group, plus
@@ -335,7 +335,9 @@ function AppShellInner() {
   const { data: postCountData, refetch: refetchPostCount } = useResource<{ count: number }>("/posts/count");
   // Scheduling shows for this month's schedulers (a Schedule goal), Managers and Team Leads
   const { data: schedAccess } = useResource<{ allowed: boolean }>("/scheduling/access");
-  useEffect(() => { refetchPostCount().catch(() => {}); }, [location.pathname]); // eslint-disable-line react-hooks/exhaustive-deps
+  // Ad uploads shows for the Managers and Team Leads, with how many approved ads wait
+  const { data: uploadsAccess, refetch: refetchUploads } = useResource<{ allowed: boolean; waiting: number }>("/ad-uploads/access");
+  useEffect(() => { refetchPostCount().catch(() => {}); refetchUploads().catch(() => {}); }, [location.pathname]); // eslint-disable-line react-hooks/exhaustive-deps
   const postCount = postCountData?.count ?? null;
   const { unread, items: activityItems } = useUnreadActivity();
   // the Inbox's count, re-read every minute for the sidebar badge
@@ -405,7 +407,8 @@ function AppShellInner() {
     && seesTeamAttendance(myEd?.designation, false, orgSettings?.attendance?.teamView);
   const canSee = (i: NavItem) => (!i.adminOnly || isAdmin || (!!i.permission && hasPermission(i.permission)) || (i.href === "/my-team" && leadsPeople))
     && (!i.chatBadge || chatAvailable)
-    && (!i.schedulerOnly || !!schedAccess?.allowed);
+    && (!i.schedulerOnly || !!schedAccess?.allowed)
+    && (!i.uploadsOnly || !!uploadsAccess?.allowed);
   const placed = new Set(SIDEBAR_GROUPS.flatMap((g) => g.hrefs));
   const sideGroups = SIDEBAR_GROUPS.map((g, gi) => ({
     label: g.label,
@@ -580,6 +583,7 @@ function AppShellInner() {
                   {item.showBadge && postCount !== null && (
                     <span className="badge">{postCount}</span>
                   )}
+                  {item.uploadsOnly && !!uploadsAccess?.waiting && <span className="badge">{uploadsAccess.waiting}</span>}
                   {item.chatBadge && <ChatBadge />}
                   {item.inboxBadge && <InboxBadge />}
                 </NavLink>

@@ -25,6 +25,7 @@ import type { Task, TaskStatus, TaskPriority, TaskType, TaskMeta, TaskAttachment
 import "./tasks-board.css";
 import { HandoverBlock, HandoverInbox, HandoverPill, useHandovers } from "@/components/handover";
 import { ScheduleBlock } from "@/components/schedule-block";
+import { AdUploadBlock } from "@/components/ad-upload-block";
 import { clockTime, clockTimeShort, dateTime } from "@/lib/time-format";
 
 function relTime(iso: string) {
@@ -2561,6 +2562,8 @@ export function TaskPanel({ mode, task, canWrite, editors, channels, onClose, on
           <HandoverBlock task={t} onChanged={onChanged} />
           {/* approved social work: its scheduler sets the date and pastes the links */}
           {t.schedule_from && <ScheduleBlock task={t} editors={editors} onChanged={onChanged} />}
+          {/* approved Ad work: the Managers and Team Leads record the ads it became */}
+          {t.upload_from && <AdUploadBlock task={t} onChanged={onChanged} />}
           {!ro && briefRo && (
             <div className="hint tp-locked">
               🔒 {isDoneTask ? "This task is completed — only an admin can change it."

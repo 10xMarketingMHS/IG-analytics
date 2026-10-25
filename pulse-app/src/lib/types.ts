@@ -275,6 +275,10 @@ export type Task = {
   post_on?: string | null;
   post_time?: string | null;
   linked_posts?: number;
+  // Ad uploads after approval (lib/ad-upload.ts): since when it's waiting for
+  // its ads to be recorded (null: not in the list), and how many are.
+  upload_from?: string | null;
+  ad_count?: number;
 };
 
 // GET/POST /break/* — one editor's shared daily break budget (see
@@ -327,7 +331,7 @@ export type ActivityVerb =
   | "leave_asked" | "leave_approved" | "leave_declined" | "leave_cancelled" | "leave_topped_up" | "leave_allowance_set"
   | "leave_counting_started" | "leave_rules_changed" | "attendance_leave_worked"
   // Scheduling approved social work (components/schedule-block.tsx)
-  | "schedule_ready" | "schedule_set" | "schedule_linked";
+  | "schedule_ready" | "schedule_set" | "schedule_linked" | "ad_recorded" | "ad_unrecorded";
 
 export type Activity = {
   id: string;

@@ -5,6 +5,7 @@ import { requirePermission } from "../permissions.js";
 import { isSuperHere } from "../super-admin.js";
 import { hasColumn } from "../schema-flags.js";
 import { followTypeTick } from "../scheduling.js";
+import { followAdTypeTick } from "../ad-uploads.js";
 
 // What a type is worth is the Super Admin's call; an admin adds, renames and
 // times types, and sees their points.
@@ -35,8 +36,9 @@ const Schema = z.object({
   metrics_description: z.string().max(2000).nullable().optional(),
   // Must a task of this type have a delivery link before going to review?
   review_link_required: z.boolean().optional(),
-  // Does an approved Social task of this type go to Scheduling (its post date,
-  // then its links — ../scheduling.js)? Reels, Carousel, Post: yes; Thumbnail: no.
+  // Does approved work of this type go on? A Social type to Scheduling (its
+  // post date, then its links — ../scheduling.js): Reels, Carousel, Post yes,
+  // Thumbnail no. An Ads type to Ad uploads (../ad-uploads.js).
   to_scheduling: z.boolean().optional(),
 });
 
@@ -75,7 +77,7 @@ contentFormatsRouter.post("/content-formats", requirePermission("task_settings")
       "select coalesce(max(sort_order), 0) + 1 as n from task_content_format where org_id = $1 and category = $2",
       [req.orgId, category],
     );
-    // a new Social type goes to Scheduling unless it's unticked (most Social work is posted)
+    // a new Social or Ads type goes on unless it's unticked (most of that work is posted or run)
     const sched = await schedCol();
     const { rows } = await pool.query(
       `insert into task_content_format
@@ -84,7 +86,7 @@ contentFormatsRouter.post("/content-formats", requirePermission("task_settings")
       [req.orgId, parsed.data.name, parsed.data.icon || "🔧", maxRow[0].n, category,
        parsed.data.metric_tier ?? null, parsed.data.points ?? null,
        parsed.data.duration_days ?? null, parsed.data.metrics_description ?? null,
-       ...(sched ? [parsed.data.to_scheduling ?? category === "social"] : [])],
+       ...(sched ? [parsed.data.to_scheduling ?? (category === "social" || category === "ad")] : [])],
     );
     res.status(201).json({ contentFormat: rows[0] });
   } catch (err) {
@@ -128,8 +130,9 @@ contentFormatsRouter.patch("/content-formats/:id", requirePermission("task_setti
       vals,
     );
     if (!rows.length) return res.status(404).json({ error: "Format not found." });
-    // the Scheduling list follows the tick: how many tasks came in or went out
-    const moved = was[0] && was[0].to_scheduling !== tick ? await followTypeTick(req.orgId, req.params.id, tick) : 0;
+    // the Scheduling and Ad uploads lists follow the tick: how many tasks came in or went out
+    const moved = was[0] && was[0].to_scheduling !== tick
+      ? (await followTypeTick(req.orgId, req.params.id, tick)) + (await followAdTypeTick(req.orgId, req.params.id, tick)) : 0;
     res.json({ contentFormat: rows[0], ...(tick !== undefined ? { schedulingMoved: moved } : {}) });
   } catch (err) {
     if (err.code === "23505") return res.status(409).json({ error: "That format already exists." });

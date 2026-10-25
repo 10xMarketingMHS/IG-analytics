@@ -12,6 +12,7 @@ import { gradFor, initialsOf } from "@/lib/editor-visuals";
 import { TaskPanel } from "@/pages/tasks";
 import type { Editor, Task } from "@/lib/types";
 import { scheduleStage, type SchedStage } from "@/lib/schedule";
+import { adStage, type AdStage } from "@/lib/ad-upload";
 import "./pipeline.css";
 
 // Social & Ads Pipeline (Pulse Redesign v7): every reel, carousel and ad in
@@ -31,8 +32,9 @@ function pipelineBucket(t: Task): "social" | "ad" | null {
   return null;
 }
 
-// Approved social work then goes through scheduling (lib/schedule.ts): to schedule → scheduled → waiting for links → live.
-type Stage = "pending_accept" | "not_started" | "in_progress" | "in_review" | "completed" | SchedStage;
+// Approved social work then goes through scheduling (lib/schedule.ts): to schedule → scheduled → waiting for links → live;
+// approved Ad work through Ad uploads (lib/ad-upload.ts): to upload → uploaded.
+type Stage = "pending_accept" | "not_started" | "in_progress" | "in_review" | "completed" | SchedStage | AdStage;
 const STAGES: { key: Stage; label: string; color: string; icon: string }[] = [
   { key: "pending_accept", label: "Pending Accept", color: "oklch(0.64 0.2 350)", icon: "hourglass_top" },
   { key: "not_started", label: "Not Started", color: "#a1a1aa", icon: "radio_button_unchecked" },
@@ -43,12 +45,14 @@ const STAGES: { key: Stage; label: string; color: string; icon: string }[] = [
   { key: "scheduled", label: "Scheduled", color: "oklch(0.62 0.13 230)", icon: "event" },
   { key: "links_due", label: "Waiting for Links", color: "oklch(0.62 0.19 25)", icon: "add_link" },
   { key: "live", label: "Live", color: "oklch(0.58 0.12 185)", icon: "public" },
+  { key: "to_upload", label: "To Upload", color: "oklch(0.72 0.15 65)", icon: "upload" },
+  { key: "uploaded", label: "Uploaded", color: "oklch(0.58 0.12 185)", icon: "campaign" },
 ];
 const STAGE_INDEX: Record<Stage, number> = {
-  pending_accept: 0, not_started: 1, in_progress: 2, in_review: 3, completed: 4, to_schedule: 5, scheduled: 6, links_due: 7, live: 8,
+  pending_accept: 0, not_started: 1, in_progress: 2, in_review: 3, completed: 4, to_schedule: 5, scheduled: 6, links_due: 7, live: 8, to_upload: 5, uploaded: 8,
 };
 function stageOf(t: Task): Stage {
-  if (t.status === "done") return scheduleStage(t) ?? "completed";
+  if (t.status === "done") return (t.task_type === "ad" ? adStage(t) : scheduleStage(t)) ?? "completed";
   if (t.status === "review") return "in_review";
   if (t.editor_id && !t.accepted) return "pending_accept";
   if (t.status === "in_progress") return "in_progress";
