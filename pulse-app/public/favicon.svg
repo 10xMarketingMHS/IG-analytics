@@ -1,9 +1,9 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
-  <!-- Echo: the mark (components/echo-logo.tsx) on a white rounded tile -->
+  <!-- Echo: the mark (components/echo-logo.tsx) in black and grey on a white rounded tile -->
   <rect width="512" height="512" rx="112" fill="#fff"/>
   <g transform="translate(46.0 105.2) scale(0.6656) translate(-166 -131)">
-    <path fill="#3E33CC" d="M352 156H513.5A44.5 44.5 0 0 1 513.5 245H338C305 245 288 262 288 285C288 302 300 313 318 313H513.5A44.5 44.5 0 0 1 513.5 402H318C300 402 290 413 290 430C290 453 307 470 338 470H513.5A44.5 44.5 0 0 1 513.5 559H352A176 175 0 0 1 176 384V346A176 190 0 0 1 352 156Z"/>
-    <g fill="none" stroke="#9DA9FB" stroke-linecap="round">
+    <path fill="#111111" d="M352 156H513.5A44.5 44.5 0 0 1 513.5 245H338C305 245 288 262 288 285C288 302 300 313 318 313H513.5A44.5 44.5 0 0 1 513.5 402H318C300 402 290 413 290 430C290 453 307 470 338 470H513.5A44.5 44.5 0 0 1 513.5 559H352A176 175 0 0 1 176 384V346A176 190 0 0 1 352 156Z"/>
+    <g fill="none" stroke="#8A8A8A" stroke-linecap="round">
       <path stroke-width="75" d="M661 179A225 225 0 0 1 661 536"/>
       <path stroke-width="64" d="M597.1 262.3A120 120 0 0 1 597.1 452.7"/>
     </g>
