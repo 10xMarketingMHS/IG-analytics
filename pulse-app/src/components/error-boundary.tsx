@@ -18,7 +18,7 @@ export class ErrorBoundary extends Component<Props, State> {
   }
 
   componentDidCatch(error: unknown) {
-    console.error("Pulse: this page stopped with an error", error);
+    console.error("Echo: this page stopped with an error", error);
   }
 
   render() {

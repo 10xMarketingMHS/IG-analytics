@@ -2,7 +2,7 @@ import { useEffect, useRef, useState, type FormEvent } from "react";
 import { Navigate, useNavigate, useSearchParams } from "react-router-dom";
 import { useAuth, ApiError } from "@/lib/auth-context";
 import { api, noAnswer } from "@/lib/api";
-import { PulseRun } from "@/components/pulse-run";
+import { EchoRun } from "@/components/echo-run";
 import { ParticleField } from "@/components/particle-field";
 import { useTheme } from "@/components/theme-provider";
 import "./login.css";
@@ -10,7 +10,7 @@ import "./login.css";
 // The sign-in screen (login.css), full screen: on the left, rings of small
 // coloured dashes turning slowly and stepping aside around the pointer
 // (components/particle-field.tsx), a glow under it, and a mini game to play
-// (components/pulse-run.tsx); the form on the right. One column on phones.
+// (components/echo-run.tsx); the form on the right. One column on phones.
 
 const EYE = (
   <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
@@ -97,7 +97,7 @@ export function LoginPage() {
   const [error, setError] = useState<string | null>(null);
   const [pending, setPending] = useState(false);
   const [showPass, setShowPass] = useState(false);
-  // "Forgot password?" — Pulse can't email anyone, so this asks the admin to set
+  // "Forgot password?" — Echo can't email anyone, so this asks the admin to set
   // a temporary password (they see the request in Activity and Team › Roster).
   const [forgot, setForgot] = useState(false);
   const [forgotSent, setForgotSent] = useState(false);
@@ -164,9 +164,9 @@ export function LoginPage() {
             <span className="lg-grain" />
           </div>
           <span className="lg-mark" aria-hidden="true">◐</span>
-          <PulseRun />
+          <EchoRun />
           <div className="lg-pitch">
-            <span>Pulse</span>
+            <span>Echo</span>
             <b>Your team’s content, tasks and goals in one place</b>
           </div>
         </div>
@@ -184,7 +184,7 @@ export function LoginPage() {
             <span className="logo lg-logo" aria-hidden="true">◐</span>
             <h1>{forgot ? "Forgot your password?" : "Welcome back"}</h1>
             <p className="lg-sub">
-              {forgot ? "Your admin will set a temporary password for you." : "Sign in to Pulse to pick up where you left off."}
+              {forgot ? "Your admin will set a temporary password for you." : "Sign in to Echo to pick up where you left off."}
             </p>
 
             {!forgot ? (
@@ -206,7 +206,7 @@ export function LoginPage() {
               </form>
             ) : forgotSent ? (
               <div className="lg-note" role="status">
-                Request sent. If that email has a Pulse login, your admin has been told. They’ll give you a
+                Request sent. If that email has an Echo login, your admin has been told. They’ll give you a
                 temporary password — once you’re in, change it under My Profile.
               </div>
             ) : (

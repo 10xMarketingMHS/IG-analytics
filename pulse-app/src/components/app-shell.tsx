@@ -178,7 +178,7 @@ function useLiveNotices(items: Activity[] | undefined, myId: string | undefined,
       // task"); one that comes back after you had it before is announced here.
       if (a.verb === "assigned" && myEditorId && a.meta?.toEditorId === myEditorId
           && myId && a.entity_id && !hasSeenTask(myId, a.entity_id)) continue;
-      // Pulse's own notices (a hand-over climbing) have no one behind them.
+      // Echo's own notices (a hand-over climbing) have no one behind them.
       if (!a.actor_id) { toast(`🔔 ${a.summary}`); continue; }
       const summary = a.summary.charAt(0).toLowerCase() + a.summary.slice(1);
       const note = a.verb === "sent_back" && typeof a.meta?.note === "string" ? a.meta.note : undefined;
@@ -192,7 +192,7 @@ function useLiveNotices(items: Activity[] | undefined, myId: string | undefined,
 function metaFor(pathname: string): [string, string] {
   if (PAGE_META[pathname]) return PAGE_META[pathname];
   const hit = Object.keys(PAGE_META).find((k) => pathname.startsWith(k));
-  return hit ? PAGE_META[hit] : ["Pulse", ""];
+  return hit ? PAGE_META[hit] : ["Echo", ""];
 }
 
 // Team chat's live stream and unread counts live for as long as you're signed
@@ -539,12 +539,12 @@ function AppShellInner() {
         </div>
         <div className="brand">
           {user?.isSuperAdmin && !user.viewingAs ? (
-            <button type="button" className="logo" onClick={() => setViewAsOpen(true)} title="View Pulse as someone (test)" aria-label="View Pulse as someone">◐</button>
+            <button type="button" className="logo" onClick={() => setViewAsOpen(true)} title="View Echo as someone (test)" aria-label="View Echo as someone">◐</button>
           ) : (
             <div className="logo">◐</div>
           )}
           <div className="sb2-label sb2-brandtx">
-            <b>Pulse</b>
+            <b>Echo</b>
             <small>{org?.name || "Content Analytics"}</small>
           </div>
           <button type="button" className="sb2-iconbtn sb2-railbtn" onClick={toggleRail} aria-pressed={rail}
@@ -703,7 +703,7 @@ function AppShellInner() {
               <button className="btn" onClick={() => navigate("/home")}>← My Day</button>
             </>
           )}
-          {/* who else has Pulse open: hover for names, click one to chat */}
+          {/* who else has Echo open: hover for names, click one to chat */}
           <OnlineNow />
           {(user?.editorId || isAdmin) && (
             <button type="button" className="btn top-leave" onClick={() => setLeaveOpen(true)} title="Attendance and leave" aria-label="Attendance">

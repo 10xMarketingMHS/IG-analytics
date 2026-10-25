@@ -621,7 +621,7 @@ goalsRouter.get("/goals/export", requireAdmin, async (req, res, next) => {
     const jphOf = (g) => jobHours(g, g.jph, capOf(g.editor_id).hours_per_day);
 
     const wb = new ExcelJS.Workbook();
-    wb.creator = "Pulse";
+    wb.creator = "Echo";
 
     // --- Sheet 1: Goal Setting (wide, one row per editor) ---
     const s1 = wb.addWorksheet("Goal Setting");

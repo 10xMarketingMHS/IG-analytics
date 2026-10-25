@@ -266,7 +266,7 @@ integrationsRouter.get("/integrations/followers/daily", async (req, res, next) =
   }
 });
 
-// Step 1: start OAuth for a specific Pulse account (channel × Instagram).
+// Step 1: start OAuth for a specific Echo account (channel × Instagram).
 integrationsRouter.get("/integrations/instagram/connect", requirePermission("channels"), async (req, res, next) => {
   try {
     if (!ig.metaConfigured()) return backToIntegrations(res, { error: "not_configured" });
@@ -308,7 +308,7 @@ integrationsRouter.get("/integrations/instagram/callback", async (req, res, next
     const accounts = await ig.listIgAccounts(userToken);
     if (accounts.length === 0) return backToIntegrations(res, { error: "no_ig" });
 
-    // Pick the IG account: match the Pulse account's handle, else the only one.
+    // Pick the IG account: match the Echo account's handle, else the only one.
     const handle = (acct.handle || "").replace(/^@/, "").toLowerCase();
     const chosen = accounts.find((a) => a.igUsername?.toLowerCase() === handle)
       || (accounts.length === 1 ? accounts[0] : null);
@@ -340,7 +340,7 @@ integrationsRouter.get("/integrations/instagram/callback", async (req, res, next
 });
 
 // One-click connect using the server's System User token — no OAuth. Discovers
-// the Instagram account the token can see and links it to the Pulse account.
+// the Instagram account the token can see and links it to the Echo account.
 // Stores the sentinel 'SYSTEM' instead of a token (the token lives in env).
 const ConnectSchema = z.object({ accountId: z.string().uuid() });
 integrationsRouter.post("/integrations/instagram/connect-system", requirePermission("channels"), async (req, res, next) => {

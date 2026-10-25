@@ -1,19 +1,19 @@
-// Move Pulse's database to another Postgres (Supabase → Aiven, say): build
-// Pulse's tables on the new one, copy every row across, and check the counts.
+// Move Echo's database to another Postgres (Supabase → Aiven, say): build
+// Echo's tables on the new one, copy every row across, and check the counts.
 //
 // Run it yourself, with the two addresses set in your own terminal (they are
 // never written to a file or printed):
-//   PowerShell:  $env:SOURCE_DATABASE_URL = "postgres://…"   (where Pulse is now)
+//   PowerShell:  $env:SOURCE_DATABASE_URL = "postgres://…"   (where Echo is now)
 //                $env:TARGET_DATABASE_URL = "postgres://…"   (the new, empty one)
 //                node scripts/move-database.mjs
 //
 // The source is only ever read (its session is read-only). On the target:
-//   1. Pulse's tables are made from every file in pulse-app/supabase/migrations,
+//   1. Echo's tables are made from every file in pulse-app/supabase/migrations,
 //      in order (a re-run skips the ones already applied);
 //   2. all of its rows are replaced with the source's, in one transaction —
 //      anything fails, and the target is left as it was before this step;
 //   3. row counts are compared, table by table.
-// A target that already holds Pulse data (logins) is refused unless you add
+// A target that already holds Echo data (logins) is refused unless you add
 // --replace. Point Render's DATABASE_URL at the target only after this is done.
 import fs from "node:fs";
 import path from "node:path";
@@ -61,7 +61,7 @@ function fail(msg) {
   process.exit(1);
 }
 // A client for one address. On this machine: no SSL. Elsewhere: encrypted,
-// without checking the certificate — as the Pulse server connects today.
+// without checking the certificate — as the Echo server connects today.
 function client(url, label) {
   let u;
   try { u = new URL(url); } catch { fail(`${label} isn't a database address (postgres://…).`); }
@@ -76,7 +76,7 @@ const q = async (c, sql, params) => (await c.query(sql, params)).rows;
 const ident = (s) => `"${String(s).replace(/"/g, '""')}"`;
 
 const SRC = process.env.SOURCE_DATABASE_URL, DST = process.env.TARGET_DATABASE_URL;
-if (!SRC || !DST) fail("Set SOURCE_DATABASE_URL (where Pulse is now) and TARGET_DATABASE_URL (the new database) in this terminal first.");
+if (!SRC || !DST) fail("Set SOURCE_DATABASE_URL (where Echo is now) and TARGET_DATABASE_URL (the new database) in this terminal first.");
 const src = client(SRC, "SOURCE_DATABASE_URL"), dst = client(DST, "TARGET_DATABASE_URL");
 if (src.where === dst.where) fail("The source and the target are the same database.");
 
@@ -91,10 +91,10 @@ try {
   const has = await q(dst.db, "select to_regclass('public.app_user') is not null as yes");
   if (has[0].yes === "t" && !REPLACE) {
     const [{ n }] = await q(dst.db, "select count(*) as n from public.app_user");
-    if (Number(n) > 0) fail(`The target already has Pulse data (${n} logins). Run with --replace to overwrite it.`);
+    if (Number(n) > 0) fail(`The target already has Echo data (${n} logins). Run with --replace to overwrite it.`);
   }
 
-  console.log("2 · Building Pulse's tables on the target");
+  console.log("2 · Building Echo's tables on the target");
   await dst.db.query(SUPABASE_SHIM);
   const done = new Set((await q(dst.db, "select version from public.local_migration_log")).map((r) => r.version));
   const files = fs.readdirSync(MIGRATIONS).filter((f) => f.endsWith(".sql")).sort();
@@ -130,7 +130,7 @@ try {
   try {
   await dst.db.query("begin");
   // foreign keys off while rows go in (re-added, and so re-checked, after);
-  // Pulse's own triggers (audit rows, say) off too: the rows arrive as they were
+  // Echo's own triggers (audit rows, say) off too: the rows arrive as they were
   fks = await q(dst.db,
     `select c.conrelid::regclass::text as tbl, c.conname as name, pg_get_constraintdef(c.oid) as def
        from pg_constraint c join pg_namespace n on n.oid = c.connamespace
@@ -187,7 +187,7 @@ try {
     if (a !== b) { bad++; console.log(`  ✗ ${t}: ${a} there, ${b} here`); }
     if (missing.length) console.log(`  · ${t}: new columns not in the source, left at their defaults: ${missing.join(", ")}`);
   }
-  if (onlySrc.length) console.log(`  · Only in the source (not part of Pulse's tables, not copied): ${onlySrc.join(", ")}`);
+  if (onlySrc.length) console.log(`  · Only in the source (not part of Echo's tables, not copied): ${onlySrc.join(", ")}`);
   const total = report.reduce((s, r) => s + r.n, 0);
   if (bad) fail(`${bad} table(s) don't match. Run it again with --replace.`);
   console.log(`\n✓ Done: ${report.length} tables, ${total} rows, every count matches.`);

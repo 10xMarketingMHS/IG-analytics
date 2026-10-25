@@ -444,7 +444,7 @@ export function HomePage() {
 
   // ---- Home role, from the position: a Manager sees the Manager Home, a Team
   // Lead the Team lead Home, an Editor the Editor Home. (A Super Admin can see
-  // anyone's Pulse with View as.)
+  // anyone's Echo with View as.)
   const myEditor = (editors ?? []).find((e) => e.id === user?.editorId) ?? null;
   const role: HomeRole = homeRoleOf(myEditor?.designation, isAdmin);
   const homeLayout = useHomeLayout(role);

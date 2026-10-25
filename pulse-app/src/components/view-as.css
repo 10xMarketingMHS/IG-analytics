@@ -1,5 +1,5 @@
 /* Super Admin "view as" — the window that asks for an employee code, and the
-   bar that stays in view while you look at Pulse as someone else. */
+   bar that stays in view while you look at Echo as someone else. */
 .va-form{display:flex;flex-direction:column;gap:8px;min-width:min(380px,80vw)}
 .va-code{font-family:'Geist Mono',ui-monospace,monospace;text-transform:uppercase;letter-spacing:.04em}
 .va-code::placeholder{text-transform:none;letter-spacing:0}

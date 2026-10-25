@@ -11,11 +11,11 @@ import { attemptLimiter } from "./attempts.js";
 
 const COOKIE_NAME = "pulse_session";
 const SESSION_TTL = "7d";
-// While a Super Admin views Pulse as someone else, their own session waits
+// While a Super Admin views Echo as someone else, their own session waits
 // here, and the borrowed one lasts at most two hours.
 const REAL_COOKIE = "pulse_session_real";
 const VIEW_AS_TTL_MS = 2 * 60 * 60 * 1000;
-const READ_ONLY = "You're viewing Pulse as someone else, so it's read-only. Switch back to make changes.";
+const READ_ONLY = "You're viewing Echo as someone else, so it's read-only. Switch back to make changes.";
 
 const cookieOpts = (maxAge) => ({
   httpOnly: true,
@@ -86,7 +86,7 @@ authRouter.post("/login", async (req, res, next) => {
   }
 });
 
-// "Forgot password?" — Pulse can't send email, so this tells the admin instead:
+// "Forgot password?" — Echo can't send email, so this tells the admin instead:
 // a request lands in the activity feed of each team the login belongs to, and
 // the admin sets a temporary password from Settings → Team. The answer is the
 // same whether or not the email has a login, so it can't be used to probe for
@@ -138,7 +138,7 @@ authRouter.post("/logout", (_req, res) => {
   res.status(204).end();
 });
 
-// Super Admin "view as" (testing): open Pulse as the person with this
+// Super Admin "view as" (testing): open Echo as the person with this
 // employee code (Team › Roster), to see exactly what they see. Read-only —
 // requireAuth refuses every change while it lasts — and logged in Activity.
 // Only a real Super Admin (app_user.is_super_admin), never while already
@@ -154,7 +154,7 @@ authRouter.post("/view-as", async (req, res, next) => {
       return res.status(409).json({ error: "View as needs the Super Admin database update first." });
     }
     const { rows: mine } = await pool.query("select is_super_admin, coalesce(name, email) as name from app_user where id = $1 and active", [me.sub]);
-    if (!mine[0]?.is_super_admin) return res.status(403).json({ error: "Only a Super Admin can view Pulse as someone else." });
+    if (!mine[0]?.is_super_admin) return res.status(403).json({ error: "Only a Super Admin can view Echo as someone else." });
     const { rows } = await pool.query(
       `select u.id, u.email, u.active, coalesce(e.name, u.name, u.email) as name, e.org_id
          from editor e join app_user u on u.editor_id = e.id
@@ -175,7 +175,7 @@ authRouter.post("/view-as", async (req, res, next) => {
     await logActivity({
       orgId: who.org_id, actorId: me.sub, verb: "view_as",
       entityType: "user", entityId: who.id,
-      summary: `Viewed Pulse as ${who.name} (read-only test)`,
+      summary: `Viewed Echo as ${who.name} (read-only test)`,
     }).catch(() => {});
     res.json({ viewingAs: { name: who.name } });
   } catch (err) {

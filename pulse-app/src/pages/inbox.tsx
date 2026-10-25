@@ -114,7 +114,7 @@ export function InboxPage() {
       case "correction":
         what = <>Start at {clockTime(i.correctionAt)}{i.date !== new Date().toLocaleDateString("en-CA") ? ` on ${day(i.date)}` : ""}</>;
         who = <Person name={i.name} imageUrl={i.imageUrl} kind="correction" />;
-        details = <>{i.note ? <span>“{i.note}”</span> : null}<span className="ib-faint">{i.checkInAt ? `Opened Pulse at ${clockTime(i.checkInAt)}` : "Not opened yet"}</span></>;
+        details = <>{i.note ? <span>“{i.note}”</span> : null}<span className="ib-faint">{i.checkInAt ? `Opened Echo at ${clockTime(i.checkInAt)}` : "Not opened yet"}</span></>;
         acts = <>{btn("Decline", () => act(i.key, () => attendanceAction(i.editorId, "correction", { approve: false, date: i.date }), "Correction declined."), "ghost")}
           {btn("Approve", () => act(i.key, () => attendanceAction(i.editorId, "correction", { approve: true, date: i.date }), "Start time corrected."), "good")}</>;
         break;

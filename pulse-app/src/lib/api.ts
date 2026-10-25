@@ -28,8 +28,8 @@ export function onSignedOut(fn: (message: string) => void): () => void {
 }
 
 // No answer at all (offline, or the server restarting or waking up), or one
-// that isn't Pulse's: said plainly instead of a bare "Request failed".
-export const NO_ANSWER = "Pulse's server didn't answer just now. Try again in a moment.";
+// that isn't Echo's: said plainly instead of a bare "Request failed".
+export const NO_ANSWER = "Echo's server didn't answer just now. Try again in a moment.";
 export const noAnswer = (err: unknown) => err instanceof ApiError && (err.status === 0 || (err.status >= 500 && err.message === NO_ANSWER));
 
 export class ApiError extends Error {

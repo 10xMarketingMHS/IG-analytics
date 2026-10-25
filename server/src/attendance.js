@@ -9,7 +9,7 @@ import { LEAVE_DEFAULTS, monthFrozen } from "./leave-math.js";
 // Office hours come from the work calendar (Settings › General); the rules
 // from Settings › Attendance (org.settings.attendance). Everything runs on
 // India time. The server sleeps when idle, so nothing waits on a timer: the
-// no-SOD alert and the auto-absent mark are applied the first time Pulse is
+// no-SOD alert and the auto-absent mark are applied the first time Echo is
 // used after their time (syncAttendance), the same way a forgotten End Work is
 // closed. See migration 20261025120000_attendance.sql.
 
@@ -214,7 +214,7 @@ export function classify(checkInAt, ymd, cal, att) {
   const open = openingFor(cal, ymd);
   if (!open) return { status: "on_time", lateMinutes: 0 };
   const late = Math.max(0, Math.round((new Date(checkInAt).getTime() - istAt(ymd, open).getTime()) / 60_000));
-  // in only after closing: the office hours missed (late, where absences aren't marked by Pulse)
+  // in only after closing: the office hours missed (late, where absences aren't marked by Echo)
   if (afterHoursOf(cal, ymd, checkInAt)) return att.autoAbsentEnabled ? { status: "absent", lateMinutes: 0 } : { status: "late", lateMinutes: late };
   if (late <= att.graceMinutes) return { status: "on_time", lateMinutes: 0 };
   const at = istMinutes(checkInAt);
@@ -478,7 +478,7 @@ export async function syncAttendance(orgId) {
         }
       }
       // Not in by the half-day time: a half-day absence; still not in by the
-      // absent time: absent. Only rows Pulse made (or none), never a lead's mark.
+      // absent time: absent. Only rows Echo made (or none), never a lead's mark.
       const markFrom = att.halfDayReady !== false ? att.halfDayAt : att.autoAbsentAt;
       if (att.autoAbsentEnabled && today.minutes >= minutesOf(markFrom)) {
         const mark = today.minutes >= minutesOf(att.autoAbsentAt) ? "absent" : "half_absent";

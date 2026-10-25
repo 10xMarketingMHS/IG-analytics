@@ -45,7 +45,7 @@ const app = express();
 app.set("trust proxy", 1);
 
 // Safety headers on every answer: don't guess file types, don't let another
-// site show Pulse inside a frame (a click-trick), send only the site name on
+// site show Echo inside a frame (a click-trick), send only the site name on
 // links out, no camera / microphone / location, and — when it's live, over
 // HTTPS — always HTTPS from now on. No "X-Powered-By: Express" either.
 app.disable("x-powered-by");
@@ -150,7 +150,7 @@ app.use((err, _req, res, _next) => {
 // check pass; bootstrap runs in the background and simply retries once the old
 // instance drains and connections free up.
 app.listen(config.PORT, () => {
-  console.log(`Pulse API listening on http://localhost:${config.PORT}`);
+  console.log(`Echo API listening on http://localhost:${config.PORT}`);
 });
 
 async function bootstrapWithRetry(attempt = 1) {

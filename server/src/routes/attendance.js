@@ -58,7 +58,7 @@ function shownStatus(row) {
 attendanceRouter.get("/attendance/today", async (req, res, next) => {
   try {
     if (!(await ready(res))) return;
-    // Pulse's own marks (the no-SOD alert, auto-absent) are applied at most
+    // Echo's own marks (the no-SOD alert, auto-absent) are applied at most
     // once a minute, in the background: the answer doesn't wait for them, and
     // they show on the next look.
     syncAttendance(req.orgId).catch(() => {});
@@ -821,7 +821,7 @@ attendanceRouter.post("/attendance/:editorId/correction", async (req, res, next)
 attendanceRouter.get("/attendance/month", async (req, res, next) => {
   try {
     if (!(await ready(res))) return;
-    // Pulse's own marks (the no-SOD alert, auto-absent) are applied at most
+    // Echo's own marks (the no-SOD alert, auto-absent) are applied at most
     // once a minute, in the background: the answer doesn't wait for them, and
     // they show on the next look.
     syncAttendance(req.orgId).catch(() => {});

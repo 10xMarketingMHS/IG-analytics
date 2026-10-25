@@ -20,7 +20,7 @@ const url = process.env.TARGET_DATABASE_URL;
 if (!url) fail("Set TARGET_DATABASE_URL (the database to run it on) in this terminal first.");
 let u;
 try { u = new URL(url); } catch { fail("TARGET_DATABASE_URL isn't a database address (postgres://…)."); }
-// on this machine: no SSL; elsewhere encrypted, as the Pulse server connects
+// on this machine: no SSL; elsewhere encrypted, as the Echo server connects
 const local = ["localhost", "127.0.0.1", "::1", "[::1]"].includes(u.hostname);
 u.searchParams.delete("sslmode");
 const db = new pg.Client({ connectionString: u.toString(), ssl: local ? false : { rejectUnauthorized: false }, application_name: "pulse-run-sql" });

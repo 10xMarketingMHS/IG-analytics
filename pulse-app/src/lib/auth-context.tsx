@@ -32,7 +32,7 @@ type AuthUser = {
   // Which in-app alerts they get (Settings › Notifications); a missing key is on.
   notifyPrefs?: Record<string, boolean>;
   isSuperAdmin?: boolean;
-  // Set while a Super Admin views Pulse as this person (read-only): who they really are.
+  // Set while a Super Admin views Echo as this person (read-only): who they really are.
   viewingAs?: { id: string; name: string } | null;
 };
 

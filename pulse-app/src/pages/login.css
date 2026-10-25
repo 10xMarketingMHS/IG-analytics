@@ -2,7 +2,7 @@
    turning slowly, spreading around the pointer, their colours travelling round
    on their own (particle-field.tsx), a soft light gliding after the pointer
    (usePointerLight), the mini
-   game (pulse-run.tsx) and the words — a near-white panel with dark words in
+   game (echo-run.tsx) and the words — a near-white panel with dark words in
    the light theme, a deep one with light words in the dark. Right: the form.
    Colours follow the accent the person picked (--acH). */
 /* full screen: the art fills the left (a small inset), the form the right */
@@ -56,7 +56,7 @@ html[data-theme="dark"] .lg-grain{opacity:.12}
 .lg-mark{position:relative;z-index:2;width:46px;height:46px;display:grid;place-items:center;border-radius:14px;font-size:22px;color:var(--art-ink);
   background:var(--art-glass);border:1px solid var(--art-glass-line);backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px);
   box-shadow:0 8px 24px -10px oklch(0.3 0.15 var(--acH) / .35)}
-/* the mini game (components/pulse-run.tsx): the panel's width, between the mark
+/* the mini game (components/echo-run.tsx): the panel's width, between the mark
    and the words. Nothing of it shows until Play: the panel is its particles. */
 .lg-game{position:relative;z-index:2;flex:1;min-height:170px;margin:10px -32px 14px;outline:none}
 .lg-game canvas{position:absolute;inset:0;width:100%;height:100%;display:block;opacity:0;pointer-events:none;transition:opacity .45s ease;

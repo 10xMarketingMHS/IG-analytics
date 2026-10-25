@@ -121,7 +121,7 @@ export function SettingsPage() {
 const ymOf = (d: Date) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
 
 // The workspace (name, time zone, week start) and the work calendar, kept as a
-// draft until Save; then the review cycle and how Pulse looks for you.
+// draft until Save; then the review cycle and how Echo looks for you.
 function GeneralSection({ onDirty }: { onDirty: (dirty: boolean) => void }) {
   const { isAdmin } = useWorkspaces();
   const { org, refetch } = useOrg();
@@ -190,16 +190,16 @@ function GeneralSection({ onDirty }: { onDirty: (dirty: boolean) => void }) {
         <section className="st-card">
           <div className="st-cardhead"><b>Workspace</b></div>
           <div className="st-row">
-            <span className="st-label"><b>Name</b><small>Shown in the sidebar under Pulse</small></span>
+            <span className="st-label"><b>Name</b><small>Shown in the sidebar under Echo</small></span>
             <input className="st-in st-wide" value={name ?? org?.name ?? ""} maxLength={60} aria-label="Workspace name"
               onChange={(e) => setName(e.target.value)} disabled={!org} />
           </div>
           <div className="st-row">
-            <span className="st-label"><b>Time zone</b><small>Pulse runs on India time: timers, due dates and the 6 PM wrap-up</small></span>
+            <span className="st-label"><b>Time zone</b><small>Echo runs on India time: timers, due dates and the 6 PM wrap-up</small></span>
             <select className="st-in st-wide" disabled aria-label="Time zone" value="ist"><option value="ist">India · IST (UTC+5:30)</option></select>
           </div>
           <div className="st-row">
-            <span className="st-label"><b>Week starts on</b><small>Used by This week and Last week across Pulse</small></span>
+            <span className="st-label"><b>Week starts on</b><small>Used by This week and Last week across Echo</small></span>
             <Seg label="Week starts on" value={week ?? org?.weekStart ?? "mon"} options={[["mon", "Monday"], ["sun", "Sunday"]]}
               onChange={(v) => { if (canStore) setWeek(v); else toast.error("The week start needs a database update first."); }} />
           </div>
@@ -337,7 +337,7 @@ function Appearance() {
     <section className="st-card">
       <div className="st-cardhead">
         <b>Appearance</b>
-        <span>Only changes how Pulse looks for you, on this browser</span>
+        <span>Only changes how Echo looks for you, on this browser</span>
       </div>
       <div className="st-row">
         <span className="st-label"><b>Theme</b></span>
@@ -357,7 +357,7 @@ function Appearance() {
 }
 
 // ── Notifications ────────────────────────────────────────────────────────────
-// Which pop-ups Pulse shows you, saved on your login so they follow you to any
+// Which pop-ups Echo shows you, saved on your login so they follow you to any
 // browser. Each switch saves as you flip it.
 function NotificationsSection() {
   const { user, refreshUser } = useAuth();
@@ -388,7 +388,7 @@ function NotificationsSection() {
       <section className="st-card">
         <div className="st-row st-colhead" style={{ borderTop: 0 }}>
           <span className="st-label"><small>Notify me when</small></span>
-          <small>In Pulse</small>
+          <small>In Echo</small>
         </div>
         {rows.length === 0 ? (
           <div className="st-empty">Your login isn't linked to a team member, so there's nothing to tell you about yet.</div>
@@ -406,7 +406,7 @@ function NotificationsSection() {
         </div>
       </section>
       <span className="st-note">
-        These are pop-ups inside Pulse while it's open. Email alerts and a daily digest email need an email service, which Pulse doesn't have yet.
+        These are pop-ups inside Echo while it's open. Email alerts and a daily digest email need an email service, which Echo doesn't have yet.
       </span>
     </>
   );

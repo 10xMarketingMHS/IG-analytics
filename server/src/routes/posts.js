@@ -419,7 +419,7 @@ postsRouter.patch("/posts/:id", requireEditor, async (req, res, next) => {
       const t = lt[0];
       if (t && t.status !== "review" && t.status !== "done") {
         const me = await callerEditorId(req);
-        // tasks made before Pulse noted who set them up: as before (Assign tasks)
+        // tasks made before Echo noted who set them up: as before (Assign tasks)
         const legacy = !t.created_by && !t.assigned_by;
         const mine = !!me && t.editor_id === me && t.created_by === req.user.sub && !t.assigned_by;
         const mayReplan = mine || ((await canAssignTasks(req)) && (legacy || setUpBy(t, req.user.sub)));

@@ -449,7 +449,7 @@ export function ChannelsSection() {
               <b>Auto-sync</b>
               <small>
                 {autoSync.enabled
-                  ? "Live numbers refresh by themselves while someone is signed in with Pulse open."
+                  ? "Live numbers refresh by themselves while someone is signed in with Echo open."
                   : "Off — pull numbers with Sync now on each platform."}
                 {!canManage && " Admins can change this."}
               </small>

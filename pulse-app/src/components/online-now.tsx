@@ -5,11 +5,11 @@ import { api, ApiError } from "@/lib/api";
 import { avatarColor, initials, useChat, type ChatPerson } from "@/lib/chat";
 import "./online-now.css";
 
-// Who's on Pulse right now, on the top bar: four faces in a tight stack that,
+// Who's on Echo right now, on the top bar: four faces in a tight stack that,
 // on hover (or on a first tap, on a phone), spreads out into everyone side by
 // side, each naming itself when pointed at; a click opens your direct messages
 // with that person.
-// From chat's presence (lib/chat.tsx): the people with Pulse open, you left out.
+// From chat's presence (lib/chat.tsx): the people with Echo open, you left out.
 
 const STACK = 4;  // faces in the stack
 const SHOW = 8;   // faces spread out; anyone past these is in the "+N"

@@ -111,7 +111,7 @@ export async function exportReport(ranked: RankedRow[], from: string, to: string
   const period = from === to ? from : `${from} to ${to}`;
 
   const summary = wb.addWorksheet("Summary");
-  summary.addRow([`Pulse team report — ${period}`]).font = { bold: true, size: 13 };
+  summary.addRow([`Echo team report — ${period}`]).font = { bold: true, size: 13 };
   summary.addRow([`Exported ${today}. Finished tasks count on the day they were completed; unfinished tasks count on their due date.`]);
   summary.addRow([]);
   summary.addRow(["Rank", "Employee", "Designation", "Points", "Completed", "Open", "Late"]).font = { bold: true };
@@ -185,7 +185,7 @@ export async function exportReport(ranked: RankedRow[], from: string, to: string
   const url = URL.createObjectURL(blob);
   const a = document.createElement("a");
   a.href = url;
-  a.download = `pulse-team-report-${from === to ? from : `${from}_to_${to}`}.xlsx`;
+  a.download = `echo-team-report-${from === to ? from : `${from}_to_${to}`}.xlsx`;
   document.body.appendChild(a);
   a.click();
   a.remove();

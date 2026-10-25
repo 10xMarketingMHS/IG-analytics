@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState, type MouseEvent } from "react";
 
-// Pulse Run — a one-button runner on the sign-in screen (login.tsx), Pulse's
-// own little game: the Pulse orb rolls along, jumps the blocks and catches the
+// Echo Run — a one-button runner on the sign-in screen (login.tsx), Echo's
+// own little game: the Echo orb rolls along, jumps the blocks and catches the
 // sparks, a little faster all the time. Until Play is pressed the panel is
 // just its moving colours; the game fades in for a round and back out after
 // it. Play and the score sit in the panel's top-right corner. During a round,
@@ -35,7 +35,7 @@ const PLAY = (
   <svg width="13" height="13" viewBox="0 0 24 24" aria-hidden="true"><path d="M7 4.5v15a1 1 0 0 0 1.5.86l12.4-7.5a1 1 0 0 0 0-1.72L8.5 3.64A1 1 0 0 0 7 4.5z" fill="currentColor" /></svg>
 );
 
-export function PulseRun() {
+export function EchoRun() {
   const wrap = useRef<HTMLDivElement>(null);
   const canvas = useRef<HTMLCanvasElement>(null);
   const scoreEl = useRef<HTMLElement>(null);   // the running score, written by the loop (no re-render per frame)
@@ -180,7 +180,7 @@ export function PulseRun() {
         ctx.beginPath(); ctx.roundRect(b.x, g - b.h, b.w, b.h, 6); ctx.fill(); ctx.stroke();
         ctx.restore();
       }
-      // the orb: a trail, a glow, the Pulse half-moon turning as it rolls
+      // the orb: a trail, a glow, the Echo half-moon turning as it rolls
       const cy = g - R - y;
       ctx.save();
       ctx.fillStyle = pal.trail;
@@ -270,7 +270,7 @@ export function PulseRun() {
   return (
     <>
       <div className="lg-game" ref={wrap} tabIndex={-1} data-on={shown || undefined} role="application"
-        aria-label="Pulse Run, a mini game: press Play, then Space or tap to jump over the blocks and catch the sparks">
+        aria-label="Echo Run, a mini game: press Play, then Space or tap to jump over the blocks and catch the sparks">
         <canvas ref={canvas} />
       </div>
       {/* top-right of the panel: Play, the score while playing, the result after */}
@@ -282,7 +282,7 @@ export function PulseRun() {
             {phase === "over" && (
               <span className="lg-score over"><b>Game over · {result.score}</b><span>Best {result.best}</span></span>
             )}
-            <button type="button" className="lg-play" onClick={play} title="Play Pulse Run: jump the blocks, catch the sparks (Space, ↑ or a tap)">
+            <button type="button" className="lg-play" onClick={play} title="Play Echo Run: jump the blocks, catch the sparks (Space, ↑ or a tap)">
               {PLAY}{phase === "over" ? "Play again" : "Play"}
             </button>
           </>

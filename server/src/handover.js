@@ -10,7 +10,7 @@ import { editorRanks, rankOf } from "./hierarchy.js";
 // Nobody answering climbs the team: at the close of the work day it was
 // offered the Team Leads are warned; at the next close it reaches the Asst.
 // Managers; at the one after, the Managers. Whoever it has reached can move it
-// to someone. Like attendance, the climb is applied the first time Pulse is
+// to someone. Like attendance, the climb is applied the first time Echo is
 // used after each close (syncHandovers). See 20261026120000_task_handover.sql.
 
 export const handoverReady = () => hasColumn("task_handover", "id");

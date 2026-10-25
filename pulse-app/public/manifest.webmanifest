@@ -1,6 +1,6 @@
 {
-  "name": "Pulse — Content Analytics",
-  "short_name": "Pulse",
+  "name": "Echo — Content Analytics",
+  "short_name": "Echo",
   "description": "Tasks, team chat and content analytics for DF Foods Marketing.",
   "start_url": "/home",
   "scope": "/",

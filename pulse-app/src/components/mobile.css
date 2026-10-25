@@ -2,7 +2,7 @@
    that rise from the bottom as sheets, an open conversation on the whole
    screen, and none of the desktop-only touches (tap flash, zoom on typing,
    hover lifts). Safe-area insets keep it clear of notches and home bars when
-   Pulse is added to the home screen. */
+   Echo is added to the home screen. */
 .tabbar,.tab-fab{display:none}
 
 @media (max-width:768px){

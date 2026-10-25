@@ -3,7 +3,7 @@ import { api, ApiError } from "@/lib/api";
 import { Modal } from "@/components/modal";
 import "./view-as.css";
 
-// Super Admin test mode: open Pulse as someone else by their employee code
+// Super Admin test mode: open Echo as someone else by their employee code
 // (Team › Roster) to see exactly what they see. The server makes it read-only
 // and logs it in Activity; the bar at the bottom switches back. Each switch
 // reloads the app, so nothing from one person's view is left in the other's.
@@ -28,13 +28,13 @@ export function ViewAsModal({ onClose }: { onClose: () => void }) {
   }
 
   return (
-    <Modal onClose={onClose} title="View Pulse as someone">
+    <Modal onClose={onClose} title="View Echo as someone">
       <form className="va-form" onSubmit={submit}>
         <label className="f" htmlFor="va-code">Employee code</label>
         <input id="va-code" className="t va-code" autoFocus placeholder="e.g. MHS01" maxLength={20} value={code}
           onChange={(e) => setCode(e.target.value.toUpperCase())} />
         <p className="hint">
-          Opens their Pulse so you see exactly what they see. It's read-only — nothing can be changed under their name — and it ends after two hours.
+          Opens their Echo so you see exactly what they see. It's read-only — nothing can be changed under their name — and it ends after two hours.
           Switch back from the bar at the bottom.
         </p>
         {error && <p className="login-err">{error}</p>}

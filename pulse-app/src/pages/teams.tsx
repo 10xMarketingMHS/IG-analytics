@@ -7,7 +7,7 @@ import type { AppUser, Editor, Role } from "@/lib/types";
 // The add / edit window for one team member — used by Team › Roster.
 
 // Positions: the team's hierarchy, most senior first. A job title only — what
-// someone can do in Pulse is their Role. Picked from this list; a position
+// someone can do in Echo is their Role. Picked from this list; a position
 // saved before the list was fixed still shows on that person until changed.
 // Senior Editor, Editor and Junior Editor are one level; only the title differs.
 export const DESIGNATIONS = ["Manager", "Asst. Manager", "Team Lead", "Senior Editor", "Editor", "Junior Editor", "Viewer"];
@@ -194,7 +194,7 @@ export function TeamMemberModal({ row, onClose, onSaved, existingEmails, startWi
 
             <label style={{ display: "flex", alignItems: "center", gap: 9, margin: "18px 0 4px", cursor: user ? "default" : "pointer", fontSize: 13.5, fontWeight: 700 }}>
               <input type="checkbox" checked={giveLogin} disabled={Boolean(user)} onChange={(e) => setGiveLogin(e.target.checked)} style={{ width: 16, height: 16, accentColor: "var(--accent)" }} />
-              Give this person login access to Pulse
+              Give this person login access to Echo
             </label>
             {user && <div className="hint" style={{ margin: "0 0 8px" }}>They already have a login — use Remove login below to take it away.</div>}
 
