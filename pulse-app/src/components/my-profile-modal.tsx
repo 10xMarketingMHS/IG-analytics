@@ -64,7 +64,8 @@ const AVATAR_PRESETS = AVATAR_EMOJI.map((emoji, i) => ({
 // Deliberately separate from the admin Settings hub: no admin access needed,
 // and it never touches the org-wide "Team" roster (a different record you
 // may or may not be linked to).
-export function MyProfileModal({ onClose }: { onClose: () => void }) {
+// onViewAs: a Super Admin's way into View as (test mode), beside Cancel.
+export function MyProfileModal({ onClose, onViewAs }: { onClose: () => void; onViewAs?: () => void }) {
   const { user, refreshUser } = useAuth();
   const fileRef = useRef<HTMLInputElement>(null);
   const [name, setName] = useState(user?.name ?? "");
@@ -247,6 +248,10 @@ export function MyProfileModal({ onClose }: { onClose: () => void }) {
       )}
 
       <div className="mfoot" style={{ marginTop: 18 }}>
+        {onViewAs && (
+          <button type="button" className="btn" style={{ marginRight: "auto" }} onClick={onViewAs}
+            title="See Echo exactly as someone else does: read-only, for up to two hours">View Echo as someone (test)</button>
+        )}
         <button type="button" className="btn" onClick={onClose}>Cancel</button>
         <button type="button" className="btn btn-primary" disabled={saving} onClick={save}>
           {saving ? "Saving…" : "Save changes"}

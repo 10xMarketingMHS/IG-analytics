@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
-import { NavLink, Outlet, useLocation, useNavigate } from "react-router-dom";
+import { Link, NavLink, Outlet, useLocation, useNavigate } from "react-router-dom";
 import { NAV_ITEMS, PAGE_META, type NavItem } from "@/lib/nav";
 import { useAuth } from "@/lib/auth-context";
 import { useWorkspaces } from "@/lib/workspaces-context";
@@ -539,11 +539,8 @@ function AppShellInner() {
           <button type="button" className="sb2-sheetx" aria-label="Close menu" onClick={() => setMenuOpen(false)}>{CLOSE_ICON}</button>
         </div>
         <div className="brand">
-          {user?.isSuperAdmin && !user.viewingAs ? (
-            <button type="button" className="logo echo-logo em-hover" onClick={() => setViewAsOpen(true)} title="View Echo as someone (test)" aria-label="View Echo as someone"><EchoMark /></button>
-          ) : (
-            <div className="logo echo-logo em-hover"><EchoMark /></div>
-          )}
+          {/* the logo goes Home, for everyone (a Super Admin's View as is in My Profile) */}
+          <Link to="/home" className="logo echo-logo em-hover" title="Home" aria-label="Echo, go to Home" onClick={() => setMenuOpen(false)}><EchoMark /></Link>
           <div className="sb2-label sb2-brandtx">
             <b>Echo</b>
             <small>{org?.name || "Content Analytics"}</small>
@@ -661,7 +658,10 @@ function AppShellInner() {
           </button>
         </div>
         {jumpOpen && <JumpPalette items={jumpItems} onClose={() => setJumpOpen(false)} />}
-        {profileOpen && <MyProfileModal onClose={() => setProfileOpen(false)} />}
+        {profileOpen && (
+          <MyProfileModal onClose={() => setProfileOpen(false)}
+            onViewAs={user?.isSuperAdmin && !user.viewingAs ? () => { setProfileOpen(false); setViewAsOpen(true); } : undefined} />
+        )}
         {signOutAsk && (
           <Modal title="You're still clocked in" onClose={() => setSignOutAsk(false)}>
             <p style={{ margin: "0 0 14px", lineHeight: 1.5 }}>
