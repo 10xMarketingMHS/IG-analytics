@@ -18,6 +18,8 @@ const NAV_ICONS: Record<string, ReactNode> = {
   "/ads-performance": svg(<><path d="M4 20V10M10 20V4M16 20v-7M22 20H2" /></>),
   "/ad-uploads": svg(<><path d="M4 10v4a1 1 0 0 0 1 1h2l5 4V5L7 9H5a1 1 0 0 0-1 1Z" /><path d="M16 8.5a5 5 0 0 1 0 7M18.5 6a8.5 8.5 0 0 1 0 12" /></>),
   "/scheduling": svg(<><rect x="3.5" y="5" width="17" height="15.5" rx="2.5" /><path d="M3.5 10h17M8 3v4M16 3v4M9 15l2 2 4-4" /></>),
+  "/social": svg(<><path d="M4 10v4a1 1 0 0 0 1 1h2l6 4V5L7 9H5a1 1 0 0 0-1 1Z" /><path d="M17 9a4 4 0 0 1 0 6" /></>),
+  "/ads": svg(<><circle cx="12" cy="12" r="8.5" /><circle cx="12" cy="12" r="4.5" /><circle cx="12" cy="12" r="1" /></>),
   "/metrics": svg(<><rect x="3" y="5" width="18" height="14" rx="2.5" /><path d="M3 9h18M8 5l-1.5 4M13 5l-1.5 4M18 5l-1.5 4" /></>),
   "/analytics": svg(<><path d="M3 3v18h18" /><path d="m7 15 4-5 3.5 3L20 6" /></>),
   "/leaderboard": svg(<><path d="M8 4h8v5a4 4 0 0 1-8 0Z" /><path d="M8 6H5a3 3 0 0 0 3 4M16 6h3a3 3 0 0 1-3 4M12 13v4M8.5 20h7M10 17h4" /></>),

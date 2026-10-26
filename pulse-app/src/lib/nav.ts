@@ -30,6 +30,8 @@ export type NavItem = {
   schedulerOnly?: boolean;
   // Ad uploads: only for the Managers and Team Leads; carries how many wait
   uploadsOnly?: boolean;
+  // Social / Ads: one sidebar item standing for its tabs' pages (lib/sections.ts)
+  area?: "social" | "ads";
 };
 
 export const NAV_ITEMS: NavItem[] = [
@@ -50,6 +52,11 @@ export const NAV_ITEMS: NavItem[] = [
   { title: "Task Board", href: "/tasks", icon: "✅", section: "Tasks" },
   // My Team — admin-only: everyone ranked for a date range, with their tasks.
   { title: "My Team", href: "/my-team", icon: "🏅", section: "Tasks", adminOnly: true },
+  // Social and Ads — the sidebar's two places for the work after the Task Board,
+  // each its pages as tabs (lib/sections.ts): Pipeline → Scheduling → Posts, and
+  // Pipeline → Uploads → Performance. The pages below stay, off the sidebar.
+  { title: "Social", href: "/social", icon: "📣", section: "Tasks", area: "social", showBadge: true },
+  { title: "Ads", href: "/ads", icon: "💰", section: "Tasks", area: "ads" },
   { title: "Social & Ads Pipeline", href: "/metrics", icon: "🎬", section: "Tasks" },
   // Scheduling — approved reels, carousels and posts for the schedulers to date and link.
   { title: "Scheduling", href: "/scheduling", icon: "🗓️", section: "Tasks", schedulerOnly: true },
@@ -77,6 +84,8 @@ export const PAGE_META: Record<string, [string, string]> = {
   "/chat": ["Team Chat", "Channels for the team, direct messages for one-to-one"],
   "/analytics/": ["Format analytics", "Total performance across all posts of one format"],
   "/analytics": ["Analytics", "Content performance across your channels and platforms"],
+  "/social": ["Social", "Pipeline, scheduling and posts"],
+  "/ads": ["Ads", "Pipeline, uploads and performance"],
   "/ads-performance": ["Ads performance", "Every ad, its results, and how each editor and team is doing"],
   "/ad-uploads": ["Ad uploads", "Approved ads by team: record the ad numbers each one became"],
   "/scheduling": ["Scheduling", "Approved reels, carousels and posts: set the post date, then paste each link"],

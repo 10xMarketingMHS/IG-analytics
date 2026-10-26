@@ -2,6 +2,8 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 import { Link, NavLink, Outlet, useLocation, useNavigate } from "react-router-dom";
 import { NAV_ITEMS, PAGE_META, type NavItem } from "@/lib/nav";
+import { SECTIONS, sectionOf, type SectionTab } from "@/lib/sections";
+import { SectionTabs } from "@/components/section-tabs";
 import { useAuth } from "@/lib/auth-context";
 import { useWorkspaces } from "@/lib/workspaces-context";
 import { useEditors } from "@/lib/use-editors";
@@ -49,9 +51,10 @@ import type { Activity } from "@/lib/types";
 // that isn't placed here lands at the end of Operations.
 const SIDEBAR_GROUPS: { label: string; hrefs: string[] }[] = [
   { label: "Workspace", hrefs: ["/home", "/inbox", "/chat", "/tasks", "/analytics"] },
-  { label: "Operations", hrefs: ["/metrics", "/scheduling", "/ad-uploads", "/ads-performance", "/posts", "/leaderboard", "/goals-board", "/my-team"] },
+  { label: "Operations", hrefs: ["/social", "/ads", "/leaderboard", "/goals-board", "/my-team"] },
 ];
-const OFF_SIDEBAR = new Set(["/settings", "/posts/new"]);
+// Social and Ads stand for these, as tabs (lib/sections.ts); they stay reachable by address and search
+const OFF_SIDEBAR = new Set(["/settings", "/posts/new", "/metrics", "/scheduling", "/posts", "/ad-uploads", "/ads-performance"]);
 // Before Start Work an editor can still open these — the Workspace group, plus
 // Activity and Settings (which shows only what their permissions allow). The
 // Operations group (Pipeline, Posts, Leaderboard, Goals) waits for it: those
@@ -409,6 +412,9 @@ function AppShellInner() {
     && (!i.chatBadge || chatAvailable)
     && (!i.schedulerOnly || !!schedAccess?.allowed)
     && (!i.uploadsOnly || !!uploadsAccess?.allowed);
+  // Social and Ads: which tabs this person sees, and where the sidebar item lands
+  const canSeeTab = (t: SectionTab) => (t.access === "scheduler" ? !!schedAccess?.allowed : t.access === "uploads" ? !!uploadsAccess?.allowed : true);
+  const here = sectionOf(location.pathname, location.search);
   const placed = new Set(SIDEBAR_GROUPS.flatMap((g) => g.hrefs));
   const sideGroups = SIDEBAR_GROUPS.map((g, gi) => ({
     label: g.label,
@@ -480,7 +486,8 @@ function AppShellInner() {
     }
   }, [eodLocked, location.pathname, navigate]);
 
-  const [title, sub] = metaFor(location.pathname);
+  // Social's and Ads' pages carry their section's name, and their tab's line
+  const [title, sub] = here ? [SECTIONS[here.section].title, here.tab.desc] : metaFor(location.pathname);
   const initial = (user?.name || user?.email || "?").charAt(0).toUpperCase();
   // Prefer the person's actual designation (Team Lead, Manager, Video
   // Editor…) from their linked roster record over the generic account role —
@@ -567,7 +574,7 @@ function AppShellInner() {
               {g.items.map((item) => (
                 <NavLink
                   key={item.href}
-                  to={item.href}
+                  to={item.area ? SECTIONS[item.area].tabs.find(canSeeTab)!.to : item.href}
                   end={item.href === "/posts"}
                   title={rail ? item.title : undefined}
                   onClick={(e) => {
@@ -576,14 +583,14 @@ function AppShellInner() {
                   }}
                   aria-disabled={eodLocked && !LIVE_WHEN_LOCKED.has(item.href) ? true : undefined}
                   className={({ isActive }) =>
-                    "navitem" + (isActive ? " active" : "") + (eodLocked && LIVE_WHEN_LOCKED.has(item.href) ? " eod-live" : "") + (tabHrefs.has(item.href) ? " in-tabbar" : "")
+                    "navitem" + ((item.area ? here?.section === item.area : isActive) ? " active" : "") + (eodLocked && LIVE_WHEN_LOCKED.has(item.href) ? " eod-live" : "") + (tabHrefs.has(item.href) ? " in-tabbar" : "")
                   }
                 >
                   <span className="ic">{navIcon(item.href) ?? item.icon}</span> <span className="sb2-label">{item.title}</span>
                   {item.showBadge && postCount !== null && (
                     <span className="badge">{postCount}</span>
                   )}
-                  {item.uploadsOnly && !!uploadsAccess?.waiting && <span className="badge">{uploadsAccess.waiting}</span>}
+                  {(item.uploadsOnly || item.area === "ads") && !!uploadsAccess?.waiting && <span className="badge">{uploadsAccess.waiting}</span>}
                   {item.chatBadge && <ChatBadge />}
                   {item.inboxBadge && <InboxBadge />}
                 </NavLink>
@@ -715,6 +722,10 @@ function AppShellInner() {
         <div className="content">
           {/* a page that breaks says so (the sidebar stays); another page starts afresh */}
           <ErrorBoundary resetKey={location.pathname}>
+            {here && (
+              <SectionTabs section={here.section} current={here.tab.key} canSee={canSeeTab}
+                counts={{ posts: postCount, uploads: uploadsAccess?.waiting }} />
+            )}
             <Outlet />
           </ErrorBoundary>
         </div>

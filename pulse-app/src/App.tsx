@@ -102,6 +102,9 @@ function AppRoutes() {
             {/* Dashboard and Top Performers live on as the two tabs of Analytics. */}
             <Route path="/analytics" element={<AnalyticsPage />} />
             <Route path="/dashboard" element={<Navigate to="/analytics" replace />} />
+            {/* Social and Ads (lib/sections.ts): their first tab */}
+            <Route path="/social" element={<Navigate to="/metrics?type=social" replace />} />
+            <Route path="/ads" element={<Navigate to="/metrics?type=ad" replace />} />
             <Route path="/metrics" element={<MetricsPage />} />
             <Route path="/scheduling" element={<SchedulingPage />} />
             <Route path="/ad-uploads" element={<AdUploadsPage />} />

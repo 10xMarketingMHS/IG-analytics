@@ -1,4 +1,5 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
+import { useSearchParams } from "react-router-dom";
 import { toast } from "sonner";
 import { Loader } from "@/components/loader";
 import { Icon } from "@/components/icon";
@@ -126,9 +127,18 @@ export function MetricsPage() {
 
   const pipelineTasks = useMemo(() => (allTasks ?? []).filter((t) => pipelineBucket(t) !== null), [allTasks]);
   const [view, setView] = useState<View>("stage");
-  const [typeFilter, setTypeFilter] = useState<TypeFilter>("all");
+  // Social's and Ads' Pipeline tabs (lib/sections.ts) show only their work: ?type=social or ?type=ad
+  const [params] = useSearchParams();
+  const lockedType: TypeFilter | null = params.get("type") === "ad" ? "ad" : params.get("type") === "social" ? "social" : null;
+  const [pickedType, setTypeFilter] = useState<TypeFilter>("all");
+  const typeFilter = lockedType ?? pickedType;
+  // the stages that type goes through: Social's scheduling, or Ads' uploads
+  const shownStages = STAGES.filter((s) => (typeFilter === "ad" ? !["to_schedule", "scheduled", "links_due", "live"].includes(s.key)
+    : typeFilter === "social" ? !["to_upload", "uploaded"].includes(s.key) : true));
   const [editorFilter, setEditorFilter] = useState(""); // "" all, "none" unclaimed, else an editor id
   const [stageFilter, setStageFilter] = useState<"" | Stage>("");
+  // moving between the Social and Ads tabs starts the stage filter afresh
+  useEffect(() => { setStageFilter(""); }, [params]);
   const [q, setQ] = useState("");
   const [openId, setOpenId] = useState<string | null>(null);
   const [claiming, setClaiming] = useState<string | null>(null);
@@ -157,7 +167,7 @@ export function MetricsPage() {
   const overdue = pre.filter((t) => t.status !== "done" && t.due_date && t.due_date < today).length;
   const social = pre.filter((t) => pipelineBucket(t) === "social").length;
   const ads = pre.filter((t) => pipelineBucket(t) === "ad").length;
-  const filtered = typeFilter !== "all" || !!editorFilter || !!stageFilter || !!q.trim();
+  const filtered = (!lockedType && typeFilter !== "all") || !!editorFilter || !!stageFilter || !!q.trim();
   const accounts = useMemo(() => {
     const m = new Map<string, { key: string; brand: string; plat: keyof typeof PLATFORM; tasks: Task[] }>();
     for (const t of rows) {
@@ -223,7 +233,7 @@ export function MetricsPage() {
           </div>
           <div className="pp-barwrap">
             <div className="pp-bar">
-              {STAGES.map((s) => {
+              {shownStages.map((s) => {
                 const n = byStage.get(s.key)!.length;
                 return n > 0 ? <span key={s.key} title={`${s.label}: ${n}`} style={{ flex: n, background: s.color, opacity: stageFilter && stageFilter !== s.key ? 0.3 : 1 }} /> : null;
               })}
@@ -232,7 +242,7 @@ export function MetricsPage() {
           </div>
         </div>
         <div className="pp-stages">
-          {STAGES.map((s) => {
+          {shownStages.map((s) => {
             const list = byStage.get(s.key)!;
             const late = list.filter((t) => t.status !== "done" && t.due_date && t.due_date < today).length;
             const sub = s.key === "pending_accept" ? (list.length ? "needs a nudge" : "") : s.key === "completed" ? "so far" : late ? `${late} overdue` : "";
@@ -257,13 +267,13 @@ export function MetricsPage() {
       </section>
 
       <div className="pp-card pp-tools">
-        <div className="pp-seg" role="group" aria-label="Type">
+        {!lockedType && <div className="pp-seg" role="group" aria-label="Type">
           {([["all", "All", "apps"], ["social", "Social", "photo_camera"], ["ad", "Ads", "campaign"]] as const).map(([k, l, ic]) => (
             <button key={k} type="button" className={typeFilter === k ? "on" : undefined} aria-pressed={typeFilter === k} onClick={() => setTypeFilter(k)}>
               <Icon name={ic} size={17} />{l}<span className="pp-n">{typeCount(k)}</span>
             </button>
           ))}
-        </div>
+        </div>}
         <label className="pp-select">
           <select value={editorFilter} onChange={(e) => setEditorFilter(e.target.value)} aria-label="Editor">
             <option value="">All editors</option>
@@ -275,7 +285,7 @@ export function MetricsPage() {
         <label className="pp-select">
           <select value={stageFilter} onChange={(e) => setStageFilter(e.target.value as Stage | "")} aria-label="Stage">
             <option value="">All stages</option>
-            {STAGES.map((s) => <option key={s.key} value={s.key}>{s.label}</option>)}
+            {shownStages.map((s) => <option key={s.key} value={s.key}>{s.label}</option>)}
           </select>
           <Icon name="expand_more" size={18} />
         </label>
@@ -319,7 +329,7 @@ export function MetricsPage() {
                     </span>
                     <span className="pp-stagecell">
                       <span className="pp-pill" style={{ ["--c" as string]: s.color }}>{s.label}</span>
-                      <span className="pp-steps">{STAGES.map((x, i) => <i key={x.key} style={{ background: i <= STAGE_INDEX[s.key] ? s.color : undefined }} />)}</span>
+                      <span className="pp-steps">{shownStages.map((x) => <i key={x.key} style={{ background: STAGE_INDEX[x.key] <= STAGE_INDEX[s.key] ? s.color : undefined }} />)}</span>
                     </span>
                     <span className={"pp-due " + due.tone}><Icon name={due.icon} size={15} />{due.l}</span>
                     <span className="pp-upd">{relTime(lastTouch(t))}</span>
