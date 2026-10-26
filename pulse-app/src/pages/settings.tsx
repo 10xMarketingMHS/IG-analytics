@@ -20,6 +20,7 @@ import { ChannelsSection } from "@/pages/channels";
 import { EodOversightSection } from "@/pages/eod-oversight";
 import { ConnectedAppsSection } from "@/pages/connected-apps";
 import { PageAccessSection } from "@/pages/page-access";
+import { AboutSection } from "@/pages/about";
 import { AttendanceSection } from "@/pages/attendance-settings";
 import { AccessSection } from "@/pages/access";
 import { SI, Seg, Stepper, Toggle, fmtHours } from "@/pages/settings-ui";
@@ -33,7 +34,7 @@ import "./settings.css";
 // People, logins and roles live in Team › Roster; each person's goals in
 // Goals › Set goals. /channels and /task-rules still land here on their own
 // section; ?s= picks one.
-type Section = "general" | "channels" | "content" | "tasks" | "attendance" | "scoring" | "access" | "pages" | "alerts" | "workday" | "apps";
+type Section = "general" | "channels" | "content" | "tasks" | "attendance" | "scoring" | "access" | "pages" | "alerts" | "workday" | "apps" | "about";
 const SECTION_FOR_PATH: Record<string, Section> = { "/channels": "channels", "/task-rules": "tasks" };
 const LEAVE_UNSAVED = "You have changes that aren't saved. Leave them?";
 
@@ -63,6 +64,7 @@ export function SettingsPage() {
     { k: "alerts", l: "Notifications", d: "What pings you, and where", icon: SI.bell, show: true },
     { k: "workday", l: "Work day", d: "Who started and ended their day", icon: SI.clock, show: pageRule("setWorkday", "see", isAdmin) },
     { k: "apps", l: "Connected apps", d: "Animus, with one line", icon: SI.link, show: !!appsAccess?.allowed },
+    { k: "about", l: "About Echo", d: "Version, what's new, who to ask", icon: SI.info, show: true },
   ];
   const shown = SECTIONS.filter((s) => s.show);
   const want = (params.get("s") as Section | null) ?? SECTION_FOR_PATH[location.pathname] ?? "general";
@@ -119,6 +121,7 @@ export function SettingsPage() {
           {cur.k === "alerts" && <NotificationsSection />}
           {cur.k === "workday" && <EodOversightSection />}
           {cur.k === "apps" && <ConnectedAppsSection canChange={appsAccess?.change ?? true} />}
+          {cur.k === "about" && <AboutSection />}
         </div>
       </div>
     </section>
