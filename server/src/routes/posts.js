@@ -7,6 +7,7 @@ import { requirePage } from "../page-access.js";
 import { logActivity } from "../activity.js";
 import { resolveBudgetHours, nextTaskRef, nextBrandTaskRef, callerEditorId, canAssignTasks, setUpBy } from "./tasks.js";
 import { closePendingHandovers } from "../handover.js";
+import { recordMetricDays } from "../post-history.js";
 import { editorRanks, seesEditor, taskViewer } from "../hierarchy.js";
 
 // The person on a post gets its editing task, so naming them is assigning work:
@@ -330,6 +331,8 @@ postsRouter.post("/posts", requirePermission("create_post", { alsoAllow: ["edito
     );
     // Auto-create a Task Management task for the assigned editor.
     await syncPostTask(rows[0].id, req.orgId, req.user.sub);
+    // its numbers, as of today, into its history (../post-history.js)
+    await recordMetricDays([rows[0].id]);
     await logActivity({
       orgId: req.orgId,
       actorId: req.user.sub,
@@ -442,6 +445,10 @@ postsRouter.patch("/posts/:id", requireEditor, requirePage("posts"), async (req,
     if (rows.length === 0) return res.status(404).json({ error: "Post not found" });
     // Keep the linked task in sync (e.g. editor assigned/changed on edit).
     await syncPostTask(req.params.id, req.orgId, req.user.sub, { keepBrief });
+    // numbers typed in (or the post just published): today's totals into its history
+    if (["views", "reach", "likes", "comments", "shares", "saves", "status"].some((k) => p[k] !== undefined)) {
+      await recordMetricDays([req.params.id]);
+    }
 
     const post = rows[0];
     if (prior && prior.status !== "published" && post.status === "published") {

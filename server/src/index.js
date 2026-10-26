@@ -43,6 +43,7 @@ import { attendanceRouter } from "./routes/attendance.js";
 import { inboxRouter } from "./routes/inbox.js";
 import { leaveRouter } from "./routes/leave.js";
 import { homeRouter } from "./routes/home.js";
+import { startThinning } from "./post-history.js";
 
 const app = express();
 
@@ -167,6 +168,8 @@ app.use((err, _req, res, _next) => {
 app.listen(config.PORT, () => {
   console.log(`Echo API listening on http://localhost:${config.PORT}`);
 });
+// posts' day-by-day numbers: older than 90 days, thinned to one a week
+startThinning();
 
 async function bootstrapWithRetry(attempt = 1) {
   try {

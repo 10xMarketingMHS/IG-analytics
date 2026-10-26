@@ -10,6 +10,7 @@ import { logActivity } from "../activity.js";
 import * as ig from "../integrations/instagram.js";
 import * as yt from "../integrations/youtube.js";
 import * as fb from "../integrations/facebook.js";
+import { recordMetricDays } from "../post-history.js";
 
 // Upsert a platform_connection row (one per account × provider). Used by every
 // connect path so the shape stays identical across Instagram / Facebook / YouTube.
@@ -836,7 +837,8 @@ integrationsRouter.post("/integrations/youtube/connect", requirePermission("chan
 // than an UPDATE per post (the pooler cap is the constraint). A number the
 // platform didn't give this time is null and keeps what the post had, so a
 // refused or rate-limited read never wipes a post to 0; metrics_updated_at
-// moves only for posts that got at least one number.
+// moves only for posts that got at least one number, and those save the day's
+// totals into their history (../post-history.js).
 //   rows: [{ id, externalId, views, reach, likes, comments, shares, saves }]
 export async function writeSyncedMetrics(rows, db = pool) {
   if (!rows.length) return;
@@ -856,6 +858,7 @@ export async function writeSyncedMetrics(rows, db = pool) {
       where p.id = d.id`,
     [col("id"), col("views"), col("reach"), col("likes"), col("comments"), col("shares"), col("saves"), col("externalId"), fresh],
   );
+  await recordMetricDays(rows.filter((_, i) => fresh[i]).map((r) => r.id), db);
 }
 
 // Step 3: pull fresh metrics for the connected account's posts (match by Link).
@@ -1002,16 +1005,8 @@ integrationsRouter.post("/integrations/youtube/sync", requireEditor, async (req,
           matched += 1;
         }
       }
-      if (ids.length) {
-        await pool.query(
-          `update post p set views=d.views, likes=d.likes, comments=d.comments,
-                  last_synced_at=now(), metrics_updated_at=now()
-             from (select unnest($1::uuid[]) as id, unnest($2::bigint[]) as views,
-                          unnest($3::bigint[]) as likes, unnest($4::bigint[]) as comments) d
-            where p.id = d.id`,
-          [ids, views, likes, comments],
-        );
-      }
+      // views, likes and comments (reach, shares and saves stay as they are), and the day's history
+      await writeSyncedMetrics(ids.map((id, i) => ({ id, views: views[i], likes: likes[i], comments: comments[i] })));
 
       // Refresh subscriber count (best-effort — works even if no videos matched).
       let subscribers = null;
