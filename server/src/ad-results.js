@@ -35,7 +35,8 @@ const scoreOf = (list) => {
   const scored = present(list, "score");
   if (!scored.length) return null;
   const spent = scored.filter((x) => Number(x.spend) > 0);
-  return spent.length ? spent.reduce((s, x) => s + x.score * x.spend, 0) / spent.reduce((s, x) => s + Number(x.spend), 0) : avgOf(scored, "score");
+  const v = spent.length ? spent.reduce((s, x) => s + x.score * x.spend, 0) / spent.reduce((s, x) => s + Number(x.spend), 0) : avgOf(scored, "score");
+  return Math.round(v * 10) / 10;
 };
 
 // One task's results across its ads (a video can run as several): leads,
