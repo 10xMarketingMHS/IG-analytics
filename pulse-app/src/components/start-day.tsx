@@ -76,10 +76,14 @@ export function StartDaySection({
   }, []);
   // A late start nobody said why about yet (the page reloaded, or the day was
   // started some other way): ask once on Home; the bar keeps a link to it.
+  // The ask Start day itself opens counts as that once: right after the reason
+  // is sent, today's attendance still says it's due until it reloads, and
+  // asking again then made a late start send its reason twice.
   const lateDue = !preview && !user?.viewingAs && !!att?.me?.lateNoteNeeded;
   const askedOnce = useRef(false);
   useEffect(() => {
-    if (!lateDue || lateAsk || askedOnce.current || !att?.me) return;
+    if (lateAsk) { askedOnce.current = true; return; }
+    if (!lateDue || askedOnce.current || !att?.me) return;
     askedOnce.current = true;
     askLateReason(att.me);
   }, [lateDue, lateAsk, att?.me, askLateReason]);
