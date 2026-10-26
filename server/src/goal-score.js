@@ -20,6 +20,12 @@ import { openingFor, readSettings } from "./attendance.js";
 //     goal for scoring by days off ÷ working days; the goal as set stays. An
 //     unexcused absence doesn't shrink it (its penalty comes off discipline).
 //  5. So a score can pass 100%, up to 150% for the month as a whole.
+//  6. Other work shrinks the goal too, by the time it took: a task someone else
+//     gave you, of a type that isn't in your goals this month (another team's
+//     packaging, a one-off edit, a report…). Its time is what its timer ran,
+//     never more than the time it was given ("Should take"); a task with none
+//     takes nothing off. Leave (in days) and Other work (in hours) together
+//     come off the month's working hours, and the goal shrinks to match.
 // A goal job is worth the points the goal was set with.
 export const TYPE_CAP = 1.5;
 // The whole month together (covered work included) is capped too: at most 150%
@@ -32,14 +38,21 @@ const IST_MONTH = (col) => `${col} >= ($2::date)::timestamp at time zone 'Asia/K
 
 // One person's month. goals: [{ contentFormatId, name, icon, goalJC, points }];
 // jobs: [{ contentFormatId, source: "self" | "assigned" | "covered", points }].
-export function scoreMonth({ goals, jobs, leaveDays = 0, workingDays = 0 }) {
+export function scoreMonth({ goals, jobs, leaveDays = 0, workingDays = 0, hoursPerDay = 8 }) {
   const leaveFactor = workingDays > 0 ? Math.max(0, 1 - leaveDays / workingDays) : 1;
+  // rule 6: Other work, at the time it took
+  const goalTypes = new Set(goals.filter((g) => g.goalJC > 0).map((g) => g.contentFormatId));
+  // (a timer that ran only a few minutes — under 6 — isn't worth listing or counting)
+  const otherWork = jobs.filter((j) => j.source === "assigned" && !(j.contentFormatId && goalTypes.has(j.contentFormatId)) && j.hours >= 0.1);
+  const otherHours = otherWork.reduce((n, j) => n + j.hours, 0);
+  const monthHours = workingDays * hoursPerDay;
+  const timeFactor = monthHours > 0 ? Math.max(0, 1 - (leaveDays * hoursPerDay + otherHours) / monthHours) : leaveFactor;
   const types = new Map();
   for (const g of goals) {
     if (!(g.goalJC > 0)) continue;
     types.set(g.contentFormatId, {
       contentFormatId: g.contentFormatId, name: g.name ?? null, icon: g.icon ?? null,
-      goalJC: g.goalJC, goal: g.goalJC * leaveFactor, points: g.points,
+      goalJC: g.goalJC, goal: g.goalJC * timeFactor, points: g.points,
       done: 0, self: 0, assigned: 0, covered: 0, counted: 0,
     });
   }
@@ -72,7 +85,12 @@ export function scoreMonth({ goals, jobs, leaveDays = 0, workingDays = 0 }) {
   const uncapped = jobsPoints + coveredPoints;
   const reached = goalPoints > 0 ? Math.min(uncapped, TOTAL_CAP * goalPoints) : uncapped;
   return {
-    leaveDays, workingDays, leaveFactor,
+    leaveDays, workingDays, leaveFactor, hoursPerDay, timeFactor,
+    otherHours: Math.round(otherHours * 10) / 10,
+    otherWork: otherWork.map((j) => ({
+      taskId: j.taskId ?? null, title: j.title ?? null, typeName: j.typeName ?? null,
+      requestedBy: j.requestedBy ?? null, hours: Math.round(j.hours * 10) / 10, completedAt: j.completedAt ?? null,
+    })),
     types: [...types.values()], coveredByType,
     goalPoints, jobsPoints, coveredPoints, coveredJobs, reached, uncapped,
     goalTarget, achieved,
@@ -97,7 +115,14 @@ export async function scoreMonthAll(orgId, monthFirst, editorId = null) {
     ),
     pool.query(
       `select t.editor_id, t.content_format_id, t.assigned_by, ${covered} as covered_from,
-              coalesce((to_jsonb(t)->>'points_at_done')::numeric, cf.points, 1)::float as pts
+              coalesce((to_jsonb(t)->>'points_at_done')::numeric, cf.points, 1)::float as pts,
+              t.id, t.title, cf.name as type_name, t.meta->>'requestedBy' as requested_by, t.completed_at,
+              -- the time it took (rule 6): its timer, never more than the time it was given
+              least(
+                (coalesce(t.budget_used_seconds, 0)
+                  + case when t.budget_started_at is not null and t.completed_at > t.budget_started_at
+                         then extract(epoch from (t.completed_at - t.budget_started_at)) else 0 end) / 3600.0,
+                t.budget_hours)::float as hours
          from task t left join task_content_format cf on cf.id = t.content_format_id
         where t.org_id = $1 and t.status = 'done' and t.task_type <> 'admin' and t.editor_id is not null
           and ${IST_MONTH("t.completed_at")}${one.replace("editor_id", "t.editor_id")}`,
@@ -113,7 +138,7 @@ export async function scoreMonthAll(orgId, monthFirst, editorId = null) {
       )
       : Promise.resolve({ rows: [] }),
     pool.query(
-      `select editor_id, working_days from editor_capacity
+      `select editor_id, working_days, hours_per_day from editor_capacity
         where org_id = $1 and period_month = $2::date and editor_id is not null${one}`,
       P,
     ),
@@ -121,6 +146,7 @@ export async function scoreMonthAll(orgId, monthFirst, editorId = null) {
     effectiveCapacity(orgId, NIL, monthFirst),
   ]);
   const fallbackDays = Number(orgCap.working_days) || 0;
+  const fallbackHours = Number(orgCap.hours_per_day) || 8;
 
   const goals = new Map(), jobs = new Map();
   for (const g of goalRes.rows) {
@@ -130,7 +156,10 @@ export async function scoreMonthAll(orgId, monthFirst, editorId = null) {
   for (const t of jobRes.rows) {
     if (!jobs.has(t.editor_id)) jobs.set(t.editor_id, []);
     const source = t.covered_from && t.covered_from !== t.editor_id ? "covered" : t.assigned_by ? "assigned" : "self";
-    jobs.get(t.editor_id).push({ contentFormatId: t.content_format_id, source, points: Number(t.pts ?? 1) });
+    jobs.get(t.editor_id).push({
+      contentFormatId: t.content_format_id, source, points: Number(t.pts ?? 1),
+      hours: Number(t.hours) || 0, taskId: t.id, title: t.title, typeName: t.type_name, requestedBy: t.requested_by, completedAt: t.completed_at,
+    });
   }
   // Leave shrinks the goal only on working days (not a Sunday, a Saturday off or a holiday).
   const { cal } = await readSettings(orgId);
@@ -140,6 +169,7 @@ export async function scoreMonthAll(orgId, monthFirst, editorId = null) {
     leave.set(r.editor_id, (leave.get(r.editor_id) ?? 0) + (r.status === "leave" ? 1 : 0.5));
   }
   const days = new Map(capRes.rows.map((r) => [r.editor_id, Number(r.working_days)]));
+  const dayHours = new Map(capRes.rows.map((r) => [r.editor_id, Number(r.hours_per_day)]));
 
   const ids = new Set([...goals.keys(), ...jobs.keys()]);
   if (editorId) ids.add(editorId);
@@ -148,6 +178,7 @@ export async function scoreMonthAll(orgId, monthFirst, editorId = null) {
     out.set(id, scoreMonth({
       goals: goals.get(id) ?? [], jobs: jobs.get(id) ?? [],
       leaveDays: leave.get(id) ?? 0, workingDays: days.get(id) ?? fallbackDays,
+      hoursPerDay: dayHours.get(id) || fallbackHours,
     }));
   }
   return out;

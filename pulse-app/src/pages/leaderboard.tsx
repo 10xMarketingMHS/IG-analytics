@@ -19,8 +19,8 @@ type Row = { editor: Editor; reels: number; carousels: number; views: number; po
 // month's points, jobs completed, goal points, and the share of the goal
 // reached, counted in jobs per type (null with no goal set).
 type GoalType = { contentFormatId: string; name: string; icon: string | null; goal: number; done: number; covered?: number; points: number };
-type HouseRow = { editor: Editor; points: number; completed: number; goal: number; goalPct: number | null; byType: GoalType[]; coveredJobs: number; leaveDays: number };
-type HouseApiRow = { editorId: string; points: number; completed: number; goalPoints: number; goalPct: number | null; byType: GoalType[]; coveredJobs?: number; leaveDays?: number };
+type HouseRow = { editor: Editor; points: number; completed: number; goal: number; goalPct: number | null; byType: GoalType[]; coveredJobs: number; leaveDays: number; otherHours: number };
+type HouseApiRow = { editorId: string; points: number; completed: number; goalPoints: number; goalPct: number | null; byType: GoalType[]; coveredJobs?: number; leaveDays?: number; otherHours?: number };
 
 // Weighted engagement across an editor's reels & carousels.
 function pointsOf(p: Post) {
@@ -267,12 +267,13 @@ function Laurel({ rank, variant }: { rank: number; variant: "gold" | "silver" | 
 // up to 150% of its goal (cut for approved leave), plus covered work, weighed
 // by the goal's points. It can pass 100%, up to 150% in all. Hover for each type's count.
 // No goal set: says so.
-function GoalCell({ goal, pct, byType, coveredJobs = 0, leaveDays = 0 }: { goal: number; pct: number | null; byType: GoalType[]; coveredJobs?: number; leaveDays?: number }) {
+function GoalCell({ goal, pct, byType, coveredJobs = 0, leaveDays = 0, otherHours = 0 }: { goal: number; pct: number | null; byType: GoalType[]; coveredJobs?: number; leaveDays?: number; otherHours?: number }) {
   if (pct == null || goal <= 0) return <span className="lb-goal-none">No goal set</span>;
   const title = [
     byType.map((g) => `${g.name}: ${g.done} of ${g.goal}${g.covered ? ` (${g.covered} covered)` : ""}`).join(" · "),
     coveredJobs > 0 ? `Covered for others: ${coveredJobs} job${coveredJobs === 1 ? "" : "s"}, counted on top` : "",
     leaveDays > 0 ? `Approved leave: ${leaveDays} day${leaveDays === 1 ? "" : "s"}, goal cut to match` : "",
+    otherHours > 0 ? `Other work (tasks outside the goals): ${otherHours}h, goal cut to match` : "",
   ].filter(Boolean).join("\n");
   return (
     <div className="lb-goal" title={title}>
@@ -281,10 +282,11 @@ function GoalCell({ goal, pct, byType, coveredJobs = 0, leaveDays = 0 }: { goal:
         <span className={"lb-goal-pct" + (pct > 100 ? " over" : "")}>{Math.round(pct)}%</span>
       </div>
       <div className="lb-goal-bar"><div className="lb-goal-fill" style={{ width: `${Math.min(100, pct)}%` }} /></div>
-      {(coveredJobs > 0 || leaveDays > 0) && (
+      {(coveredJobs > 0 || leaveDays > 0 || otherHours > 0) && (
         <div className="lb-goal-extra">
           {coveredJobs > 0 && <span>+{coveredJobs} covered</span>}
           {leaveDays > 0 && <span>{leaveDays}d leave</span>}
+          {otherHours > 0 && <span>{otherHours}h other work</span>}
         </div>
       )}
     </div>
@@ -346,7 +348,7 @@ export function LeaderboardPage() {
     const byId = new Map(editors.map((e) => [e.id, e]));
     return houseData.rows.flatMap((r) => {
       const editor = byId.get(r.editorId);
-      return editor ? [{ editor, points: r.points, completed: r.completed, goal: r.goalPoints, goalPct: r.goalPct, byType: r.byType, coveredJobs: r.coveredJobs ?? 0, leaveDays: r.leaveDays ?? 0 }] : [];
+      return editor ? [{ editor, points: r.points, completed: r.completed, goal: r.goalPoints, goalPct: r.goalPct, byType: r.byType, coveredJobs: r.coveredJobs ?? 0, leaveDays: r.leaveDays ?? 0, otherHours: r.otherHours ?? 0 }] : [];
     });
   }, [editors, houseData]);
 
@@ -559,7 +561,7 @@ export function LeaderboardPage() {
                       <div className="who"><b>{r.editor.name}</b><small>{r.editor.designation || "Editor"}</small></div>
                     </div>
                     <div className="lb-cell num lb-hidesm">{r.completed}</div>
-                    <div className="lb-cell lb-hidesm"><GoalCell goal={r.goal} pct={r.goalPct} byType={r.byType} coveredJobs={r.coveredJobs} leaveDays={r.leaveDays} /></div>
+                    <div className="lb-cell lb-hidesm"><GoalCell goal={r.goal} pct={r.goalPct} byType={r.byType} coveredJobs={r.coveredJobs} leaveDays={r.leaveDays} otherHours={r.otherHours} /></div>
                     <div className="lb-points">{r.points.toFixed(1)}</div>
                   </div>
                 ))}

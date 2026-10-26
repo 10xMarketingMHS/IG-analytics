@@ -86,6 +86,11 @@ const TaskSchema = z.object({
   // the reviewer explicitly confirms it (the app asks first).
   approveWithoutWork: z.boolean().optional(),
   meta: MetaSchema.optional(),
+  // Other work (../goal-score.js): which team asked for a task given to someone
+  // (kept in meta.requestedBy), and how long it should take — its time budget,
+  // which caps the time it takes off that person's goal when it's outside them.
+  requestedBy: z.string().trim().max(80).nullable().optional(),
+  budgetHours: z.number().min(0.25, "Should take: at least 15 minutes.").max(200, "Should take: 200 hours at most.").nullable().optional(),
   // When a save results in an accepted task with a resolvable time budget,
   // the client already knows (from this same response, checked after a first
   // save) whether the budget clock would run past office close — self-assign
@@ -438,8 +443,11 @@ tasksRouter.post("/tasks", requireEditor, requireActiveEod, async (req, res, nex
     // starts (POST /tasks/:id/accept). Admin tasks are always self-assigned, so
     // always accepted, and have no timer to gate anyway.
     const accepted = !assigneeId || callerEid === assigneeId;
-    // Admin tasks carry no time tracking at all — skip the budget lookup.
-    const budgetHours = isAdminTask ? null : await resolveBudgetHours(req.orgId, assigneeId, contentFormatId);
+    // Admin tasks carry no time tracking at all — skip the budget lookup. A
+    // task given to someone else may come with the time it should take.
+    const budgetHours = isAdminTask ? null
+      : d.budgetHours != null && !accepted ? d.budgetHours
+      : await resolveBudgetHours(req.orgId, assigneeId, contentFormatId);
     // The clock never starts at creation: an assigned task's starts on Accept,
     // one you made for yourself when you press Start (see PATCH). A morning plan
     // full of new tasks would otherwise start every timer at once.
@@ -484,7 +492,7 @@ tasksRouter.post("/tasks", requireEditor, requireActiveEod, async (req, res, nex
         sid,
         adId,
         svid,
-        JSON.stringify(d.meta ?? {}),
+        JSON.stringify({ ...(d.meta ?? {}), ...(d.requestedBy ? { requestedBy: d.requestedBy } : {}) }),
         d.contentType ?? null,
         d.platforms ?? [],
         JSON.stringify(d.attachments ?? []),
@@ -592,6 +600,8 @@ tasksRouter.patch("/tasks/:id", requireEditor, requireActiveEod, async (req, res
       const json = (v) => JSON.stringify(v ?? null);
       const briefChanged =
         (d.title !== undefined && d.title !== prior.title)
+        || (d.requestedBy !== undefined && !same(d.requestedBy || null, prior.meta?.requestedBy ?? null))
+        || (d.budgetHours !== undefined && !same(d.budgetHours == null ? null : Number(d.budgetHours), prior.budget_hours == null ? null : Number(prior.budget_hours)))
         || (d.description !== undefined && (d.description ?? "") !== (prior.description ?? ""))
         || (d.channelId !== undefined && !same(d.channelId, prior.channel_id))
         || (d.priority !== undefined && d.priority !== prior.priority)
@@ -987,7 +997,13 @@ tasksRouter.patch("/tasks/:id", requireEditor, requireActiveEod, async (req, res
       }
       push("review_link_required", d.reviewLinkRequired);
     }
-    if (d.meta !== undefined) push("meta", JSON.stringify(d.meta));
+    // Requested by lives in meta but is its own field: a meta edit keeps it
+    if (d.meta !== undefined || d.requestedBy !== undefined) {
+      const next = { ...(d.meta !== undefined ? d.meta : prior.meta ?? {}) };
+      const asked = d.requestedBy !== undefined ? d.requestedBy || null : prior.meta?.requestedBy ?? null;
+      if (asked) next.requestedBy = asked; else delete next.requestedBy;
+      push("meta", JSON.stringify(next));
+    }
 
     // Reassigning — resets acceptance unless it's a no-op (same editor) or a
     // self-assign (claiming, or a manager assigning their own work to themselves).
@@ -1020,7 +1036,11 @@ tasksRouter.patch("/tasks/:id", requireEditor, requireActiveEod, async (req, res
     if (d.contentFormatId !== undefined || d.editorId !== undefined) {
       const effectiveEditorId = d.editorId !== undefined ? (d.editorId ?? null) : prior.editor_id;
       const effectiveFormatId = d.contentFormatId !== undefined ? (d.contentFormatId ?? null) : prior.content_format_id;
-      const budgetHours = await resolveBudgetHours(req.orgId, effectiveEditorId, effectiveFormatId);
+      // the time it was given (Should take) stays unless the work itself changed
+      const sameWork = effectiveEditorId === prior.editor_id && effectiveFormatId === prior.content_format_id;
+      const budgetHours = d.budgetHours != null ? d.budgetHours
+        : sameWork && prior.budget_hours != null ? Number(prior.budget_hours)
+        : await resolveBudgetHours(req.orgId, effectiveEditorId, effectiveFormatId);
       push("budget_hours", budgetHours);
       // A task that hasn't been started (still To Do) keeps its clock stopped.
       const runs = budgetHours !== null && accepted && (prior.status !== "todo" || budgetStartSet);
@@ -1033,6 +1053,10 @@ tasksRouter.patch("/tasks/:id", requireEditor, requireActiveEod, async (req, res
       // already-running clock should count from (e.g. deferring a self-assign
       // made after office hours to 9 AM tomorrow instead).
       push("budget_started_at", new Date(d.startAt));
+    }
+    // Should take changed on its own: the budget changes, the clock doesn't
+    if (d.budgetHours !== undefined && d.contentFormatId === undefined && d.editorId === undefined && prior.task_type !== "admin") {
+      push("budget_hours", d.budgetHours ?? await resolveBudgetHours(req.orgId, prior.editor_id, prior.content_format_id));
     }
     // The points a completed task earns: its type's points the moment it's
     // approved, kept from then on, so changing a type's points never rewrites

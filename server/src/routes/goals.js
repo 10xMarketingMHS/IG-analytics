@@ -378,6 +378,13 @@ goalsRouter.get("/goals/performance-all", goalView, async (req, res, next) => {
         covered: scored?.coveredByType?.[g.content_format_id] ?? 0,
       });
     }
+    // the time off each goal: approved leave, and Other work (../goal-score.js rule 6)
+    for (const [id, p] of Object.entries(people)) {
+      const s = scores.get(id);
+      if (!s) continue;
+      p.leaveDays = s.leaveDays; p.otherHours = s.otherHours; p.otherWork = s.otherWork;
+      p.monthHours = Math.round(s.workingDays * s.hoursPerDay * 10) / 10;
+    }
     res.json({ month, people });
   } catch (err) {
     next(err);

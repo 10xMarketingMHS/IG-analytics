@@ -516,7 +516,7 @@ async function computeDetail(orgId, editorId, monthFirst, isCurrent) {
       thresholds: thr,
       ...current,
       // approved leave (goals cut for scoring) and covered work (counted on top)
-      leaveDays: scored?.leaveDays ?? 0,
+      leaveDays: scored?.leaveDays ?? 0, otherHours: scored?.otherHours ?? 0,
       workingDays: scored?.workingDays ?? 0,
       coveredJobs: scored?.coveredJobs ?? 0,
       coveredPoints: Math.round((scored?.coveredPoints ?? 0) * 100) / 100,

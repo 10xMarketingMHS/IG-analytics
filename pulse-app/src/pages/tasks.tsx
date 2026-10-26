@@ -2113,12 +2113,16 @@ export function TaskPanel({ mode, task, canWrite, editors, channels, onClose, on
   const [draft, setDraft] = useState<{
     channel_id: string | null; editor_id: string | null; due_date: string | null; start_date: string | null; priority: string;
     status: string; content_format_id: string | null; attachments: TaskAttachment[]; ad_team_id: string | null;
-  }>({ channel_id: null, editor_id: null, due_date: null, start_date: null, priority: "medium", status: "todo", content_format_id: null, attachments: [], ad_team_id: null });
+    requested_by: string; budget_hours: number | null;
+  }>({ channel_id: null, editor_id: null, due_date: null, start_date: null, priority: "medium", status: "todo", content_format_id: null, attachments: [], ad_team_id: null, requested_by: "", budget_hours: null });
   // Ads are made for a team (VSL, Longer Life, Webinar) and numbered within it, not a brand
   const { adTeams } = useAdTeams();
   const [title, setTitle] = useState(task?.title ?? "");
   const [description, setDescription] = useState(task?.description ?? "");
   const [busy, setBusy] = useState(false);
+  // Other work (server/src/goal-score.js): which team asked, and how long it should take
+  const [askedBy, setAskedBy] = useState(task?.meta?.requestedBy ?? "");
+  const [shouldTake, setShouldTake] = useState(task?.budget_hours != null ? String(task.budget_hours) : "");
   // Closing plays the sheet back down (the drawer back out) before the panel
   // goes, the way it came in. Skipped when the viewer asks for less motion.
   const [leaving, setLeaving] = useState(false);
@@ -2283,6 +2287,11 @@ export function TaskPanel({ mode, task, canWrite, editors, channels, onClose, on
         startDate: category === "project" ? draft.start_date : undefined,
         priority: draft.priority, contentFormatId: draft.content_format_id,
         ...(canAssign && linkOverride != null ? { reviewLinkRequired: linkOverride } : {}),
+        // given to someone: which team asked, and how long it should take
+        ...(draft.editor_id && draft.editor_id !== user?.editorId ? {
+          requestedBy: draft.requested_by.trim() || undefined,
+          budgetHours: draft.budget_hours ?? undefined,
+        } : {}),
         attachments: draft.attachments,
       }) });
       toast.success("Task created.");
@@ -2477,6 +2486,35 @@ export function TaskPanel({ mode, task, canWrite, editors, channels, onClose, on
       <div className="t autofield">{projectPoints != null ? projectPoints : "— pick a project type first"}</div>
     </Row>
   );
+  // A task given to someone: which team asked for it, and how long it should
+  // take. When it isn't in their goals, that time comes off their goal once
+  // it's done (server/src/goal-score.js), so only whoever gives it sets these.
+  const givenToOther = creating ? !!draft.editor_id && draft.editor_id !== user?.editorId : !!task?.assigned_by;
+  const otherRows = givenToOther && !(adminTask || adminEdit) && (
+    <>
+      <Row label="Requested by" icon={ic(TB_ICON.person)}>
+        <input className="t" placeholder="Which team asked, e.g. Longer Life" maxLength={80} disabled={briefRo}
+          value={creating ? draft.requested_by : askedBy}
+          onChange={(e) => (creating ? setDraft((d) => ({ ...d, requested_by: e.target.value })) : setAskedBy(e.target.value))}
+          onBlur={() => { if (!creating && askedBy.trim() !== (task?.meta?.requestedBy ?? "")) patch({ requestedBy: askedBy.trim() || null }); }} />
+      </Row>
+      <Row label="Should take" icon={ic(TB_ICON.hourglass)}>
+        <span className="tp2-hours">
+          <input className="t tp2-narrow" type="number" min={0.25} max={200} step={0.25} placeholder="Usual" disabled={briefRo} aria-label="Hours it should take"
+            value={creating ? (draft.budget_hours ?? "") : shouldTake}
+            onChange={(e) => (creating
+              ? setDraft((d) => ({ ...d, budget_hours: e.target.value === "" ? null : Number(e.target.value) }))
+              : setShouldTake(e.target.value))}
+            onBlur={() => {
+              if (creating) return;
+              const v = shouldTake === "" ? null : Number(shouldTake);
+              if (v !== (task?.budget_hours ?? null) && (v == null || (v >= 0.25 && v <= 200))) patch({ budgetHours: v });
+            }} />
+          <small>hours · if it isn't in their goals, this time comes off their goal</small>
+        </span>
+      </Row>
+    </>
+  );
   const repeatRow = !creating && !adminEdit && (
     <Row label="Repeat" icon={TB_ICON.repeat}>
       <select className="t tp2-narrow" disabled={briefRo} value={task!.recurrence} onChange={(e) => patch({ recurrence: e.target.value })}>
@@ -2525,6 +2563,7 @@ export function TaskPanel({ mode, task, canWrite, editors, channels, onClose, on
               {assigneeRow}
               {startRow}
               {dueRow}
+              {otherRows}
               {priorityRow}
               {typeRow}
               {linkRow}
@@ -2602,6 +2641,7 @@ export function TaskPanel({ mode, task, canWrite, editors, channels, onClose, on
             {assigneeRow}
             {startRow}
             {dueRow}
+            {otherRows}
             {placeRow}
             {priorityRow}
             {typeRow}

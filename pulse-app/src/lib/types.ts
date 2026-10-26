@@ -132,6 +132,8 @@ export type TaskType = "content" | "short_task" | "general" | "social" | "ad" | 
 // Type-specific extras for social/ad tasks — optional, only meaningful when
 // task_type is "social" or "ad" respectively.
 export type TaskMeta = {
+  // Other work: which team asked for a task given to someone (server/src/goal-score.js)
+  requestedBy?: string;
   platform?: string;
   caption?: string;
   assetLinks?: string;

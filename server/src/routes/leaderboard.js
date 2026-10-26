@@ -76,7 +76,7 @@ leaderboardRouter.get("/leaderboard/house", requirePage("leaderboard"), async (r
         editorId: p.id, points: Math.round(points * 100) / 100, completed: mine.length,
         goalPoints: Math.round((s?.goalPoints ?? 0) * 10) / 10,
         goalPct: s?.pct == null ? null : Math.round(s.pct * 10) / 10,
-        coveredJobs: s?.coveredJobs ?? 0, leaveDays: s?.leaveDays ?? 0,
+        coveredJobs: s?.coveredJobs ?? 0, leaveDays: s?.leaveDays ?? 0, otherHours: s?.otherHours ?? 0,
         byType,
       };
     });

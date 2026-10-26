@@ -310,6 +310,10 @@ html[data-theme="dark"] .task-panel-scrim.tp2-scrim{background:rgba(0,0,0,.55)}
   color:var(--tb-text);font:600 13px 'Plus Jakarta Sans',sans-serif;box-sizing:border-box}
 .tp2 .tp-val select.t{padding-right:32px}
 .tp2 .tp-val .tp2-narrow{max-width:260px}
+/* Should take (tasks.tsx otherRows): hours, with what they do to the goal */
+.tp2-hours{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+.tp2 .tp-val .tp2-hours .tp2-narrow{max-width:96px}
+.tp2-hours small{font-size:11.5px;color:var(--faint)}
 .tp2 .tp-val input.t.tp2-date{width:180px;cursor:pointer}
 .tp2 .tp-val .autofield{border:1.5px dashed var(--tb-line);border-radius:11px;background:var(--tb-sunk);color:var(--tb-text2)}
 .tp2-chips{display:flex;flex-wrap:wrap;gap:8px}

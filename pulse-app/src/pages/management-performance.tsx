@@ -152,7 +152,7 @@ type DetailResp = BoardRow & {
     // the goal after approved leave, the jobs that count (up to 150%), jobs taken over from someone
     goalAdjusted?: number; counted?: number; covered?: number;
   }[];
-  leaveDays?: number; workingDays?: number; coveredJobs?: number; coveredPoints?: number;
+  leaveDays?: number; workingDays?: number; coveredJobs?: number; coveredPoints?: number; otherHours?: number;
   history: { month: string; totalGoalPoints: number; totalPoints: number; performancePct: number | null; level: Level | null }[];
   eodSessions: { date: string; startedAt: string; endedAt: string | null; spanHours: number | null }[];
 };
@@ -223,9 +223,10 @@ function PerformanceDetailInline({ editorId, month }: { editorId: string; month:
           {d.level ? <>Band applied: <b>{LEVEL_META[d.level].label}</b> — Overall Performance {bandText}.</> : "No band."}
           {!d.reviewed && <span className="st dim"> · * discipline not yet fully reviewed</span>}
         </div>
-        {((d.leaveDays ?? 0) > 0 || (d.coveredJobs ?? 0) > 0) && (
+        {((d.leaveDays ?? 0) > 0 || (d.coveredJobs ?? 0) > 0 || (d.otherHours ?? 0) > 0) && (
           <div className="hint" style={{ margin: "4px 0 0" }}>
             {(d.leaveDays ?? 0) > 0 && <>Approved leave: <b>{d.leaveDays} day{d.leaveDays === 1 ? "" : "s"}</b> of {d.workingDays} working days, so each goal is cut by {Math.round(((d.leaveDays ?? 0) / Math.max(1, d.workingDays ?? 1)) * 100)}%. </>}
+            {(d.otherHours ?? 0) > 0 && <>Other work (tasks given outside the goals): <b>{d.otherHours}h</b>, taken off the goal too. </>}
             {(d.coveredJobs ?? 0) > 0 && <>Covered for others: <b>{d.coveredJobs} job{d.coveredJobs === 1 ? "" : "s"}</b> ({pts(d.coveredPoints ?? 0)} pts), counted on top of the goal.</>}
           </div>
         )}

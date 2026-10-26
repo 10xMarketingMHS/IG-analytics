@@ -98,6 +98,43 @@ export function GoalsPage() {
 }
 
 type Person = { editor: Editor; rows: PerfRow[]; lines: GoalLine[]; target: number; done: number; x: number; missed: number };
+// The month's time away from the goal (server/src/goal-score.js): approved leave,
+// and Other work — tasks given to them outside their goals, at the time they took.
+type OtherTask = { taskId: string | null; title: string | null; typeName: string | null; requestedBy: string | null; hours: number; completedAt: string | null };
+type TimeOff = { leaveDays?: number; otherHours?: number; otherWork?: OtherTask[]; monthHours?: number };
+
+// Time away from the goal this month: leave and Other work, how much it took
+// off the goal, and the Other tasks themselves (who asked, how long each took).
+function TimeAway({ off, rows }: { off?: TimeOff; rows: PerfRow[] }) {
+  const other = off?.otherWork ?? [];
+  if (!off || (!(off.otherHours ?? 0) && !(off.leaveDays ?? 0))) return null;
+  const set = rows.find((r) => r.goalJC > 0);
+  const left = set && set.goalAdjusted != null ? set.goalAdjusted / set.goalJC : null;
+  const hrs = (h: number) => `${Math.round(h * 10) / 10}h`;
+  const parts = [
+    (off.otherHours ?? 0) > 0 && `${hrs(off.otherHours!)} of Other work`,
+    (off.leaveDays ?? 0) > 0 && `${off.leaveDays} day${off.leaveDays === 1 ? "" : "s"} of leave`,
+  ].filter(Boolean).join(" and ");
+  return (
+    <div className="gl-away">
+      <span className="gl-awayline">
+        <b>Time away from the goal: {parts}</b>
+        {left != null && <span>The goal counts {Math.round(left * 100)}% of what was set{off.monthHours ? ` (out of ${hrs(off.monthHours)} this month)` : ""}, so it's still fair.</span>}
+      </span>
+      {other.length > 0 && (
+        <div className="gl-awaylist">
+          {other.map((t, n) => (
+            <span key={t.taskId ?? n} className="gl-awayrow">
+              <b>{t.title ?? "A task"}</b>
+              <span>{[t.typeName, t.requestedBy ? `asked by ${t.requestedBy}` : null, t.completedAt ? new Date(t.completedAt).toLocaleDateString("en-IN", { day: "numeric", month: "short" }) : null].filter(Boolean).join(" · ")}</span>
+              <em>{hrs(t.hours)}</em>
+            </span>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
 
 function TeamGoals({ month, isCurrent, focusId, selfOnly }: { month: string; isCurrent: boolean; focusId: string | null; selfOnly: boolean }) {
   const { isAdmin, hasPermission } = useWorkspaces();
@@ -110,6 +147,7 @@ function TeamGoals({ month, isCurrent, focusId, selfOnly }: { month: string; isC
   const [view, setView] = useState<"people" | "types">("people");
   const [selId, setSelId] = useState<string | null>(focusId);
   const [perf, setPerf] = useState<Record<string, PerfRow[]> | null>(null);
+  const [timeOff, setTimeOff] = useState<Record<string, TimeOff>>({});
   const [exporting, setExporting] = useState(false);
 
   // Each person's goals and the month's done counts, in one request — only
@@ -122,8 +160,12 @@ function TeamGoals({ month, isCurrent, focusId, selfOnly }: { month: string; isC
     if (!active.length) { if (editors) setPerf({}); return; }
     let live = true;
     setPerf(null);
-    api<{ people: Record<string, { rows: PerfRow[] }> }>(`/goals/performance-all?month=${month}-01`)
-      .then((d) => { if (live) setPerf(Object.fromEntries(active.map((e) => [e.id, d.people[e.id]?.rows ?? []]))); })
+    api<{ people: Record<string, { rows: PerfRow[] } & TimeOff> }>(`/goals/performance-all?month=${month}-01`)
+      .then((d) => {
+        if (!live) return;
+        setPerf(Object.fromEntries(active.map((e) => [e.id, d.people[e.id]?.rows ?? []])));
+        setTimeOff(Object.fromEntries(Object.entries(d.people).map(([id, p]) => [id, { leaveDays: p.leaveDays, otherHours: p.otherHours, otherWork: p.otherWork, monthHours: p.monthHours }])));
+      })
       .catch(() => { if (live) setPerf(Object.fromEntries(active.map((e) => [e.id, [] as PerfRow[]]))); });
     return () => { live = false; };
   }, [active, month, editors]);
@@ -268,6 +310,7 @@ function TeamGoals({ month, isCurrent, focusId, selfOnly }: { month: string; isC
                       <span>{monthName(month, "short")} goal</span>
                       {sel.rows.map((r) => <span key={r.contentFormatId} className="gl-mchip">{r.name}<b>{r.goalJC}</b></span>)}
                     </div>
+                    <TimeAway off={timeOff[sel.editor.id]} rows={sel.rows} />
                     <div className="gl-tablewrap">
                       <div className="gl-table">
                         <div className="gl-th"><span>Goal</span><span className="num">Month</span><span className="num">Target</span><span className="num">Done</span><span className="num">Pending</span><span>Progress</span><span>Status</span></div>
