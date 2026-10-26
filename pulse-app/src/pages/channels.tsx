@@ -167,8 +167,25 @@ export function ChannelsSection() {
   }
 
   async function deleteChannel(id: string, name: string) {
+    // first: who'd lose Echo, and what it touches (server/src/routes/workspaces.js)
+    let check: { lockedOut: { id: string; name: string }[]; tasks: number; posts: number };
+    try {
+      check = await api(`/workspaces/${id}/delete-check`);
+    } catch (e) {
+      toast.error(e instanceof ApiError ? e.message : "Could not check that channel.");
+      return;
+    }
+    if (check.lockedOut.length) {
+      const who = check.lockedOut.map((p) => p.name);
+      toast.error(`Can't delete “${name}”: ${who.length <= 2 ? who.join(" and ") : `${who.slice(0, -1).join(", ")} and ${who[who.length - 1]}`} would lose Echo — it's the only channel ${who.length === 1 ? "they belong" : "they all belong"} to. Give them another channel first (switch to it, then add their login on Team › Roster).`, { duration: 12000 });
+      return;
+    }
+    const plural = (n: number, one: string) => `${n} ${one}${n === 1 ? "" : "s"}`;
     if (!window.confirm(
-      `Delete channel “${name}”?\n\nThis permanently removes its posts, platform links, and Instagram connection. Your team and other channels are kept, and tasks stay (just un-linked from this channel).\n\nThis can't be undone.`,
+      `Delete channel “${name}”?\n\n`
+      + `• ${check.posts ? `${plural(check.posts, "post")} ${check.posts === 1 ? "is" : "are"} deleted for good` : "It has no posts"}, with its platform links and Instagram connection.\n`
+      + `• ${check.tasks ? `${plural(check.tasks, "task")} ${check.tasks === 1 ? "loses its" : "lose their"} brand: ${check.tasks === 1 ? "it stays" : "they stay"}, with no brand` : "No tasks use it"}.\n`
+      + `• Nobody loses Echo: everyone in it belongs to another channel too.\n\nThis can't be undone.`,
     )) return;
     try {
       await api(`/workspaces/${id}`, { method: "DELETE" });
