@@ -3,7 +3,8 @@
 -- team), or the ad's name or number another team sends back. One piece of work
 -- can run as several ads. Run after 20261104120000_task_scheduling (its
 -- "goes on after approval" tick on each task type decides which Ads types come
--- here). No job credit: it's record-keeping. Safe to run more than once.
+-- here). No job credit: it's record-keeping. Also Connected apps (below):
+-- how Animus connects, with one line. Safe to run more than once.
 
 -- On the task: when it came into the list (null: not in it).
 alter table public.task add column if not exists upload_from timestamptz;
@@ -32,3 +33,21 @@ update public.task t set upload_from = t.completed_at
  where f.id = t.content_format_id and f.to_scheduling
    and t.task_type = 'ad' and t.status = 'done' and t.upload_from is null and t.completed_at is not null
    and t.completed_at >= (date_trunc('month', now() at time zone 'Asia/Kolkata') at time zone 'Asia/Kolkata');
+
+-- Connected apps (Settings › Connected apps): another app — Animus first —
+-- connects to one brand with one line Echo makes, shown once. Only a
+-- fingerprint of the line's secret is kept; revoking it ends it at once.
+create table if not exists public.app_connection (
+  id           uuid primary key default gen_random_uuid(),
+  org_id       uuid not null references public.org(id) on delete cascade,
+  workspace_id uuid not null references public.workspace(id) on delete cascade,
+  app          text not null default 'animus',
+  label        text not null default '',
+  secret_hash  text not null,
+  created_by   uuid references public.app_user(id) on delete set null,
+  created_at   timestamptz not null default now(),
+  last_used_at timestamptz,
+  revoked_at   timestamptz
+);
+create index if not exists app_connection_org_idx on public.app_connection(org_id);
+alter table public.app_connection enable row level security;
