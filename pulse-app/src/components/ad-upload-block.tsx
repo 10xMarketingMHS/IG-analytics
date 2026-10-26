@@ -3,6 +3,8 @@ import { toast } from "sonner";
 import { api, ApiError } from "@/lib/api";
 import { useResource } from "@/lib/use-resource";
 import { AD_STAGE_WORDS, splitAdRefs, type TaskAds } from "@/lib/ad-upload";
+import { countWords, dayShort, pctWords, roasWords, rupees, scoreWords, windowTone, type AdResults, type ResultsPatch } from "@/lib/ad-results";
+import { AdResultsForm } from "@/components/ad-results-form";
 import type { Task } from "@/lib/types";
 import "./schedule-block.css";
 import "./ad-upload-block.css";
@@ -11,7 +13,9 @@ import "./ad-upload-block.css";
 // which ads it became, recorded by the Managers and Team Leads — the AD numbers
 // Animus gave it, or the names another team sends back. Hidden for tasks that
 // aren't in the list. Everyone who can open the task sees the ads; the ones
-// Animus sent back (server/src/routes/animus.js) say so.
+// Animus sent back (server/src/routes/animus.js) say so. Under each ad, its
+// results (Ads performance): from Animus after every sync, or typed in by the
+// Managers and Team Leads, with the 14-day window after it went live.
 
 const errText = (e: unknown, fallback: string) => (e instanceof ApiError ? e.message : fallback);
 
@@ -19,6 +23,7 @@ export function AdUploadBlock({ task, onChanged }: { task: Task; onChanged: () =
   const { data, refetch } = useResource<TaskAds>(`/tasks/${task.id}/ads`);
   const [text, setText] = useState("");
   const [busy, setBusy] = useState(false);
+  const [editing, setEditing] = useState<string | null>(null);
   const s = data?.ready && data.inFlow ? data : null;
   if (!s) return null;
 
@@ -46,6 +51,10 @@ export function AdUploadBlock({ task, onChanged }: { task: Task; onChanged: () =
       setBusy(false);
     }
   }
+  async function saveResults(adId: string, ref: string, patch: ResultsPatch) {
+    const done = await call(`/tasks/${task.id}/ads/${adId}/results`, { method: "PATCH", body: JSON.stringify(patch) }, `${ref}'s results saved.`);
+    if (done) setEditing(null);
+  }
   async function add() {
     if (!refs.length) return;
     const done = await call(`/tasks/${task.id}/ads`, { method: "POST", body: JSON.stringify({ refs }) },
@@ -61,16 +70,31 @@ export function AdUploadBlock({ task, onChanged }: { task: Task; onChanged: () =
       </div>
       <p className="sch-say">{say}</p>
       {ads.length > 0 && (
-        <div className="adu-ads">
+        <div className="adu-list">
           {ads.map((a) => (
-            <span key={a.id} className="adu-ad" title={`${a.source === "animus" ? "Sent by Animus" : `Recorded by ${a.byName ?? "someone"}`}, ${new Date(a.createdAt).toLocaleDateString("en-IN", { day: "numeric", month: "short" })}`}>
-              <b>{a.ref}</b>
-              {a.source === "animus" && <em className="adu-src">Animus</em>}
-              {s.canRecord && (
-                <button type="button" aria-label={`Take ${a.ref} off`} disabled={busy}
-                  onClick={() => { if (window.confirm(`Take ${a.ref} off this task?`)) call(`/tasks/${task.id}/ads/${a.id}`, { method: "DELETE" }, `${a.ref} taken off.`); }}>×</button>
+            <div key={a.id} className="adu-row">
+              <div className="adu-rowhead">
+                <span className="adu-ad" title={`${a.source === "animus" ? "Sent by Animus" : `Recorded by ${a.byName ?? "someone"}`}, ${new Date(a.createdAt).toLocaleDateString("en-IN", { day: "numeric", month: "short" })}`}>
+                  <b>{a.ref}</b>
+                  {a.source === "animus" && <em className="adu-src">Animus</em>}
+                  {s.canRecord && (
+                    <button type="button" aria-label={`Take ${a.ref} off`} disabled={busy}
+                      onClick={() => { if (window.confirm(`Take ${a.ref} off this task?`)) call(`/tasks/${task.id}/ads/${a.id}`, { method: "DELETE" }, `${a.ref} taken off.`); }}>×</button>
+                  )}
+                </span>
+                {a.window && <span className={"adu-window " + windowTone(a.window)} title="The 14 days after it went live">{a.window}</span>}
+                <span className="sch-grow" />
+                {s.canRecord && a.results !== undefined && editing !== a.id && (
+                  <button type="button" className="adu-edit" onClick={() => setEditing(a.id)}>
+                    {a.results?.source === "animus" ? "Notes" : a.results?.source ? "Edit results" : "Add results"}
+                  </button>
+                )}
+              </div>
+              {a.results?.source && <ResultsLine r={a.results} />}
+              {editing === a.id && (
+                <AdResultsForm results={a.results} busy={busy} onCancel={() => setEditing(null)} onSave={(p) => saveResults(a.id, a.ref, p)} />
               )}
-            </span>
+            </div>
           ))}
         </div>
       )}
@@ -84,5 +108,27 @@ export function AdUploadBlock({ task, onChanged }: { task: Task; onChanged: () =
         </div>
       )}
     </section>
+  );
+}
+
+// One ad's results in a line: what's known of them, Animus's spend and score too.
+function ResultsLine({ r }: { r: AdResults }) {
+  const parts = [
+    r.adStatus ? <b key="s" className={"adu-status " + (r.adStatus === "Active" ? "on" : "")}>{r.adStatus}</b> : null,
+    r.publishedOn ? <span key="p">Live {dayShort(r.publishedOn)}</span> : null,
+    r.spend != null ? <span key="sp">{rupees(r.spend)}</span> : null,
+    <span key="h">Hook {pctWords(r.hookRate)}</span>,
+    <span key="hd">Hold {pctWords(r.holdRate)}</span>,
+    <span key="l">{countWords(r.leads)} leads</span>,
+    <span key="c">{countWords(r.conversions)} conv.</span>,
+    <span key="r">ROAS {roasWords(r.roas)}</span>,
+    r.score != null ? <span key="sc">Score {scoreWords(r.score)}</span> : null,
+  ].filter(Boolean);
+  return (
+    <div className="adu-results">
+      {parts}
+      {r.notes && <em className="adu-note">{r.notes}</em>}
+      {r.at && <small className="adu-at">{r.source === "animus" ? "From Animus" : "Typed in"}, {new Date(r.at).toLocaleString("en-IN", { day: "numeric", month: "short", hour: "numeric", minute: "2-digit" })}</small>}
+    </div>
   );
 }

@@ -55,6 +55,8 @@ export const NAV_ITEMS: NavItem[] = [
   { title: "Scheduling", href: "/scheduling", icon: "🗓️", section: "Tasks", schedulerOnly: true },
   // Ad uploads — approved ads, by team, for the Managers and Team Leads to record the ads each became.
   { title: "Ad uploads", href: "/ad-uploads", icon: "📣", section: "Tasks", uploadsOnly: true },
+  // Ads performance — everyone: every ad, with its results, per editor and per team.
+  { title: "Ads performance", href: "/ads-performance", icon: "📊", section: "Tasks" },
   // Social Media, Activity — hidden from the sidebar per request; routes/
   // pages still exist.
   { title: "Add Post", href: "/posts/new", icon: "➕", section: "Manage", adminOnly: true, permission: "create_post" },
@@ -75,6 +77,7 @@ export const PAGE_META: Record<string, [string, string]> = {
   "/chat": ["Team Chat", "Channels for the team, direct messages for one-to-one"],
   "/analytics/": ["Format analytics", "Total performance across all posts of one format"],
   "/analytics": ["Analytics", "Content performance across your channels and platforms"],
+  "/ads-performance": ["Ads performance", "Every ad, its results, and how each editor and team is doing"],
   "/ad-uploads": ["Ad uploads", "Approved ads by team: record the ad numbers each one became"],
   "/scheduling": ["Scheduling", "Approved reels, carousels and posts: set the post date, then paste each link"],
   "/metrics": ["Social & Ads Pipeline", "Every reel, carousel and ad in production. Stages are read-only here — move work on the Task Board."],

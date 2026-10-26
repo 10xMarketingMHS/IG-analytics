@@ -2,7 +2,9 @@ import { Router } from "express";
 import { z } from "zod";
 import { pool } from "../db.js";
 import { connectionOf } from "../connections.js";
-import { NEEDS_UPLOADS_DB, recordAds, uploadsReady } from "../ad-uploads.js";
+import { NEEDS_UPLOADS_DB, adRefOf, recordAds, uploadsReady } from "../ad-uploads.js";
+import { NEEDS_RESULTS_DB, resultsReady } from "../ad-results.js";
+import { validYmd } from "../leave-math.js";
 
 // Animus — the VSL team's ads register, its own app — talks to Echo server to
 // server, connected to one Ads team (VSL) by the line made in Settings › Connected apps
@@ -14,6 +16,7 @@ import { NEEDS_UPLOADS_DB, recordAds, uploadsReady } from "../ad-uploads.js";
 //   GET  /api/animus/hello       { app, label, brand: { id, name } } — checks a pasted line ("brand": the team)
 //   GET  /api/animus/waiting     { ads: [...] } — the team's approved Ad work in Ad uploads
 //   POST /api/animus/recorded    { records: [{ taskId, adNumbers }] } → { results }
+//   POST /api/animus/results     { asOf, ads: [{ adNumber, status, liveFrom, spend, … }] } → { matched, unknown }
 export const animusRouter = Router();
 
 animusRouter.use(async (req, res, next) => {
@@ -78,5 +81,51 @@ animusRouter.post("/recorded", async (req, res, next) => {
       results.push({ taskId: r.taskId, ...(await recordAds({ orgId: req.orgId, task: t, refs: r.adNumbers, source: "animus" })) });
     }
     res.json({ results });
+  } catch (err) { next(err); }
+});
+
+// Each ad's results, sent by Animus after every spend sync (Ads performance,
+// ../ad-results.js). Animus sends all its funnel's ads; Echo keeps the ones it
+// has recorded for this line's team and ignores the rest. The latest call
+// replaces each ad's numbers; its typed notes are left alone.
+const num = z.number().finite().nullable().optional();
+const ResultsSchema = z.object({
+  asOf: z.string().max(40).optional(),
+  ads: z.array(z.object({
+    adNumber: z.string().trim().min(1).max(120),
+    status: z.string().trim().max(20).nullable().optional(),
+    liveFrom: z.string().refine(validYmd).nullable().optional(),
+    spend: num, impressions: num, hookRate: num, holdRate: num, optIns: num, leads: num,
+    conversions: num, revenue: num, roas: num, score: num,
+  })).max(1000),
+});
+
+animusRouter.post("/results", async (req, res, next) => {
+  const parsed = ResultsSchema.safeParse(req.body ?? {});
+  if (!parsed.success) return res.status(400).json({ error: parsed.error.issues[0]?.message ?? "That couldn't be read." });
+  try {
+    if (!(await resultsReady())) return res.status(409).json({ error: NEEDS_RESULTS_DB });
+    const scope = req.connection.ad_team_id ?? req.connection.workspace_id;
+    const int = (v) => (v == null ? null : Math.round(v));
+    const ads = parsed.data.ads.map((a) => ({
+      ref: adRefOf(a.adNumber), ad_status: a.status ?? null, published_on: a.liveFrom ?? null,
+      spend: a.spend ?? null, impressions: int(a.impressions), hook_rate: a.hookRate ?? null, hold_rate: a.holdRate ?? null,
+      opt_ins: int(a.optIns), leads: int(a.leads), conversions: int(a.conversions), revenue: a.revenue ?? null,
+      roas: a.roas ?? null, score: int(a.score),
+    }));
+    const { rows } = ads.length ? await pool.query(
+      `with x as (
+         select * from jsonb_to_recordset($2::jsonb) as r(ref text, ad_status text, published_on date, spend numeric, impressions bigint,
+           hook_rate numeric, hold_rate numeric, opt_ins int, leads int, conversions int, revenue numeric, roas numeric, score int))
+       update task_ad a set ad_status = x.ad_status, published_on = coalesce(x.published_on, a.published_on), spend = x.spend,
+              impressions = x.impressions, hook_rate = x.hook_rate, hold_rate = x.hold_rate, opt_ins = x.opt_ins, leads = x.leads,
+              conversions = x.conversions, revenue = x.revenue, roas = x.roas, score = x.score,
+              results_source = 'animus', results_at = now(), results_by = null
+         from x where coalesce(a.ad_team_id, a.workspace_id) = $1 and lower(a.ad_ref) = lower(x.ref)
+       returning lower(a.ad_ref) as ref`,
+      [scope, JSON.stringify(ads)],
+    ) : { rows: [] };
+    const matched = new Set(rows.map((r) => r.ref));
+    res.json({ matched: matched.size, unknown: new Set(ads.map((a) => a.ref.toLowerCase())).size - matched.size });
   } catch (err) { next(err); }
 });

@@ -7,6 +7,8 @@ import { mayOpenTask, taskViewer } from "../hierarchy.js";
 import { logActivity } from "../activity.js";
 import { taskSelect } from "./tasks.js";
 import { NEEDS_UPLOADS_DB, recordAds, uploadStage, uploadsReady } from "../ad-uploads.js";
+import { NEEDS_RESULTS_DB, RESULT_COLUMNS, resultsOf, resultsReady, windowWords } from "../ad-results.js";
+import { validYmd } from "../leave-math.js";
 
 // Ad uploads (../ad-uploads.js): approved Ad work waits here for the Managers
 // and Team Leads — the leads by position (Team › Roster), and the Super Admin —
@@ -16,6 +18,7 @@ import { NEEDS_UPLOADS_DB, recordAds, uploadStage, uploadsReady } from "../ad-up
 //   GET    /tasks/:id/ads           one task's ads, and whether the caller may record them
 //   POST   /tasks/:id/ads           { refs: ["AD205", "AD206"] } — or another team's ad names
 //   DELETE /tasks/:id/ads/:adId     a mistyped one out again
+//   PATCH  /tasks/:id/ads/:adId/results   its results, typed in (../ad-results.js): a team without Animus
 export const adUploadsRouter = Router();
 
 const REF = "coalesce(t.ad_id, t.sid, t.tid)";
@@ -30,14 +33,20 @@ async function taskRow(orgId, taskId) {
   );
   return rows[0] ?? null;
 }
+const todayIst = () => new Date(Date.now() + 330 * 60_000).toISOString().slice(0, 10);
 async function adsOf(taskId) {
+  const withResults = await resultsReady();
   const { rows } = await pool.query(
-    `select a.id, a.ad_ref as "ref", a.source, a.created_at as "createdAt", coalesce(e.name, u.email) as "byName"
+    `select a.*, a.ad_ref as "ref", a.created_at as "createdAt", coalesce(e.name, u.email) as "byName"
        from task_ad a left join app_user u on u.id = a.created_by left join editor e on e.id = u.editor_id
       where a.task_id = $1 order by a.created_at, a.ad_ref`,
     [taskId],
   );
-  return rows;
+  // each ad's results (Ads performance) and its 14-day window, once the database has them
+  return rows.map((a) => ({
+    id: a.id, ref: a.ref, source: a.source, createdAt: a.createdAt, byName: a.byName,
+    ...(withResults ? { results: resultsOf(a), window: windowWords(a.published_on ? String(a.published_on).slice(0, 10) : null, todayIst()) } : {}),
+  }));
 }
 async function view(t, lead) {
   const ads = await adsOf(t.id);
@@ -112,6 +121,44 @@ adUploadsRouter.post("/tasks/:id/ads", requireEditor, requireActiveEod, async (r
     const r = await recordAds({ orgId: req.orgId, task: t, refs: parsed.data.refs, source: "manual", userId: req.user.sub, allOrNothing: true });
     if (r.clash.length) return res.status(409).json({ error: `${r.clash[0].ad} is already recorded on ${r.clash[0].on}.` });
     res.status(r.added.length ? 201 : 200).json(await view(t, true));
+  } catch (err) { next(err); }
+});
+
+// An ad's results typed in, as in the team's sheet — for a team without Animus.
+// Numbers Animus sends can't be typed over (the next sync would undo them);
+// their notes can. Rates are fractions (0.17 = 17%).
+const ResultsSchema = z.object({
+  publishedOn: z.string().refine(validYmd, "Pick a date.").nullable().optional(),
+  adStatus: z.enum(["Active", "Inactive"]).nullable().optional(),
+  hookRate: z.number().min(0).max(1).nullable().optional(),
+  holdRate: z.number().min(0).max(1).nullable().optional(),
+  leads: z.number().int().min(0).max(10_000_000).nullable().optional(),
+  conversions: z.number().int().min(0).max(10_000_000).nullable().optional(),
+  roas: z.number().min(0).max(100_000).nullable().optional(),
+  notes: z.string().trim().max(500).nullable().optional(),
+});
+
+adUploadsRouter.patch("/tasks/:id/ads/:adId/results", requireEditor, async (req, res, next) => {
+  const parsed = ResultsSchema.safeParse(req.body ?? {});
+  if (!parsed.success) return res.status(400).json({ error: parsed.error.issues[0]?.message ?? "That couldn't be read." });
+  try {
+    if (!(await resultsReady())) return res.status(409).json({ error: NEEDS_RESULTS_DB });
+    if (!(await isLead(req))) return res.status(403).json({ error: "Ads results are typed in by the Managers and Team Leads." });
+    const t = await taskRow(req.orgId, req.params.id);
+    if (!t) return res.status(404).json({ error: "Task not found." });
+    const { rows: [ad] } = await pool.query("select id, results_source from task_ad where id = $1 and task_id = $2", [req.params.adId, t.id]);
+    if (!ad) return res.status(404).json({ error: "That ad isn't on this task." });
+    const d = parsed.data;
+    const fromAnimus = ad.results_source === "animus";
+    if (fromAnimus && Object.keys(d).some((k) => k !== "notes")) {
+      return res.status(409).json({ error: "Animus sends this ad's results after every sync — only its notes can be typed here." });
+    }
+    const sets = [], vals = [ad.id];
+    for (const [k, v] of Object.entries(d)) { vals.push(v === "" ? null : v); sets.push(`${RESULT_COLUMNS[k]} = $${vals.length}`); }
+    if (!sets.length) return res.status(400).json({ error: "Nothing to save." });
+    if (!fromAnimus) { vals.push(req.user.sub); sets.push("results_source = 'manual'", "results_at = now()", `results_by = $${vals.length}`); }
+    await pool.query(`update task_ad set ${sets.join(", ")} where id = $1`, vals);
+    res.json(await view(t, true));
   } catch (err) { next(err); }
 });
 

@@ -1,7 +1,9 @@
 // Ad uploads after approval (server/src/ad-uploads.js): approved Ad work waits
 // in one list for the Managers and Team Leads, who record which ads it became —
 // the AD number Animus gave it (the VSL team), or the ad's name or number
-// another team sends back. One piece of work can run as several ads.
+// another team sends back. One piece of work can run as several ads. Each ad
+// then carries its results (lib/ad-results.ts: from Animus, or typed in).
+import type { AdResults } from "@/lib/ad-results";
 
 export type AdStage = "to_upload" | "uploaded";
 
@@ -18,7 +20,9 @@ export type TaskAds = {
   ready: boolean;
   inFlow?: boolean;
   stage?: AdStage | null;
-  ads?: { id: string; ref: string; source: "manual" | "animus"; createdAt: string; byName: string | null }[];
+  ads?: { id: string; ref: string; source: "manual" | "animus"; createdAt: string; byName: string | null;
+    // its results and its 14-day window (once the database has them)
+    results?: AdResults; window?: string | null }[];
   canRecord?: boolean;
 };
 

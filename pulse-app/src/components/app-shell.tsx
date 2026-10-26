@@ -49,7 +49,7 @@ import type { Activity } from "@/lib/types";
 // that isn't placed here lands at the end of Operations.
 const SIDEBAR_GROUPS: { label: string; hrefs: string[] }[] = [
   { label: "Workspace", hrefs: ["/home", "/inbox", "/chat", "/tasks", "/analytics"] },
-  { label: "Operations", hrefs: ["/metrics", "/scheduling", "/ad-uploads", "/posts", "/leaderboard", "/goals-board", "/my-team"] },
+  { label: "Operations", hrefs: ["/metrics", "/scheduling", "/ad-uploads", "/ads-performance", "/posts", "/leaderboard", "/goals-board", "/my-team"] },
 ];
 const OFF_SIDEBAR = new Set(["/settings", "/posts/new"]);
 // Before Start Work an editor can still open these — the Workspace group, plus

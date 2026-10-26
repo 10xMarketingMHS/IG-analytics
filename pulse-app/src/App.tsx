@@ -26,6 +26,7 @@ const TrendsPage = lazy(() => import("@/pages/trends").then((m) => ({ default: m
 import { MetricsPage } from "@/pages/metrics";
 import { SchedulingPage } from "@/pages/scheduling";
 import { AdUploadsPage } from "@/pages/ad-uploads";
+import { AdsPerformancePage } from "@/pages/ads-performance";
 import { ReportsPage } from "@/pages/reports";
 import { PostsPage } from "@/pages/posts";
 import { TasksPage } from "@/pages/tasks";
@@ -104,6 +105,7 @@ function AppRoutes() {
             <Route path="/metrics" element={<MetricsPage />} />
             <Route path="/scheduling" element={<SchedulingPage />} />
             <Route path="/ad-uploads" element={<AdUploadsPage />} />
+            <Route path="/ads-performance" element={<AdsPerformancePage />} />
             <Route path="/insights" element={<InsightsPage />} />
             <Route
               path="/trends"
