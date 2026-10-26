@@ -2,6 +2,7 @@ import { Router } from "express";
 import { z } from "zod";
 import { pool } from "../db.js";
 import { connectionOf } from "../connections.js";
+import { attemptLimiter } from "../attempts.js";
 import { NEEDS_UPLOADS_DB, adRefOf, recordAds, uploadsReady } from "../ad-uploads.js";
 import { NEEDS_RESULTS_DB, resultsReady } from "../ad-results.js";
 import { validYmd } from "../leave-math.js";
@@ -19,10 +20,23 @@ import { validYmd } from "../leave-math.js";
 //   POST /api/animus/results     { asOf, ads: [{ adNumber, status, liveFrom, spend, … }] } → { matched, unknown }
 export const animusRouter = Router();
 
+// Wrong lines: 10 for one connection from one address, or 60 from one address,
+// in 15 minutes, then a wait — so a flood of made-up lines can't keep Echo's
+// few database connections busy, and one revoked line doesn't stop the others.
+const wrongLines = attemptLimiter({ windowMs: 15 * 60_000, perEmail: 10, perAddress: 60 });
+
 animusRouter.use(async (req, res, next) => {
   try {
-    const c = await connectionOf(req.get("x-echo-token"));
-    if (!c) return res.status(401).json({ error: "This connection line is wrong or was revoked. Make a new one in Echo › Settings › Connected apps." });
+    const token = req.get("x-echo-token");
+    const ip = req.ip || req.socket?.remoteAddress || "?";
+    const id = String(token ?? "").split(".")[1]?.slice(0, 36) ?? "";
+    const wait = wrongLines.wait(ip, id);
+    if (wait) return res.status(429).json({ error: `Too many wrong connection lines. Try again in ${wait} minute${wait === 1 ? "" : "s"}.` });
+    const c = await connectionOf(token);
+    if (!c) {
+      wrongLines.count(ip, id);
+      return res.status(401).json({ error: "This connection line is wrong or was revoked. Make a new one in Echo › Settings › Connected apps." });
+    }
     if (!(await uploadsReady())) return res.status(409).json({ error: NEEDS_UPLOADS_DB });
     req.orgId = c.org_id;
     req.connection = c;

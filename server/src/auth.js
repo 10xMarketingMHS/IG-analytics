@@ -56,6 +56,9 @@ authRouter.post("/login", async (req, res, next) => {
   const ip = addressOf(req);
   const wait = logins.wait(ip, email);
   if (wait) return tooMany(res, wait, "sign-in attempts");
+  // counted now, before the password check, so tries sent all at once can't
+  // each slip under the limit; a right password takes its try back
+  logins.count(ip, email);
 
   try {
     const { rows } = await pool.query(
@@ -68,7 +71,6 @@ authRouter.post("/login", async (req, res, next) => {
     const ok = await bcrypt.compare(password, user?.password_hash ?? NO_LOGIN_HASH);
 
     if (!user || !ok) {
-      logins.count(ip, email);
       return res.status(401).json({ error: "Invalid login credentials" });
     }
     logins.clear(ip, email);
@@ -153,6 +155,10 @@ authRouter.post("/view-as", async (req, res, next) => {
     if (!(await hasColumn("app_user", "is_super_admin")) || !(await hasColumn("editor", "employee_code"))) {
       return res.status(409).json({ error: "View as needs the Super Admin database update first." });
     }
+    // only from a session that's still good: not from before a password change
+    const st = await loginState(me.sub);
+    if (!st.ok) return res.status(401).json({ error: SWITCHED_OFF });
+    if (me.pv !== st.pv) return res.status(401).json({ error: PASSWORD_CHANGED });
     const { rows: mine } = await pool.query("select is_super_admin, coalesce(name, email) as name from app_user where id = $1 and active", [me.sub]);
     if (!mine[0]?.is_super_admin) return res.status(403).json({ error: "Only a Super Admin can view Echo as someone else." });
     const { rows } = await pool.query(
@@ -168,7 +174,8 @@ authRouter.post("/view-as", async (req, res, next) => {
     if (who.id === me.sub) return res.status(409).json({ error: "That's your own code." });
     if (!who.active) return res.status(409).json({ error: `${who.name}'s login is deactivated.` });
 
-    const borrowed = jwt.sign({ sub: who.id, email: who.email, actAs: me.sub }, config.JWT_SECRET, { expiresIn: VIEW_AS_TTL_MS / 1000 });
+    // carries the Super Admin's password fingerprint: changing it ends this too
+    const borrowed = jwt.sign({ sub: who.id, email: who.email, actAs: me.sub, actAsPv: me.pv }, config.JWT_SECRET, { expiresIn: VIEW_AS_TTL_MS / 1000 });
     // your own session is kept only as long as the borrowed one lasts
     res.cookie(REAL_COOKIE, req.cookies[COOKIE_NAME], cookieOpts(VIEW_AS_TTL_MS));
     res.cookie(COOKIE_NAME, borrowed, cookieOpts(VIEW_AS_TTL_MS));
@@ -215,6 +222,9 @@ authRouter.get("/me", async (req, res) => {
     );
     const u = rows[0];
     if (!u || !(await isActiveLogin(payload.sub))) return res.status(401).json({ error: SWITCHED_OFF });
+    // what every other call checks (requireAuth): the password since, and a view-as still good
+    if (payload.pv && payload.pv !== (await loginState(payload.sub)).pv) return res.status(401).json({ error: PASSWORD_CHANGED });
+    if (payload.actAs && !(await stillSuper(payload.actAs, payload.actAsPv))) return res.status(401).json({ error: VIEW_AS_ENDED });
     // Viewing as someone (Super Admin test mode): who is really signed in.
     const real = payload.actAs
       ? (await pool.query("select coalesce(name, email) as name from app_user where id = $1", [payload.actAs])).rows[0]
@@ -267,11 +277,14 @@ export async function isActiveLogin(userId) {
   return (await loginState(userId)).ok;
 }
 const SWITCHED_OFF = "This login has been switched off. Ask an admin if that's a mistake.";
+const PASSWORD_CHANGED = "Your password was changed. Sign in again.";
+const VIEW_AS_ENDED = "View as has ended. Sign in again.";
 const VIEW_AS_CLOSED = /^\/api\/(chat(\/|\?|$)|integrations\/instagram\/(connect|callback))/;
-// The login behind a "view as" session: still switched on and still a Super Admin.
-async function stillSuper(userId) {
-  const { rows } = await pool.query("select active, is_super_admin from app_user where id = $1", [userId]);
-  return !!rows[0]?.active && !!rows[0]?.is_super_admin;
+// The login behind a "view as" session: still switched on, still a Super
+// Admin, and on the password it had when the view-as began.
+async function stillSuper(userId, pv) {
+  const { rows } = await pool.query("select active, is_super_admin, password_hash from app_user where id = $1", [userId]);
+  return !!rows[0]?.active && !!rows[0]?.is_super_admin && !!pv && passPrint(rows[0].password_hash) === pv;
 }
 
 export async function requireAuth(req, res, next) {
@@ -288,9 +301,9 @@ export async function requireAuth(req, res, next) {
   try {
     const st = await loginState(user.sub);
     if (!st.ok) return res.status(401).json({ error: SWITCHED_OFF });
-    if (user.pv && user.pv !== st.pv) return res.status(401).json({ error: "Your password was changed. Sign in again." });
-    // viewing as someone: only while the Super Admin who started it still is one
-    if (user.actAs && !(await stillSuper(user.actAs))) return res.status(401).json({ error: "View as has ended. Sign in again." });
+    if (user.pv && user.pv !== st.pv) return res.status(401).json({ error: PASSWORD_CHANGED });
+    // viewing as someone: only while the Super Admin who started it still is one, on the same password
+    if (user.actAs && !(await stillSuper(user.actAs, user.actAsPv))) return res.status(401).json({ error: VIEW_AS_ENDED });
   } catch (err) {
     return next(err);
   }

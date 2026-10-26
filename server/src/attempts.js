@@ -35,9 +35,13 @@ export function attemptLimiter({ windowMs, perEmail, perAddress }) {
         else hits.set(k, { n: 1, start: now });
       }
     },
-    // a right password: that email's count from this address starts again
+    // a right password: that email's count from this address starts again,
+    // and the address gets its try back (it was counted before the check)
     clear(ip, email) {
-      hits.delete(keys(ip, email)[1][0]);
+      const [[addr], [mail]] = keys(ip, email);
+      hits.delete(mail);
+      const h = live(addr, Date.now());
+      if (h && h.n > 0) h.n--;
     },
   };
 }

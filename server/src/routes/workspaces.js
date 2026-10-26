@@ -219,6 +219,11 @@ workspacesRouter.delete("/workspaces/:id", resolveWorkspace, requirePermission("
     // deleted. Deleting posts now keeps those audit rows valid; the workspace
     // delete then cascades them away.
     await client.query("delete from post where workspace_id = $1", [ws.id]);
+    // Recorded ad numbers and their results belong to the task, not the brand:
+    // they let go of it rather than go with it (task_ad's brand link cascades).
+    if (await hasColumn("task_ad", "workspace_id")) {
+      await client.query("update task_ad set workspace_id = null where workspace_id = $1", [ws.id]);
+    }
     await client.query("delete from workspace where id = $1", [ws.id]);
     await client.query("COMMIT");
     res.status(204).end();

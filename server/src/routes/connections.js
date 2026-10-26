@@ -23,6 +23,11 @@ const SELECT = `select c.id, c.app, c.label, coalesce(c.ad_team_id, c.workspace_
                   left join app_user u on u.id = c.created_by left join editor e on e.id = u.editor_id`;
 const ready = async () => (await connectionsReady()) && adTeamsReady();
 
+// Whether this person may open Connected apps (Settings shows the tab by it)
+connectionsRouter.get("/connections/access", async (req, res, next) => {
+  try { res.json({ allowed: await mayManage(req) }); } catch (err) { next(err); }
+});
+
 connectionsRouter.get("/connections", async (req, res, next) => {
   try {
     if (!(await ready())) return res.status(409).json({ error: NEEDS_DB });

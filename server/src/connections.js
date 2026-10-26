@@ -23,7 +23,7 @@ export const secretHash = fingerprint;
 // The live connection a token belongs to, or null (malformed, unknown, revoked
 // or the wrong secret). Marks it used, at most every five minutes.
 export async function connectionOf(token) {
-  const m = String(token ?? "").trim().match(/^ec1\.([0-9a-f-]{36})\.([A-Za-z0-9_-]{20,})$/);
+  const m = String(token ?? "").trim().match(/^ec1\.([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\.([A-Za-z0-9_-]{20,})$/i);
   if (!m || !(await connectionsReady())) return null;
   const { rows } = await pool.query(
     `select c.id, c.org_id, c.ad_team_id, c.workspace_id, c.app, c.label, c.secret_hash, c.last_used_at,

@@ -15,7 +15,7 @@ export const pctWords = (v: number | null | undefined) => (v == null ? "—" : `
 export const roasWords = (v: number | null | undefined) => (v == null ? "—" : `${(Math.round(v * 100) / 100).toFixed(2)}×`);
 export const rupees = (v: number | null | undefined) => (v == null ? "—" : `₹${Math.round(v).toLocaleString("en-IN")}`);
 export const countWords = (v: number | null | undefined) => (v == null ? "—" : Math.round(v).toLocaleString("en-IN"));
-export const scoreWords = (v: number | null | undefined) => (v == null ? "—" : String(Math.round(v)));
+export const scoreWords = (v: number | null | undefined) => (v == null ? "—" : String(Math.round(v * 10) / 10));
 export const dayShort = (ymd: string | null | undefined) => (ymd ? new Date(`${ymd}T12:00:00`).toLocaleDateString("en-IN", { day: "numeric", month: "short" }) : "—");
 // the 14-day window's tone: "Overdue" late, under 4 days soon
 export const windowTone = (w: string | null | undefined) => (!w ? "" : w === "Overdue" ? "late" : w === "Set publish date" ? "soon" : parseInt(w, 10) <= 3 ? "soon" : "");

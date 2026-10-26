@@ -43,6 +43,8 @@ const LEAVE_UNSAVED = "You have changes that aren't saved. Leave them?";
 export function SettingsPage() {
   const { isAdmin, hasPermission } = useWorkspaces();
   const isSuper = useIsSuper();
+  // Connected apps: the Super Admin, Managers and Asst. Managers — the server says who
+  const { data: appsAccess } = useResource<{ allowed: boolean }>("/connections/access");
   const location = useLocation();
   const navigate = useNavigate();
   const [params] = useSearchParams();
@@ -58,7 +60,7 @@ export function SettingsPage() {
     { k: "access", l: "Access", d: "Extra permissions per person", icon: SI.admin, show: isSuper || (!isAdmin && hasPermission("access_manage")) },
     { k: "alerts", l: "Notifications", d: "What pings you, and where", icon: SI.bell, show: true },
     { k: "workday", l: "Work day", d: "Who started and ended their day", icon: SI.clock, show: isAdmin },
-    { k: "apps", l: "Connected apps", d: "Animus, with one line", icon: SI.link, show: isAdmin },
+    { k: "apps", l: "Connected apps", d: "Animus, with one line", icon: SI.link, show: !!appsAccess?.allowed },
   ];
   const shown = SECTIONS.filter((s) => s.show);
   const want = (params.get("s") as Section | null) ?? SECTION_FOR_PATH[location.pathname] ?? "general";

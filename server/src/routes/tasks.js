@@ -121,6 +121,23 @@ export async function nextBrandTaskRef(channelId, kind) {
   return `${prefix}-${String(rows[0].n).padStart(5, "0")}`;
 }
 
+// An Ad task's AID: the next in its team (with none, its brand), passing over
+// any number a task of that team or brand already holds — an ad moved in from
+// another team, or one that keeps an older brand, may hold it already.
+async function nextFreeAid(teamId, channelId) {
+  const teams = await adTeamsReady();
+  for (;;) {
+    const aid = teamId ? await nextTeamAid(teamId) : await nextBrandTaskRef(channelId, "adid");
+    const { rowCount } = await pool.query(
+      `select 1 from task where ad_id = $1 and (${teams ? "ad_team_id = $2 or " : ""}channel_id = $3) limit 1`,
+      teams ? [aid, teamId ?? null, channelId ?? null] : [aid, null, channelId ?? null],
+    );
+    if (!rowCount) return aid;
+  }
+}
+const activeTeam = async (id, orgId) =>
+  (await adTeamsReady()) && (await pool.query("select 1 from ad_team where id = $1 and org_id = $2 and active", [id, orgId])).rowCount > 0;
+
 // Returned shape: task fields + assignee name/image + channel name for the UI.
 // Content format is a joined name/icon (from the org's own taxonomy), not a
 // fixed enum. Social Media tasks (post_id set) also carry the post's title,
@@ -428,7 +445,7 @@ tasksRouter.post("/tasks", requireEditor, requireActiveEod, async (req, res, nex
     // SVID. Admin tasks get a TID only.
     const tid = await nextTaskRef(req.orgId, "tid");
     const sid = taskType === "social" ? await nextBrandTaskRef(channelId, "sid") : null;
-    const adId = taskType !== "ad" ? null : adTeamId ? await nextTeamAid(adTeamId) : await nextBrandTaskRef(channelId, "adid");
+    const adId = taskType !== "ad" ? null : await nextFreeAid(adTeamId, channelId);
     const svid = taskType === "service" ? await nextBrandTaskRef(channelId, "svid") : null;
     const pid = isProject ? await nextBrandTaskRef(channelId, "pid") : null;
     // Atomically claim the next per-org Task ID (serial, "TASK-####") and
@@ -896,6 +913,7 @@ tasksRouter.patch("/tasks/:id", requireEditor, requireActiveEod, async (req, res
       push("task_type", "content");
     }
 
+    let aidSet = false;
     if (d.taskType !== undefined && d.postId === undefined) {
       // Auto-created tasks are always "content" and that's not user-editable.
       // (Linking a post above already forces task_type — skip this branch then.)
@@ -916,19 +934,42 @@ tasksRouter.patch("/tasks/:id", requireEditor, requireActiveEod, async (req, res
             : "Pick a Brand first — Social, Service and Project tasks are numbered per brand." });
         }
         if (d.taskType === "social" && !prior.sid) push("sid", await nextBrandTaskRef(effChannel, "sid"));
-        if (d.taskType === "ad" && !prior.ad_id) push("ad_id", effTeam ? await nextTeamAid(effTeam) : await nextBrandTaskRef(effChannel, "adid"));
+        if (d.taskType === "ad" && d.adTeamId && !(await activeTeam(d.adTeamId, req.orgId))) return res.status(400).json({ error: "Pick the team this ad is for." });
+        if (d.taskType === "ad" && !prior.ad_id) { push("ad_id", await nextFreeAid(effTeam, effChannel)); aidSet = true; }
         if (d.taskType === "service" && !prior.svid) push("svid", await nextBrandTaskRef(effChannel, "svid"));
         if (d.taskType === "project" && !prior.pid) push("pid", await nextBrandTaskRef(effChannel, "pid"));
       }
     }
     if (d.contentFormatId !== undefined) push("content_format_id", d.contentFormatId ?? null);
-    // The team an ad is for. It keeps the AID it was given; a first team numbers one with no AID yet.
+    // The team an ad is for. AIDs count within a team, so a new team numbers it
+    // afresh (with no team, its brand does), and its recorded ad numbers go with it.
+    let adsMoveTo = null;
     if (d.adTeamId !== undefined && (d.adTeamId ?? null) !== (prior.ad_team_id ?? null) && (await adTeamsReady())) {
-      if (d.adTeamId && !((await adTeamsReady()) && (await pool.query("select 1 from ad_team where id = $1 and org_id = $2 and active", [d.adTeamId, req.orgId])).rowCount)) {
+      if (d.adTeamId && !(await activeTeam(d.adTeamId, req.orgId))) {
         return res.status(400).json({ error: "Pick the team this ad is for." });
       }
+      const isAd = (d.taskType ?? prior.task_type) === "ad";
+      const effChannel = d.channelId !== undefined ? (d.channelId ?? null) : prior.channel_id;
+      if (isAd && !d.adTeamId && !effChannel) {
+        return res.status(400).json({ error: "Pick the team this ad is for — Ads are numbered per team." });
+      }
       push("ad_team_id", d.adTeamId ?? null);
-      if (d.adTeamId && !prior.ad_id && (d.taskType ?? prior.task_type) === "ad" && d.taskType === undefined) push("ad_id", await nextTeamAid(d.adTeamId));
+      if (isAd) {
+        // an ad number the new team (or brand) already has on another task: one of them lets go first
+        if (await hasColumn("task_ad", "ad_team_id")) {
+          const { rows: clash } = await pool.query(
+            `select a.ad_ref from task_ad a
+              where a.task_id = $1 and exists (select 1 from task_ad b where b.task_id <> $1
+                and coalesce(b.ad_team_id, b.workspace_id) = $2 and lower(b.ad_ref) = lower(a.ad_ref)) limit 1`,
+            [req.params.id, d.adTeamId ?? effChannel],
+          );
+          if (clash.length) {
+            return res.status(409).json({ error: `${clash[0].ad_ref} is already recorded on another task of that ${d.adTeamId ? "team" : "brand"} — remove it from one of them first.` });
+          }
+          adsMoveTo = { team: d.adTeamId ?? null, channel: effChannel };
+        }
+        if (!aidSet) push("ad_id", await nextFreeAid(d.adTeamId ?? null, effChannel));
+      }
     }
     if (d.reviewLinkRequired !== undefined && (d.reviewLinkRequired ?? null) !== (prior.review_link_required ?? null)) {
       // The assignee can't waive their own review link — only an admin, or
@@ -1023,6 +1064,13 @@ tasksRouter.patch("/tasks/:id", requireEditor, requireActiveEod, async (req, res
     );
     if (!rows.length && moving) return res.status(409).json({ error: "Someone else just changed this task. Reload it and try again." });
     if (!rows.length) return res.status(404).json({ error: "Task not found" });
+    // its recorded ads, to the team it moved to (with none, its brand)
+    if (adsMoveTo) {
+      await pool.query(
+        "update task_ad set ad_team_id = $2, workspace_id = case when $2::uuid is null then $3::uuid else workspace_id end where task_id = $1",
+        [req.params.id, adsMoveTo.team, adsMoveTo.channel],
+      );
+    }
 
     const finalStatus = d.status ?? prior.status;
     const finalRecurrence = d.recurrence ?? prior.recurrence;
@@ -1211,11 +1259,11 @@ async function spawnNextOccurrence(taskId, recurrence) {
     const budgetHours = await resolveBudgetHours(t.org_id, t.editor_id, t.content_format_id);
     const tid = await nextTaskRef(t.org_id, "tid");
     const sid = t.task_type === "social" && t.channel_id ? await nextBrandTaskRef(t.channel_id, "sid") : null;
-    const adId = t.task_type !== "ad" ? null : t.ad_team_id ? await nextTeamAid(t.ad_team_id) : t.channel_id ? await nextBrandTaskRef(t.channel_id, "adid") : null;
+    const adId = t.task_type !== "ad" ? null : t.ad_team_id || t.channel_id ? await nextFreeAid(t.ad_team_id, t.channel_id) : null;
     const svid = t.task_type === "service" && t.channel_id ? await nextBrandTaskRef(t.channel_id, "svid") : null;
     const { rows } = await pool.query(
       `insert into task (org_id, editor_id, channel_id, title, description, priority, due_date, recurrence, status, task_type, content_format_id, budget_hours, budget_started_at, tid, sid, ad_id, svid, review_link_required, accepted, created_by, assigned_by)
-       values ($1,$2,$3,$4,$5,$6, ${nextDue}, $8, 'todo', $9, $10, $11, null, $12, $13, $14, $15, $16, false, $17) returning id`,
+       values ($1,$2,$3,$4,$5,$6, ${nextDue}, $8, 'todo', $9, $10, $11, null, $12, $13, $14, $15, $16, false, $17, $18) returning id`,
       [t.org_id, t.editor_id, t.channel_id, t.title, t.description, t.priority, t.due_date, recurrence, t.task_type, t.content_format_id, budgetHours, tid, sid, adId, svid, t.review_link_required, t.created_by, t.assigned_by],
     );
     const newId = rows[0].id;
