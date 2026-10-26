@@ -26,6 +26,7 @@ import "./tasks-board.css";
 import { HandoverBlock, HandoverInbox, HandoverPill, useHandovers } from "@/components/handover";
 import { ScheduleBlock } from "@/components/schedule-block";
 import { AdUploadBlock } from "@/components/ad-upload-block";
+import { placeOf, useAdTeams } from "@/lib/ad-teams";
 import { clockTime, clockTimeShort, dateTime } from "@/lib/time-format";
 
 function relTime(iso: string) {
@@ -1205,8 +1206,8 @@ export function TasksPage() {
                       </div>
                       <div className="task-title">{t.title}</div>
                       <div className="tb-chips-row">
-                        {t.channel_name && (
-                          <span className="tb-tag"><span className="tb-dot" style={{ background: brandDot(t.channel_name) }} />{t.channel_name}</span>
+                        {placeOf(t) && (
+                          <span className="tb-tag"><span className="tb-dot" style={{ background: brandDot(placeOf(t)!) }} />{placeOf(t)}</span>
                         )}
                         <span className="tb-tag" title={TYPE_LABEL[t.task_type]}>
                           {t.content_format_name ? <>{t.content_format_icon} {t.content_format_name}</> : <>{TYPE_ICON[t.task_type]} {TYPE_LABEL[t.task_type]}</>}
@@ -2111,8 +2112,10 @@ export function TaskPanel({ mode, task, canWrite, editors, channels, onClose, on
   const { contentFormats } = useContentFormats();
   const [draft, setDraft] = useState<{
     channel_id: string | null; editor_id: string | null; due_date: string | null; start_date: string | null; priority: string;
-    status: string; content_format_id: string | null; attachments: TaskAttachment[];
-  }>({ channel_id: null, editor_id: null, due_date: null, start_date: null, priority: "medium", status: "todo", content_format_id: null, attachments: [] });
+    status: string; content_format_id: string | null; attachments: TaskAttachment[]; ad_team_id: string | null;
+  }>({ channel_id: null, editor_id: null, due_date: null, start_date: null, priority: "medium", status: "todo", content_format_id: null, attachments: [], ad_team_id: null });
+  // Ads are made for a team (VSL, Longer Life, Webinar) and numbered within it, not a brand
+  const { adTeams } = useAdTeams();
   const [title, setTitle] = useState(task?.title ?? "");
   const [description, setDescription] = useState(task?.description ?? "");
   const [busy, setBusy] = useState(false);
@@ -2187,8 +2190,10 @@ export function TaskPanel({ mode, task, canWrite, editors, channels, onClose, on
 
   const cur = creating ? draft : {
     channel_id: task!.channel_id, editor_id: task!.editor_id, due_date: task!.due_date, start_date: task!.start_date, priority: task!.priority,
-    status: task!.status, content_format_id: task!.content_format_id, attachments: task!.attachments ?? [],
+    status: task!.status, content_format_id: task!.content_format_id, attachments: task!.attachments ?? [], ad_team_id: task!.ad_team_id ?? null,
   };
+  // An Ad task picks its team once there are teams (Settings › Tasks & time › Ads teams)
+  const adByTeam = activeCategory === "ad" && (adTeams?.length ?? 0) > 0;
   // Project-only derived values: the selected project type drives its duration
   // (which bounds the Due Date) and its read-only points. Declared after `cur`.
   const isProject = activeCategory === "project";
@@ -2264,7 +2269,7 @@ export function TaskPanel({ mode, task, canWrite, editors, channels, onClose, on
   const dayLocked = useDayLocked();
   const { refresh: refreshDay, start: startDay, busy: dayBusy } = useEodState();
   useEffect(() => { if (creating) refreshDay(); }, [creating, refreshDay]);
-  const canCreate = Boolean(title.trim() && category && !adminNeedsRoster && (category === "admin" || draft.channel_id) && (category !== "project" || draft.content_format_id)
+  const canCreate = Boolean(title.trim() && category && !adminNeedsRoster && (category === "admin" || (adByTeam ? draft.ad_team_id : draft.channel_id)) && (category !== "project" || draft.content_format_id)
     && (!limitTypes || category === "admin" || !!draft.content_format_id)) && !(creating && dayLocked);
   async function create() {
     if (!canCreate || busy) return;
@@ -2273,7 +2278,8 @@ export function TaskPanel({ mode, task, canWrite, editors, channels, onClose, on
       const r = await api<{ task: Task }>("/tasks", { method: "POST", body: JSON.stringify({
         // Every new task starts in To Do, regardless of where it was opened from.
         title: title.trim(), description, taskType: category, status: "todo",
-        channelId: draft.channel_id, editorId: draft.editor_id, dueDate: draft.due_date,
+        channelId: adByTeam ? null : draft.channel_id, editorId: draft.editor_id, dueDate: draft.due_date,
+        ...(adByTeam ? { adTeamId: draft.ad_team_id } : {}),
         startDate: category === "project" ? draft.start_date : undefined,
         priority: draft.priority, contentFormatId: draft.content_format_id,
         ...(canAssign && linkOverride != null ? { reviewLinkRequired: linkOverride } : {}),
@@ -2308,7 +2314,8 @@ export function TaskPanel({ mode, task, canWrite, editors, channels, onClose, on
     : !category ? `Choose a category — Social, Ads, Service or Project${isAdmin ? " or Admin" : ""} — to begin.`
     : adminNeedsRoster ? "You're not on the team roster yet, so an Admin task would have no owner. Add yourself on Team › Roster (Edit on your row) first."
     : adminTask ? (!title.trim() ? "Add a title — Admin tasks need nothing else." : "Admin task — just for you.")
-    : !draft.channel_id ? "Pick a Brand — Social, Ads, Service and Project tasks are numbered per brand."
+    : adByTeam && !draft.ad_team_id ? "Pick the team this ad is for — Ads are numbered per team."
+    : !adByTeam && !draft.channel_id ? "Pick a Brand — Social, Ads, Service and Project tasks are numbered per brand."
     : !title.trim() ? "Add a task title."
     : category === "project" && contentTypeChoices.length === 0 ? "No project types exist yet. Add one under Settings › Tasks & time (as a Project type) first."
     : category === "project" && !draft.content_format_id ? "Pick a project type."
@@ -2404,6 +2411,19 @@ export function TaskPanel({ mode, task, canWrite, editors, channels, onClose, on
       </select>
     </Row>
   );
+  // Ads: the team it's made for instead of a brand (an older Ad task keeps showing its brand too)
+  const teamRow = (
+    <Row label="Team" icon={ic(TB_ICON.tag)}>
+      <select className="t tp2-narrow" disabled={briefRo} value={cur.ad_team_id ?? ""} aria-label="Team this ad is for"
+        onChange={(e) => set("ad_team_id", "adTeamId", e.target.value || null)}>
+        <option value="">—</option>
+        {(adTeams ?? []).concat(task?.ad_team_id && !(adTeams ?? []).some((x) => x.id === task.ad_team_id)
+          ? [{ id: task.ad_team_id, name: task.ad_team_name ?? "Team", leadName: "", active: false, tasks: 0 }] : [])
+          .map((x) => <option key={x.id} value={x.id}>{x.name}{x.leadName ? ` · ${x.leadName}` : ""}</option>)}
+      </select>
+    </Row>
+  );
+  const placeRow = adByTeam ? <>{teamRow}{!creating && cur.channel_id ? brandRow : null}</> : brandRow;
   const priorityRow = (
     <Row label="Priority" icon={ic(TB_ICON.flag)}>
       {creating ? (
@@ -2501,7 +2521,7 @@ export function TaskPanel({ mode, task, canWrite, editors, channels, onClose, on
                   {isAdmin && <button type="button" className={"tp2-chip" + (category === "admin" ? " on" : "")} onClick={() => pickCategory("admin")}>🛠️ Admin</button>}
                 </div>
               </Row>
-              {brandRow}
+              {placeRow}
               {assigneeRow}
               {startRow}
               {dueRow}
@@ -2531,7 +2551,7 @@ export function TaskPanel({ mode, task, canWrite, editors, channels, onClose, on
         <div className="tp2-dhead">
           {/* Shrinks (and clips) before the buttons on the right ever do. */}
           <span className="tp2-crumbs">
-            {t.channel_name && <><span>{t.channel_name}</span><span>/</span></>}
+            {placeOf(t) && <><span>{placeOf(t)}</span><span>/</span></>}
             <span className="tp2-mono strong">{ref}</span>
             {otherIds.map((id) => <span key={id} className="tp2-mono">· {id}</span>)}
             {editCategory && <span className="tp2-tag">{CATEGORY_LABEL[editCategory]}</span>}
@@ -2582,7 +2602,7 @@ export function TaskPanel({ mode, task, canWrite, editors, channels, onClose, on
             {assigneeRow}
             {startRow}
             {dueRow}
-            {brandRow}
+            {placeRow}
             {priorityRow}
             {typeRow}
             {linkRow}
@@ -3017,7 +3037,7 @@ function TaskList({ tasks, onOpen, nowMs }: { tasks: Task[]; onOpen: (t: Task) =
                       {t.platforms?.length > 0 && <span className="task-plats">{t.platforms.map((p) => PLATFORM_META[p]?.icon ?? "").join(" ")}</span>}
                     </span>
                     <span className="tb-lwho">{t.editor_name ? <><Ava name={t.editor_name} image={t.editor_image} size={22} />{t.editor_name}</> : <span className="tb-dim">Unassigned</span>}</span>
-                    <span className="tb-lbrand">{t.channel_name ? <><span className="tb-dot" style={{ background: brandDot(t.channel_name) }} />{t.channel_name}</> : <span className="tb-dim">—</span>}</span>
+                    <span className="tb-lbrand">{placeOf(t) ? <><span className="tb-dot" style={{ background: brandDot(placeOf(t)!) }} />{placeOf(t)}</> : <span className="tb-dim">—</span>}</span>
                     <span className={"tb-pri " + t.priority}><span className="tb-pri-dot" />{PRI_LABEL[t.priority]}</span>
                     <span className={"tb-ldue" + (overdue ? " over" : t.due_date === today() ? " today" : "")}>
                       {t.status === "done" ? "Done" : t.due_date ? dueText(t.due_date) : <span className="tb-dim">—</span>}

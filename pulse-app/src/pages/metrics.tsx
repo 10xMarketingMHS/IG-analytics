@@ -13,6 +13,7 @@ import { TaskPanel } from "@/pages/tasks";
 import type { Editor, Task } from "@/lib/types";
 import { scheduleStage, type SchedStage } from "@/lib/schedule";
 import { adStage, type AdStage } from "@/lib/ad-upload";
+import { placeOf } from "@/lib/ad-teams";
 import "./pipeline.css";
 
 // Social & Ads Pipeline (Pulse Redesign v7): every reel, carousel and ad in
@@ -161,7 +162,7 @@ export function MetricsPage() {
     const m = new Map<string, { key: string; brand: string; plat: keyof typeof PLATFORM; tasks: Task[] }>();
     for (const t of rows) {
       const plat = platformOf(t) ?? "none";
-      const brand = t.channel_name ?? "No brand";
+      const brand = placeOf(t) ?? "No brand";
       const key = `${brand}|${plat}`;
       if (!m.has(key)) m.set(key, { key, brand, plat, tasks: [] });
       m.get(key)!.tasks.push(t);
@@ -311,7 +312,7 @@ export function MetricsPage() {
                     <span>{ref ? <span className="pp-ref">{ref}</span> : <span className="pp-faint">—</span>}</span>
                     <span className="pp-chan">
                       <span className="pp-plat" style={{ background: plat.bg }}>{plat.ab}</span>
-                      <span><b>{t.channel_name ?? "—"}</b><em>{plat.l}</em></span>
+                      <span><b>{placeOf(t) ?? "—"}</b><em>{plat.l}</em></span>
                     </span>
                     <span className="pp-ed">
                       {ed ? <><Ava editor={ed} /><b>{ed.name}</b></> : <><span className="pp-faint">Unclaimed</span>{claimBtn(t)}</>}

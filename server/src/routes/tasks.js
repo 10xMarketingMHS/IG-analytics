@@ -11,7 +11,7 @@ import { closePendingHandovers } from "../handover.js";
 import { hasColumn } from "../schema-flags.js";
 import { coverFrom } from "../goal-score.js";
 import { enterScheduling, leaveScheduling, schedulerIds, schedulingReady } from "../scheduling.js";
-import { enterUploads, leaveUploads, uploadsReady } from "../ad-uploads.js";
+import { adTeamsReady, enterUploads, leaveUploads, nextTeamAid, uploadsReady } from "../ad-uploads.js";
 
 export const tasksRouter = Router();
 
@@ -75,6 +75,9 @@ const TaskSchema = z.object({
   // admin-manageable task_content_format list. Optional — not every task
   // (e.g. a short/general task) has one.
   contentFormatId: z.string().uuid().nullable().optional(),
+  // Ads: the team it's made for (Settings › Tasks & time › Ads teams), which
+  // numbers it (AID per team) instead of a brand.
+  adTeamId: z.string().uuid().nullable().optional(),
   // Per-task "delivery link required to submit for review". null = follow the
   // content type's default. Only an admin / assign_tasks grantee may set it.
   reviewLinkRequired: z.boolean().nullable().optional(),
@@ -149,6 +152,7 @@ const SELECT = `
          /*linked_posts*/0 as linked_posts,
          -- Ad uploads after approval (../ad-uploads.js), the same way: ad_count: taskSelect()
          (to_jsonb(t)->>'upload_from')::timestamptz as upload_from, /*ad_count*/0 as ad_count,
+         (to_jsonb(t)->>'ad_team_id')::uuid as ad_team_id, /*ad_team_name*/null::text as ad_team_name,
          e.name as editor_name, e.image_url as editor_image,
          coalesce(hu.name, hu.email) as held_by_name,
          -- The assignee's break, so the client can offset the countdown by
@@ -176,6 +180,7 @@ export async function taskSelect() {
   let s = SELECT;
   if (await schedulingReady()) s = s.replace("/*linked_posts*/0", "(select count(*)::int from post fp where fp.from_task_id = t.id and fp.deleted_at is null)");
   if (await uploadsReady()) s = s.replace("/*ad_count*/0", "(select count(*)::int from task_ad ta where ta.task_id = t.id)");
+  if (await adTeamsReady()) s = s.replace("/*ad_team_name*/null::text", "(select atm.name from ad_team atm where atm.id = t.ad_team_id)");
   return s;
 }
 
@@ -375,10 +380,20 @@ tasksRouter.post("/tasks", requireEditor, requireActiveEod, async (req, res, nex
     // Admin tasks may optionally belong to a brand (Project) — they just never
     // get a content type, SID/AID or timer.
     const channelId = d.channelId ?? null;
-    // Social / Ads / Service / Project tasks are numbered per brand, so they must
-    // belong to one — enforce it up front rather than minting an orphan id.
-    if ((taskType === "social" || taskType === "ad" || taskType === "service" || taskType === "project") && !channelId) {
-      return res.status(400).json({ error: "Pick a Brand — Social, Ads, Service and Project tasks are numbered per brand." });
+    // An Ad task is made for an Ads team and numbered within it (no brand needed).
+    let adTeamId = null;
+    if (taskType === "ad" && d.adTeamId) {
+      const ok = (await adTeamsReady()) && (await pool.query("select 1 from ad_team where id = $1 and org_id = $2 and active", [d.adTeamId, req.orgId])).rowCount;
+      if (!ok) return res.status(400).json({ error: "Pick the team this ad is for." });
+      adTeamId = d.adTeamId;
+    }
+    // Social / Ads / Service / Project tasks are numbered per brand (Ads: per
+    // team), so they must belong to one — enforce it up front rather than minting an orphan id.
+    if (taskType === "ad" && !channelId && !adTeamId) {
+      return res.status(400).json({ error: "Pick the team this ad is for — Ads are numbered per team." });
+    }
+    if ((taskType === "social" || taskType === "service" || taskType === "project") && !channelId) {
+      return res.status(400).json({ error: "Pick a Brand — Social, Service and Project tasks are numbered per brand." });
     }
     // Project: has a Start Date (defaults to today) and a Due Date bounded by the
     // selected project type's configured duration. Enforced server-side, not just
@@ -413,7 +428,7 @@ tasksRouter.post("/tasks", requireEditor, requireActiveEod, async (req, res, nex
     // SVID. Admin tasks get a TID only.
     const tid = await nextTaskRef(req.orgId, "tid");
     const sid = taskType === "social" ? await nextBrandTaskRef(channelId, "sid") : null;
-    const adId = taskType === "ad" ? await nextBrandTaskRef(channelId, "adid") : null;
+    const adId = taskType !== "ad" ? null : adTeamId ? await nextTeamAid(adTeamId) : await nextBrandTaskRef(channelId, "adid");
     const svid = taskType === "service" ? await nextBrandTaskRef(channelId, "svid") : null;
     const pid = isProject ? await nextBrandTaskRef(channelId, "pid") : null;
     // Atomically claim the next per-org Task ID (serial, "TASK-####") and
@@ -460,6 +475,7 @@ tasksRouter.post("/tasks", requireEditor, requireActiveEod, async (req, res, nex
     const creatorEid = await callerEditorId(req);
     const assignedBy = d.editorId && d.editorId !== creatorEid ? req.user.sub : null;
     await pool.query("update task set created_by = $2, assigned_by = $3 where id = $1", [rows[0].id, req.user.sub, assignedBy]);
+    if (adTeamId) await pool.query("update task set ad_team_id = $2 where id = $1", [rows[0].id, adTeamId]);
     if (typeof d.reviewLinkRequired === "boolean" && (await canAssignTasks(req))) {
       await pool.query("update task set review_link_required = $2 where id = $1", [rows[0].id, d.reviewLinkRequired]);
     }
@@ -518,7 +534,7 @@ tasksRouter.patch("/tasks/:id", requireEditor, requireActiveEod, async (req, res
     // Capture prior state so we can spawn the next occurrence on completion,
     // guard task_type for post-linked tasks, and re-resolve the time budget.
     const prior = (await pool.query(
-      "select status, recurrence, post_id, editor_id, channel_id, content_format_id, accepted, budget_hours, budget_started_at, budget_used_seconds, on_hold, sid, ad_id, svid, pid, start_date, due_date, revision, task_type, delivery_link, review_link_required, title, description, priority, content_type, platforms, attachments, meta, created_by, held_by, assigned_by, review_started_at, to_jsonb(task)->>'covered_from_editor_id' as covered_from from task where id = $1 and org_id = $2",
+      "select status, recurrence, post_id, editor_id, channel_id, content_format_id, accepted, budget_hours, budget_started_at, budget_used_seconds, on_hold, sid, ad_id, svid, pid, start_date, due_date, revision, task_type, delivery_link, review_link_required, title, description, priority, content_type, platforms, attachments, meta, created_by, held_by, assigned_by, review_started_at, to_jsonb(task)->>'covered_from_editor_id' as covered_from, (to_jsonb(task)->>'ad_team_id')::uuid as ad_team_id from task where id = $1 and org_id = $2",
       [req.params.id, req.orgId],
     )).rows[0];
     if (!prior) return res.status(404).json({ error: "Task not found" });
@@ -893,16 +909,27 @@ tasksRouter.patch("/tasks/:id", requireEditor, requireActiveEod, async (req, res
       // task's existing one. Never re-generates an id that already exists.
       if (d.taskType === "social" || d.taskType === "ad" || d.taskType === "service" || d.taskType === "project") {
         const effChannel = d.channelId !== undefined ? (d.channelId ?? null) : prior.channel_id;
-        if (!effChannel) {
-          return res.status(400).json({ error: "Pick a Brand first — Social, Ads, Service and Project tasks are numbered per brand." });
+        // Ads: the team being set in this same PATCH, else the task's own
+        const effTeam = d.adTeamId !== undefined ? (d.adTeamId ?? null) : prior.ad_team_id ?? null;
+        if (d.taskType === "ad" ? !effChannel && !effTeam : !effChannel) {
+          return res.status(400).json({ error: d.taskType === "ad" ? "Pick the team this ad is for first — Ads are numbered per team."
+            : "Pick a Brand first — Social, Service and Project tasks are numbered per brand." });
         }
         if (d.taskType === "social" && !prior.sid) push("sid", await nextBrandTaskRef(effChannel, "sid"));
-        if (d.taskType === "ad" && !prior.ad_id) push("ad_id", await nextBrandTaskRef(effChannel, "adid"));
+        if (d.taskType === "ad" && !prior.ad_id) push("ad_id", effTeam ? await nextTeamAid(effTeam) : await nextBrandTaskRef(effChannel, "adid"));
         if (d.taskType === "service" && !prior.svid) push("svid", await nextBrandTaskRef(effChannel, "svid"));
         if (d.taskType === "project" && !prior.pid) push("pid", await nextBrandTaskRef(effChannel, "pid"));
       }
     }
     if (d.contentFormatId !== undefined) push("content_format_id", d.contentFormatId ?? null);
+    // The team an ad is for. It keeps the AID it was given; a first team numbers one with no AID yet.
+    if (d.adTeamId !== undefined && (d.adTeamId ?? null) !== (prior.ad_team_id ?? null) && (await adTeamsReady())) {
+      if (d.adTeamId && !((await adTeamsReady()) && (await pool.query("select 1 from ad_team where id = $1 and org_id = $2 and active", [d.adTeamId, req.orgId])).rowCount)) {
+        return res.status(400).json({ error: "Pick the team this ad is for." });
+      }
+      push("ad_team_id", d.adTeamId ?? null);
+      if (d.adTeamId && !prior.ad_id && (d.taskType ?? prior.task_type) === "ad" && d.taskType === undefined) push("ad_id", await nextTeamAid(d.adTeamId));
+    }
     if (d.reviewLinkRequired !== undefined && (d.reviewLinkRequired ?? null) !== (prior.review_link_required ?? null)) {
       // The assignee can't waive their own review link — only an admin, or
       // someone who may assign work (the Assign tasks grant) and set this task
@@ -1170,7 +1197,7 @@ tasksRouter.get("/tasks/:id/history", async (req, res, next) => {
 async function spawnNextOccurrence(taskId, recurrence) {
   try {
     const t = (await pool.query(
-      "select org_id, editor_id, channel_id, title, description, priority, due_date, task_type, content_format_id, review_link_required, created_by, assigned_by from task where id = $1",
+      "select org_id, editor_id, channel_id, title, description, priority, due_date, task_type, content_format_id, review_link_required, created_by, assigned_by, (to_jsonb(task)->>'ad_team_id')::uuid as ad_team_id from task where id = $1",
       [taskId],
     )).rows[0];
     if (!t) return;
@@ -1184,7 +1211,7 @@ async function spawnNextOccurrence(taskId, recurrence) {
     const budgetHours = await resolveBudgetHours(t.org_id, t.editor_id, t.content_format_id);
     const tid = await nextTaskRef(t.org_id, "tid");
     const sid = t.task_type === "social" && t.channel_id ? await nextBrandTaskRef(t.channel_id, "sid") : null;
-    const adId = t.task_type === "ad" && t.channel_id ? await nextBrandTaskRef(t.channel_id, "adid") : null;
+    const adId = t.task_type !== "ad" ? null : t.ad_team_id ? await nextTeamAid(t.ad_team_id) : t.channel_id ? await nextBrandTaskRef(t.channel_id, "adid") : null;
     const svid = t.task_type === "service" && t.channel_id ? await nextBrandTaskRef(t.channel_id, "svid") : null;
     const { rows } = await pool.query(
       `insert into task (org_id, editor_id, channel_id, title, description, priority, due_date, recurrence, status, task_type, content_format_id, budget_hours, budget_started_at, tid, sid, ad_id, svid, review_link_required, accepted, created_by, assigned_by)
@@ -1192,6 +1219,7 @@ async function spawnNextOccurrence(taskId, recurrence) {
       [t.org_id, t.editor_id, t.channel_id, t.title, t.description, t.priority, t.due_date, recurrence, t.task_type, t.content_format_id, budgetHours, tid, sid, adId, svid, t.review_link_required, t.created_by, t.assigned_by],
     );
     const newId = rows[0].id;
+    if (t.ad_team_id) await pool.query("update task set ad_team_id = $2 where id = $1", [newId, t.ad_team_id]);
     await pool.query(
       "insert into subtask (task_id, title, sort_order) select $1, title, sort_order from subtask where task_id = $2",
       [newId, taskId],

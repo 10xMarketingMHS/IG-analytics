@@ -6,6 +6,7 @@ import { useContentFormats } from "@/lib/use-content-formats";
 import { useIsSuper } from "@/lib/use-org";
 import type { ContentFormatDef, TaskTimeRule } from "@/lib/types";
 import { SI, Stepper, Toggle, fmtHours } from "@/pages/settings-ui";
+import { AdTeamsCard } from "@/pages/ad-teams-card";
 
 // Settings › Tasks & time (Pulse Redesign v5): every task type in one list,
 // grouped Social / Ads / Service / Project — its icon, name, category, whether
@@ -216,6 +217,8 @@ export function TaskRulesSection() {
         Ads task goes to Ad uploads, for the ad numbers it became. Points — on or
         before the due date earns them in full, 1 day late half, 2 days none, 3 or more costs them back. Removing a type doesn't touch tasks already using it.
       </span>
+
+      <AdTeamsCard />
 
       <section className="st-card">
         <div className="st-cardhead"><b>Breaks</b></div>

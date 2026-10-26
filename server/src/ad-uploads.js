@@ -7,9 +7,20 @@ import { logActivity } from "./activity.js";
 // for the Managers and Team Leads. They record which ads it became — the AD
 // number Animus gave it for the VSL team, or the ad's name or number the other
 // teams send back — one task, one or more ads (task_ad). Record-keeping only:
-// no job credit. Each team is a brand, so an ad's name is unique per brand.
+// no job credit. Ads are made for Ads teams (VSL, Longer Life, Webinar), so an
+// ad's name is unique within its team — or its brand, for an Ad task made
+// before teams.
 
-export const uploadsReady = async () => (await hasColumn("task", "upload_from")) && hasColumn("task_content_format", "to_scheduling");
+export const adTeamsReady = () => hasColumn("task", "ad_team_id");
+export const uploadsReady = async () => (await hasColumn("task", "upload_from")) && (await hasColumn("task_ad", "ad_team_id"))
+  && hasColumn("task_content_format", "to_scheduling");
+
+// The team's next AID: AID-00001, AID-00002… counted per team.
+export async function nextTeamAid(teamId, db = pool) {
+  const { rows } = await db.query("update ad_team set next_aid = next_aid + 1 where id = $1 returning next_aid", [teamId]);
+  if (!rows.length) throw new Error("No such Ads team.");
+  return `AID-${String(rows[0].next_aid).padStart(5, "0")}`;
+}
 export const NEEDS_UPLOADS_DB = "Ad uploads needs a database update first — ask whoever runs the database to apply 20261106120000_ad_uploads.";
 
 // to_upload (no ad recorded yet) · uploaded (one or more) — null when it isn't in the list.
@@ -30,13 +41,15 @@ export function adRefOf(raw) {
 // (source "manual") or sent by Animus ("animus", routes/animus.js). Tidied, one
 // of each. An ad already on this task is "already"; one on another task of the
 // brand is a clash and isn't recorded (allOrNothing: then none are). task: id,
-// title, channel_id, ref.
+// title, ad_team_id, channel_id, ref.
 export async function recordAds({ orgId, task, refs, source = "manual", userId = null, allOrNothing = false }) {
   const tidy = [...new Map(refs.map(adRefOf).filter(Boolean).map((r) => [r.toLowerCase(), r])).values()];
+  // an ad's name is unique within the task's team (or its brand, before teams)
+  const scope = task.ad_team_id ?? task.channel_id;
   const { rows: taken } = await pool.query(
     `select a.ad_ref, a.task_id, coalesce(t.ad_id, t.sid, t.tid) as ref, t.title from task_ad a join task t on t.id = a.task_id
-      where a.workspace_id = $1 and lower(a.ad_ref) = any($2::text[])`,
-    [task.channel_id, tidy.map((r) => r.toLowerCase())],
+      where coalesce(a.ad_team_id, a.workspace_id) = $1 and lower(a.ad_ref) = any($2::text[])`,
+    [scope, tidy.map((r) => r.toLowerCase())],
   );
   // answered in the order they were sent
   const byName = new Map(taken.map((x) => [x.ad_ref.toLowerCase(), x]));
@@ -47,10 +60,10 @@ export async function recordAds({ orgId, task, refs, source = "manual", userId =
   const fresh = allOrNothing && clash.length ? [] : tidy.filter((r) => !known.has(r.toLowerCase()));
   // two at once: whichever lands second records nothing (the unique name per brand)
   const added = fresh.length ? (await pool.query(
-    `insert into task_ad (org_id, workspace_id, task_id, ad_ref, source, created_by)
-     select $1, $2, $3, r, $5, $6 from unnest($4::text[]) as r
-     on conflict (workspace_id, lower(ad_ref)) do nothing returning ad_ref`,
-    [orgId, task.channel_id, task.id, fresh, source, userId],
+    `insert into task_ad (org_id, workspace_id, ad_team_id, task_id, ad_ref, source, created_by)
+     select $1, $2, $7, $3, r, $5, $6 from unnest($4::text[]) as r
+     on conflict (coalesce(ad_team_id, workspace_id), lower(ad_ref)) do nothing returning ad_ref`,
+    [orgId, task.channel_id ?? null, task.id, fresh, source, userId, task.ad_team_id ?? null],
   )).rows.map((x) => x.ad_ref) : [];
   if (added.length) {
     await logActivity({

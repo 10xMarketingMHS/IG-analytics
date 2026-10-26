@@ -5,6 +5,7 @@ import { useEditors } from "@/lib/use-editors";
 import { useWorkspaces } from "@/lib/workspaces-context";
 import { gradFor, initialsOf } from "@/lib/editor-visuals";
 import { AD_STAGE_WORDS, adStage, type AdStage } from "@/lib/ad-upload";
+import { placeOf } from "@/lib/ad-teams";
 import { TaskPanel } from "@/pages/tasks";
 import type { Task } from "@/lib/types";
 import "./pipeline.css";
@@ -12,7 +13,7 @@ import "./scheduling.css";
 import "./ad-uploads.css";
 
 // Ad uploads — for the Managers and Team Leads: every approved Ad task, by
-// team (each team is a brand), waiting for the ads it became to be recorded —
+// Ads team (VSL, Longer Life, Webinar), waiting for the ads it became to be recorded —
 // the AD number from Animus for the VSL team, or the names the other teams send
 // back. Recording happens in the task window's Ad uploads part. Data: GET
 // /ad-uploads (server/src/routes/ad-uploads.js).
@@ -43,10 +44,11 @@ export function AdUploadsPage() {
   useEffect(() => { load(); }, [load]);
 
   const staged = useMemo(() => (rows ?? []).map((t) => ({ t, stage: adStage(t) ?? "to_upload" })), [rows]);
-  // the teams (brands) with work here, for the chips
-  const brands = useMemo(() => [...new Map((rows ?? []).filter((t) => t.channel_id).map((t) => [t.channel_id!, t.channel_name ?? "Brand"])).entries()]
+  // the teams with work here, for the chips (an Ad task from before teams: its brand)
+  const teamKey = (t: Row) => t.ad_team_id ?? t.channel_id ?? "";
+  const brands = useMemo(() => [...new Map((rows ?? []).filter((t) => teamKey(t)).map((t) => [teamKey(t), placeOf(t) ?? "Team"])).entries()]
     .sort((a, b) => a[1].localeCompare(b[1])), [rows]);
-  const inBrand = staged.filter((x) => brand === "all" || x.t.channel_id === brand);
+  const inBrand = staged.filter((x) => brand === "all" || teamKey(x.t) === brand);
   const count = (k: AdStage) => inBrand.filter((x) => x.stage === k).length;
   const shown = inBrand.filter((x) => x.stage === tab).map((x) => x.t);
   const edOf = (id: string | null) => (editors ?? []).find((e) => e.id === id) ?? null;
@@ -102,7 +104,7 @@ export function AdUploadsPage() {
                   </span>
                 </span>
                 <span>{t.ad_id ? <span className="pp-ref">{t.ad_id}</span> : <span className="pp-faint">—</span>}</span>
-                <span className="sch-brand">{t.channel_name ?? "—"}</span>
+                <span className="sch-brand">{placeOf(t) ?? "—"}</span>
                 <span className="pp-ed">
                   <span className="pp-ava" style={{ width: 24, height: 24, background: gradFor(ed?.name ?? t.editor_name ?? "?") }}>{initialsOf(ed?.name ?? t.editor_name ?? "?")}</span>
                   <b>{ed?.name ?? t.editor_name ?? "—"}</b>

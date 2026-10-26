@@ -3,7 +3,7 @@ import { pool } from "./db.js";
 import { hasColumn } from "./schema-flags.js";
 
 // Connected apps (20261106120000_ad_uploads; Settings › Connected apps):
-// another app connects to one brand with one line Echo makes —
+// another app connects to one Ads team with one line Echo makes —
 //   https://<echo>/api/animus#ec1.<connection id>.<secret>
 // — pasted into that app once. Everything after "#" is the token: the app
 // sends it in a header (x-echo-token), so the secret never sits in a URL or a
@@ -26,9 +26,10 @@ export async function connectionOf(token) {
   const m = String(token ?? "").trim().match(/^ec1\.([0-9a-f-]{36})\.([A-Za-z0-9_-]{20,})$/);
   if (!m || !(await connectionsReady())) return null;
   const { rows } = await pool.query(
-    `select c.id, c.org_id, c.workspace_id, c.app, c.label, c.secret_hash, c.last_used_at, w.name as brand_name
-       from app_connection c join workspace w on w.id = c.workspace_id
-      where c.id = $1 and c.revoked_at is null`,
+    `select c.id, c.org_id, c.ad_team_id, c.workspace_id, c.app, c.label, c.secret_hash, c.last_used_at,
+            coalesce(tm.name, w.name) as team_name
+       from app_connection c left join ad_team tm on tm.id = c.ad_team_id left join workspace w on w.id = c.workspace_id
+      where c.id = $1 and c.revoked_at is null and (tm.id is null or tm.active)`,
     [m[1]],
   );
   const c = rows[0];

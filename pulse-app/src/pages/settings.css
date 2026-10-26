@@ -349,3 +349,8 @@ html[data-theme="dark"] .st-box{border-color:rgba(255,255,255,.22)}
 .cx-made .st-label b{display:inline-flex;align-items:center;gap:6px}
 .cx-line{flex:1 1 100%;display:flex;gap:8px;flex-wrap:wrap}
 .cx-line input{font:500 12px 'Geist Mono',ui-monospace,monospace}
+
+/* Settings › Tasks & time › Ads teams (ad-teams-card.tsx) */
+.adt-name{width:100%;height:24px;padding:0 6px;margin-left:-6px;border:1px solid transparent;border-radius:6px;background:transparent;color:var(--st-text);font:600 13px 'Plus Jakarta Sans',sans-serif;outline:none}
+.adt-name:hover{border-color:var(--st-line)}
+.adt-name:focus{border-color:var(--st-ac);background:var(--st-solid)}

@@ -24,7 +24,7 @@ const isLead = async (req) => { const v = await taskViewer(req); return v.seesAl
 
 async function taskRow(orgId, taskId) {
   const { rows } = await pool.query(
-    `select t.id, t.title, t.status, t.task_type, t.channel_id, t.upload_from, ${REF} as ref
+    `select t.id, t.title, t.status, t.task_type, t.channel_id, t.ad_team_id, t.upload_from, ${REF} as ref
        from task t where t.id = $1 and t.org_id = $2`,
     [taskId, orgId],
   );
@@ -107,7 +107,7 @@ adUploadsRouter.post("/tasks/:id/ads", requireEditor, requireActiveEod, async (r
     if (!(await isLead(req))) return res.status(403).json({ error: NOT_LEAD });
     const t = await taskRow(req.orgId, req.params.id);
     if (!t) return res.status(404).json({ error: "Task not found." });
-    if (!t.upload_from || t.status !== "done" || !t.channel_id) return res.status(409).json({ error: "This task isn't waiting for its ads." });
+    if (!t.upload_from || t.status !== "done" || !(t.ad_team_id || t.channel_id)) return res.status(409).json({ error: "This task isn't waiting for its ads." });
     // an ad belongs to one piece of work: with one already on another, record none and say which
     const r = await recordAds({ orgId: req.orgId, task: t, refs: parsed.data.refs, source: "manual", userId: req.user.sub, allOrNothing: true });
     if (r.clash.length) return res.status(409).json({ error: `${r.clash[0].ad} is already recorded on ${r.clash[0].on}.` });

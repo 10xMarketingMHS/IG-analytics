@@ -279,6 +279,9 @@ export type Task = {
   // its ads to be recorded (null: not in the list), and how many are.
   upload_from?: string | null;
   ad_count?: number;
+  // Ads: the team it's made for (lib/ad-teams.ts), which numbers it instead of a brand
+  ad_team_id?: string | null;
+  ad_team_name?: string | null;
 };
 
 // GET/POST /break/* — one editor's shared daily break budget (see
