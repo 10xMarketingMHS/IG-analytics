@@ -84,7 +84,7 @@ export function AdUploadBlock({ task, onChanged }: { task: Task; onChanged: () =
                 </span>
                 {a.window && <span className={"adu-window " + windowTone(a.window)} title="The 14 days after it went live">{a.window}</span>}
                 <span className="sch-grow" />
-                {s.canRecord && a.results !== undefined && editing !== a.id && (
+                {(s.canResults ?? s.canRecord) && a.results !== undefined && editing !== a.id && (
                   <button type="button" className="adu-edit" onClick={() => setEditing(a.id)}>
                     {a.results?.source === "animus" ? "Notes" : a.results?.source ? "Edit results" : "Add results"}
                   </button>

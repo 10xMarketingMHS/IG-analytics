@@ -7,3 +7,8 @@
 .sectab.on{background:var(--panel);color:var(--text);box-shadow:0 1px 3px oklch(0.4 0.15 var(--acH) / .12)}
 .sectab-n{min-width:18px;height:18px;display:inline-grid;place-items:center;padding:0 5px;border-radius:999px;background:var(--accent-weak);
   color:var(--accent-ink);font-size:11px;font-weight:700}
+/* A page the person's Page access row doesn't open (app-shell.tsx) */
+.pa-shut{display:flex;flex-direction:column;align-items:flex-start;gap:6px;max-width:520px}
+.pa-shut b{font-size:15px}
+.pa-shut span{font-size:13px;color:var(--faint)}
+.pa-shut .btn{margin-top:8px}

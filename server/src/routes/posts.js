@@ -3,6 +3,7 @@ import { z } from "zod";
 import { pool } from "../db.js";
 import { requireEditor } from "../resolve-workspace.js";
 import { assignLimits, requirePermission } from "../permissions.js";
+import { requirePage } from "../page-access.js";
 import { logActivity } from "../activity.js";
 import { resolveBudgetHours, nextTaskRef, nextBrandTaskRef, callerEditorId, canAssignTasks, setUpBy } from "./tasks.js";
 import { closePendingHandovers } from "../handover.js";
@@ -344,7 +345,7 @@ postsRouter.post("/posts", requirePermission("create_post", { alsoAllow: ["edito
   }
 });
 
-postsRouter.patch("/posts/:id", requireEditor, async (req, res, next) => {
+postsRouter.patch("/posts/:id", requireEditor, requirePage("posts"), async (req, res, next) => {
   const parsed = UpdatePostSchema.safeParse(req.body);
   if (!parsed.success) {
     return res.status(400).json({ error: parsed.error.flatten().fieldErrors });
@@ -462,7 +463,7 @@ postsRouter.patch("/posts/:id", requireEditor, async (req, res, next) => {
   }
 });
 
-postsRouter.delete("/posts/:id", requireEditor, async (req, res, next) => {
+postsRouter.delete("/posts/:id", requireEditor, requirePage("posts"), async (req, res, next) => {
   try {
     // Permanent removal (the DELETE is recorded in audit_log by trigger).
     const { rowCount } = await pool.query(

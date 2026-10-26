@@ -1,4 +1,5 @@
 import { pool } from "./db.js";
+import { callerAccess } from "./page-access.js";
 
 // Access — per-user permission grants (see the Settings → Access UI and the
 // user_permission_grant table). An ADDITIVE layer on top of roles: a grant
@@ -96,11 +97,36 @@ export function clearOrgAdminCache() { orgAdminCache.clear(); }
 // hold ANY of them (e.g. the goals view opens to goal_setting_access, edit_goals
 // or discipline). Every held key is flagged on req.viaGrant so a route can tell
 // exactly which grant let them in (self-scoping vs full access hinge on that).
-export function requirePermission(key, { alsoAllow = [], message } = {}) {
+// Page access (page-access.js): once the caller's position row is saved, the
+// page a grant stands for decides in place of the admin role (and of
+// `alsoAllow`), with the same reach as the grant; the grant itself still counts
+// on top. Settings' Channels, Content and Tasks and time: See to read, Change for
+// the rest (`mode` overrides that); Goals' Change sets goals; the Task Board's
+// gives others tasks; Add Post (or Posts' Change) creates posts.
+const GRANT_PAGE = {
+  channels: (p, read) => (read ? p.setChannels.see : p.setChannels.change),
+  content_taxonomy: (p, read) => (read ? p.setContent.see : p.setContent.change),
+  task_settings: (p, read) => (read ? p.setTasks.see : p.setTasks.change),
+  edit_goals: (p) => p.goals.change,
+  assign_tasks: (p) => p.tasks.change,
+  create_post: (p) => p.addPost.see || p.posts.change,
+};
+export function requirePermission(key, { alsoAllow = [], message, mode } = {}) {
   const keys = Array.isArray(key) ? key : [key];
   return async (req, res, next) => {
     try {
-      if (req.role === "admin" || alsoAllow.includes(req.role)) return next();
+      const a = await callerAccess(req);
+      if (a.super) return next();
+      if (a.pages) {
+        const read = (mode ?? (req.method === "GET" ? "see" : "change")) === "see";
+        const by = keys.filter((k) => GRANT_PAGE[k]?.(a.pages, read));
+        if (by.length) {
+          // as far as the grant reaches (create_post's grant is self-scoped; the page isn't)
+          req.viaGrant ??= {};
+          for (const k of by) if (k !== "create_post") req.viaGrant[k] = true;
+          return next();
+        }
+      } else if (req.role === "admin" || alsoAllow.includes(req.role)) return next();
       const { rows } = await pool.query(
         "select permission_key from user_permission_grant where org_id=$1 and user_id=$2 and permission_key = any($3) and revoked_at is null",
         [req.orgId, req.user.sub, keys],

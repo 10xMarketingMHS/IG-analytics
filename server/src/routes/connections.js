@@ -2,6 +2,7 @@ import { Router } from "express";
 import { z } from "zod";
 import { pool } from "../db.js";
 import { taskViewer } from "../hierarchy.js";
+import { mayPage } from "../page-access.js";
 import { connectionsReady, newSecret, secretHash, tokenOf } from "../connections.js";
 import { adTeamsReady } from "../ad-uploads.js";
 
@@ -15,7 +16,11 @@ export const connectionsRouter = Router();
 
 const NEEDS_DB = "Connected apps needs a database update first — ask whoever runs the database to apply 20261106120000_ad_uploads.";
 const NOT_MANAGER = "Connected apps is for the Managers and the Super Admin.";
-const mayManage = async (req) => { const v = await taskViewer(req); return v.seesAll || v.rank <= 1; };
+// the Managers (rank 0–1) and the Super Admin — or, once the caller's Page access row is saved, its Connected apps ticks
+const mayManage = (req, mode = req.method === "GET" ? "see" : "change") => mayPage(req, "setApps", mode, async () => {
+  const v = await taskViewer(req);
+  return v.seesAll || v.rank <= 1;
+});
 
 const SELECT = `select c.id, c.app, c.label, coalesce(c.ad_team_id, c.workspace_id) as "teamId", coalesce(tm.name, w.name) as "teamName",
                        c.created_at as "createdAt", coalesce(e.name, u.email) as "createdByName", c.last_used_at as "lastUsedAt", c.revoked_at as "revokedAt"
@@ -25,7 +30,7 @@ const ready = async () => (await connectionsReady()) && adTeamsReady();
 
 // Whether this person may open Connected apps (Settings shows the tab by it)
 connectionsRouter.get("/connections/access", async (req, res, next) => {
-  try { res.json({ allowed: await mayManage(req) }); } catch (err) { next(err); }
+  try { res.json({ allowed: await mayManage(req, "see"), change: await mayManage(req, "change") }); } catch (err) { next(err); }
 });
 
 connectionsRouter.get("/connections", async (req, res, next) => {

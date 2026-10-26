@@ -50,9 +50,10 @@ import { MyTeamPage } from "@/pages/my-team";
 // Adding posts is for admins and anyone given Add Post access — everyone else
 // who opens the address gets a short explanation instead of an empty page.
 function AddPostGate({ children }: { children: React.ReactNode }) {
-  const { isAdmin, hasPermission, loading } = useWorkspaces();
+  const { hasPermission, loading } = useWorkspaces();
   if (loading) return null;
-  if (!isAdmin && !hasPermission("create_post")) {
+  // admins, Add Post grantees — or, once their Page access row is saved, whoever it opens Add Post to
+  if (!hasPermission("create_post")) {
     return (
       <section className="screen">
         <div className="card pad home-empty">

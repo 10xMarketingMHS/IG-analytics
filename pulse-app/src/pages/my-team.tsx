@@ -24,7 +24,7 @@ import { useOrg } from "@/lib/use-org";
 // Attendance and Leave, team leads Attendance only (their own people); anyone
 // else is turned away.
 export function MyTeamPage() {
-  const { isAdmin, loading, active, workspaces } = useWorkspaces();
+  const { isAdmin, loading, active, workspaces, pageRule } = useWorkspaces();
   const { user } = useAuth();
   const { tasks, refetch } = useTasks();
   const { editors } = useEditors();
@@ -44,7 +44,7 @@ export function MyTeamPage() {
   // Leave: whoever answers leave — a Manager or Asst. Manager, or an admin
   const canLeave = isAdmin || homeRole === "manager";
   const tab = raw === "leave" && canLeave ? "leave"
-    : attendanceOnly ? "attendance" : raw === "ranking" || raw === "roster" || raw === "attendance" ? raw : "today";
+    : attendanceOnly ? "attendance" : raw === "ranking" || (raw === "roster" && isAdmin) || raw === "attendance" ? raw : "today";
   const leaveView = params.get("view") === "settings" ? "settings" : "approve";
   // Goals' "View in Team" hands over the person to show.
   const focusId = (location.state as { editorId?: string } | null)?.editorId ?? null;
@@ -56,7 +56,8 @@ export function MyTeamPage() {
   // context briefly reports "not loading" with no workspace yet, and deciding
   // then would bounce an admin away on a direct visit or refresh.
   if (loading || !active || (!isAdmin && (editors === null || org === null))) return <section className="screen"><Loader label="Loading…" /></section>;
-  if (!isAdmin && !attendanceOnly) return <Navigate to="/home" replace />;
+  // …or anyone whose saved Page access row opens My Team (they see the people at their level and below)
+  if (!isAdmin && !attendanceOnly && !pageRule("myTeam", "see", false)) return <Navigate to="/home" replace />;
 
   return (
     <section className="screen mt-page">
@@ -81,7 +82,8 @@ export function MyTeamPage() {
           Leave
         </button>
         )}
-        {!attendanceOnly && (
+        {/* the roster (people, logins, positions) stays the admins' */}
+        {isAdmin && !attendanceOnly && (
         <button type="button" className={tab === "roster" ? "on" : ""} onClick={() => setParams({ tab: "roster" }, { replace: true })} aria-pressed={tab === "roster"}>
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><rect x="3" y="5" width="18" height="15" rx="2" /><circle cx="9" cy="11.5" r="2.5" /><path d="M5.5 17a3.5 3.5 0 0 1 7 0M15 10h3M15 14h3M9 5V3h6v2" /></svg>
           Roster

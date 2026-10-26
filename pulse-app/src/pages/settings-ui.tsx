@@ -79,3 +79,15 @@ export function fmtHours(h: number) {
   const s = (hh ? `${hh}h` : "") + (mm ? `${hh ? " " : ""}${mm}m` : "");
   return (total < 0 ? "−" : "") + (s || "0h");
 }
+
+// A section someone may look at but not change (Settings › Page access: See
+// without Change): shown as it is, every control in it off.
+export function LookOnly({ on, children }: { on: boolean; children: ReactNode }) {
+  if (!on) return <>{children}</>;
+  return (
+    <fieldset disabled className="st-lookonly">
+      <span className="st-note">{SI.lock}You can look at this. Changing it is for the positions Page access lets.</span>
+      {children}
+    </fieldset>
+  );
+}

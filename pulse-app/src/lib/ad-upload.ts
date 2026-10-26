@@ -24,6 +24,8 @@ export type TaskAds = {
     // its results and its 14-day window (once the database has them)
     results?: AdResults; window?: string | null }[];
   canRecord?: boolean;
+  // may type in its ads' results (Ads › Performance's Change in Page access)
+  canResults?: boolean;
 };
 
 // "AD205, AD206" or one per line → ["AD205", "AD206"]; another team's ad names

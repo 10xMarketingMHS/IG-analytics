@@ -4,6 +4,7 @@ import ExcelJS from "exceljs";
 import { pool } from "../db.js";
 import { requireAdmin, requireEditor } from "../resolve-workspace.js";
 import { requirePermission } from "../permissions.js";
+import { callerAccess } from "../page-access.js";
 import { resolveBudgetHours } from "./tasks.js";
 import { hasColumn } from "../schema-flags.js";
 import { capacityFor } from "../work-calendar.js";
@@ -166,7 +167,9 @@ const GOAL_VIEW_KEYS = ["goal_setting_access", "edit_goals", "discipline"];
 // goal_setting_access grantee, so scopedEditorId locks them to themselves.
 async function goalView(req, res, next) {
   try {
-    if (req.role !== "admin") {
+    // Page access (../page-access.js): once the caller's row is saved, Goals' Change oversees everyone's, not the admin role
+    const a = await callerAccess(req);
+    if (!(a.super || (a.pages ? a.pages.goals.change : req.role === "admin"))) {
       const { rows } = await pool.query(
         "select permission_key from user_permission_grant where org_id=$1 and user_id=$2 and permission_key = any($3) and revoked_at is null",
         [req.orgId, req.user.sub, GOAL_VIEW_KEYS],

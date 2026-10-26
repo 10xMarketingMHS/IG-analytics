@@ -4,6 +4,7 @@ import { pool } from "../db.js";
 import { config } from "../config.js";
 import { requireEditor } from "../resolve-workspace.js";
 import { requirePermission } from "../permissions.js";
+import { requirePage } from "../page-access.js";
 import { encryptToken, decryptToken, encryptionReady, signState, verifyState } from "../crypto.js";
 import { logActivity } from "../activity.js";
 import * as ig from "../integrations/instagram.js";
@@ -218,7 +219,7 @@ integrationsRouter.patch("/integrations/auto-sync", requirePermission("channels"
 // value as of the selected range's start (`from`) and end (`to`) — from the
 // follower_snapshot timeline — so the card can show the count for the range and
 // the growth over it. `from`/`to` are YYYY-MM-DD (omit for "all time").
-integrationsRouter.get("/integrations/followers", async (req, res, next) => {
+integrationsRouter.get("/integrations/followers", requirePage("analytics"), async (req, res, next) => {
   try {
     const dateOrNull = (v) => (/^\d{4}-\d{2}-\d{2}$/.test(String(v || "")) ? String(v) : null);
     const from = dateOrNull(req.query.from);
@@ -246,7 +247,7 @@ integrationsRouter.get("/integrations/followers", async (req, res, next) => {
 // (connection, day) from follower_snapshot over the last `days` (default 30, max
 // 180). The client groups by scope and computes each day's gain/loss vs the
 // previous day.
-integrationsRouter.get("/integrations/followers/daily", async (req, res, next) => {
+integrationsRouter.get("/integrations/followers/daily", requirePage("analytics"), async (req, res, next) => {
   try {
     const days = Math.min(180, Math.max(1, Number(req.query.days) || 30));
     const { rows } = await pool.query(
@@ -267,7 +268,7 @@ integrationsRouter.get("/integrations/followers/daily", async (req, res, next) =
 });
 
 // Step 1: start OAuth for a specific Echo account (channel × Instagram).
-integrationsRouter.get("/integrations/instagram/connect", requirePermission("channels"), async (req, res, next) => {
+integrationsRouter.get("/integrations/instagram/connect", requirePermission("channels", { mode: "change" }), async (req, res, next) => {
   try {
     if (!ig.metaConfigured()) return backToIntegrations(res, { error: "not_configured" });
     if (!encryptionReady()) return backToIntegrations(res, { error: "no_encryption" });

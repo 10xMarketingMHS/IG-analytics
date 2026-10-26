@@ -4,6 +4,7 @@ import { pool } from "../db.js";
 import { requireEditor } from "../resolve-workspace.js";
 import { requireActiveEod } from "./eod.js";
 import { assignLimits, hasActiveGrant } from "../permissions.js";
+import { callerAccess } from "../page-access.js";
 import { reviewContext, routeReview, withReview } from "../review-route.js";
 import { logActivity } from "../activity.js";
 import { canSeeTask, editorRanks, mayOpenTask, seesEditor, taskViewer } from "../hierarchy.js";
@@ -228,7 +229,10 @@ export async function callerEditorId(req) {
 // Setting work up for other people — assigning it, re-planning it, removing it —
 // is for an admin or an assign_tasks grantee (Settings → Access).
 export async function canAssignTasks(req) {
-  return req.role === "admin" || (await hasActiveGrant(req.orgId, req.user.sub, "assign_tasks"));
+  // Page access (../page-access.js): a saved row's Task Board Change stands in for the admin role
+  const a = await callerAccess(req);
+  if (a.super || (a.pages ? a.pages.tasks.change : req.role === "admin")) return true;
+  return hasActiveGrant(req.orgId, req.user.sub, "assign_tasks");
 }
 // Someone else's task is in an assigner's hands only when they set it up: they
 // assigned it, or they made it and it's still unassigned. Assign tasks doesn't

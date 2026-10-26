@@ -2,7 +2,7 @@ import { Router } from "express";
 import { z } from "zod";
 import { pool } from "../db.js";
 import { logActivity } from "../activity.js";
-import { closeStaleSessions } from "./eod.js";
+import { closeStaleSessions, overseesDays } from "./eod.js";
 
 // Start of Day (SOD): after Start Work, an employee adds the day's tasks on the
 // board as usual, then opens the Start of Day window on My Day: their open tasks,
@@ -146,7 +146,7 @@ sodRouter.get("/sod", async (req, res, next) => {
     const date = String(req.query.date || "").slice(0, 10);
     if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) return res.status(400).json({ error: "A valid date is required." });
     let editorId = req.query.editorId ? String(req.query.editorId) : null;
-    if (editorId && req.role !== "admin") return res.status(403).json({ error: "Admins only." });
+    if (editorId && !(await overseesDays(req))) return res.status(403).json({ error: "Admins only." });
     if (!editorId) editorId = await callerEditorId(req);
     if (!editorId) return res.status(400).json({ error: "No team member to show." });
     res.json({ plan: await planFor(req.orgId, editorId, date) });

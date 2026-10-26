@@ -2,7 +2,7 @@ import { useCallback, useEffect, useState } from "react";
 import { toast } from "sonner";
 import { api, API_BASE, ApiError } from "@/lib/api";
 import { relTime } from "@/lib/activity-meta";
-import { SI } from "@/pages/settings-ui";
+import { LookOnly, SI } from "@/pages/settings-ui";
 
 // Settings › Connected apps (server/src/routes/connections.js): Animus — the
 // VSL team's ads register — connects to one Ads team with one line made here.
@@ -19,7 +19,7 @@ const day = (iso: string) => new Date(iso).toLocaleDateString("en-IN", { day: "n
 // the line: where Echo's API is, then the token after "#" (an app sends it in a header, never in the address)
 const lineOf = (token: string) => `${new URL(API_BASE, window.location.origin).href.replace(/\/$/, "")}/animus#${token}`;
 
-export function ConnectedAppsSection() {
+export function ConnectedAppsSection({ canChange = true }: { canChange?: boolean }) {
   const [data, setData] = useState<Data | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [teamId, setTeamId] = useState("");
@@ -75,7 +75,7 @@ export function ConnectedAppsSection() {
   if (!data) return <section className="st-card"><div className="st-empty">Loading…</div></section>;
   const live = data.connections.filter((c) => !c.revokedAt), gone = data.connections.filter((c) => c.revokedAt);
   return (
-    <>
+    <LookOnly on={!canChange}>
       <section className="st-card">
         <div className="st-cardhead">
           <span className="st-titleline"><b>Connected apps</b><span className="st-count">{live.length}</span></span>
@@ -118,6 +118,6 @@ export function ConnectedAppsSection() {
           Revoked: {gone.map((c) => `${c.label || "Animus"} (${c.teamName}, ${day(c.revokedAt!)})`).join(", ")}.
         </span>
       )}
-    </>
+    </LookOnly>
   );
 }

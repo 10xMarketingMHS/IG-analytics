@@ -19,6 +19,7 @@ import { TaskRulesSection } from "@/pages/task-rules";
 import { ChannelsSection } from "@/pages/channels";
 import { EodOversightSection } from "@/pages/eod-oversight";
 import { ConnectedAppsSection } from "@/pages/connected-apps";
+import { PageAccessSection } from "@/pages/page-access";
 import { AttendanceSection } from "@/pages/attendance-settings";
 import { AccessSection } from "@/pages/access";
 import { SI, Seg, Stepper, Toggle, fmtHours } from "@/pages/settings-ui";
@@ -32,7 +33,7 @@ import "./settings.css";
 // People, logins and roles live in Team › Roster; each person's goals in
 // Goals › Set goals. /channels and /task-rules still land here on their own
 // section; ?s= picks one.
-type Section = "general" | "channels" | "content" | "tasks" | "attendance" | "scoring" | "access" | "alerts" | "workday" | "apps";
+type Section = "general" | "channels" | "content" | "tasks" | "attendance" | "scoring" | "access" | "pages" | "alerts" | "workday" | "apps";
 const SECTION_FOR_PATH: Record<string, Section> = { "/channels": "channels", "/task-rules": "tasks" };
 const LEAVE_UNSAVED = "You have changes that aren't saved. Leave them?";
 
@@ -41,10 +42,10 @@ const LEAVE_UNSAVED = "You have changes that aren't saved. Leave them?";
 // day, and sees the calendar, points, penalties and bands; the Super Admin
 // changes those too, and Access.
 export function SettingsPage() {
-  const { isAdmin, hasPermission } = useWorkspaces();
+  const { isAdmin, hasPermission, pageRule } = useWorkspaces();
   const isSuper = useIsSuper();
   // Connected apps: the Super Admin, Managers and Asst. Managers — the server says who
-  const { data: appsAccess } = useResource<{ allowed: boolean }>("/connections/access");
+  const { data: appsAccess } = useResource<{ allowed: boolean; change?: boolean }>("/connections/access");
   const location = useLocation();
   const navigate = useNavigate();
   const [params] = useSearchParams();
@@ -52,14 +53,15 @@ export function SettingsPage() {
 
   const SECTIONS: { k: Section; l: string; d: string; icon: ReactNode; show: boolean }[] = [
     { k: "general", l: "General", d: "Workspace, work calendar, look", icon: SI.tune, show: true },
-    { k: "channels", l: "Channels", d: "Brands and platform accounts", icon: SI.hub, show: isAdmin },
-    { k: "content", l: "Content", d: "Pillars, types, avatars, formats", icon: SI.category, show: true },
-    { k: "tasks", l: "Tasks & time", d: "Task types, budgets, breaks", icon: SI.timer, show: isAdmin },
-    { k: "attendance", l: "Attendance", d: "Start of day, late and absent rules", icon: SI.clock, show: isAdmin },
-    { k: "scoring", l: "Scoring", d: "How rankings are calculated", icon: SI.chart, show: isAdmin },
+    { k: "channels", l: "Channels", d: "Brands and platform accounts", icon: SI.hub, show: pageRule("setChannels", "see", isAdmin) },
+    { k: "content", l: "Content", d: "Pillars, types, avatars, formats", icon: SI.category, show: pageRule("setContent", "see", true) },
+    { k: "tasks", l: "Tasks & time", d: "Task types, budgets, breaks", icon: SI.timer, show: pageRule("setTasks", "see", isAdmin) },
+    { k: "attendance", l: "Attendance", d: "Start of day, late and absent rules", icon: SI.clock, show: pageRule("setAttendance", "see", isAdmin) },
+    { k: "scoring", l: "Scoring", d: "How rankings are calculated", icon: SI.chart, show: pageRule("setScoring", "see", isAdmin) },
     { k: "access", l: "Access", d: "Extra permissions per person", icon: SI.admin, show: isSuper || (!isAdmin && hasPermission("access_manage")) },
+    { k: "pages", l: "Page access", d: "What each position sees and changes", icon: SI.shield, show: isSuper || isAdmin },
     { k: "alerts", l: "Notifications", d: "What pings you, and where", icon: SI.bell, show: true },
-    { k: "workday", l: "Work day", d: "Who started and ended their day", icon: SI.clock, show: isAdmin },
+    { k: "workday", l: "Work day", d: "Who started and ended their day", icon: SI.clock, show: pageRule("setWorkday", "see", isAdmin) },
     { k: "apps", l: "Connected apps", d: "Animus, with one line", icon: SI.link, show: !!appsAccess?.allowed },
   ];
   const shown = SECTIONS.filter((s) => s.show);
@@ -113,9 +115,10 @@ export function SettingsPage() {
           {cur.k === "attendance" && <AttendanceSection onDirty={setDirty} />}
           {cur.k === "scoring" && <ScoringSection />}
           {cur.k === "access" && <AccessSection />}
+          {cur.k === "pages" && <PageAccessSection />}
           {cur.k === "alerts" && <NotificationsSection />}
           {cur.k === "workday" && <EodOversightSection />}
-          {cur.k === "apps" && <ConnectedAppsSection />}
+          {cur.k === "apps" && <ConnectedAppsSection canChange={appsAccess?.change ?? true} />}
         </div>
       </div>
     </section>
@@ -128,7 +131,7 @@ const ymOf = (d: Date) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStar
 // The workspace (name, time zone, week start) and the work calendar, kept as a
 // draft until Save; then the review cycle and how Echo looks for you.
 function GeneralSection({ onDirty }: { onDirty: (dirty: boolean) => void }) {
-  const { isAdmin } = useWorkspaces();
+  const { isAdmin, pageRule } = useWorkspaces();
   const { org, refetch } = useOrg();
   const isSuper = !!org?.superAdmin;
   const months = useMemo(() => {
@@ -191,7 +194,7 @@ function GeneralSection({ onDirty }: { onDirty: (dirty: boolean) => void }) {
 
   return (
     <>
-      {isAdmin && (
+      {pageRule("setGeneral", "change", isAdmin) && (
         <section className="st-card">
           <div className="st-cardhead"><b>Workspace</b></div>
           <div className="st-row">
@@ -597,7 +600,7 @@ function ContentSection() {
 type Thresholds = { epiMinPct: number; mpiMinPct: number; isDefault?: boolean };
 
 function ScoringSection() {
-  const { isAdmin, hasPermission } = useWorkspaces();
+  const { isAdmin, hasPermission, pageRule } = useWorkspaces();
   const isSuper = useIsSuper();
   const W: [string, number][] = [
     ["View", SCORE_WEIGHTS.view], ["Like", SCORE_WEIGHTS.like], ["Comment", SCORE_WEIGHTS.comment],
@@ -646,7 +649,7 @@ function ScoringSection() {
         )}
       </section>
 
-      {isAdmin && <PerformanceBands canEdit={isSuper} />}
+      {pageRule("setScoring", "see", isAdmin) && <PerformanceBands canEdit={isSuper} />}
 
       <section className="st-card">
         <div className="st-cardhead">

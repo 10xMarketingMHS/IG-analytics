@@ -5,7 +5,7 @@ import { useWorkspaces } from "@/lib/workspaces-context";
 import { useContentFormats } from "@/lib/use-content-formats";
 import { useIsSuper } from "@/lib/use-org";
 import type { ContentFormatDef, TaskTimeRule } from "@/lib/types";
-import { SI, Stepper, Toggle, fmtHours } from "@/pages/settings-ui";
+import { LookOnly, SI, Stepper, Toggle, fmtHours } from "@/pages/settings-ui";
 import { AdTeamsCard } from "@/pages/ad-teams-card";
 
 // Settings › Tasks & time (Pulse Redesign v5): every task type in one list,
@@ -47,8 +47,10 @@ function useAutoSave<T>(value: T, saved: T, save: (v: T) => void, delay = 700) {
 }
 
 export function TaskRulesSection() {
-  const { hasPermission } = useWorkspaces();
+  const { hasPermission, pageRule } = useWorkspaces();
   const canManage = hasPermission("task_settings");
+  // See without Change (Settings › Page access): the lists, every control off
+  const canLook = canManage || pageRule("setTasks", "see", false);
   // what a type is worth is the Super Admin's call; admins see the points
   const canPoints = useIsSuper();
   const { contentFormats, refetch: refetchFormats } = useContentFormats();
@@ -63,9 +65,9 @@ export function TaskRulesSection() {
       .then(({ rules }) => setRules(rules))
       .catch(() => setRules([]));
   }, []);
-  useEffect(() => { if (canManage) load(); }, [canManage, load]);
+  useEffect(() => { if (canLook) load(); }, [canLook, load]);
 
-  if (!canManage) {
+  if (!canLook) {
     return (
       <section className="st-card">
         <div className="st-empty">
@@ -140,7 +142,7 @@ export function TaskRulesSection() {
   const globalFor = (f: ContentFormatDef) => rules?.find((r) => r.content_format_id === f.id && !r.editor_id) ?? null;
 
   return (
-    <>
+    <LookOnly on={!canManage}>
       <section className="st-card">
         <div className="st-cardhead">
           <span className="st-titleline"><b>Task types</b><span className="st-count">{formats.length}</span></span>
@@ -242,7 +244,7 @@ export function TaskRulesSection() {
         <RuleRow l="Finished work goes to review first" d="An admin approves it before it counts as completed" />
         <RuleRow l="Flag tasks that pass their time budget" d="The timer turns red once a task runs past its time" />
       </section>
-    </>
+    </LookOnly>
   );
 }
 

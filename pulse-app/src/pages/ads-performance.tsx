@@ -52,7 +52,7 @@ export function AdsPerformancePage() {
   const [error, setError] = useState<string | null>(null);
   const [fill, setFill] = useState(false);
   // the Managers and Team Leads type in results (the same people who record ads)
-  const { data: lead } = useResource<{ allowed: boolean }>("/ad-uploads/access");
+  const { data: lead } = useResource<{ allowed: boolean; results?: boolean }>("/ad-uploads/access");
   const range = rangeOf(preset, custom);
   const qs = new URLSearchParams({ ...(range.from ? { from: range.from } : {}), ...(range.to ? { to: range.to } : {}), ...(team !== "all" ? { team } : {}) }).toString();
   const load = useCallback(async () => {
@@ -113,7 +113,7 @@ export function AdsPerformancePage() {
             <div className="ap-head">
               <b>Every ad</b><span className="ap-count">{data.ads.length}</span>
               <span className="pp-grow" />
-              {lead?.allowed && (
+              {(lead?.results ?? lead?.allowed) && (
                 <div className="pp-seg" role="group" aria-label="View">
                   <button type="button" className={!fill ? "on" : ""} onClick={() => setFill(false)}>Figures</button>
                   <button type="button" className={fill ? "on" : ""} onClick={() => setFill(true)}>Fill in</button>

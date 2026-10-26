@@ -44,9 +44,10 @@ function relTime(iso: string | null) {
 // rename, add and delete channels, and add or remove a platform. Rendered inside
 // the Settings page.
 export function ChannelsSection() {
-  const { workspaces, active, isAdmin, hasPermission, refresh, switchTo } = useWorkspaces();
+  const { workspaces, active, hasPermission, refresh, switchTo } = useWorkspaces();
   // Admin, or a channels grantee — manage channels & connect integrations.
-  const canManage = isAdmin || hasPermission("channels");
+  // admins and Channels grantees — or, once their Page access row is saved, its Change (lib/workspaces-context.tsx)
+  const canManage = hasPermission("channels");
   const [params, setParams] = useSearchParams();
   const { data: platData } = useResource<{ platforms: Platform[] }>("/platforms");
   const { data: acctData, refetch } = useResource<{ accounts: Account[] }>("/accounts?channel=all");

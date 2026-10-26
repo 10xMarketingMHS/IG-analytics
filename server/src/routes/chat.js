@@ -6,6 +6,7 @@ import { isActiveLogin } from "../auth.js";
 import { reviewContext, routeReview } from "../review-route.js";
 import { canSeeTask, editorRanks, taskViewer } from "../hierarchy.js";
 import { hasColumn } from "../schema-flags.js";
+import { mayPage } from "../page-access.js";
 
 // Team chat — channels, direct messages, threads, reactions, @mentions and task
 // links (see the team_chat migration). Everyone who works in the org (an admin or
@@ -62,6 +63,11 @@ chatRouter.use("/chat", async (req, res, next) => {
     const { byId } = await orgPeople(req.orgId);
     if (!byId.has(req.user.sub)) {
       return res.status(403).json({ error: "Team chat is for admins and editors." });
+    }
+    // Page access (../page-access.js): a saved row closes it without See, and sending without Change
+    const reading = req.method === "GET" || /\/(read|typing)$/.test(req.path);
+    if (!(await mayPage(req, "chat", reading ? "see" : "change", true))) {
+      return res.status(403).json({ error: "Team chat isn't open to your position." });
     }
     next();
   } catch (err) {

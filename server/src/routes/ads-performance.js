@@ -1,6 +1,7 @@
 import { Router } from "express";
 import { z } from "zod";
 import { pool } from "../db.js";
+import { requirePage } from "../page-access.js";
 import { validYmd } from "../leave-math.js";
 import { uploadsReady } from "../ad-uploads.js";
 import { NEEDS_RESULTS_DB, combine, resultsOf, resultsReady, summarize, windowWords } from "../ad-results.js";
@@ -19,7 +20,7 @@ const Query = z.object({
   team: z.string().uuid().optional(),
 });
 
-adsPerformanceRouter.get("/ads-performance", async (req, res, next) => {
+adsPerformanceRouter.get("/ads-performance", requirePage("adsPerformance"), async (req, res, next) => {
   const parsed = Query.safeParse(req.query ?? {});
   if (!parsed.success) return res.status(400).json({ error: "Pick a valid date range." });
   try {

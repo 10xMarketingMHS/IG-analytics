@@ -1,0 +1,32 @@
+/* Settings › Page access (page-access.tsx): the grid of positions against pages, on Settings' own tokens (settings.css). */
+.pa-state{flex:none;font-size:12px;font-weight:600;color:var(--st-text3)}
+.pa-state.saved{color:var(--st-acText)}
+.pa-scroll{overflow-x:auto;border-top:1px solid var(--st-line2)}
+.pa-grid{width:100%;min-width:560px;border-collapse:collapse;table-layout:fixed;font-size:12px}
+.pa-rowcol{width:150px}
+.pa-grid th{padding:8px 4px 4px;font-weight:600;color:var(--st-text3);text-align:center;vertical-align:bottom}
+.pa-grid th.pa-page{border-left:1px solid var(--st-line2);color:var(--st-text);font-size:12.5px;font-weight:700}
+.pa-grid th.pa-page span{display:block}
+.pa-grid th.pa-page small{display:block;margin-top:1px;font-size:10.5px;font-weight:500;color:var(--st-text3);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.pa-grid th.pa-sub{padding:2px 4px 8px;font-size:10.5px;text-transform:uppercase;letter-spacing:.04em}
+.pa-grid th.pa-poshead{text-align:left;padding-left:18px}
+.pa-grid .first{border-left:1px solid var(--st-line2)}
+.pa-grid td{padding:6px 4px;text-align:center;border-top:1px solid var(--st-line2)}
+.pa-grid td.pa-pos{text-align:left;padding-left:18px;font-size:13px;font-weight:600;color:var(--st-text);white-space:nowrap}
+.pa-grid td.pa-pos svg{vertical-align:-2px;margin-left:4px;color:var(--st-text3)}
+.pa-super td{background:var(--st-sunk)}
+.pa-dirty td{background:var(--st-acSoft)}
+.pa-n{display:inline-grid;place-items:center;min-width:18px;height:18px;margin-left:6px;padding:0 5px;border-radius:999px;background:var(--st-acSoft);
+  color:var(--st-acText);font-size:11px;font-weight:700;cursor:default}
+.pa-tick{width:22px;height:22px;display:inline-grid;place-items:center;padding:0;border:1.5px solid var(--st-line);border-radius:50%;background:var(--st-solid);
+  color:#fff;cursor:pointer}
+.pa-tick:hover:not(:disabled){border-color:var(--st-ac)}
+.pa-tick.on{border-color:var(--st-ac);background:var(--st-ac)}
+.pa-tick.locked{cursor:default;opacity:.55}
+.pa-tick:disabled:not(.locked){cursor:not-allowed;opacity:.4}
+.pa-tick svg{width:12px;height:12px}
+.pa-none{color:var(--st-text3)}
+.pa-none svg{vertical-align:-2px}
+.pa-bar{position:sticky;bottom:12px;z-index:5;display:flex;align-items:center;gap:10px;flex-wrap:wrap;padding:10px 14px;border:1px solid var(--st-line);
+  border-radius:var(--st-rc);background:var(--st-panel);box-shadow:0 6px 24px oklch(0.3 0.05 var(--acH) / .14);font-size:13px;font-weight:600}
+.pa-bar span{flex:1 1 200px}

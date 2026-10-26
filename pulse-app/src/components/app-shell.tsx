@@ -3,6 +3,7 @@ import { toast } from "sonner";
 import { Link, NavLink, Outlet, useLocation, useNavigate } from "react-router-dom";
 import { NAV_ITEMS, PAGE_META, type NavItem } from "@/lib/nav";
 import { SECTIONS, sectionOf, type SectionTab } from "@/lib/sections";
+import { NAV_PAGE, pagesAt } from "@/lib/page-access";
 import { SectionTabs } from "@/components/section-tabs";
 import { useAuth } from "@/lib/auth-context";
 import { useWorkspaces } from "@/lib/workspaces-context";
@@ -298,7 +299,7 @@ function ChatBadge() {
 function AppShellInner() {
   const { user, logout } = useAuth();
   const { available: chatAvailable } = useChat();
-  const { active, workspaces, isAdmin, hasPermission } = useWorkspaces();
+  const { active, workspaces, isAdmin, hasPermission, pageAccess, pageRule } = useWorkspaces();
   // EOD lockout: an editor with no open session gets the whole shell grayscaled
   // and non-interactive (except a few live controls) until they Start EOD. The
   // grayscale/disable is CSS keyed off this class; see index.css `.eod-lock`.
@@ -408,12 +409,25 @@ function AppShellInner() {
   const myEd = (editors ?? []).find((e) => e.id === user?.editorId) ?? null;
   const leadsPeople = !isAdmin && homeRoleOf(myEd?.designation, false) !== "editor"
     && seesTeamAttendance(myEd?.designation, false, orgSettings?.attendance?.teamView);
-  const canSee = (i: NavItem) => (!i.adminOnly || isAdmin || (!!i.permission && hasPermission(i.permission)) || (i.href === "/my-team" && leadsPeople))
-    && (!i.chatBadge || chatAvailable)
-    && (!i.schedulerOnly || !!schedAccess?.allowed)
-    && (!i.uploadsOnly || !!uploadsAccess?.allowed);
   // Social and Ads: which tabs this person sees, and where the sidebar item lands
-  const canSeeTab = (t: SectionTab) => (t.access === "scheduler" ? !!schedAccess?.allowed : t.access === "uploads" ? !!uploadsAccess?.allowed : true);
+  // (Scheduling and Uploads: the server's answer, which follows Page access too)
+  const canSeeTab = (t: SectionTab) => (t.access === "scheduler" ? !!schedAccess?.allowed : t.access === "uploads" ? !!uploadsAccess?.allowed : pageRule(t.page, "see", true));
+  const canSee = (i: NavItem) => {
+    const today = (!i.adminOnly || isAdmin || (!!i.permission && hasPermission(i.permission)) || (i.href === "/my-team" && leadsPeople))
+      && (!i.chatBadge || chatAvailable)
+      && (!i.schedulerOnly || !!schedAccess?.allowed)
+      && (!i.uploadsOnly || !!uploadsAccess?.allowed);
+    if (i.area) return today && SECTIONS[i.area].tabs.some(canSeeTab);
+    // a saved Page access row decides the pages it covers
+    const page = NAV_PAGE[i.href];
+    return page && !i.schedulerOnly && !i.uploadsOnly ? pageRule(page, "see", today) : today;
+  };
+  // A page the caller's saved row doesn't let them open (Scheduling and Uploads by the server's answer)
+  const pagesHere = pagesAt(location.pathname, location.search);
+  const shut = !!pageAccess?.pages && !pageAccess.super && !!pagesHere && !pagesHere.some((k) =>
+    k === "scheduling" ? schedAccess === undefined || !!schedAccess.allowed
+      : k === "uploads" ? uploadsAccess === undefined || !!uploadsAccess.allowed
+      : pageRule(k, "see", true));
   const here = sectionOf(location.pathname, location.search);
   const placed = new Set(SIDEBAR_GROUPS.flatMap((g) => g.hrefs));
   const sideGroups = SIDEBAR_GROUPS.map((g, gi) => ({
@@ -452,7 +466,10 @@ function AppShellInner() {
   const addPostItem = NAV_ITEMS.find((i) => i.href === "/posts/new");
   const settingsItem = NAV_ITEMS.find((i) => i.href === "/settings");
   const jumpItems: JumpItem[] = [
-    ...sideGroups.flatMap((g) => g.items.map((i) => ({ title: i.title, href: i.href, icon: navIcon(i.href) ?? i.icon, group: g.label }))),
+    ...sideGroups.flatMap((g) => g.items.flatMap((i) => i.area
+      // Social and Ads: each tab they may open, by name
+      ? SECTIONS[i.area].tabs.filter(canSeeTab).map((t) => ({ title: `${SECTIONS[i.area!].title} › ${t.label}`, href: t.to, icon: navIcon(i.href) ?? i.icon, group: g.label }))
+      : [{ title: i.title, href: i.href, icon: navIcon(i.href) ?? i.icon, group: g.label }])),
     ...(addPostItem && canSee(addPostItem) ? [{ title: addPostItem.title, href: addPostItem.href, icon: navIcon(addPostItem.href) ?? addPostItem.icon, group: "Create", state: { backgroundLocation: location } }] : []),
     ...(settingsItem ? [{ title: settingsItem.title, href: settingsItem.href, icon: GEAR_ICON, group: "Account" }] : []),
   ];
@@ -726,7 +743,13 @@ function AppShellInner() {
               <SectionTabs section={here.section} current={here.tab.key} canSee={canSeeTab}
                 counts={{ posts: postCount, uploads: uploadsAccess?.waiting }} />
             )}
-            <Outlet />
+            {shut ? (
+              <section className="card pad pa-shut">
+                <b>This page isn't open to your position.</b>
+                <span>Ask an admin if you need it. What each position can open is set in Settings › Page access.</span>
+                <NavLink to="/home" className="btn">Go to Home</NavLink>
+              </section>
+            ) : <Outlet />}
           </ErrorBoundary>
         </div>
       </main>

@@ -4,6 +4,7 @@ import { pool } from "../db.js";
 import { requireEditor } from "../resolve-workspace.js";
 import { requireActiveEod } from "./eod.js";
 import { mayOpenTask, taskViewer } from "../hierarchy.js";
+import { mayPage } from "../page-access.js";
 import { logActivity } from "../activity.js";
 import { taskSelect } from "./tasks.js";
 import { NEEDS_UPLOADS_DB, recordAds, uploadStage, uploadsReady } from "../ad-uploads.js";
@@ -24,6 +25,10 @@ export const adUploadsRouter = Router();
 const REF = "coalesce(t.ad_id, t.sid, t.tid)";
 const NOT_LEAD = "Ad uploads is for the Managers and Team Leads.";
 const isLead = async (req) => { const v = await taskViewer(req); return v.seesAll || v.rank <= 2; };
+// Page access (../page-access.js): once the caller's position row is saved, its
+// ticks stand in for the leads rule — Uploads' See opens the list, its Change
+// records ad numbers; Ads › Performance's Change types in results.
+const may = (req, key, mode) => mayPage(req, key, mode, isLead);
 
 async function taskRow(orgId, taskId) {
   const { rows } = await pool.query(
@@ -48,32 +53,35 @@ async function adsOf(taskId) {
     ...(withResults ? { results: resultsOf(a), window: windowWords(a.published_on ? String(a.published_on).slice(0, 10) : null, todayIst()) } : {}),
   }));
 }
-async function view(t, lead) {
+async function view(t, records, results = records) {
   const ads = await adsOf(t.id);
   return {
     ready: true, inFlow: !!t.upload_from,
     stage: uploadStage({ ...t, ad_count: ads.length }),
-    ads, canRecord: lead && !!t.upload_from && t.status === "done",
+    ads, canRecord: records && !!t.upload_from && t.status === "done",
+    canResults: results && !!t.upload_from && t.status === "done",
   };
 }
 
 adUploadsRouter.get("/ad-uploads/access", async (req, res, next) => {
   try {
-    if (!(await uploadsReady()) || !(await isLead(req))) return res.json({ allowed: false, waiting: 0 });
+    // results: may they type in ads' results (Ads › Performance's Fill in)
+    const results = (await uploadsReady()) && (await may(req, "adsPerformance", "change"));
+    if (!(await uploadsReady()) || !(await may(req, "uploads", "see"))) return res.json({ allowed: false, waiting: 0, results });
     const { rows: [n] } = await pool.query(
       `select count(*)::int as n from task t
         where t.org_id = $1 and t.status = 'done' and t.upload_from is not null
           and not exists (select 1 from task_ad a where a.task_id = t.id)`,
       [req.orgId],
     );
-    res.json({ allowed: true, waiting: n.n });
+    res.json({ allowed: true, waiting: n.n, results });
   } catch (err) { next(err); }
 });
 
 adUploadsRouter.get("/ad-uploads", async (req, res, next) => {
   try {
     if (!(await uploadsReady())) return res.status(409).json({ error: NEEDS_UPLOADS_DB });
-    if (!(await isLead(req))) return res.status(403).json({ error: NOT_LEAD });
+    if (!(await may(req, "uploads", "see"))) return res.status(403).json({ error: NOT_LEAD });
     const { rows } = await pool.query(
       `${await taskSelect()}
         where t.org_id = $1 and t.status = 'done' and (to_jsonb(t)->>'upload_from') is not null
@@ -95,11 +103,11 @@ adUploadsRouter.get("/ad-uploads", async (req, res, next) => {
 adUploadsRouter.get("/tasks/:id/ads", async (req, res, next) => {
   try {
     if (!(await uploadsReady())) return res.json({ ready: false });
-    const lead = await isLead(req);
+    const [sees, records, results] = await Promise.all([may(req, "uploads", "see"), may(req, "uploads", "change"), may(req, "adsPerformance", "change")]);
     const t = await taskRow(req.orgId, req.params.id);
     // the task window shows it to whoever may open the task; only the leads record
-    if (!t || (!lead && !(await mayOpenTask(req, t.id)))) return res.status(404).json({ error: "Task not found." });
-    res.json(await view(t, lead));
+    if (!t || (!sees && !(await mayOpenTask(req, t.id)))) return res.status(404).json({ error: "Task not found." });
+    res.json(await view(t, records, results));
   } catch (err) { next(err); }
 });
 
@@ -113,7 +121,7 @@ adUploadsRouter.post("/tasks/:id/ads", requireEditor, requireActiveEod, async (r
   if (!parsed.success) return res.status(400).json({ error: parsed.error.issues[0]?.message ?? "That couldn't be read." });
   try {
     if (!(await uploadsReady())) return res.status(409).json({ error: NEEDS_UPLOADS_DB });
-    if (!(await isLead(req))) return res.status(403).json({ error: NOT_LEAD });
+    if (!(await may(req, "uploads", "change"))) return res.status(403).json({ error: NOT_LEAD });
     const t = await taskRow(req.orgId, req.params.id);
     if (!t) return res.status(404).json({ error: "Task not found." });
     if (!t.upload_from || t.status !== "done" || !(t.ad_team_id || t.channel_id)) return res.status(409).json({ error: "This task isn't waiting for its ads." });
@@ -143,7 +151,7 @@ adUploadsRouter.patch("/tasks/:id/ads/:adId/results", requireEditor, async (req,
   if (!parsed.success) return res.status(400).json({ error: parsed.error.issues[0]?.message ?? "That couldn't be read." });
   try {
     if (!(await resultsReady())) return res.status(409).json({ error: NEEDS_RESULTS_DB });
-    if (!(await isLead(req))) return res.status(403).json({ error: "Ads results are typed in by the Managers and Team Leads." });
+    if (!(await may(req, "adsPerformance", "change"))) return res.status(403).json({ error: "Ads results are typed in by the Managers and Team Leads." });
     const t = await taskRow(req.orgId, req.params.id);
     if (!t) return res.status(404).json({ error: "Task not found." });
     const { rows: [ad] } = await pool.query("select id, results_source from task_ad where id = $1 and task_id = $2", [req.params.adId, t.id]);
@@ -165,7 +173,7 @@ adUploadsRouter.patch("/tasks/:id/ads/:adId/results", requireEditor, async (req,
 adUploadsRouter.delete("/tasks/:id/ads/:adId", requireEditor, requireActiveEod, async (req, res, next) => {
   try {
     if (!(await uploadsReady())) return res.status(409).json({ error: NEEDS_UPLOADS_DB });
-    if (!(await isLead(req))) return res.status(403).json({ error: NOT_LEAD });
+    if (!(await may(req, "uploads", "change"))) return res.status(403).json({ error: NOT_LEAD });
     const t = await taskRow(req.orgId, req.params.id);
     if (!t) return res.status(404).json({ error: "Task not found." });
     const { rows } = await pool.query("delete from task_ad where id = $1 and task_id = $2 returning ad_ref", [req.params.adId, t.id]);

@@ -1,5 +1,6 @@
 import { Router } from "express";
 import { pool } from "../db.js";
+import { requirePage } from "../page-access.js";
 import { hasColumn } from "../schema-flags.js";
 import { istNow, istYmd } from "../attendance.js";
 import { scoreMonthAll } from "../goal-score.js";
@@ -41,7 +42,7 @@ function taskPoints(t) {
   return -basePts;
 }
 
-leaderboardRouter.get("/leaderboard/house", async (req, res, next) => {
+leaderboardRouter.get("/leaderboard/house", requirePage("leaderboard"), async (req, res, next) => {
   try {
     const month = /^\d{4}-\d{2}$/.test(String(req.query.month ?? "")) ? String(req.query.month) : istNow().ymd.slice(0, 7);
     const first = `${month}-01`;

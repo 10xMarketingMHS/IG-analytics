@@ -5,7 +5,8 @@ import { api, ApiError } from "@/lib/api";
 import { useOrg } from "@/lib/use-org";
 import { clockTime } from "@/lib/time-format";
 import type { AttSettings } from "@/lib/use-attendance";
-import { SI, Stepper, Toggle } from "@/pages/settings-ui";
+import { LookOnly, SI, Stepper, Toggle } from "@/pages/settings-ui";
+import { useWorkspaces } from "@/lib/workspaces-context";
 
 // Settings › Attendance (Pulse Redesign v7) — admins. Start of day (require it,
 // the grace period, the no-SOD alert, auto-absent, the end-of-day wrap-up,
@@ -24,6 +25,9 @@ const plus = (hhmm: string, min: number) => { const d = at(hhmm); d.setMinutes(d
 
 export function AttendanceSection({ onDirty }: { onDirty: (d: boolean) => void }) {
   const { org, refetch } = useOrg();
+  const { isAdmin, pageRule } = useWorkspaces();
+  // See without Change (Settings › Page access): every control off
+  const canChange = pageRule("setAttendance", "change", isAdmin);
   const isSuper = !!org?.superAdmin;
   const saved: AttSettings = { ...DEFAULTS, ...(org?.attendance ?? {}), teamView: { ...DEFAULTS.teamView!, ...(org?.attendance?.teamView ?? {}) } };
   const [draft, setDraft] = useState<AttSettings | null>(null);
@@ -55,7 +59,7 @@ export function AttendanceSection({ onDirty }: { onDirty: (d: boolean) => void }
     + (a.autoAbsentEnabled ? `  ·  half day absent after ${clockTime(at(a.halfDayAt ?? "11:30"))}  ·  absent after ${clockTime(at(a.autoAbsentAt))}` : "  ·  no automatic absence");
 
   return (
-    <>
+    <LookOnly on={!canChange}>
       <section className="st-card">
         <div className="st-cardhead"><b>Start of day</b><span>Office hours come from General › Work calendar{hours ? ` (${hours})` : ""}.</span></div>
         <div className="st-row">
@@ -140,6 +144,6 @@ export function AttendanceSection({ onDirty }: { onDirty: (d: boolean) => void }
           <button type="button" className="st-btn grad" onClick={save} disabled={saving}>{SI.check}{saving ? "Saving…" : "Save changes"}</button>
         </div>
       )}
-    </>
+    </LookOnly>
   );
 }

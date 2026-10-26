@@ -4,6 +4,7 @@ import { pool } from "../db.js";
 import { requireEditor } from "../resolve-workspace.js";
 import { requireActiveEod } from "./eod.js";
 import { mayOpenTask, taskViewer } from "../hierarchy.js";
+import { mayPage } from "../page-access.js";
 import { logActivity } from "../activity.js";
 import { hasColumn } from "../schema-flags.js";
 import { validYmd } from "../leave-math.js";
@@ -33,10 +34,17 @@ const dayWords = (ymd) => new Date(`${ymd}T12:00:00Z`).toLocaleDateString("en-IN
 const clockWords = (hhmm) => { const [h, m] = hhmm.split(":").map(Number); return `${h % 12 || 12}:${String(m).padStart(2, "0")} ${h >= 12 ? "PM" : "AM"}`; };
 
 // who's asking: their roster id, a lead or not (Team Lead or above: the
-// hierarchy's rank 0–2, or the Super Admin), a scheduler this month or not
+// hierarchy's rank 0–2, or the Super Admin), a scheduler this month or not.
+// Once their position's Page access row is saved (../page-access.js), its
+// Scheduling ticks stand in for the leads rule: See opens everyone's list,
+// Change acts as a lead. A Schedule goal keeps its own scheduler's part either way.
 async function who(req) {
   const [me, viewer] = await Promise.all([callerEditorId(req), taskViewer(req)]);
-  return { me, lead: viewer.seesAll || viewer.rank <= 2, scheduler: await isScheduler(req.orgId, me) };
+  const today = viewer.seesAll || viewer.rank <= 2;
+  const [sees, lead, scheduler] = await Promise.all([
+    mayPage(req, "scheduling", "see", today), mayPage(req, "scheduling", "change", today), isScheduler(req.orgId, me),
+  ]);
+  return { me, sees: sees || lead, lead, scheduler };
 }
 
 async function taskRow(orgId, taskId) {
@@ -51,7 +59,7 @@ async function taskRow(orgId, taskId) {
 }
 // a task in scheduling may be opened by the schedulers, whoever's work it was
 async function mayOpen(req, t, w) {
-  return (!!t.schedule_from && (w.lead || w.scheduler || w.me === t.scheduler_id)) || (await mayOpenTask(req, t.id));
+  return (!!t.schedule_from && (w.sees || w.scheduler || (!!w.me && w.me === t.scheduler_id))) || (await mayOpenTask(req, t.id));
 }
 const canAct = (t, w) => !!t.schedule_from && t.status === "done" && (w.lead || (!!w.me && w.me === t.scheduler_id) || (!t.scheduler_id && w.scheduler));
 
@@ -102,7 +110,7 @@ schedulingRouter.get("/scheduling/access", async (req, res, next) => {
   try {
     if (!(await schedulingReady())) return res.json({ allowed: false, scheduler: false });
     const w = await who(req);
-    res.json({ allowed: w.lead || w.scheduler, scheduler: w.scheduler });
+    res.json({ allowed: w.sees || w.scheduler, scheduler: w.scheduler });
   } catch (err) { next(err); }
 });
 
@@ -112,7 +120,7 @@ schedulingRouter.get("/scheduling", async (req, res, next) => {
   try {
     if (!(await schedulingReady())) return res.status(409).json({ error: NEEDS_SCHED_DB });
     const w = await who(req);
-    if (!w.lead && !w.scheduler) return res.status(403).json({ error: "Scheduling is for the people with a Schedule goal this month." });
+    if (!w.sees && !w.scheduler) return res.status(403).json({ error: "Scheduling is for the people with a Schedule goal this month." });
     const { rows } = await pool.query(
       `${await taskSelect()}
         where t.org_id = $1 and t.status = 'done' and t.schedule_from is not null
@@ -120,7 +128,7 @@ schedulingRouter.get("/scheduling", async (req, res, next) => {
           and (not exists (select 1 from post fp where fp.from_task_id = t.id and fp.deleted_at is null)
                or t.schedule_from > now() - interval '60 days')
         order by t.post_on nulls first, t.schedule_from`,
-      [req.orgId, w.lead, w.me],
+      [req.orgId, w.sees, w.me],
     );
     res.json({ tasks: rows, me: w.me, lead: w.lead, scheduler: w.scheduler });
   } catch (err) { next(err); }

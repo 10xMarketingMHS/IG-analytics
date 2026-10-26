@@ -1,7 +1,8 @@
 import { Router } from "express";
 import { z } from "zod";
 import { pool } from "../db.js";
-import { requirePermission } from "../permissions.js";
+import { hasActiveGrant } from "../permissions.js";
+import { callerAccess } from "../page-access.js";
 import { hasColumn } from "../schema-flags.js";
 import { CALENDAR_DEFAULTS, normalizeCalendar } from "../work-calendar.js";
 import { ATTENDANCE_DEFAULTS, clearSettingsCache, normalizeAttendance } from "../attendance.js";
@@ -71,14 +72,29 @@ orgRouter.get("/org", async (req, res, next) => {
   }
 });
 
-orgRouter.patch("/org", requirePermission("edit_goals"), async (req, res, next) => {
+orgRouter.patch("/org", async (req, res, next) => {
   const parsed = PatchSchema.safeParse(req.body);
   if (!parsed.success) return res.status(400).json({ error: "Those settings don't look right." });
   const d = parsed.data;
-  if ((d.name !== undefined || d.weekStart !== undefined || d.attendance !== undefined) && req.role !== "admin") {
-    return res.status(403).json({ error: "Only an admin can change the workspace name, week start or attendance rules." });
-  }
   try {
+    // Who changes what: once the caller's Page access row is saved (../page-access.js),
+    // General's Change the workspace (name, week start, calendar) and Attendance's
+    // the attendance rules; before that, as ever, an admin (or a Set goals grantee
+    // for the calendar). The Super Admin's own parts are checked below either way.
+    const a = await callerAccess(req);
+    const general = d.name !== undefined || d.weekStart !== undefined || d.calendar !== undefined;
+    if (a.pages && !a.super) {
+      if ((general && !a.pages.setGeneral.change) || (d.attendance !== undefined && !a.pages.setAttendance.change)) {
+        return res.status(403).json({ error: "Your position doesn't have this. Ask an admin (Settings › Page access)." });
+      }
+    } else if (!a.super) {
+      if (req.role !== "admin" && !(await hasActiveGrant(req.orgId, req.user.sub, "edit_goals"))) {
+        return res.status(403).json({ error: "You don't have access to this." });
+      }
+      if ((d.name !== undefined || d.weekStart !== undefined || d.attendance !== undefined) && req.role !== "admin") {
+        return res.status(403).json({ error: "Only an admin can change the workspace name, week start or attendance rules." });
+      }
+    }
     // The work calendar, the attendance penalties and who sees the team's
     // attendance are the Super Admin's call. Only what actually changes
     // counts. The calendar sent is laid over the saved one: a part left out

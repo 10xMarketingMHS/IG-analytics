@@ -1,7 +1,7 @@
 import { Router } from "express";
 import { z } from "zod";
 import { pool } from "../db.js";
-import { requireAdmin } from "../resolve-workspace.js";
+import { mayPage } from "../page-access.js";
 import { hasColumn } from "../schema-flags.js";
 
 // Start/End EOD — one clock-in session per editor per workday. Editors are
@@ -355,13 +355,19 @@ eodRouter.put("/eod/notes", async (req, res, next) => {
   } catch (err) { next(err); }
 });
 
+// Everyone's day: the admins — or, once the caller's Page access row is saved,
+// whoever it opens Settings › Work day or My Team to.
+export async function overseesDays(req) {
+  return (await mayPage(req, "setWorkday", "see", req.role === "admin")) || (await mayPage(req, "myTeam", "see", false));
+}
+
 // A summary for a date — self by default; admins may pass ?editorId= for anyone.
 eodRouter.get("/eod/summary", async (req, res, next) => {
   try {
     const date = String(req.query.date || "").slice(0, 10);
     if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) return res.status(400).json({ error: "A valid date is required." });
     let editorId = req.query.editorId ? String(req.query.editorId) : null;
-    if (editorId && req.role !== "admin") return res.status(403).json({ error: "Admins only." });
+    if (editorId && !(await overseesDays(req))) return res.status(403).json({ error: "Admins only." });
     if (!editorId) editorId = await callerEditorId(req);
     if (!editorId) return res.status(400).json({ error: "No editor to summarize." });
     await closeStaleSessions();
@@ -416,8 +422,9 @@ eodRouter.get("/eod/my-days", async (req, res, next) => {
 });
 
 // Admin oversight — every (non-admin) editor's EOD status for a date.
-eodRouter.get("/eod/team", requireAdmin, async (req, res, next) => {
+eodRouter.get("/eod/team", async (req, res, next) => {
   try {
+    if (!(await overseesDays(req))) return res.status(403).json({ error: "Admins only." });
     const date = String(req.query.date || new Date(Date.now() + 330 * 60_000).toISOString().slice(0, 10)).slice(0, 10);
     if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) return res.status(400).json({ error: "A valid date is required." });
     await closeStaleSessions();
