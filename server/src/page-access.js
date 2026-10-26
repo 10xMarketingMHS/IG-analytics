@@ -66,6 +66,7 @@ export const PAGES = [
   { key: "adsPerformance", group: "Ads", label: "Performance", see: true, change: true, does: "fill in results", def: { see: ALL, change: LEADS } },
   { key: "goals", group: "Manage", label: "Goals", see: true, change: true, does: "set people's goals", def: { see: ALL, change: NONE } },
   { key: "addPost", group: "Manage", label: "Add Post", see: true, change: false, def: { see: NONE } },
+  { key: "knowledge", group: "Manage", label: "Knowledge Hub", see: true, change: true, does: "add and edit pages", def: { see: ALL, change: LEADS } },
   { key: "setGeneral", group: "Settings", label: "General", see: "on", change: true, does: "the workspace", def: { change: NONE } },
   { key: "setChannels", group: "Settings", label: "Channels", see: true, change: true, does: "brands, accounts", def: { see: NONE, change: NONE } },
   { key: "setContent", group: "Settings", label: "Content", see: true, change: true, does: "the content lists", def: { see: ALL, change: NONE } },

@@ -52,16 +52,17 @@ import type { Activity } from "@/lib/types";
 // that isn't placed here lands at the end of Operations.
 const SIDEBAR_GROUPS: { label: string; hrefs: string[] }[] = [
   { label: "Workspace", hrefs: ["/home", "/inbox", "/chat", "/tasks", "/analytics"] },
-  { label: "Operations", hrefs: ["/social", "/ads", "/leaderboard", "/goals-board", "/my-team"] },
+  { label: "Operations", hrefs: ["/social", "/ads", "/leaderboard", "/goals-board", "/my-team", "/knowledge"] },
 ];
 // Social and Ads stand for these, as tabs (lib/sections.ts); they stay reachable by address and search
 const OFF_SIDEBAR = new Set(["/settings", "/posts/new", "/metrics", "/scheduling", "/posts", "/ad-uploads", "/ads-performance"]);
 // Before Start Work an editor can still open these — the Workspace group, plus
-// Activity and Settings (which shows only what their permissions allow). The
+// Activity, Settings (which shows only what their permissions allow) and the
+// Knowledge Hub (SOPs and training can be read first thing). The rest of the
 // Operations group (Pipeline, Posts, Leaderboard, Goals) waits for it: those
 // links stay greyed, and clicking one asks them to start work.
-const OPEN_WHEN_LOCKED = new Set(["/home", "/inbox", "/leave", "/activity", "/chat", "/tasks", "/analytics", "/settings", "/channels", "/task-rules"]);
-const LIVE_WHEN_LOCKED = new Set(["/home", "/inbox", "/chat", "/tasks", "/analytics"]);
+const OPEN_WHEN_LOCKED = new Set(["/home", "/inbox", "/leave", "/activity", "/chat", "/tasks", "/analytics", "/settings", "/channels", "/task-rules", "/knowledge"]);
+const LIVE_WHEN_LOCKED = new Set(["/home", "/inbox", "/chat", "/tasks", "/analytics", "/knowledge"]);
 const openWhenLocked = (path: string) => OPEN_WHEN_LOCKED.has(path) || path.startsWith("/analytics/");
 const RAIL_KEY = "pulse-sidebar-rail";
 // The phone tab bar has ~54px a tab: two names go short there (the sidebar and

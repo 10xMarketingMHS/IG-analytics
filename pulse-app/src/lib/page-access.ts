@@ -6,7 +6,7 @@ import type { PermissionKey } from "@/lib/workspaces-context";
 export type PageKey =
   | "home" | "inbox" | "chat" | "analytics" | "leaderboard" | "tasks" | "myTeam"
   | "socialPipeline" | "scheduling" | "posts" | "adsPipeline" | "uploads" | "adsPerformance"
-  | "goals" | "addPost"
+  | "goals" | "addPost" | "knowledge"
   | "setGeneral" | "setChannels" | "setContent" | "setTasks" | "setAttendance" | "setScoring" | "setNotifications" | "setWorkday" | "setApps";
 export type PageTicks = Record<PageKey, { see: boolean; change: boolean }>;
 // /page-access/me — pages null: the row isn't saved, so today's rules hold
@@ -26,7 +26,7 @@ export const PERM_PAGE: Partial<Record<PermissionKey, { key: PageKey; mode: "see
 export const NAV_PAGE: Record<string, PageKey> = {
   "/home": "home", "/inbox": "inbox", "/chat": "chat", "/analytics": "analytics", "/leaderboard": "leaderboard",
   "/tasks": "tasks", "/my-team": "myTeam", "/scheduling": "scheduling", "/posts": "posts", "/ad-uploads": "uploads",
-  "/ads-performance": "adsPerformance", "/goals-board": "goals", "/posts/new": "addPost",
+  "/ads-performance": "adsPerformance", "/goals-board": "goals", "/posts/new": "addPost", "/knowledge": "knowledge",
 };
 
 // Which page an address is — any one of them lets it open — or null for one

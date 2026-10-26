@@ -43,6 +43,7 @@ import { useWorkspaces } from "@/lib/workspaces-context";
 // so any old link keeps working, just pre-selecting the matching tab.
 import { SettingsPage } from "@/pages/settings";
 import { GoalsPage } from "@/pages/goals";
+import { KnowledgePage } from "@/pages/knowledge";
 import { FormatAnalyticsPage } from "@/pages/format-analytics";
 import { LeaderboardPage } from "@/pages/leaderboard";
 import { MyTeamPage } from "@/pages/my-team";
@@ -141,6 +142,7 @@ function AppRoutes() {
             <Route path="/settings" element={<SettingsPage />} />
             {/* Goals: Team goals, Org goals (the old Goals board), Set goals and Discipline. */}
             <Route path="/goals-board" element={<GoalsPage />} />
+            <Route path="/knowledge" element={<KnowledgePage />} />
             {/* Old Goal Setting link — each person's goals are now Goals › Set goals. */}
             <Route path="/goals" element={<Navigate to="/goals-board?tab=set" replace />} />
             <Route path="/teams" element={<Navigate to="/my-team?tab=roster" replace />} />
