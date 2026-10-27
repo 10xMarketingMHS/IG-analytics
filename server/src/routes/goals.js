@@ -398,6 +398,9 @@ goalsRouter.get("/goals/performance-all", goalView, async (req, res, next) => {
 // in their goals, and the month's hours, so the app can show what it adds —
 // goal points for a goal type, or the time it takes off the goal when it's
 // Other work (../goal-score.js rule 6). Your own, or someone you may give work to.
+// Also what their goal still needs (the sheet's "From the goal" picks): each
+// goal type with jobs left after what's done and what's already on their
+// board, the most points still to win first.
 //   GET /goals/preview?editorId=&contentFormatId=
 goalsRouter.get("/goals/preview", async (req, res, next) => {
   try {
@@ -418,6 +421,33 @@ goalsRouter.get("/goals/preview", async (req, res, next) => {
     ]);
     const s = scores.get(editorId);
     const t = cf ? s?.types.find((x) => x.contentFormatId === cf) : null;
+    const goalTypes = (s?.types ?? []).filter((x) => x.goalJC > 0);
+    const ids = goalTypes.map((x) => x.contentFormatId);
+    const [kinds, open] = ids.length ? await Promise.all([
+      pool.query("select id, category from task_content_format where org_id = $1 and active and category is not null and id = any($2::uuid[])", [req.orgId, ids]),
+      pool.query(
+        `select content_format_id as id, count(*)::int as n from task
+          where org_id = $1 and editor_id = $2 and status <> 'done' and content_format_id = any($3::uuid[])
+          group by content_format_id`,
+        [req.orgId, editorId, ids],
+      ),
+    ]) : [{ rows: [] }, { rows: [] }];
+    const kindOf = new Map(kinds.rows.map((r) => [r.id, r.category]));
+    const openOf = new Map(open.rows.map((r) => [r.id, r.n]));
+    const suggest = goalTypes
+      .filter((x) => kindOf.has(x.contentFormatId))
+      .map((x) => {
+        // the goal can be a part job once leave or Other work shrinks it: 4.6 to go is 5 jobs
+        const done = x.self + x.assigned;
+        const left = Math.max(0, Math.ceil(x.goal - done - 1e-9));
+        const onBoard = openOf.get(x.contentFormatId) ?? 0;
+        return {
+          contentFormatId: x.contentFormatId, name: x.name, icon: x.icon, category: kindOf.get(x.contentFormatId),
+          goal: Math.round(x.goal * 10) / 10, done, open: onBoard, need: Math.max(0, left - onBoard), points: x.points,
+        };
+      })
+      .filter((x) => x.need > 0)
+      .sort((a, b) => b.need * b.points - a.need * a.points || b.need - a.need);
     res.json({
       preview: s ? {
         goalPoints: Math.round(s.goalPoints * 10) / 10, reached: Math.round(s.reached * 10) / 10, pct: s.pct,
@@ -425,6 +455,7 @@ goalsRouter.get("/goals/preview", async (req, res, next) => {
         inGoal: !!t, typeName: fmt.rows[0]?.name ?? null,
         points: t ? t.points : fmt.rows[0]?.points ?? null,
         typeGoal: t ? { goal: Math.round(t.goal * 10) / 10, done: t.done } : null,
+        suggest,
       } : null,
     });
   } catch (err) {

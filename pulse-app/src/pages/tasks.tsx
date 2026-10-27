@@ -2266,6 +2266,17 @@ export function TaskPanel({ mode, task, canWrite, editors, channels, onClose, on
     inGoal: boolean; typeName: string | null; points: number | null; typeGoal: { goal: number; done: number } | null;
   } | null>(null);
   const [previewBusy, setPreviewBusy] = useState(false);
+  // What their goal still needs (GET /goals/preview's suggest), for the "From the goal" picks
+  type GoalPick = { contentFormatId: string; name: string | null; icon: string | null; category: TaskCategory; goal: number; done: number; open: number; need: number; points: number };
+  const [goalPicks, setGoalPicks] = useState<GoalPick[]>([]);
+  useEffect(() => {
+    if (!creating || !draft.editor_id) { setGoalPicks([]); return; }
+    let live = true;
+    api<{ preview: { suggest?: GoalPick[] } | null }>(`/goals/preview?editorId=${draft.editor_id}`)
+      .then((r) => { if (live) setGoalPicks(r.preview?.suggest ?? []); })
+      .catch(() => { if (live) setGoalPicks([]); });
+    return () => { live = false; };
+  }, [creating, draft.editor_id]);
   useEffect(() => {
     if (!creating || !draft.editor_id || !(draft.content_format_id || otherPick) || category === "admin") { setPreview(null); return; }
     let live = true;
@@ -2592,6 +2603,13 @@ export function TaskPanel({ mode, task, canWrite, editors, channels, onClose, on
     } else { tag = "none"; big = "No points"; line = "Not in your goals this month, so it won't add points. (Work someone gives you does take time off your goal.)"; }
     const now = pv && pv.goalPoints > 0 ? (pv.reached / pv.goalPoints) * 100 : null;
     const kinds = KINDS.filter((k) => !k.adminOnly || isAdmin);
+    // the goal's picks this person may be given (an Assign grant can limit the types), up to four
+    const picks = goalPicks.filter((g) => kinds.some((k) => k.k === g.category) && (!limitTypes || limitTypes.includes(g.contentFormatId))).slice(0, 4);
+    const pickGoal = (g: GoalPick) => {
+      if (category !== g.category) pickCategory(g.category);
+      setOtherPick(false);
+      onPickContentType(g.contentFormatId);
+    };
     const hint = dayLocked ? "Start your day first: tap Start day above."
       : !category ? "Choose what kind of work this is to begin."
       : !title.trim() ? "Give the task a title."
@@ -2625,6 +2643,20 @@ export function TaskPanel({ mode, task, canWrite, editors, channels, onClose, on
 
               <section className="tp2-sec">
                 <h3><span>1</span>What kind of work</h3>
+                {picks.length > 0 && (
+                  <div className="tp2-goalpicks">
+                    <span className="tp2-goalpicks-h">From {forName} goal · still to do this month</span>
+                    <div className="tp2-goalpicks-row" role="group" aria-label="Suggested from the goal">
+                      {picks.map((g) => (
+                        <button key={g.contentFormatId} type="button" className={"tp2-goalpick" + (cur.content_format_id === g.contentFormatId ? " on" : "")}
+                          aria-pressed={cur.content_format_id === g.contentFormatId} onClick={() => pickGoal(g)}>
+                          <span>{g.icon} {g.name}</span>
+                          <small>{g.need} to go{g.open ? ` · ${g.open} on the board` : ""} · {tenths(g.points)} {g.points === 1 ? "pt" : "pts"} each</small>
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                )}
                 <div className={"tp2-kinds" + (category ? " picked" : "")} role="group" aria-label="Category">
                   {kinds.map((k) => (
                     <button key={k.k} type="button" className={"tp2-kind" + (category === k.k ? " on" : "")} aria-pressed={category === k.k} onClick={() => pickCategory(k.k)}>
@@ -2640,7 +2672,7 @@ export function TaskPanel({ mode, task, canWrite, editors, channels, onClose, on
                     <button key={f.id} type="button" className={"tp2-type" + (f.counts_in_goal === false ? " off" : "") + (cur.content_format_id === f.id ? " on" : "")} aria-pressed={cur.content_format_id === f.id}
                       onClick={() => { setOtherPick(false); onPickContentType(cur.content_format_id === f.id ? null : f.id); }}>
                       <span>{f.icon} {f.name}</span>
-                      <small>{tenths(f.points ?? 0)} pts{isProject ? (f.duration_days ? ` · ${f.duration_days} day${f.duration_days === 1 ? "" : "s"}` : "") : f.hours != null ? ` · ${fmtHours(Number(f.hours))}h` : ""}</small>
+                      <small>{tenths(f.points ?? 0)} {f.points === 1 ? "pt" : "pts"}{isProject ? (f.duration_days ? ` · ${f.duration_days} day${f.duration_days === 1 ? "" : "s"}` : "") : f.hours != null ? ` · ${fmtHours(Number(f.hours))}h` : ""}</small>
                     </button>
                   );
                   const inGoal = typeChoices.filter((f) => f.counts_in_goal !== false), offGoal = typeChoices.filter((f) => f.counts_in_goal === false);
