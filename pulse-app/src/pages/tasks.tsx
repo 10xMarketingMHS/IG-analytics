@@ -2277,6 +2277,14 @@ export function TaskPanel({ mode, task, canWrite, editors, channels, onClose, on
       .catch(() => { if (live) setGoalInfo(null); });
     return () => { live = false; };
   }, [creating, draft.editor_id]);
+  // For yourself, with a goal this month: only the goal types in it (see the type
+  // chips). A type picked before the goal came in, and not in it, is let go.
+  const ownGoalOnly = creating && !!draft.editor_id && draft.editor_id === user?.editorId && !!goalInfo && goalInfo.goalPoints > 0;
+  useEffect(() => {
+    if (!ownGoalOnly || !draft.content_format_id) return;
+    const f = (contentFormats ?? []).find((x) => x.id === draft.content_format_id);
+    if (f && f.counts_in_goal !== false && !goalInfo!.types.some((g) => g.contentFormatId === f.id)) setDraft((d) => ({ ...d, content_format_id: null }));
+  }, [ownGoalOnly, goalInfo, draft.content_format_id, contentFormats]);
   useEffect(() => {
     if (!creating || !draft.editor_id || !(draft.content_format_id || otherPick) || category === "admin") { setPreview(null); return; }
     let live = true;
@@ -2650,12 +2658,13 @@ export function TaskPanel({ mode, task, canWrite, editors, channels, onClose, on
                 </div>
                 {category && !adminTask && (() => {
                   // tracked in goals, or not (Settings › Tasks & time › Goal); Service also offers "Something else".
-                  // Each goal type says what this person's goal still needs: "3 to go", "goal met", or no goal this month.
+                  // Each goal type says what this person's goal still needs: "3 to go", "Goal met". For yourself only
+                  // the goal types in your goal show; given to someone, one outside their goal is Other work.
                   const goalOf = new Map((goalInfo?.types ?? []).map((g) => [g.contentFormatId, g]));
                   const goalNote = (f: ContentFormatDef): { cls: string; text: string } | null => {
                     if (!goalInfo || !(goalInfo.goalPoints > 0) || f.counts_in_goal === false) return null;
                     const g = goalOf.get(f.id);
-                    if (!g) return { cls: "none", text: "No goal this month" };
+                    if (!g) return { cls: "none", text: forMe ? "No goal this month" : "Not in their goal · Other work" };
                     if (g.need > 0) return { cls: "need", text: `${g.need} to go${g.open ? ` · ${g.open} on the board` : ""}` };
                     return { cls: "met", text: g.done >= g.goal ? "Goal met" : "Rest on the board" };
                   };
@@ -2672,7 +2681,8 @@ export function TaskPanel({ mode, task, canWrite, editors, channels, onClose, on
                   };
                   // what the goal still needs most comes first; the rest keep their order
                   const ask = (f: ContentFormatDef) => { const g = goalOf.get(f.id); return g && g.need > 0 ? g.need * g.points : 0; };
-                  const inGoal = typeChoices.filter((f) => f.counts_in_goal !== false).sort((a, b) => ask(b) - ask(a)), offGoal = typeChoices.filter((f) => f.counts_in_goal === false);
+                  const inGoal = typeChoices.filter((f) => f.counts_in_goal !== false && (!ownGoalOnly || goalOf.has(f.id))).sort((a, b) => ask(b) - ask(a)),
+                    offGoal = typeChoices.filter((f) => f.counts_in_goal === false);
                   const elsePick = category === "service" && (
                     <button type="button" className={"tp2-type off" + (otherPick ? " on" : "")} aria-pressed={otherPick}
                       onClick={() => { onPickContentType(null); setOtherPick((v) => !v); }}>
@@ -2681,6 +2691,9 @@ export function TaskPanel({ mode, task, canWrite, editors, channels, onClose, on
                   );
                   if (typeChoices.length === 0 && !elsePick) {
                     return <span className="tp2-faint">No {isProject ? "project" : CATEGORY_LABEL[category].toLowerCase()} types yet — add them under Settings › Tasks & time.</span>;
+                  }
+                  if (!inGoal.length && !offGoal.length && !elsePick) {
+                    return <span className="tp2-faint">Your goal this month has no {isProject ? "project" : CATEGORY_LABEL[category]} work. Ask your lead if you need to make one.</span>;
                   }
                   if (!offGoal.length && !elsePick) {
                     return <div className="tp2-types" role="group" aria-label={isProject ? "Project type" : "Content type"}>{inGoal.map(chip)}</div>;
