@@ -2603,10 +2603,12 @@ export function TaskPanel({ mode, task, canWrite, editors, channels, onClose, on
     } else { tag = "none"; big = "No points"; line = "Not in your goals this month, so it won't add points. (Work someone gives you does take time off your goal.)"; }
     const now = pv && pv.goalPoints > 0 ? (pv.reached / pv.goalPoints) * 100 : null;
     const kinds = KINDS.filter((k) => !k.adminOnly || isAdmin);
-    // the goal's picks this person may be given (an Assign grant can limit the types), up to four
-    const picks = goalPicks.filter((g) => kinds.some((k) => k.k === g.category) && (!limitTypes || limitTypes.includes(g.contentFormatId))).slice(0, 4);
+    // the goal's picks for the kind picked (none before one is), that this person
+    // may be given (an Assign grant can limit the types), up to four
+    const picks = category && !adminTask
+      ? goalPicks.filter((g) => g.category === category && (!limitTypes || limitTypes.includes(g.contentFormatId))).slice(0, 4)
+      : [];
     const pickGoal = (g: GoalPick) => {
-      if (category !== g.category) pickCategory(g.category);
       setOtherPick(false);
       onPickContentType(g.contentFormatId);
     };
@@ -2643,20 +2645,6 @@ export function TaskPanel({ mode, task, canWrite, editors, channels, onClose, on
 
               <section className="tp2-sec">
                 <h3><span>1</span>What kind of work</h3>
-                {picks.length > 0 && (
-                  <div className="tp2-goalpicks">
-                    <span className="tp2-goalpicks-h">From {forName} goal · still to do this month</span>
-                    <div className="tp2-goalpicks-row" role="group" aria-label="Suggested from the goal">
-                      {picks.map((g) => (
-                        <button key={g.contentFormatId} type="button" className={"tp2-goalpick" + (cur.content_format_id === g.contentFormatId ? " on" : "")}
-                          aria-pressed={cur.content_format_id === g.contentFormatId} onClick={() => pickGoal(g)}>
-                          <span>{g.icon} {g.name}</span>
-                          <small>{g.need} to go{g.open ? ` · ${g.open} on the board` : ""} · {tenths(g.points)} {g.points === 1 ? "pt" : "pts"} each</small>
-                        </button>
-                      ))}
-                    </div>
-                  </div>
-                )}
                 <div className={"tp2-kinds" + (category ? " picked" : "")} role="group" aria-label="Category">
                   {kinds.map((k) => (
                     <button key={k.k} type="button" className={"tp2-kind" + (category === k.k ? " on" : "")} aria-pressed={category === k.k} onClick={() => pickCategory(k.k)}>
@@ -2666,13 +2654,27 @@ export function TaskPanel({ mode, task, canWrite, editors, channels, onClose, on
                     </button>
                   ))}
                 </div>
+                {picks.length > 0 && (
+                  <div className="tp2-goalpicks">
+                    <span className="tp2-goalpicks-h">From {forName} goal · still to do this month</span>
+                    <div className="tp2-goalpicks-row" role="group" aria-label="Suggested from the goal">
+                      {picks.map((g) => (
+                        <button key={g.contentFormatId} type="button" className={"tp2-goalpick" + (cur.content_format_id === g.contentFormatId ? " on" : "")}
+                          aria-pressed={cur.content_format_id === g.contentFormatId} onClick={() => pickGoal(g)}>
+                          <span>{g.icon} {g.name}</span>
+                          <small>{g.need} to go{g.open ? ` · ${g.open} on the board` : ""} · {tenths(g.points)} {Number(g.points) === 1 ? "pt" : "pts"} each</small>
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                )}
                 {category && !adminTask && (() => {
                   // tracked in goals, or not (Settings › Tasks & time › Goal); Service also offers "Something else"
                   const chip = (f: ContentFormatDef) => (
                     <button key={f.id} type="button" className={"tp2-type" + (f.counts_in_goal === false ? " off" : "") + (cur.content_format_id === f.id ? " on" : "")} aria-pressed={cur.content_format_id === f.id}
                       onClick={() => { setOtherPick(false); onPickContentType(cur.content_format_id === f.id ? null : f.id); }}>
                       <span>{f.icon} {f.name}</span>
-                      <small>{tenths(f.points ?? 0)} {f.points === 1 ? "pt" : "pts"}{isProject ? (f.duration_days ? ` · ${f.duration_days} day${f.duration_days === 1 ? "" : "s"}` : "") : f.hours != null ? ` · ${fmtHours(Number(f.hours))}h` : ""}</small>
+                      <small>{tenths(f.points ?? 0)} {Number(f.points) === 1 ? "pt" : "pts"}{isProject ? (f.duration_days ? ` · ${f.duration_days} day${f.duration_days === 1 ? "" : "s"}` : "") : f.hours != null ? ` · ${fmtHours(Number(f.hours))}h` : ""}</small>
                     </button>
                   );
                   const inGoal = typeChoices.filter((f) => f.counts_in_goal !== false), offGoal = typeChoices.filter((f) => f.counts_in_goal === false);
