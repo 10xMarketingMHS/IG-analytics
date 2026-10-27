@@ -300,7 +300,9 @@ function ChatBadge() {
 function AppShellInner() {
   const { user, logout } = useAuth();
   const { available: chatAvailable } = useChat();
-  const { active, workspaces, isAdmin, hasPermission, pageAccess, pageRule } = useWorkspaces();
+  const { active, workspaces, isAdmin, hasPermission, pageAccess, pageRule, loading: wsLoading } = useWorkspaces();
+  // Signed in but in no brand (a login whose only brand was deleted): say so, instead of every page waiting for one
+  const noBrand = !wsLoading && workspaces.length === 0;
   // EOD lockout: an editor with no open session gets the whole shell grayscaled
   // and non-interactive (except a few live controls) until they Start EOD. The
   // grayscale/disable is CSS keyed off this class; see index.css `.eod-lock`.
@@ -744,7 +746,12 @@ function AppShellInner() {
               <SectionTabs section={here.section} current={here.tab.key} canSee={canSeeTab}
                 counts={{ posts: postCount, uploads: uploadsAccess?.waiting }} />
             )}
-            {shut ? (
+            {noBrand ? (
+              <section className="card pad pa-shut">
+                <b>You're not in any brand yet.</b>
+                <span>Every page in Echo belongs to a brand, so there's nothing to show until you're in one. Ask an admin to add you (Team › Roster, or Settings › Channels).</span>
+              </section>
+            ) : shut ? (
               <section className="card pad pa-shut">
                 <b>This page isn't open to your position.</b>
                 <span>Ask an admin if you need it. What each position can open is set in Settings › Page access.</span>
