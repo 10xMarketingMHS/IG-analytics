@@ -8,6 +8,7 @@ import { callerAccess } from "../page-access.js";
 import { reviewContext, routeReview, withReview } from "../review-route.js";
 import { logActivity } from "../activity.js";
 import { canSeeTask, editorRanks, mayOpenTask, seesEditor, taskViewer } from "../hierarchy.js";
+import { callerScope } from "../attendance.js";
 import { closePendingHandovers } from "../handover.js";
 import { hasColumn } from "../schema-flags.js";
 import { coverFrom } from "../goal-score.js";
@@ -409,16 +410,20 @@ tasksRouter.post("/tasks", requireEditor, requireActiveEod, async (req, res, nex
     // This endpoint is for manual tasks only (auto-created ones are inserted
     // directly by syncPostTask) — default to "general".
     const taskType = d.taskType ?? "general";
-    // "admin" is an admin-only, lightweight personal category: no project, no
-    // content format, no timer, self-assigned to the creating admin, and it
-    // starts In Progress (the one deviation from "new tasks start in To Do").
+    // "admin" is the General task (the app calls it General): a lightweight
+    // personal category for a Manager, Asst. Manager or Team Lead (by their
+    // position, Team › Roster) — no content format, no timer, no points,
+    // self-assigned, and its owner closes it with no review (PATCH below).
     const isAdminTask = taskType === "admin";
-    if (isAdminTask && req.role !== "admin") {
-      return res.status(403).json({ error: "Only an admin can create an Admin task." });
+    if (isAdminTask) {
+      const { role } = await callerScope(req);
+      if (role !== "manager" && role !== "lead") {
+        return res.status(403).json({ error: "Only a Manager, Asst. Manager or Team Lead can make a General task." });
+      }
     }
     const callerEid = await callerEditorId(req);
     if (isAdminTask && !callerEid) {
-      return res.status(400).json({ error: "Add yourself to the team first (Settings → Team → Edit on your row) — an Admin task is assigned to you." });
+      return res.status(400).json({ error: "Add yourself to the team first (Settings → Team → Edit on your row) — a General task is assigned to you." });
     }
     if (!isAdminTask && d.editorId && d.editorId !== callerEid && !(await canAssignTasks(req))) {
       return res.status(403).json({ error: "You can create tasks for yourself. Assigning work to someone else needs an admin." });
@@ -726,6 +731,14 @@ tasksRouter.patch("/tasks/:id", requireEditor, requireActiveEod, async (req, res
     let holdAction = null;
     let budgetStartSet = false;
     if (d.status !== undefined && d.status !== prior.status) {
+      // A General task closes itself: its owner moves it to Completed (Review
+      // completes it too), with no review — the owner checks below still apply.
+      if (prior.task_type === "admin" && prior.status !== "review" && prior.status !== "done" && (d.status === "done" || d.status === "review")) {
+        d.status = "done";
+        selfClosed = true;
+        reviewLogAction = "approved";
+        reviewNote = "No review needed: a General task, closed by its owner.";
+      }
       if (prior.status === "review") {
         // Resolving a review (approve into done, or send back for rework)
         // follows one rule for everyone, admins included (../review-route.js):
@@ -778,7 +791,7 @@ tasksRouter.patch("/tasks/:id", requireEditor, requireActiveEod, async (req, res
           reviewNote = (d.reviewNote ?? "").trim() || null;
         }
       } else {
-        if (d.status === "done") {
+        if (d.status === "done" && !selfClosed) {
           return res.status(400).json({ error: "Move it to Review first — only an admin can mark it Completed." });
         }
         // Once work has started there's no going back to To Do — an admin parks
@@ -795,6 +808,9 @@ tasksRouter.patch("/tasks/:id", requireEditor, requireActiveEod, async (req, res
           }
           if (d.status === "todo") {
             return res.status(400).json({ error: "A completed task can be reopened to In progress or Review, not To Do." });
+          }
+          if (prior.task_type === "admin" && d.status === "review") {
+            return res.status(400).json({ error: "A General task has no review — reopen it to In progress." });
           }
         } else {
           // A held task is frozen until an admin resumes it (clears the hold).
@@ -925,7 +941,7 @@ tasksRouter.patch("/tasks/:id", requireEditor, requireActiveEod, async (req, res
     // requireEditor). "" / null clears it.
     if (d.deliveryLink !== undefined) {
       if (prior.task_type === "admin") {
-        return res.status(400).json({ error: "Admin tasks don't have a delivery link." });
+        return res.status(400).json({ error: "General tasks don't have a delivery link." });
       }
       if (req.role !== "admin") {
         const myEditorId = await callerEditorId(req);

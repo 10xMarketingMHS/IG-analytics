@@ -11,7 +11,7 @@ import { useContentFormats } from "@/lib/use-content-formats";
 import { noteTaskSeen } from "@/lib/use-task-notify";
 import { bankedMs, breakOffsetMs, fmtWait, isDayPaused, isOverBudget, OFFICE_CLOSE_HOUR, reviewWaitMs, SLOW_REVIEW_MS } from "@/lib/task-timing";
 import { onTasksChanged } from "@/lib/task-events";
-import { peopleVisibleTo } from "@/lib/home-role";
+import { homeRoleOf, peopleVisibleTo } from "@/lib/home-role";
 import { useIsSuper, useOrg } from "@/lib/use-org";
 import { tenths } from "@/lib/goal-periods";
 import { askStartDay, useDayLocked, useEodState } from "@/lib/eod-context";
@@ -53,11 +53,11 @@ const TYPE_LABEL: Record<TaskType, string> = {
   general: "General",
   social: "Social Media",
   ad: "Paid Ad",
-  admin: "Admin",
+  admin: "General",
   service: "Service",
   project: "Project",
 };
-const TYPE_ICON: Record<TaskType, string> = { content: "📄", short_task: "⚡", general: "🗒️", social: "📱", ad: "📢", admin: "🛠️", service: "🧰", project: "📁" };
+const TYPE_ICON: Record<TaskType, string> = { content: "📄", short_task: "⚡", general: "🗒️", social: "📱", ad: "📢", admin: "📌", service: "🧰", project: "📁" };
 // Task types selectable in the Add/Edit Task modal — "content" is reserved
 // for auto-created (post-linked) tasks, not offered here.
 const SELECTABLE_TASK_TYPES: TaskType[] = ["general", "short_task", "social", "ad"];
@@ -93,11 +93,11 @@ const CONTENT_LABEL = (v: string | null) => CONTENT_TYPES.find((c) => c.value ==
 // drives its per-brand id (SID vs AID) and gates the Content Type list: pick a
 // category first, then only its content types are offered.
 type TaskCategory = "social" | "ad" | "service" | "project" | "admin";
-const CATEGORY_LABEL: Record<TaskCategory, string> = { social: "Social", ad: "Ads", service: "Service", project: "Project", admin: "Admin" };
+const CATEGORY_LABEL: Record<TaskCategory, string> = { social: "Social", ad: "Ads", service: "Service", project: "Project", admin: "General" };
 // A task's category, inferred from its task_type (null for legacy general/short
 // tasks that predate the Social/Ads split). "service" is a full peer of
-// Social/Ads; "admin" is an admin-only category with no project/content-type/
-// timer/scoring.
+// Social/Ads; "admin" is the General task: a Manager's, Asst. Manager's or Team
+// Lead's own, with no content type/timer/scoring, that its owner closes (no review).
 const taskCategory = (t: Pick<Task, "task_type">): TaskCategory | null =>
   t.task_type === "social" ? "social"
     : t.task_type === "ad" ? "ad"
@@ -461,6 +461,7 @@ export function TasksPage() {
   // status-move controls from them so the affordance matches the permission.
   const canWrite = active?.role !== "viewer";
   const isOwner = (t: Task) => !!user?.editorId && t.editor_id === user.editorId;
+  const isGeneral = (t: Task) => t.task_type === "admin";
   // Review is a checkpoint, not just another column: the assignee moves a
   // task through todo -> in_progress -> review on their own; only an admin
   // can resolve a review — approve it into done, or send it back to
@@ -468,6 +469,13 @@ export function TasksPage() {
   function canTransition(t: Task, target: TaskStatus): boolean {
     if (!canWrite || target === t.status) return false;
     if (t.status === "review") return canResolveTask(t) && (target === "done" || target === "in_progress");
+    // A General task skips Review: its owner closes it, and an admin reopens it to
+    // In progress (the server does the same)
+    if (isGeneral(t) && t.status === "done") return isAdmin && target === "in_progress";
+    if (isGeneral(t)) {
+      if (target === "review") return false;
+      if (target === "done") return isOwner(t) && t.accepted && !t.on_hold;
+    }
     if (target === "done") return false; // must go through review
     // Completed is final for the assignee — only an admin reopens approved work.
     if (t.status === "done") return isAdmin && target !== "todo";
@@ -712,7 +720,9 @@ export function TasksPage() {
       toast.error(
         t.status === "review"
           ? (t.review_by ? `Waiting for ${t.review_by} to review it.` : "Only its reviewer can approve or send it back.")
-          : status === "done"
+          : isGeneral(t) && status === "review"
+            ? "A General task needs no review. Move it to Completed when it is done."
+          : status === "done" && !isGeneral(t)
             ? "Move it to Review first."
             : isOwner(t) && !t.accepted
               ? "Accept this task first, then you can move it."
@@ -742,6 +752,7 @@ export function TasksPage() {
       await refetch();
       toast.success(
         t.status === "done" ? `Reopened “${t.title}”.`
+          : status === "done" && isGeneral(t) ? `Completed “${t.title}”.`
           : status === "done" ? `Approved “${t.title}”.`
           : t.status === "review" ? `Sent “${t.title}” back for rework.`
           : status === "review" ? `Submitted “${t.title}” for review.`
@@ -1118,8 +1129,12 @@ export function TasksPage() {
                     </span>
                   );
                   const actions = (() => {
-                    const canPrev = ci > 0 && canTransition(t, COLUMNS[ci - 1].key);
-                    const canNext = ci < COLUMNS.length - 1 && canTransition(t, COLUMNS[ci + 1].key);
+                    const prevKey = isGeneral(t) && t.status === "done" ? "in_progress" : COLUMNS[ci - 1]?.key;
+                    const canPrev = ci > 0 && !!prevKey && canTransition(t, prevKey);
+                    // a General task in progress goes straight to Completed (no review)
+                    const closesItself = isGeneral(t) && t.status === "in_progress";
+                    const nextKey = closesItself ? "done" : COLUMNS[ci + 1]?.key;
+                    const canNext = !!nextKey && canTransition(t, nextKey);
                     // An admin, or the task's own assignee, can park (Hold)
                     // or resume an in-progress task — it stays In Progress;
                     // Hold pauses its timer. Same "is this mine" check the
@@ -1147,18 +1162,18 @@ export function TasksPage() {
                     }
                     // Start is the main action; moving on to review is a link;
                     // approving is green; going back is quiet.
-                    const nextKind = t.status === "todo" ? "pri" : t.status === "review" ? "good" : "link";
+                    const nextKind = t.status === "todo" ? "pri" : t.status === "review" || closesItself ? "good" : "link";
                     return (
                       <>
                         {canPrev && (
-                          <button className="tb-act ghost" onClick={() => move(t, COLUMNS[ci - 1].key)}>
-                            ← {COLUMNS[ci - 1].label}
+                          <button className="tb-act ghost" onClick={() => move(t, prevKey!)}>
+                            ← {COLUMNS.find((c) => c.key === prevKey)?.label}
                           </button>
                         )}
                         {holdCtrl}
                         {canNext && (
-                          <button className={"tb-act next " + nextKind} onClick={() => move(t, COLUMNS[ci + 1].key)}>
-                            {t.status === "todo" ? "▶ Start" : t.status === "review" ? <>{TB_ICON.check} {COLUMNS[ci + 1].label}</> : `${COLUMNS[ci + 1].label} →`}
+                          <button className={"tb-act next " + nextKind} onClick={() => move(t, nextKey!)}>
+                            {t.status === "todo" ? "▶ Start" : closesItself ? <>{TB_ICON.check} Done</> : t.status === "review" ? <>{TB_ICON.check} {COLUMNS[ci + 1].label}</> : `${COLUMNS[ci + 1].label} →`}
                           </button>
                         )}
                       </>
@@ -1986,12 +2001,12 @@ function Row({ label, icon, note, children }: { label: string; icon?: ReactNode;
 // One-tap due dates for a new task: today, tomorrow, and the coming Friday
 // and Monday.
 // The New task sheet's kinds of work, each with what it covers.
-const KINDS: { k: TaskCategory; icon: string; label: string; sub: string; adminOnly?: boolean }[] = [
+const KINDS: { k: TaskCategory; icon: string; label: string; sub: string; leadsOnly?: boolean }[] = [
   { k: "social", icon: "📣", label: "Social", sub: "Reels, carousels, posts" },
   { k: "ad", icon: "💰", label: "Ads", sub: "Ad videos for the teams" },
   { k: "service", icon: "🧰", label: "Service", sub: "Schedule, requests" },
   { k: "project", icon: "📁", label: "Project", sub: "Bigger work, with a start" },
-  { k: "admin", icon: "🛠️", label: "Admin", sub: "Just for you, no timer", adminOnly: true },
+  { k: "admin", icon: "📌", label: "General", sub: "Just for you · close it yourself", leadsOnly: true },
 ];
 // Its due picks: Today, Tomorrow, and the next two working days — no Sundays,
 // no Saturdays when the office is shut then, no holidays (Settings › General).
@@ -2381,9 +2396,11 @@ export function TaskPanel({ mode, task, canWrite, editors, channels, onClose, on
     if (creating || !task) return true;
     if (c.key === task.status) return true;
     if (task.status === "review") return canResolve && c.key === "done";
-    if (task.status === "done") return isAdmin && c.key !== "todo";
-    // The assignee moves it — once they've accepted it.
-    return c.key !== "done" && !!user?.editorId && task.editor_id === user.editorId && task.accepted;
+    if (task.status === "done") return isAdmin && (task.task_type === "admin" ? c.key === "in_progress" : c.key !== "todo");
+    // The assignee moves it — once they've accepted it. A General task skips
+    // Review: its owner sets it to Completed.
+    const general = task.task_type === "admin";
+    return (general ? c.key !== "review" : c.key !== "done") && !!user?.editorId && task.editor_id === user.editorId && task.accepted;
   });
 
   // The redesign's look: a sheet that rises from the bottom to create a task,
@@ -2396,6 +2413,7 @@ export function TaskPanel({ mode, task, canWrite, editors, channels, onClose, on
     : task.status === "review" ? (canResolve
       ? "To approve, set Status to Completed. Sending back for rework needs a note — use the Send back / ← button."
       : task.review_by ? `⏳ Waiting for ${task.review_by} to review it.` : "⏳ Waiting on review.")
+    : task.status === "in_progress" && task.task_type === "admin" ? "A General task needs no review: set Status to Completed when it's done."
     : task.status === "in_progress" ? "Use Hold on the board to park it — a started task can't go back to To Do."
     : "";
   const meEditor = editors.find((ed) => ed.id === user?.editorId);
@@ -2596,7 +2614,7 @@ export function TaskPanel({ mode, task, canWrite, editors, channels, onClose, on
     let tag: "goal" | "other" | "none" | null = null, big = "", line = "";
     let after: number | null = null;
     if (!category) line = "Pick what kind of work this is to see how it scores.";
-    else if (adminTask) { tag = "none"; big = "No points"; line = "Admin tasks don't count toward goals."; }
+    else if (adminTask) { tag = "none"; big = "No points"; line = "General tasks don't count toward goals. No review: you close it yourself with Done."; }
     else if (!cur.editor_id) { tag = "none"; big = "Not given yet"; line = "Whoever takes it gets its points, if its type is in their goals."; }
     else if (!cur.content_format_id && !otherPick) line = `Pick its type to see what it adds to ${forName} month.`;
     else if (previewBusy && !pv) line = "Working it out…";
@@ -2615,12 +2633,15 @@ export function TaskPanel({ mode, task, canWrite, editors, channels, onClose, on
       line = `${selectedFormat.name} counts in goals, but your goal this month has no ${selectedFormat.name} jobs, so it won't add points. Your lead can add some on Set goals.`;
     } else { tag = "none"; big = "No points"; line = "Not in your goals this month, so it won't add points. (Work someone gives you does take time off your goal.)"; }
     const now = pv && pv.goalPoints > 0 ? (pv.reached / pv.goalPoints) * 100 : null;
-    const kinds = KINDS.filter((k) => !k.adminOnly || isAdmin);
+    // General is for a Manager, Asst. Manager or Team Lead (by their position; the server holds the same line)
+    const meRow = editors.find((e) => e.id === user?.editorId) ?? null;
+    const makesGeneral = homeRoleOf(meRow?.designation, isAdmin) !== "editor";
+    const kinds = KINDS.filter((k) => !k.leadsOnly || makesGeneral);
     const hint = dayLocked ? "Start your day first: tap Start day above."
       : !category ? "Choose what kind of work this is to begin."
       : !title.trim() ? "Give the task a title."
       : elseNeedsBrief ? "Say what the work is in the Brief — Something else has no type to tell them."
-      : adminNeedsRoster ? "You're not on the team roster yet, so an Admin task would have no owner. Add yourself on Team › Roster first."
+      : adminNeedsRoster ? "You're not on the team roster yet, so a General task would have no owner. Add yourself on Team › Roster first."
       : !adminTask && adByTeam && !draft.ad_team_id ? "Pick the team this ad is for — Ads are numbered per team."
       : !adminTask && !adByTeam && !draft.channel_id ? "Pick a brand — its tasks are numbered per brand."
       : category === "project" && contentTypeChoices.length === 0 ? "No project types yet. Add one under Settings › Tasks & time first."

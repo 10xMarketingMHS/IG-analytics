@@ -28,7 +28,7 @@ type RangeKey = "today" | "week" | "lastweek" | "month" | "custom";
 const STAGES = ["To Do", "In Progress", "Review", "Completed"] as const;
 const STAGE_INDEX: Record<Task["status"], number> = { todo: 0, in_progress: 1, review: 2, done: 3 };
 const CATEGORY: Record<string, string> = {
-  social: "Social", ad: "Ads", service: "Service", project: "Project", admin: "Admin",
+  social: "Social", ad: "Ads", service: "Service", project: "Project", admin: "General",
   content: "Content", short_task: "Short task", general: "General",
 };
 
