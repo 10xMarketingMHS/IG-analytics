@@ -633,3 +633,14 @@ html[data-theme="dark"] .task-panel-scrim.tp2-scrim{background:rgba(0,0,0,.55)}
   color:var(--tb-text);font-family:inherit;font-size:13px;line-height:1.45}
 .tp2-backnote:focus{outline:none;border-color:var(--tb-ac)}
 @media (max-width:520px){.tp2-dfoot.tp2-review{flex-direction:column;align-items:stretch}}
+
+/* New task: once a kind is picked, the others go grey (hover brings them back) */
+.tp2-kinds.picked .tp2-kind:not(.on){filter:grayscale(1);opacity:.55}
+.tp2-kinds.picked .tp2-kind:not(.on):hover{filter:none;opacity:1}
+/* its types, grouped: counts in goals / off-goal (Settings › Tasks & time › Goal) */
+.tp2-typegroups{display:flex;flex-direction:column;gap:10px;padding:12px;border:1.5px solid var(--tb-line);border-radius:12px;background:var(--tb-sunk)}
+.tp2-typegroup{display:flex;flex-direction:column;gap:6px}
+.tp2-typehead{display:flex;align-items:center;gap:6px;font-size:11.5px;font-weight:700;color:var(--tb-text2)}
+.tp2-typehead::before{content:"";width:7px;height:7px;border-radius:50%;background:var(--tb-ac)}
+.tp2-typehead.off::before{background:var(--tb-good)}
+.tp2-type.off.on{border-color:var(--tb-good);background:var(--tb-goodSoft);color:var(--tb-good)}

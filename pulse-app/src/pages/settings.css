@@ -357,3 +357,9 @@ html[data-theme="dark"] .st-box{border-color:rgba(255,255,255,.22)}
 
 /* Look only (settings-ui.tsx LookOnly): a section seen, not changed */
 .st-lookonly{display:flex;flex-direction:column;gap:16px;min-width:0;margin:0;padding:0;border:0}
+
+/* Tasks & time › Goal (task-rules.tsx): tracked in goals or not */
+.st-c-goal{flex:none;width:52px;display:flex;justify-content:center;text-align:center}
+.st-tt-goal{font-size:11px;font-weight:600;color:var(--st-text3)}
+.st-tt-goal.off{color:var(--st-text3);font-style:italic}
+@media (max-width:720px){.st-c-goal{width:auto}}

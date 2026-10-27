@@ -156,6 +156,7 @@ export function TaskRulesSection() {
         </div>
         <div className="st-tt-head" aria-hidden="true">
           <span>Type</span>
+          <span className="st-c-goal">Goal</span>
           <span className="st-c-link">Link</span>
           <span className="st-c-sched">Next step</span>
           <span className="st-c-metric">Metric</span>
@@ -184,6 +185,12 @@ export function TaskRulesSection() {
                   onRename={(name) => patchFormat(f.id, { name }, "Could not rename that type.", "Renamed.")}
                   onPoints={(points) => patchFormat(f.id, { points }, "Could not save points.", `${f.name}: ${trim(points)} point${points === 1 ? "" : "s"}.`)}
                   onMetric={(metric_tier) => patchFormat(f.id, { metric_tier }, "Could not update the metric tag.", "Metric tag saved.")}
+                  onGoal={(counts_in_goal) => {
+                    const n = f.goal_people ?? 0;
+                    if (!counts_in_goal && n > 0 && !window.confirm(`${n} ${n === 1 ? "person has" : "people have"} a ${f.name} goal this month. Taking ${f.name} out of goals stops those goals counting, and ${f.name} tasks given to someone count as Other work instead. Take it out?`)) return;
+                    patchFormat(f.id, { counts_in_goal }, "Could not update the goal setting.",
+                      counts_in_goal ? `${f.name} counts in goals again.` : `${f.name} is off-goal work now.`);
+                  }}
                   onLink={(review_link_required) => patchFormat(f.id, { review_link_required }, "Could not update the review link setting.",
                     review_link_required ? "A link is now needed for review." : "No link needed for review now.")}
                   onSched={(to_scheduling) => patchFormat(f.id, { to_scheduling }, "Could not update the next step.", ({ schedulingMoved: n = 0 }) => {
@@ -299,7 +306,7 @@ function IconPicker({ value, onPick }: { value: string; onPick: (icon: string) =
 // One task type: icon, name (click to rename), link toggle, scheduling toggle
 // (Social types), metric tag, points and time (or duration). Every field saves on its own.
 function TypeRow({
-  format, rule, canPoints, onCategory, onIcon, onRename, onPoints, onMetric, onLink, onSched, onHours, onClearHours, onDuration, onMetrics, onRemove,
+  format, rule, canPoints, onCategory, onIcon, onRename, onPoints, onMetric, onGoal, onLink, onSched, onHours, onClearHours, onDuration, onMetrics, onRemove,
 }: {
   format: ContentFormatDef;
   rule: TaskTimeRule | null;
@@ -309,6 +316,7 @@ function TypeRow({
   onRename: (name: string) => void;
   onPoints: (points: number) => void;
   onMetric: (tier: "key" | "critical" | null) => void;
+  onGoal: (on: boolean) => void;
   onLink: (required: boolean) => void;
   onSched: (on: boolean) => void;
   onHours: (hours: number) => void;
@@ -357,12 +365,23 @@ function TypeRow({
               onChange={(e) => onCategory(e.target.value as Cat)}>
               {CATS.map((c) => <option key={c.key} value={c.key}>{c.label}</option>)}
             </select>
+            {format.counts_in_goal !== undefined && (
+              <small className={"st-tt-goal" + (format.counts_in_goal ? "" : " off")}>
+                {!format.counts_in_goal ? "Not tracked in goals" : format.goal_people ? `In ${format.goal_people} ${format.goal_people === 1 ? "person's" : "people's"} goals` : "Tracked in goals"}
+              </small>
+            )}
             {isProject && (
               <input className="st-metrics" value={metrics} placeholder="What this project delivers (a note, not scored)…" aria-label={`What ${format.name} delivers`}
                 onChange={(e) => setMetrics(e.target.value)} onBlur={saveMetrics} onKeyDown={blurOnEnter} />
             )}
           </span>
         </span>
+      </span>
+      <span className="st-c-goal">
+        <span className="st-mlabel">Goal</span>
+        {format.counts_in_goal !== undefined
+          ? <Toggle on={format.counts_in_goal} onChange={onGoal} label={`${format.name} counts in goals`} />
+          : <span className="st-note" title="Needs the database update 20261110120000_type_counts_in_goal">—</span>}
       </span>
       <span className="st-c-link">
         <span className="st-mlabel">Link</span>

@@ -2258,23 +2258,26 @@ export function TaskPanel({ mode, task, canWrite, editors, channels, onClose, on
     api<{ ref: string | null }>(`/tasks/next-ref?${p.toString()}`).then((r) => { if (live) setNextRef(r.ref); }).catch(() => { if (live) setNextRef(null); });
     return () => { live = false; };
   }, [creating, category, adByTeam, draft.ad_team_id, draft.channel_id]);
+  // Service › Something else: an off-goal request that has no type of its own
+  const [otherPick, setOtherPick] = useState(false);
+  useEffect(() => { setOtherPick(false); }, [category]);
   const [preview, setPreview] = useState<{
     goalPoints: number; reached: number; pct: number | null; monthHours: number; timeFactor: number; otherHours: number; leaveDays: number;
     inGoal: boolean; typeName: string | null; points: number | null; typeGoal: { goal: number; done: number } | null;
   } | null>(null);
   const [previewBusy, setPreviewBusy] = useState(false);
   useEffect(() => {
-    if (!creating || !draft.editor_id || !draft.content_format_id || category === "admin") { setPreview(null); return; }
+    if (!creating || !draft.editor_id || !(draft.content_format_id || otherPick) || category === "admin") { setPreview(null); return; }
     let live = true;
     setPreviewBusy(true);
     const t = setTimeout(() => {
-      api<{ preview: typeof preview }>(`/goals/preview?editorId=${draft.editor_id}&contentFormatId=${draft.content_format_id}`)
+      api<{ preview: typeof preview }>(`/goals/preview?editorId=${draft.editor_id}${draft.content_format_id ? `&contentFormatId=${draft.content_format_id}` : ""}`)
         .then((r) => { if (live) setPreview(r.preview); })
         .catch(() => { if (live) setPreview(null); })
         .finally(() => { if (live) setPreviewBusy(false); });
     }, 150);
     return () => { live = false; clearTimeout(t); };
-  }, [creating, draft.editor_id, draft.content_format_id, category]);
+  }, [creating, draft.editor_id, draft.content_format_id, otherPick, category]);
 
   async function patch(fields: Record<string, unknown>) {
     if (!task) return;
@@ -2574,7 +2577,7 @@ export function TaskPanel({ mode, task, canWrite, editors, channels, onClose, on
     if (!category) line = "Pick what kind of work this is to see how it scores.";
     else if (adminTask) { tag = "none"; big = "No points"; line = "Admin tasks don't count toward goals."; }
     else if (!cur.editor_id) { tag = "none"; big = "Not given yet"; line = "Whoever takes it gets its points, if its type is in their goals."; }
-    else if (!cur.content_format_id) line = `Pick its type to see what it adds to ${forName} month.`;
+    else if (!cur.content_format_id && !otherPick) line = `Pick its type to see what it adds to ${forName} month.`;
     else if (previewBusy && !pv) line = "Working it out…";
     else if (!pv || !(pv.goalPoints > 0)) { tag = "none"; big = "No goal yet"; line = `${forMe ? "You have" : `${forName.replace(/'s$/, "")} has`} no goals set this month, so it won't add points yet.`; }
     else if (pv.inGoal) {
@@ -2582,7 +2585,7 @@ export function TaskPanel({ mode, task, canWrite, editors, channels, onClose, on
       line = `Counts toward ${forName} ${pv.typeName} goal${pv.typeGoal ? `: ${tenths(pv.typeGoal.done)} of ${tenths(pv.typeGoal.goal)} done so far` : ""}.`;
       after = ((pv.reached + (pv.points ?? 0)) / pv.goalPoints) * 100;
     } else if (givenToOther) {
-      tag = "other"; big = shouldTake ? `−${tenths(shouldTake)}h off the goal` : "Time off the goal";
+      tag = "other"; big = shouldTake ? `−${tenths(shouldTake)}h off the goal` : "Set how long it should take";
       line = `Not in ${forName} goals this month. Once it's done, the time it took${shouldTake ? ` (up to ${tenths(shouldTake)}h)` : ""} comes off their goal, so they stay on track.`;
       const left = pv.timeFactor - (shouldTake ?? 0) / Math.max(1, pv.monthHours);
       after = left > 0 && pv.timeFactor > 0 ? (pv.reached / (pv.goalPoints * (left / pv.timeFactor))) * 100 : null;
@@ -2622,7 +2625,7 @@ export function TaskPanel({ mode, task, canWrite, editors, channels, onClose, on
 
               <section className="tp2-sec">
                 <h3><span>1</span>What kind of work</h3>
-                <div className="tp2-kinds" role="group" aria-label="Category">
+                <div className={"tp2-kinds" + (category ? " picked" : "")} role="group" aria-label="Category">
                   {kinds.map((k) => (
                     <button key={k.k} type="button" className={"tp2-kind" + (category === k.k ? " on" : "")} aria-pressed={category === k.k} onClick={() => pickCategory(k.k)}>
                       <span className="tp2-kind-ic" aria-hidden="true">{k.icon}</span>
@@ -2631,18 +2634,43 @@ export function TaskPanel({ mode, task, canWrite, editors, channels, onClose, on
                     </button>
                   ))}
                 </div>
-                {category && !adminTask && (
-                  <div className="tp2-types" role="group" aria-label={isProject ? "Project type" : "Content type"}>
-                    {typeChoices.length === 0 && <span className="tp2-faint">No {isProject ? "project" : CATEGORY_LABEL[category].toLowerCase()} types yet — add them under Settings › Tasks & time.</span>}
-                    {typeChoices.map((f) => (
-                      <button key={f.id} type="button" className={"tp2-type" + (cur.content_format_id === f.id ? " on" : "")} aria-pressed={cur.content_format_id === f.id}
-                        onClick={() => onPickContentType(cur.content_format_id === f.id ? null : f.id)}>
-                        <span>{f.icon} {f.name}</span>
-                        <small>{tenths(f.points ?? 0)} pts{isProject ? (f.duration_days ? ` · ${f.duration_days} day${f.duration_days === 1 ? "" : "s"}` : "") : f.hours != null ? ` · ${fmtHours(Number(f.hours))}h` : ""}</small>
-                      </button>
-                    ))}
-                  </div>
-                )}
+                {category && !adminTask && (() => {
+                  // tracked in goals, or not (Settings › Tasks & time › Goal); Service also offers "Something else"
+                  const chip = (f: ContentFormatDef) => (
+                    <button key={f.id} type="button" className={"tp2-type" + (f.counts_in_goal === false ? " off" : "") + (cur.content_format_id === f.id ? " on" : "")} aria-pressed={cur.content_format_id === f.id}
+                      onClick={() => { setOtherPick(false); onPickContentType(cur.content_format_id === f.id ? null : f.id); }}>
+                      <span>{f.icon} {f.name}</span>
+                      <small>{tenths(f.points ?? 0)} pts{isProject ? (f.duration_days ? ` · ${f.duration_days} day${f.duration_days === 1 ? "" : "s"}` : "") : f.hours != null ? ` · ${fmtHours(Number(f.hours))}h` : ""}</small>
+                    </button>
+                  );
+                  const inGoal = typeChoices.filter((f) => f.counts_in_goal !== false), offGoal = typeChoices.filter((f) => f.counts_in_goal === false);
+                  const elsePick = category === "service" && (
+                    <button type="button" className={"tp2-type off" + (otherPick ? " on" : "")} aria-pressed={otherPick}
+                      onClick={() => { onPickContentType(null); setOtherPick((v) => !v); }}>
+                      <span>··· Something else</span><small>set how long below</small>
+                    </button>
+                  );
+                  if (typeChoices.length === 0 && !elsePick) {
+                    return <span className="tp2-faint">No {isProject ? "project" : CATEGORY_LABEL[category].toLowerCase()} types yet — add them under Settings › Tasks & time.</span>;
+                  }
+                  if (!offGoal.length && !elsePick) {
+                    return <div className="tp2-types" role="group" aria-label={isProject ? "Project type" : "Content type"}>{inGoal.map(chip)}</div>;
+                  }
+                  return (
+                    <div className="tp2-typegroups">
+                      {inGoal.length > 0 && (
+                        <div className="tp2-typegroup">
+                          <span className="tp2-typehead goal">Counts in goals</span>
+                          <div className="tp2-types" role="group" aria-label="Types that count in goals">{inGoal.map(chip)}</div>
+                        </div>
+                      )}
+                      <div className="tp2-typegroup">
+                        <span className="tp2-typehead off">Off-goal · help for another team, takes its time off the goal</span>
+                        <div className="tp2-types" role="group" aria-label="Off-goal types">{offGoal.map(chip)}{elsePick}</div>
+                      </div>
+                    </div>
+                  );
+                })()}
                 {limitTypes && !adminTask && (
                   <span className="hint">For someone else you can pick only {limitNames}.</span>
                 )}

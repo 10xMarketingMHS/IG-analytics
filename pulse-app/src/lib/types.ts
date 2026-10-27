@@ -158,6 +158,10 @@ export type ContentFormatDef = {
   points: number;
   // its usual time (the team-wide time rule), for the New task sheet's type chips
   hours?: number | null;
+  // tracked in goals (Settings › Tasks & time › Goal); false: off-goal work. Absent before the database has it.
+  counts_in_goal?: boolean;
+  // how many people have a goal for it this month
+  goal_people?: number;
   // Management-metric tag — surfaces goal-vs-achieved for this format under
   // Key / Critical Metrics in Management Performance. null = untagged.
   metric_tier: "key" | "critical" | null;

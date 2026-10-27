@@ -110,7 +110,8 @@ export async function scoreMonthAll(orgId, monthFirst, editorId = null) {
       `select g.editor_id, g.content_format_id, g.jc::float as jc, cf.name, cf.icon,
               coalesce((to_jsonb(g)->>'points')::numeric, cf.points)::float as pts
          from editor_goal g join task_content_format cf on cf.id = g.content_format_id
-        where g.org_id = $1 and g.period_month = $2::date${one.replace("editor_id", "g.editor_id")}`,
+        where g.org_id = $1 and g.period_month = $2::date${one.replace("editor_id", "g.editor_id")}
+          and coalesce((to_jsonb(cf)->>'counts_in_goal')::boolean, true)`,
       P,
     ),
     pool.query(

@@ -285,7 +285,8 @@ goalsRouter.get("/goals/set-all", requirePermission("edit_goals"), async (req, r
     if (!month) return res.status(400).json({ error: "That month couldn't be read." });
     const [eds, formats, goals, rules, caps, orgEff] = await Promise.all([
       pool.query("select id from editor where org_id=$1 and active", [req.orgId]),
-      pool.query("select id, name, icon, category, sort_order, points, duration_days from task_content_format where org_id=$1 and active order by category, sort_order, name", [req.orgId]),
+      // the types tracked in goals (Settings › Tasks & time › Goal)
+      pool.query("select id, name, icon, category, sort_order, points, duration_days from task_content_format where org_id=$1 and active and coalesce((to_jsonb(task_content_format)->>'counts_in_goal')::boolean, true) order by category, sort_order, name", [req.orgId]),
       pool.query("select editor_id, content_format_id, jc, jph, (to_jsonb(editor_goal)->>'points')::numeric as pts from editor_goal where org_id=$1 and period_month=$2", [req.orgId, month]),
       pool.query("select content_format_id, editor_id, hours from task_time_rule where org_id=$1", [req.orgId]),
       pool.query("select editor_id, working_days, hours_per_day from editor_capacity where org_id=$1 and period_month=$2", [req.orgId, month]),
@@ -347,6 +348,7 @@ goalsRouter.get("/goals/performance-all", goalView, async (req, res, next) => {
                 coalesce((to_jsonb(g)->>'points')::numeric, cf.points) as points
            from editor_goal g join task_content_format cf on cf.id = g.content_format_id
           where g.org_id=$1 and g.period_month=$2${one}
+            and coalesce((to_jsonb(cf)->>'counts_in_goal')::boolean, true)
           order by cf.category, cf.sort_order, cf.name`,
         P,
       ),

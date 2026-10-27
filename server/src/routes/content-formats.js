@@ -40,12 +40,16 @@ const Schema = z.object({
   // post date, then its links — ../scheduling.js): Reels, Carousel, Post yes,
   // Thumbnail no. An Ads type to Ad uploads (../ad-uploads.js).
   to_scheduling: z.boolean().optional(),
+  // Is it tracked in goals? Off: not offered in Set goals, never goal work; given
+  // to someone, it's Other work (../goal-score.js rule 6). 20261110120000_type_counts_in_goal
+  counts_in_goal: z.boolean().optional(),
 });
 
 const SELECT = "id, name, icon, sort_order, active, points, category, metric_tier, duration_days, metrics_description, review_link_required";
 // to_scheduling comes with the scheduling database update (20261104120000_task_scheduling)
 const schedCol = () => hasColumn("task_content_format", "to_scheduling");
-const select = async () => SELECT + ((await schedCol()) ? ", to_scheduling" : "");
+const goalCol = () => hasColumn("task_content_format", "counts_in_goal");
+const select = async () => SELECT + ((await schedCol()) ? ", to_scheduling" : "") + ((await goalCol()) ? ", counts_in_goal" : "");
 const CATEGORIES = ["social", "ad", "service", "project"];
 
 // Org-wide, like editors — every channel picks from the same list.
@@ -54,7 +58,11 @@ contentFormatsRouter.get("/content-formats", async (req, res, next) => {
     // hours: its usual time (the team-wide time rule), shown on the New task sheet's type chips
     const { rows } = await pool.query(
       `select ${await select()},
-              (select r.hours::float from task_time_rule r where r.org_id = $1 and r.content_format_id = task_content_format.id and r.editor_id is null limit 1) as hours
+              (select r.hours::float from task_time_rule r where r.org_id = $1 and r.content_format_id = task_content_format.id and r.editor_id is null limit 1) as hours,
+              -- how many people have a goal for it this month (Settings › Tasks & time: "In 3 people's goals")
+              (select count(distinct g.editor_id)::int from editor_goal g
+                where g.content_format_id = task_content_format.id and g.jc > 0
+                  and g.period_month = date_trunc('month', now() at time zone 'Asia/Kolkata')::date) as goal_people
          from task_content_format where org_id = $1 and active order by sort_order, name`,
       [req.orgId],
     );
@@ -111,6 +119,10 @@ contentFormatsRouter.patch("/content-formats/:id", requirePermission("task_setti
   if (parsed.data.duration_days !== undefined) { vals.push(parsed.data.duration_days); sets.push(`duration_days = $${vals.length}`); }
   if (parsed.data.metrics_description !== undefined) { vals.push(parsed.data.metrics_description); sets.push(`metrics_description = $${vals.length}`); }
   if (parsed.data.review_link_required !== undefined) { vals.push(parsed.data.review_link_required); sets.push(`review_link_required = $${vals.length}`); }
+  if (parsed.data.counts_in_goal !== undefined) {
+    if (!(await goalCol())) return res.status(409).json({ error: "The Goal switch needs a database update first — ask whoever runs the database to apply 20261110120000_type_counts_in_goal." });
+    vals.push(parsed.data.counts_in_goal); sets.push(`counts_in_goal = $${vals.length}`);
+  }
   const tick = parsed.data.to_scheduling;
   if (tick !== undefined) {
     if (!(await schedCol())) return res.status(409).json({ error: "Scheduling needs a database update first — ask whoever runs the database to apply 20261104120000_task_scheduling." });
