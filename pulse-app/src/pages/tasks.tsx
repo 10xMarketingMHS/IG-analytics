@@ -2258,8 +2258,10 @@ export function TaskPanel({ mode, task, canWrite, editors, channels, onClose, on
     api<{ ref: string | null }>(`/tasks/next-ref?${p.toString()}`).then((r) => { if (live) setNextRef(r.ref); }).catch(() => { if (live) setNextRef(null); });
     return () => { live = false; };
   }, [creating, category, adByTeam, draft.ad_team_id, draft.channel_id]);
-  // Service › Something else: an off-goal request that has no type of its own
+  // Service › Something else: an off-goal request that has no type of its own,
+  // so the Brief says what it is (required)
   const [otherPick, setOtherPick] = useState(false);
+  const elseNeedsBrief = creating && otherPick && !description.trim();
   useEffect(() => { setOtherPick(false); }, [category]);
   const [preview, setPreview] = useState<{
     goalPoints: number; reached: number; pct: number | null; monthHours: number; timeFactor: number; otherHours: number; leaveDays: number;
@@ -2346,7 +2348,7 @@ export function TaskPanel({ mode, task, canWrite, editors, channels, onClose, on
   const { refresh: refreshDay, start: startDay, busy: dayBusy } = useEodState();
   useEffect(() => { if (creating) refreshDay(); }, [creating, refreshDay]);
   const canCreate = Boolean(title.trim() && category && !adminNeedsRoster && (category === "admin" || (adByTeam ? draft.ad_team_id : draft.channel_id)) && (category !== "project" || draft.content_format_id)
-    && (!limitTypes || category === "admin" || !!draft.content_format_id)) && !(creating && dayLocked);
+    && (!limitTypes || category === "admin" || !!draft.content_format_id)) && !(creating && dayLocked) && !elseNeedsBrief;
   async function create() {
     if (!canCreate || busy) return;
     setBusy(true);
@@ -2617,6 +2619,7 @@ export function TaskPanel({ mode, task, canWrite, editors, channels, onClose, on
     const hint = dayLocked ? "Start your day first: tap Start day above."
       : !category ? "Choose what kind of work this is to begin."
       : !title.trim() ? "Give the task a title."
+      : elseNeedsBrief ? "Say what the work is in the Brief — Something else has no type to tell them."
       : adminNeedsRoster ? "You're not on the team roster yet, so an Admin task would have no owner. Add yourself on Team › Roster first."
       : !adminTask && adByTeam && !draft.ad_team_id ? "Pick the team this ad is for — Ads are numbered per team."
       : !adminTask && !adByTeam && !draft.channel_id ? "Pick a brand — its tasks are numbered per brand."
@@ -2686,7 +2689,7 @@ export function TaskPanel({ mode, task, canWrite, editors, channels, onClose, on
                   const elsePick = category === "service" && (
                     <button type="button" className={"tp2-type off" + (otherPick ? " on" : "")} aria-pressed={otherPick}
                       onClick={() => { onPickContentType(null); setOtherPick((v) => !v); }}>
-                      <span>··· Something else</span><small>set how long below</small>
+                      <span>··· Something else</span><small>say what it is in the Brief</small>
                     </button>
                   );
                   if (typeChoices.length === 0 && !elsePick) {
@@ -2819,8 +2822,9 @@ export function TaskPanel({ mode, task, canWrite, editors, channels, onClose, on
               </section>
 
               <section className="tp2-sec">
-                <h3><span>3</span>{adminTask ? "Brief" : "Brief & links"}</h3>
-                <textarea className="tp-desc tp2-desc" placeholder="What does done look like? Anything they need to know…" value={description} maxLength={20000} onChange={(e) => setDescription(e.target.value)} />
+                <h3><span>3</span>{adminTask ? "Brief" : "Brief & links"}{otherPick && <em className={"tp2-req" + (elseNeedsBrief ? "" : " ok")}>{elseNeedsBrief ? "Required · say what the work is" : "✓ Says what the work is"}</em>}</h3>
+                <textarea className={"tp-desc tp2-desc" + (elseNeedsBrief ? " need" : "")} value={description} maxLength={20000} onChange={(e) => setDescription(e.target.value)}
+                  placeholder={otherPick ? "What is this work? e.g. Pack shots for the Diwali hamper: 6 photos on white, for the Longer Life team" : "What does done look like? Anything they need to know…"} />
                 {!adminTask && <Attachments links={cur.attachments} readOnly={false} onChange={(next) => setDraft((d) => ({ ...d, attachments: next }))} />}
                 {!adminTask && canAssign && (
                   <label className={"tp-linkreq tp2-switch" + (linkRequired ? " on" : "")}>
