@@ -398,8 +398,8 @@ goalsRouter.get("/goals/performance-all", goalView, async (req, res, next) => {
 // in their goals, and the month's hours, so the app can show what it adds —
 // goal points for a goal type, or the time it takes off the goal when it's
 // Other work (../goal-score.js rule 6). Your own, or someone you may give work to.
-// Also what their goal still needs (the sheet's "From the goal" picks): each
-// goal type with jobs left after what's done and what's already on their
+// Also each type in their goal and what it still needs (the sheet's type
+// chips: "3 to go"): jobs left after what's done and what's already on their
 // board, the most points still to win first.
 //   GET /goals/preview?editorId=&contentFormatId=
 goalsRouter.get("/goals/preview", async (req, res, next) => {
@@ -434,7 +434,7 @@ goalsRouter.get("/goals/preview", async (req, res, next) => {
     ]) : [{ rows: [] }, { rows: [] }];
     const kindOf = new Map(kinds.rows.map((r) => [r.id, r.category]));
     const openOf = new Map(open.rows.map((r) => [r.id, r.n]));
-    const suggest = goalTypes
+    const goalNeeds = goalTypes
       .filter((x) => kindOf.has(x.contentFormatId))
       .map((x) => {
         // the goal can be a part job once leave or Other work shrinks it: 4.6 to go is 5 jobs
@@ -446,7 +446,6 @@ goalsRouter.get("/goals/preview", async (req, res, next) => {
           goal: Math.round(x.goal * 10) / 10, done, open: onBoard, need: Math.max(0, left - onBoard), points: x.points,
         };
       })
-      .filter((x) => x.need > 0)
       .sort((a, b) => b.need * b.points - a.need * a.points || b.need - a.need);
     res.json({
       preview: s ? {
@@ -455,7 +454,7 @@ goalsRouter.get("/goals/preview", async (req, res, next) => {
         inGoal: !!t, typeName: fmt.rows[0]?.name ?? null,
         points: t ? t.points : fmt.rows[0]?.points ?? null,
         typeGoal: t ? { goal: Math.round(t.goal * 10) / 10, done: t.done } : null,
-        suggest,
+        goalTypes: goalNeeds,
       } : null,
     });
   } catch (err) {

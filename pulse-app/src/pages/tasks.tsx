@@ -2266,15 +2266,15 @@ export function TaskPanel({ mode, task, canWrite, editors, channels, onClose, on
     inGoal: boolean; typeName: string | null; points: number | null; typeGoal: { goal: number; done: number } | null;
   } | null>(null);
   const [previewBusy, setPreviewBusy] = useState(false);
-  // What their goal still needs (GET /goals/preview's suggest), for the "From the goal" picks
-  type GoalPick = { contentFormatId: string; name: string | null; icon: string | null; category: TaskCategory; goal: number; done: number; open: number; need: number; points: number };
-  const [goalPicks, setGoalPicks] = useState<GoalPick[]>([]);
+  // Their goal, type by type (GET /goals/preview's goalTypes), for the type chips: "3 to go"
+  type GoalType = { contentFormatId: string; goal: number; done: number; open: number; need: number; points: number };
+  const [goalInfo, setGoalInfo] = useState<{ goalPoints: number; types: GoalType[] } | null>(null);
   useEffect(() => {
-    if (!creating || !draft.editor_id) { setGoalPicks([]); return; }
+    if (!creating || !draft.editor_id) { setGoalInfo(null); return; }
     let live = true;
-    api<{ preview: { suggest?: GoalPick[] } | null }>(`/goals/preview?editorId=${draft.editor_id}`)
-      .then((r) => { if (live) setGoalPicks(r.preview?.suggest ?? []); })
-      .catch(() => { if (live) setGoalPicks([]); });
+    api<{ preview: { goalPoints: number; goalTypes?: GoalType[] } | null }>(`/goals/preview?editorId=${draft.editor_id}`)
+      .then((r) => { if (live) setGoalInfo(r.preview ? { goalPoints: r.preview.goalPoints, types: r.preview.goalTypes ?? [] } : null); })
+      .catch(() => { if (live) setGoalInfo(null); });
     return () => { live = false; };
   }, [creating, draft.editor_id]);
   useEffect(() => {
@@ -2600,18 +2600,12 @@ export function TaskPanel({ mode, task, canWrite, editors, channels, onClose, on
       line = `Not in ${forName} goals this month. Once it's done, the time it took${shouldTake ? ` (up to ${tenths(shouldTake)}h)` : ""} comes off their goal, so they stay on track.`;
       const left = pv.timeFactor - (shouldTake ?? 0) / Math.max(1, pv.monthHours);
       after = left > 0 && pv.timeFactor > 0 ? (pv.reached / (pv.goalPoints * (left / pv.timeFactor))) * 100 : null;
+    } else if (selectedFormat && selectedFormat.counts_in_goal !== false) {
+      tag = "none"; big = "No points";
+      line = `${selectedFormat.name} counts in goals, but your goal this month has no ${selectedFormat.name} jobs, so it won't add points. Your lead can add some on Set goals.`;
     } else { tag = "none"; big = "No points"; line = "Not in your goals this month, so it won't add points. (Work someone gives you does take time off your goal.)"; }
     const now = pv && pv.goalPoints > 0 ? (pv.reached / pv.goalPoints) * 100 : null;
     const kinds = KINDS.filter((k) => !k.adminOnly || isAdmin);
-    // the goal's picks for the kind picked (none before one is), that this person
-    // may be given (an Assign grant can limit the types), up to four
-    const picks = category && !adminTask
-      ? goalPicks.filter((g) => g.category === category && (!limitTypes || limitTypes.includes(g.contentFormatId))).slice(0, 4)
-      : [];
-    const pickGoal = (g: GoalPick) => {
-      setOtherPick(false);
-      onPickContentType(g.contentFormatId);
-    };
     const hint = dayLocked ? "Start your day first: tap Start day above."
       : !category ? "Choose what kind of work this is to begin."
       : !title.trim() ? "Give the task a title."
@@ -2654,30 +2648,31 @@ export function TaskPanel({ mode, task, canWrite, editors, channels, onClose, on
                     </button>
                   ))}
                 </div>
-                {picks.length > 0 && (
-                  <div className="tp2-goalpicks">
-                    <span className="tp2-goalpicks-h">From {forName} goal · still to do this month</span>
-                    <div className="tp2-goalpicks-row" role="group" aria-label="Suggested from the goal">
-                      {picks.map((g) => (
-                        <button key={g.contentFormatId} type="button" className={"tp2-goalpick" + (cur.content_format_id === g.contentFormatId ? " on" : "")}
-                          aria-pressed={cur.content_format_id === g.contentFormatId} onClick={() => pickGoal(g)}>
-                          <span>{g.icon} {g.name}</span>
-                          <small>{g.need} to go{g.open ? ` · ${g.open} on the board` : ""} · {tenths(g.points)} {Number(g.points) === 1 ? "pt" : "pts"} each</small>
-                        </button>
-                      ))}
-                    </div>
-                  </div>
-                )}
                 {category && !adminTask && (() => {
-                  // tracked in goals, or not (Settings › Tasks & time › Goal); Service also offers "Something else"
-                  const chip = (f: ContentFormatDef) => (
-                    <button key={f.id} type="button" className={"tp2-type" + (f.counts_in_goal === false ? " off" : "") + (cur.content_format_id === f.id ? " on" : "")} aria-pressed={cur.content_format_id === f.id}
-                      onClick={() => { setOtherPick(false); onPickContentType(cur.content_format_id === f.id ? null : f.id); }}>
-                      <span>{f.icon} {f.name}</span>
-                      <small>{tenths(f.points ?? 0)} {Number(f.points) === 1 ? "pt" : "pts"}{isProject ? (f.duration_days ? ` · ${f.duration_days} day${f.duration_days === 1 ? "" : "s"}` : "") : f.hours != null ? ` · ${fmtHours(Number(f.hours))}h` : ""}</small>
-                    </button>
-                  );
-                  const inGoal = typeChoices.filter((f) => f.counts_in_goal !== false), offGoal = typeChoices.filter((f) => f.counts_in_goal === false);
+                  // tracked in goals, or not (Settings › Tasks & time › Goal); Service also offers "Something else".
+                  // Each goal type says what this person's goal still needs: "3 to go", "goal met", or no goal this month.
+                  const goalOf = new Map((goalInfo?.types ?? []).map((g) => [g.contentFormatId, g]));
+                  const goalNote = (f: ContentFormatDef): { cls: string; text: string } | null => {
+                    if (!goalInfo || !(goalInfo.goalPoints > 0) || f.counts_in_goal === false) return null;
+                    const g = goalOf.get(f.id);
+                    if (!g) return { cls: "none", text: "No goal this month" };
+                    if (g.need > 0) return { cls: "need", text: `${g.need} to go${g.open ? ` · ${g.open} on the board` : ""}` };
+                    return { cls: "met", text: g.done >= g.goal ? "Goal met" : "Rest on the board" };
+                  };
+                  const chip = (f: ContentFormatDef) => {
+                    const note = goalNote(f);
+                    return (
+                      <button key={f.id} type="button" className={"tp2-type" + (f.counts_in_goal === false ? " off" : "") + (note?.cls === "need" ? " goal" : "") + (cur.content_format_id === f.id ? " on" : "")} aria-pressed={cur.content_format_id === f.id}
+                        onClick={() => { setOtherPick(false); onPickContentType(cur.content_format_id === f.id ? null : f.id); }}>
+                        <span>{f.icon} {f.name}</span>
+                        <small>{tenths(f.points ?? 0)} {Number(f.points) === 1 ? "pt" : "pts"}{isProject ? (f.duration_days ? ` · ${f.duration_days} day${f.duration_days === 1 ? "" : "s"}` : "") : f.hours != null ? ` · ${fmtHours(Number(f.hours))}h` : ""}</small>
+                        {note && <em className={"tp2-type-goal " + note.cls}>{note.text}</em>}
+                      </button>
+                    );
+                  };
+                  // what the goal still needs most comes first; the rest keep their order
+                  const ask = (f: ContentFormatDef) => { const g = goalOf.get(f.id); return g && g.need > 0 ? g.need * g.points : 0; };
+                  const inGoal = typeChoices.filter((f) => f.counts_in_goal !== false).sort((a, b) => ask(b) - ask(a)), offGoal = typeChoices.filter((f) => f.counts_in_goal === false);
                   const elsePick = category === "service" && (
                     <button type="button" className={"tp2-type off" + (otherPick ? " on" : "")} aria-pressed={otherPick}
                       onClick={() => { onPickContentType(null); setOtherPick((v) => !v); }}>
