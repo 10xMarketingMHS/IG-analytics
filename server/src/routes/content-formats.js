@@ -51,8 +51,11 @@ const CATEGORIES = ["social", "ad", "service", "project"];
 // Org-wide, like editors — every channel picks from the same list.
 contentFormatsRouter.get("/content-formats", async (req, res, next) => {
   try {
+    // hours: its usual time (the team-wide time rule), shown on the New task sheet's type chips
     const { rows } = await pool.query(
-      `select ${await select()} from task_content_format where org_id = $1 and active order by sort_order, name`,
+      `select ${await select()},
+              (select r.hours::float from task_time_rule r where r.org_id = $1 and r.content_format_id = task_content_format.id and r.editor_id is null limit 1) as hours
+         from task_content_format where org_id = $1 and active order by sort_order, name`,
       [req.orgId],
     );
     res.json({ contentFormats: rows });

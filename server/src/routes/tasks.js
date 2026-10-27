@@ -289,6 +289,36 @@ const LITE = [
   "review_started_at", "can_review", "review_by",
 ];
 const liteTask = (t) => Object.fromEntries(LITE.filter((k) => k in t).map((k) => [k, t[k]]));
+// The number a new task would get (the New task sheet's chip) — a look only,
+// nothing is taken: the TID for Admin, the brand's SID / AID / SVID / PID, or
+// an Ads team's AID. Another task made first takes it, so it's "about".
+//   GET /tasks/next-ref?category=social|ad|service|project|admin&channelId=&adTeamId=
+tasksRouter.get("/tasks/next-ref", async (req, res, next) => {
+  try {
+    const cat = String(req.query.category ?? "");
+    const id = (v) => (z.string().uuid().safeParse(v).success ? v : null);
+    const kind = { social: "sid", ad: "adid", service: "svid", project: "pid" }[cat];
+    const prefix = { social: "SID", ad: "AID", service: "SVID", project: "PID", admin: "TID" }[cat];
+    if (!prefix) return res.json({ ref: null });
+    let n = null;
+    if (cat === "admin") {
+      n = (await pool.query("select next_val from task_ref_seq where org_id = $1 and kind = 'tid'", [req.orgId])).rows[0]?.next_val ?? 1;
+    } else if (cat === "ad" && id(req.query.adTeamId)) {
+      const { rows } = await pool.query("select next_aid from ad_team where id = $1 and org_id = $2", [req.query.adTeamId, req.orgId]);
+      n = rows.length ? Number(rows[0].next_aid) + 1 : null;
+    } else if (id(req.query.channelId)) {
+      const { rows } = await pool.query(
+        "select (select next_val from task_brand_ref_seq where channel_id = w.id and kind = $3) as n from workspace w where w.id = $1 and w.org_id = $2",
+        [req.query.channelId, req.orgId, kind],
+      );
+      n = rows.length ? Number(rows[0].n ?? 1) : null;
+    }
+    res.json({ ref: n == null ? null : `${prefix}-${String(n).padStart(5, "0")}` });
+  } catch (err) {
+    next(err);
+  }
+});
+
 tasksRouter.get("/tasks", async (req, res, next) => {
   try {
     const clauses = ["t.org_id = $1"];

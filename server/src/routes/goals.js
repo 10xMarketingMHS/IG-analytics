@@ -5,7 +5,7 @@ import { pool } from "../db.js";
 import { requireAdmin, requireEditor } from "../resolve-workspace.js";
 import { requirePermission } from "../permissions.js";
 import { callerAccess } from "../page-access.js";
-import { resolveBudgetHours } from "./tasks.js";
+import { callerEditorId, canAssignTasks, resolveBudgetHours } from "./tasks.js";
 import { hasColumn } from "../schema-flags.js";
 import { capacityFor } from "../work-calendar.js";
 import { monthPenalties, readSettings } from "../attendance.js";
@@ -386,6 +386,45 @@ goalsRouter.get("/goals/performance-all", goalView, async (req, res, next) => {
       p.monthHours = Math.round(s.workingDays * s.hoursPerDay * 10) / 10;
     }
     res.json({ month, people });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// How a task would score for its person this month (the New task sheet's How
+// it scores panel): their goal and what's counted so far, whether its type is
+// in their goals, and the month's hours, so the app can show what it adds —
+// goal points for a goal type, or the time it takes off the goal when it's
+// Other work (../goal-score.js rule 6). Your own, or someone you may give work to.
+//   GET /goals/preview?editorId=&contentFormatId=
+goalsRouter.get("/goals/preview", async (req, res, next) => {
+  try {
+    const uuid = (v) => (z.string().uuid().safeParse(v).success ? v : null);
+    const mine = await callerEditorId(req);
+    const editorId = uuid(req.query.editorId) ?? mine;
+    if (!editorId) return res.json({ preview: null });
+    if (editorId !== mine) {
+      const [viewer, ranks, may] = await Promise.all([taskViewer(req), editorRanks(req.orgId), canAssignTasks(req)]);
+      if (!may || !seesEditor(viewer, ranks, editorId)) return res.status(403).json({ error: "You can only see the goals of people you give work to." });
+    }
+    const ist = new Date(Date.now() + 330 * 60_000);
+    const month = `${ist.getUTCFullYear()}-${String(ist.getUTCMonth() + 1).padStart(2, "0")}-01`;
+    const cf = uuid(req.query.contentFormatId);
+    const [scores, fmt] = await Promise.all([
+      scoreMonthAll(req.orgId, month, editorId),
+      cf ? pool.query("select name, points::float from task_content_format where id = $1 and org_id = $2", [cf, req.orgId]) : { rows: [] },
+    ]);
+    const s = scores.get(editorId);
+    const t = cf ? s?.types.find((x) => x.contentFormatId === cf) : null;
+    res.json({
+      preview: s ? {
+        goalPoints: Math.round(s.goalPoints * 10) / 10, reached: Math.round(s.reached * 10) / 10, pct: s.pct,
+        monthHours: Math.round(s.workingDays * s.hoursPerDay * 10) / 10, timeFactor: s.timeFactor, otherHours: s.otherHours, leaveDays: s.leaveDays,
+        inGoal: !!t, typeName: fmt.rows[0]?.name ?? null,
+        points: t ? t.points : fmt.rows[0]?.points ?? null,
+        typeGoal: t ? { goal: Math.round(t.goal * 10) / 10, done: t.done } : null,
+      } : null,
+    });
   } catch (err) {
     next(err);
   }

@@ -12,7 +12,8 @@ import { noteTaskSeen } from "@/lib/use-task-notify";
 import { bankedMs, breakOffsetMs, fmtWait, isDayPaused, isOverBudget, OFFICE_CLOSE_HOUR, reviewWaitMs, SLOW_REVIEW_MS } from "@/lib/task-timing";
 import { onTasksChanged } from "@/lib/task-events";
 import { peopleVisibleTo } from "@/lib/home-role";
-import { useIsSuper } from "@/lib/use-org";
+import { useIsSuper, useOrg } from "@/lib/use-org";
+import { tenths } from "@/lib/goal-periods";
 import { askStartDay, useDayLocked, useEodState } from "@/lib/eod-context";
 import { useAuth } from "@/lib/auth-context";
 import { useReviewAccess } from "@/lib/use-review-access";
@@ -1980,11 +1981,30 @@ function Row({ label, icon, note, children }: { label: string; icon?: ReactNode;
   );
 }
 
-// The number a new task will be given, by category.
-const CATEGORY_PREFIX: Record<TaskCategory, string> = { social: "SID", ad: "AID", service: "SVID", project: "PID", admin: "TID" };
+// (The number a new task will be given is the server's to say: GET /tasks/next-ref.)
 
 // One-tap due dates for a new task: today, tomorrow, and the coming Friday
 // and Monday.
+// The New task sheet's kinds of work, each with what it covers.
+const KINDS: { k: TaskCategory; icon: string; label: string; sub: string; adminOnly?: boolean }[] = [
+  { k: "social", icon: "📣", label: "Social", sub: "Reels, carousels, posts" },
+  { k: "ad", icon: "💰", label: "Ads", sub: "Ad videos for the teams" },
+  { k: "service", icon: "🧰", label: "Service", sub: "Schedule, requests" },
+  { k: "project", icon: "📁", label: "Project", sub: "Bigger work, with a start" },
+  { k: "admin", icon: "🛠️", label: "Admin", sub: "Just for you, no timer", adminOnly: true },
+];
+// Its due picks: Today, Tomorrow, and the next two working days — no Sundays,
+// no Saturdays when the office is shut then, no holidays (Settings › General).
+function workDues(cal?: { satOff?: boolean; holidays?: string[] } | null) {
+  const now = new Date();
+  const out = [{ label: "Today", value: ymd(now) }, { label: "Tomorrow", value: ymd(addDays(now, 1)) }];
+  const off = (d: Date) => d.getDay() === 0 || (d.getDay() === 6 && !!cal?.satOff) || (cal?.holidays ?? []).includes(ymd(d));
+  for (let d = addDays(now, 2); out.length < 4; d = addDays(d, 1)) {
+    if (!off(d)) out.push({ label: d.toLocaleDateString("en-GB", { weekday: "short", day: "numeric" }), value: ymd(d) });
+  }
+  return out;
+}
+
 function quickDues() {
   const now = new Date();
   const out = [{ label: "Today", value: ymd(now) }, { label: "Tomorrow", value: ymd(addDays(now, 1)) }];
@@ -2225,6 +2245,36 @@ export function TaskPanel({ mode, task, canWrite, editors, channels, onClose, on
   const dueMax = isProject && cur.start_date != null && projectDuration != null
     ? ymd(addDays(new Date(`${cur.start_date}T00:00:00`), projectDuration))
     : undefined;
+  // New task sheet: the number it'll get (a look, nothing taken), and how it
+  // scores for its person (GET /goals/preview)
+  const { org } = useOrg();
+  const [nextRef, setNextRef] = useState<string | null>(null);
+  useEffect(() => {
+    if (!creating || !category) { setNextRef(null); return; }
+    const p = new URLSearchParams({ category });
+    if (adByTeam && draft.ad_team_id) p.set("adTeamId", draft.ad_team_id);
+    if (!adByTeam && draft.channel_id) p.set("channelId", draft.channel_id);
+    let live = true;
+    api<{ ref: string | null }>(`/tasks/next-ref?${p.toString()}`).then((r) => { if (live) setNextRef(r.ref); }).catch(() => { if (live) setNextRef(null); });
+    return () => { live = false; };
+  }, [creating, category, adByTeam, draft.ad_team_id, draft.channel_id]);
+  const [preview, setPreview] = useState<{
+    goalPoints: number; reached: number; pct: number | null; monthHours: number; timeFactor: number; otherHours: number; leaveDays: number;
+    inGoal: boolean; typeName: string | null; points: number | null; typeGoal: { goal: number; done: number } | null;
+  } | null>(null);
+  const [previewBusy, setPreviewBusy] = useState(false);
+  useEffect(() => {
+    if (!creating || !draft.editor_id || !draft.content_format_id || category === "admin") { setPreview(null); return; }
+    let live = true;
+    setPreviewBusy(true);
+    const t = setTimeout(() => {
+      api<{ preview: typeof preview }>(`/goals/preview?editorId=${draft.editor_id}&contentFormatId=${draft.content_format_id}`)
+        .then((r) => { if (live) setPreview(r.preview); })
+        .catch(() => { if (live) setPreview(null); })
+        .finally(() => { if (live) setPreviewBusy(false); });
+    }, 150);
+    return () => { live = false; clearTimeout(t); };
+  }, [creating, draft.editor_id, draft.content_format_id, category]);
 
   async function patch(fields: Record<string, unknown>) {
     if (!task) return;
@@ -2316,20 +2366,8 @@ export function TaskPanel({ mode, task, canWrite, editors, channels, onClose, on
   // a drawer on the right to view and edit one. Same fields, same rules, same
   // saves as before — only the arrangement and the controls' look changed.
   const ic = (x: ReactNode) => (creating ? undefined : x);
-  const pfx = activeCategory ? CATEGORY_PREFIX[activeCategory] : null;
   const ref = task ? taskRef(task) : null;
   const otherIds = task ? [task.tid, showId(task.sid), showId(task.ad_id), task.svid, task.pid].filter((x): x is string => !!x && x !== ref) : [];
-  const createHint = creating && dayLocked ? "Start your day first: tap Start day above."
-    : !category ? `Choose a category — Social, Ads, Service or Project${isAdmin ? " or Admin" : ""} — to begin.`
-    : adminNeedsRoster ? "You're not on the team roster yet, so an Admin task would have no owner. Add yourself on Team › Roster (Edit on your row) first."
-    : adminTask ? (!title.trim() ? "Add a title — Admin tasks need nothing else." : "Admin task — just for you.")
-    : adByTeam && !draft.ad_team_id ? "Pick the team this ad is for — Ads are numbered per team."
-    : !adByTeam && !draft.channel_id ? "Pick a Brand — Social, Ads, Service and Project tasks are numbered per brand."
-    : !title.trim() ? "Add a task title."
-    : category === "project" && contentTypeChoices.length === 0 ? "No project types exist yet. Add one under Settings › Tasks & time (as a Project type) first."
-    : category === "project" && !draft.content_format_id ? "Pick a project type."
-    : limitTypes && !draft.content_format_id ? `Pick a content type. You can give others only ${limitNames} tasks.`
-    : "Checklist & comments become available after you create the task.";
   const rule = creating || !task ? ""
     : task.status === "review" ? (canResolve
       ? "To approve, set Status to Completed. Sending back for rework needs a note — use the Send back / ← button."
@@ -2524,57 +2562,228 @@ export function TaskPanel({ mode, task, canWrite, editors, channels, onClose, on
   );
 
   if (creating) {
+    // What the person this is for gets out of it (GET /goals/preview): goal
+    // points for a type in their goals, or — given to them, outside their
+    // goals — the time it takes off their goal (server/src/goal-score.js rule 6).
+    const forMe = !!cur.editor_id && cur.editor_id === user?.editorId;
+    const forName = forMe ? "your" : `${editors.find((e) => e.id === cur.editor_id)?.name ?? "their"}'s`;
+    const shouldTake = draft.budget_hours ?? selectedFormat?.hours ?? null;
+    const pv = preview;
+    let tag: "goal" | "other" | "none" | null = null, big = "", line = "";
+    let after: number | null = null;
+    if (!category) line = "Pick what kind of work this is to see how it scores.";
+    else if (adminTask) { tag = "none"; big = "No points"; line = "Admin tasks don't count toward goals."; }
+    else if (!cur.editor_id) { tag = "none"; big = "Not given yet"; line = "Whoever takes it gets its points, if its type is in their goals."; }
+    else if (!cur.content_format_id) line = `Pick its type to see what it adds to ${forName} month.`;
+    else if (previewBusy && !pv) line = "Working it out…";
+    else if (!pv || !(pv.goalPoints > 0)) { tag = "none"; big = "No goal yet"; line = `${forMe ? "You have" : `${forName.replace(/'s$/, "")} has`} no goals set this month, so it won't add points yet.`; }
+    else if (pv.inGoal) {
+      tag = "goal"; big = `+${tenths(pv.points ?? 0)} pts`;
+      line = `Counts toward ${forName} ${pv.typeName} goal${pv.typeGoal ? `: ${tenths(pv.typeGoal.done)} of ${tenths(pv.typeGoal.goal)} done so far` : ""}.`;
+      after = ((pv.reached + (pv.points ?? 0)) / pv.goalPoints) * 100;
+    } else if (givenToOther) {
+      tag = "other"; big = shouldTake ? `−${tenths(shouldTake)}h off the goal` : "Time off the goal";
+      line = `Not in ${forName} goals this month. Once it's done, the time it took${shouldTake ? ` (up to ${tenths(shouldTake)}h)` : ""} comes off their goal, so they stay on track.`;
+      const left = pv.timeFactor - (shouldTake ?? 0) / Math.max(1, pv.monthHours);
+      after = left > 0 && pv.timeFactor > 0 ? (pv.reached / (pv.goalPoints * (left / pv.timeFactor))) * 100 : null;
+    } else { tag = "none"; big = "No points"; line = "Not in your goals this month, so it won't add points. (Work someone gives you does take time off your goal.)"; }
+    const now = pv && pv.goalPoints > 0 ? (pv.reached / pv.goalPoints) * 100 : null;
+    const kinds = KINDS.filter((k) => !k.adminOnly || isAdmin);
+    const hint = dayLocked ? "Start your day first: tap Start day above."
+      : !category ? "Choose what kind of work this is to begin."
+      : !title.trim() ? "Give the task a title."
+      : adminNeedsRoster ? "You're not on the team roster yet, so an Admin task would have no owner. Add yourself on Team › Roster first."
+      : !adminTask && adByTeam && !draft.ad_team_id ? "Pick the team this ad is for — Ads are numbered per team."
+      : !adminTask && !adByTeam && !draft.channel_id ? "Pick a brand — its tasks are numbered per brand."
+      : category === "project" && contentTypeChoices.length === 0 ? "No project types yet. Add one under Settings › Tasks & time first."
+      : category === "project" && !draft.content_format_id ? "Pick a project type."
+      : limitTypes && !draft.content_format_id ? `Pick a type. You can give others only ${limitNames} tasks.`
+      : nextRef ? `Ready — ${nextRef} will be assigned when you create it.` : "Ready to create.";
     return (
       <div className={"task-panel-scrim center tp2-scrim" + (leaving ? " leaving" : "")} onClick={close}>
-        <div className={"task-panel centered tp2 tp2-sheet" + (leaving ? " leaving" : "")} role="dialog" aria-label="New task" onClick={(e) => e.stopPropagation()}>
+        <div className={"task-panel centered tp2 tp2-sheet tp2-new" + (leaving ? " leaving" : "")} role="dialog" aria-label="New task" onClick={(e) => e.stopPropagation()}>
           <div className="tp2-grab" aria-hidden="true"><span /></div>
-          <div className="tp2-head">
-            <span className="tp2-headic">{TB_ICON.addTask}</span>
-            <span className="tp2-headtx">
-              <b>New task</b>
-              <span>{pfx ? `${CATEGORY_LABEL[category!]} · gets its ${pfx} number when you create it · starts in To Do` : "Fill in the details below"}</span>
-            </span>
-            <span className="tp2-grow" />
+          <div className="tp2-nhead">
+            <input className={"tp2-ntitle" + (title.trim() ? " filled" : "")} autoFocus placeholder="What needs doing?" value={title} maxLength={300}
+              onChange={(e) => setTitle(e.target.value)} aria-label="Task title" />
+            {nextRef && <span className="tp2-refchip" title="The number it gets when you create it">{nextRef}</span>}
             <button type="button" className="tp2-x" onClick={close} aria-label="Close">{TB_ICON.close}</button>
           </div>
-          <div className="tp-body tp2-body">
-            {dayLocked && (
-              <div className="tp2-dayask" role="status">
-                <span><b>Your day hasn't started.</b> Start it to create this task. Its timer and points count from then.</span>
-                <button type="button" className="tp2-btn pri" disabled={dayBusy} onClick={() => { startDay().catch(() => {}); }}>
-                  {dayBusy ? "Starting…" : "▶ Start day"}
-                </button>
-              </div>
-            )}
-            <input className={"tp-title tp2-title" + (title.trim() ? " filled" : "")} autoFocus placeholder="Task title…" value={title} maxLength={300}
-              onChange={(e) => setTitle(e.target.value)} />
-            <textarea className="tp-desc tp2-desc" placeholder="Add a description…" value={description} maxLength={20000} onChange={(e) => setDescription(e.target.value)} />
-            <div className="tp-fields tp2-card">
-              <Row label="Category" note={category ? undefined : "Required"}>
-                <div className="tp2-chips" role="group" aria-label="Category">
-                  <button type="button" className={"tp2-chip" + (category === "social" ? " on" : "")} onClick={() => pickCategory("social")}>📣 Social</button>
-                  <button type="button" className={"tp2-chip" + (category === "ad" ? " on" : "")} onClick={() => pickCategory("ad")}>💰 Ads</button>
-                  <button type="button" className={"tp2-chip" + (category === "service" ? " on" : "")} onClick={() => pickCategory("service")}>🧰 Service</button>
-                  <button type="button" className={"tp2-chip" + (category === "project" ? " on" : "")} onClick={() => pickCategory("project")}>📁 Project</button>
-                  {isAdmin && <button type="button" className={"tp2-chip" + (category === "admin" ? " on" : "")} onClick={() => pickCategory("admin")}>🛠️ Admin</button>}
+          <div className="tp2-nbody">
+            <div className="tp2-nform">
+              {dayLocked && (
+                <div className="tp2-dayask" role="status">
+                  <span><b>Your day hasn't started.</b> Start it to create this task. Its timer and points count from then.</span>
+                  <button type="button" className="tp2-btn pri" disabled={dayBusy} onClick={() => { startDay().catch(() => {}); }}>
+                    {dayBusy ? "Starting…" : "▶ Start day"}
+                  </button>
                 </div>
-              </Row>
-              {placeRow}
-              {assigneeRow}
-              {startRow}
-              {dueRow}
-              {otherRows}
-              {priorityRow}
-              {typeRow}
-              {linkRow}
-              {pointsRow}
+              )}
+
+              <section className="tp2-sec">
+                <h3><span>1</span>What kind of work</h3>
+                <div className="tp2-kinds" role="group" aria-label="Category">
+                  {kinds.map((k) => (
+                    <button key={k.k} type="button" className={"tp2-kind" + (category === k.k ? " on" : "")} aria-pressed={category === k.k} onClick={() => pickCategory(k.k)}>
+                      <span className="tp2-kind-ic" aria-hidden="true">{k.icon}</span>
+                      <b>{k.label}</b>
+                      <small>{k.sub}</small>
+                    </button>
+                  ))}
+                </div>
+                {category && !adminTask && (
+                  <div className="tp2-types" role="group" aria-label={isProject ? "Project type" : "Content type"}>
+                    {typeChoices.length === 0 && <span className="tp2-faint">No {isProject ? "project" : CATEGORY_LABEL[category].toLowerCase()} types yet — add them under Settings › Tasks & time.</span>}
+                    {typeChoices.map((f) => (
+                      <button key={f.id} type="button" className={"tp2-type" + (cur.content_format_id === f.id ? " on" : "")} aria-pressed={cur.content_format_id === f.id}
+                        onClick={() => onPickContentType(cur.content_format_id === f.id ? null : f.id)}>
+                        <span>{f.icon} {f.name}</span>
+                        <small>{tenths(f.points ?? 0)} pts{isProject ? (f.duration_days ? ` · ${f.duration_days} day${f.duration_days === 1 ? "" : "s"}` : "") : f.hours != null ? ` · ${fmtHours(Number(f.hours))}h` : ""}</small>
+                      </button>
+                    ))}
+                  </div>
+                )}
+                {limitTypes && !adminTask && (
+                  <span className="hint">For someone else you can pick only {limitNames}.</span>
+                )}
+                {givenToOther && !adminTask && (
+                  <div className="tp2-given">
+                    <div className="tp2-given-head">
+                      <b>Given to {editors.find((e) => e.id === cur.editor_id)?.name ?? "them"}</b>
+                      {pv && cur.content_format_id && !pv.inGoal && pv.goalPoints > 0 && <span className="tp2-tag other">Outside their goals</span>}
+                    </div>
+                    <label className="tp2-ncell">
+                      <span>Requested by</span>
+                      <input className="t" placeholder="Which team asked, e.g. Longer Life" maxLength={80} value={draft.requested_by}
+                        onChange={(e) => setDraft((d) => ({ ...d, requested_by: e.target.value }))} />
+                    </label>
+                    <div className="tp2-ncell">
+                      <span>Should take</span>
+                      <div className="tp2-step">
+                        <button type="button" aria-label="Half an hour less" onClick={() => setDraft((d) => ({ ...d, budget_hours: Math.max(0.5, (d.budget_hours ?? selectedFormat?.hours ?? 1) - 0.5) }))}>−</button>
+                        <b>{shouldTake != null ? `${tenths(shouldTake)}h` : "—"}</b>
+                        <button type="button" aria-label="Half an hour more" onClick={() => setDraft((d) => ({ ...d, budget_hours: Math.min(200, (d.budget_hours ?? selectedFormat?.hours ?? 0) + 0.5) }))}>+</button>
+                        {[1, 3, 8].map((h) => (
+                          <button key={h} type="button" className={"tp2-pill" + (shouldTake === h ? " on" : "")} onClick={() => setDraft((d) => ({ ...d, budget_hours: h }))}>{h}h</button>
+                        ))}
+                      </div>
+                      <small className="tp2-faint">Becomes its time budget{selectedFormat?.hours != null && draft.budget_hours == null ? ` (its type's usual ${fmtHours(Number(selectedFormat.hours))}h)` : ""}.</small>
+                    </div>
+                  </div>
+                )}
+              </section>
+
+              <section className="tp2-sec">
+                <h3><span>2</span>Details</h3>
+                <div className="tp2-ngrid">
+                  {!adminTask && (
+                    <label className="tp2-ncell">
+                      <span>{adByTeam ? "Team" : "Brand"}</span>
+                      {adByTeam ? (
+                        <select className="t" value={draft.ad_team_id ?? ""} aria-label="Team this ad is for" onChange={(e) => setDraft((d) => ({ ...d, ad_team_id: e.target.value || null }))}>
+                          <option value="">Pick a team</option>
+                          {(adTeams ?? []).map((x) => <option key={x.id} value={x.id}>{x.name}{x.leadName ? ` · ${x.leadName}` : ""}</option>)}
+                        </select>
+                      ) : (
+                        <select className="t" value={draft.channel_id ?? ""} onChange={(e) => setDraft((d) => ({ ...d, channel_id: e.target.value || null }))}>
+                          <option value="">Pick a brand</option>
+                          {channels.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
+                        </select>
+                      )}
+                    </label>
+                  )}
+                  <div className="tp2-ncell">
+                    <span>Assignee</span>
+                    {adminTask ? selfChip : (
+                      <>
+                        {canSelfAssign && canAssign && (
+                          <div className="tp2-segs" role="group" aria-label="Who it's for">
+                            <button type="button" className={assignMode === "self" ? "on" : ""} onClick={() => setMode("self")}>Myself</button>
+                            <button type="button" className={assignMode === "assign" ? "on" : ""} onClick={() => setMode("assign")}>Assign</button>
+                          </div>
+                        )}
+                        {canAssign && assignMode === "assign" ? (
+                          <div className="tp2-people" role="group" aria-label="Assign to">
+                            <button type="button" className={"tp2-person" + (!cur.editor_id ? " on" : "")} onClick={() => setDraft((d) => ({ ...d, editor_id: null }))}>
+                              <span className="tb-ava init none">–</span>Unassigned
+                            </button>
+                            {assignPeople.map((ed) => (
+                              <button key={ed.id} type="button" className={"tp2-person" + (cur.editor_id === ed.id ? " on" : "")} onClick={() => setDraft((d) => ({ ...d, editor_id: ed.id }))}>
+                                <Ava name={ed.name} image={ed.image_url} size={24} />{ed.name}
+                              </button>
+                            ))}
+                          </div>
+                        ) : (!canAssign || assignMode === "self") && selfChip}
+                      </>
+                    )}
+                  </div>
+                  {isProject && (
+                    <label className="tp2-ncell">
+                      <span>Start date</span>
+                      <input className="t tp2-date" type="date" value={cur.start_date ?? ""} onChange={(e) => setDraft((d) => ({ ...d, start_date: e.target.value || null }))} />
+                    </label>
+                  )}
+                  <div className="tp2-ncell">
+                    <span>Due</span>
+                    {!isProject && (
+                      <div className="tp2-inline">
+                        {workDues(org?.calendar).map((q) => (
+                          <button key={q.value} type="button" className={"tp2-pill" + (cur.due_date === q.value ? " on" : "")} onClick={() => setDraft((d) => ({ ...d, due_date: d.due_date === q.value ? null : q.value }))}>{q.label}</button>
+                        ))}
+                      </div>
+                    )}
+                    <input className="t tp2-date" type="date" value={cur.due_date ?? ""} aria-label="Due date"
+                      min={isProject ? (cur.start_date ?? undefined) : undefined} max={dueMax}
+                      onChange={(e) => setDraft((d) => ({ ...d, due_date: e.target.value || null }))} />
+                    {isProject && projectDuration != null && <small className="tp2-faint">Within {projectDuration} day{projectDuration === 1 ? "" : "s"} of the start{dueMax ? ` (by ${dueMax})` : ""}.</small>}
+                  </div>
+                  <div className="tp2-ncell">
+                    <span>Priority</span>
+                    <div className="tp2-segs" role="group" aria-label="Priority">
+                      {(["low", "medium", "high"] as const).map((p) => (
+                        <button key={p} type="button" className={"pri-" + p + (cur.priority === p ? " on" : "")} onClick={() => setDraft((d) => ({ ...d, priority: p }))}>{PRI_LABEL[p]}</button>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+              </section>
+
+              <section className="tp2-sec">
+                <h3><span>3</span>{adminTask ? "Brief" : "Brief & links"}</h3>
+                <textarea className="tp-desc tp2-desc" placeholder="What does done look like? Anything they need to know…" value={description} maxLength={20000} onChange={(e) => setDescription(e.target.value)} />
+                {!adminTask && <Attachments links={cur.attachments} readOnly={false} onChange={(next) => setDraft((d) => ({ ...d, attachments: next }))} />}
+                {!adminTask && canAssign && (
+                  <label className={"tp-linkreq tp2-switch" + (linkRequired ? " on" : "")}>
+                    <input type="checkbox" checked={linkRequired} onChange={(e) => setLinkOverride(e.target.checked)} />
+                    <span className="tp2-track" aria-hidden="true"><span /></span>
+                    <span>Review link required to submit for review</span>
+                  </label>
+                )}
+              </section>
             </div>
-            {!(adminTask || adminEdit) && (
-              <Attachments links={cur.attachments} readOnly={!canEditWork} onChange={(next) => set("attachments", "attachments", next)} />
-            )}
+
+            <aside className="tp2-score" aria-live="polite">
+              <b className="tp2-score-h">How it scores</b>
+              {tag && <span className={"tp2-tag " + tag}>{tag === "goal" ? "Goal" : tag === "other" ? "Other work" : "No points"}</span>}
+              {big && <span className={"tp2-score-big " + (tag ?? "")}>{big}</span>}
+              <span className="tp2-score-line">{line}</span>
+              {now != null && (
+                <div className="tp2-month">
+                  <span className="tp2-month-l">{forMe ? "Your" : forName.replace(/'s$/, "") + "'s"} month</span>
+                  <div className="tp2-month-bar">
+                    <span className="done" style={{ width: `${Math.min(100, now)}%` }} />
+                    {after != null && after > now && <span className="this" style={{ width: `${Math.max(0, Math.min(100, after) - Math.min(100, now))}%` }} />}
+                  </div>
+                  <span className="tp2-month-n">
+                    {Math.round(now)}% of the goal{after != null && Math.round(after) !== Math.round(now) ? <> → <b>{Math.round(Math.min(150, after))}%</b> with this task</> : ""}
+                  </span>
+                  {(pv?.otherHours ?? 0) > 0 && <small className="tp2-faint">Already {tenths(pv!.otherHours)}h of Other work this month.</small>}
+                </div>
+              )}
+            </aside>
           </div>
           <div className="tp2-foot">
-            <span className={"tp2-foot-hint" + (canCreate ? " ok" : "")}>{canCreate ? TB_ICON.check : TB_ICON.info}<span>{createHint}</span></span>
+            <span className={"tp2-foot-hint" + (canCreate ? " ok" : "")}>{canCreate ? TB_ICON.check : TB_ICON.info}<span>{hint}</span></span>
             <button type="button" className="tp2-btn" onClick={close}>Cancel</button>
             <button type="button" className="tp2-btn pri" disabled={busy || !canCreate} onClick={create}>{TB_ICON.plus} {busy ? "Creating…" : "Create task"}</button>
           </div>
