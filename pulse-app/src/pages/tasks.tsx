@@ -473,6 +473,8 @@ export function TasksPage() {
   function canTransition(t: Task, target: TaskStatus): boolean {
     if (!canWrite || target === t.status) return false;
     if (t.status === "review") return canResolveTask(t) && (target === "done" || target === "in_progress");
+    // Started before it's handed in: To Do goes only to In progress (the server holds the same)
+    if (t.status === "todo" && target !== "in_progress") return false;
     // A General task skips Review: its owner closes it, and an admin reopens it to
     // In progress (the server does the same)
     if (isGeneral(t) && t.status === "done") return isAdmin && target === "in_progress";
@@ -724,6 +726,8 @@ export function TasksPage() {
       toast.error(
         t.status === "review"
           ? (t.review_by ? `Waiting for ${t.review_by} to review it.` : "Only its reviewer can approve or send it back.")
+          : t.status === "todo" && (status === "review" || status === "done")
+            ? "Start it first: a task goes to In progress before Review."
           : isGeneral(t) && status === "review"
             ? "A General task needs no review. Move it to Completed when it is done."
           : status === "done" && !isGeneral(t)
@@ -2405,10 +2409,14 @@ export function TaskPanel({ mode, task, canWrite, editors, channels, onClose, on
     if (c.key === task.status) return true;
     if (task.status === "review") return canResolve && c.key === "done";
     if (task.status === "done") return isAdmin && (task.task_type === "admin" ? c.key === "in_progress" : c.key !== "todo");
-    // The assignee moves it — once they've accepted it. A General task skips
-    // Review: its owner sets it to Completed.
+    // The assignee moves it — once they've accepted it — one way only: To Do →
+    // In progress → Review (a General task: → Completed, no review). Never back to
+    // To Do once started, never on without starting (the server holds the same).
     const general = task.task_type === "admin";
-    return (general ? c.key !== "review" : c.key !== "done") && !!user?.editorId && task.editor_id === user.editorId && task.accepted;
+    const next = task.status === "todo" ? c.key === "in_progress"
+      : task.status === "in_progress" ? c.key === (general ? "done" : "review")
+      : false;
+    return next && !!user?.editorId && task.editor_id === user.editorId && task.accepted;
   });
 
   // The redesign's look: a sheet that rises from the bottom to create a task,

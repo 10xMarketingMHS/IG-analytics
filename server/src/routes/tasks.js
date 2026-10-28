@@ -731,9 +731,9 @@ tasksRouter.patch("/tasks/:id", requireEditor, requireActiveEod, async (req, res
     let holdAction = null;
     let budgetStartSet = false;
     if (d.status !== undefined && d.status !== prior.status) {
-      // A General task closes itself: its owner moves it to Completed (Review
-      // completes it too), with no review — the owner checks below still apply.
-      if (prior.task_type === "admin" && prior.status !== "review" && prior.status !== "done" && (d.status === "done" || d.status === "review")) {
+      // A General task closes itself: its owner moves it from In progress to
+      // Completed (Review completes it too), with no review — the owner checks below still apply.
+      if (prior.task_type === "admin" && prior.status === "in_progress" && (d.status === "done" || d.status === "review")) {
         d.status = "done";
         selfClosed = true;
         reviewLogAction = "approved";
@@ -791,6 +791,10 @@ tasksRouter.patch("/tasks/:id", requireEditor, requireActiveEod, async (req, res
           reviewNote = (d.reviewNote ?? "").trim() || null;
         }
       } else {
+        // Work is started before it's handed in: To Do goes to In progress first
+        if (prior.status === "todo" && (d.status === "review" || d.status === "done")) {
+          return res.status(400).json({ error: "Start it first — a task goes to In progress before Review or Completed." });
+        }
         if (d.status === "done" && !selfClosed) {
           return res.status(400).json({ error: "Move it to Review first — only an admin can mark it Completed." });
         }
