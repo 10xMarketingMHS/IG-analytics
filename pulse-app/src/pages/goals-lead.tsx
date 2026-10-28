@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, type ReactNode } from "react";
+import { Fragment, useEffect, useMemo, useState, type ReactNode } from "react";
 import { toast } from "sonner";
 import { api, ApiError } from "@/lib/api";
 import { gradFor } from "@/lib/editor-visuals";
@@ -8,7 +8,8 @@ import { monthName, tenths } from "@/lib/goal-periods";
 // results for the month — 200 L1 Conversions, 500 Leads, 50,000 Followers —
 // that the team delivers and the lead answers for, looked at in the Tactical
 // meetings: Review 1 (1–15) and Review 2 (16–month end). Counts are typed in at
-// each meeting; Followers is read from the connected social accounts. Below,
+// each meeting; Followers is the new followers the connected social accounts
+// gained, each review and the month, and opens to show them channel by channel. Below,
 // how each member's goals stand in a review, by Team goals' rule. Not part of
 // anyone's task score. Whoever sets the goals sets these; a Team Lead sees his
 // own and types in the numbers.
@@ -18,7 +19,9 @@ type Goal = { id: string; editorId: string; name: string; kind: Kind; target: nu
 type Lead = { id: string; name: string; imageUrl: string | null; designation: string | null };
 type Half = { target: number; done: number; pct: number | null; missed: number };
 type Member = { editorId: string; name: string; imageUrl: string | null; designation: string | null; h1: Half; h2: Half };
-type Followers = { accounts: number; now: number; start: number | null; r1: number; r2: number };
+// new followers (net) in each review and the month, added up and by channel (server/src/routes/lead-goals.js)
+type Channel = { id: string; provider: string; name: string; brand: string | null; now: number; r1: number; r2: number; month: number };
+type Followers = { accounts: number; now: number; r1: number; r2: number; month: number; list: Channel[] };
 type Resp = {
   ready: boolean; error?: string; month: string; prevMonth?: string; canEdit: boolean; me: string | null;
   leads: Lead[]; goals: Goal[]; followers: Followers; team: Member[];
@@ -29,6 +32,9 @@ type Row = { id: string | null; name: string; kind: Kind; target: string; r1: st
 const ymOf = (d: Date) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
 const initials = (n: string) => n.split(/\s+/).filter(Boolean).map((w) => w[0]).join("").slice(0, 2).toUpperCase();
 const n0 = (n: number) => n.toLocaleString("en-IN", { maximumFractionDigits: 1 });
+// a growth: +1,240 · −30 · 0
+const plus = (n: number) => (n > 0 ? `+${n0(n)}` : n < 0 ? `−${n0(-n)}` : "0");
+const PLATFORM: Record<string, string> = { instagram: "Instagram", facebook: "Facebook", youtube: "YouTube" };
 const sv = (d: ReactNode, size = 16) => (
   <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">{d}</svg>
 );
@@ -64,6 +70,7 @@ export function LeadGoals() {
   const [newKind, setNewKind] = useState<Kind>("count");
   const [newTarget, setNewTarget] = useState("");
   const [half, setHalf] = useState<"h1" | "h2">(new Date().getDate() <= 15 ? "h1" : "h2");
+  const [byChannel, setByChannel] = useState(false);
 
   useEffect(() => {
     let live = true;
@@ -113,18 +120,16 @@ export function LeadGoals() {
   // a key result's standing: each review against half its target (Review 1 the first half), and the month
   const standing = (r: Row) => {
     const target = Number(r.target) || 0;
-    if (r.kind === "followers") {
-      const pct = target ? f.now / target : null;
-      return { r1t: null, r2t: null, month: f.now, pct, text: !target ? "—" : f.now >= target ? "Reached" : `${n0(target - f.now)} to go`, cls: target && f.now >= target ? "good" : "warn" };
-    }
     const r1t = tenths(target / 2), r2t = tenths(target - r1t);
-    const a1 = num(r.r1) ?? 0, a2 = num(r.r2) ?? 0, sum = a1 + a2;
+    // Followers: the new followers each review brought (filled in); a count: as typed in
+    const fol = r.kind === "followers";
+    const a1 = fol ? f.r1 : num(r.r1) ?? 0, a2 = fol ? f.r2 : num(r.r2) ?? 0, sum = fol ? f.month : a1 + a2;
     const pct = target ? sum / target : null;
     const text = !target ? "—" : sum >= target ? "Met"
       : elapsed === 0 ? "Not started" : elapsed === 1 ? `Short by ${n0(target - sum)}`
       : (pct ?? 0) >= elapsed - 0.05 ? "On pace" : `Behind by ${n0(Math.ceil(target * elapsed - sum))}`;
     const cls = !target ? "" : sum >= target ? "good" : elapsed === 1 ? "bad" : (pct ?? 0) >= elapsed - 0.05 ? "good" : "warn";
-    return { r1t, r2t, month: sum, pct, text, cls };
+    return { r1t, r2t, a1, a2, month: sum, pct, text, cls };
   };
   const st = rows.map(standing);
   // the usual key results not added yet, one tap each
@@ -227,7 +232,7 @@ export function LeadGoals() {
             <div className="gs-capline">
               <span className="gs-formula">
                 Tactical meetings: Review 1 (1–15) · Review 2 (16–{lastDay})
-                <small>Counts are typed in at each meeting · Followers comes from the {f.accounts} connected account{f.accounts === 1 ? "" : "s"}</small>
+                <small>Counts are typed in at each meeting · Followers is the new followers of the {f.accounts} connected channel{f.accounts === 1 ? "" : "s"}</small>
               </span>
             </div>
           </section>
@@ -245,19 +250,24 @@ export function LeadGoals() {
                   const s = st[i];
                   const fol = r.kind === "followers";
                   return (
-                    <div className="gs-row lg-r" key={r.id ?? `new-${i}`}>
+                    <Fragment key={r.id ?? `new-${i}`}>
+                    <div className="gs-row lg-r">
                       <span className="lg-name">
                         {canEdit ? <input className="lg-in name" value={r.name} aria-label="Key result" onChange={(e) => patch(i, { name: e.target.value })} /> : <b>{r.name}</b>}
-                        <small>{fol ? "From the connected accounts" : "Typed in at the meetings"}</small>
+                        {fol ? (
+                          <button type="button" className="lg-chan" aria-expanded={byChannel} onClick={() => setByChannel((v) => !v)}>
+                            New followers · {f.accounts} channel{f.accounts === 1 ? "" : "s"} {byChannel ? "▴" : "▾"}
+                          </button>
+                        ) : <small>Typed in at the meetings</small>}
                       </span>
                       {canEdit
                         ? <input className="lg-in" type="number" min={0} value={r.target} placeholder="—" aria-label={`${r.name} target`} onChange={(e) => patch(i, { target: e.target.value })} />
                         : <b className="c lg-num">{r.target ? n0(Number(r.target)) : "—"}</b>}
                       {fol ? (
                         <>
-                          <span className="c lg-auto"><b>{n0(r1Over ? f.r1 : f.now)}</b><small>{r1Over ? "on the 15th" : "now"}</small></span>
-                          <span className="c lg-auto"><b>{n0(r2Over ? f.r2 : f.now)}</b><small>{r2Over ? "at month end" : r1Over ? "now" : "—"}</small></span>
-                          <span className="c lg-auto"><b>{n0(f.now)}</b><small>{f.start != null ? `${f.now - f.start >= 0 ? "+" : ""}${n0(f.now - f.start)} this month` : "now"}</small></span>
+                          <span className="c lg-auto"><b>{elapsed === 0 ? "—" : plus(f.r1)}</b><small className={s.r1t != null && f.r1 >= s.r1t && s.r1t > 0 ? "met" : ""}>of {s.r1t != null ? n0(s.r1t) : "—"}{!r1Over && elapsed > 0 ? " · so far" : ""}</small></span>
+                          <span className="c lg-auto"><b>{r1Over ? plus(f.r2) : "—"}</b><small className={s.r2t != null && f.r2 >= s.r2t && s.r2t > 0 ? "met" : ""}>of {s.r2t != null ? n0(s.r2t) : "—"}{r1Over && !r2Over ? " · so far" : ""}</small></span>
+                          <span className="c lg-auto"><b>{elapsed === 0 ? "—" : plus(f.month)}</b><small>{s.pct != null ? `${Math.floor(Math.max(0, s.pct) * 100)}%` : "—"} · {n0(f.now)} in all</small></span>
                         </>
                       ) : (
                         <>
@@ -277,6 +287,21 @@ export function LeadGoals() {
                         {canEdit && <button type="button" className="lg-x" aria-label={`Remove ${r.name}`} onClick={() => setRows(rows.filter((_, j) => j !== i))}>{IC.x}</button>}
                       </span>
                     </div>
+                    {fol && byChannel && (
+                      <div className="lg-chans">
+                        {f.list.length === 0 ? <span className="lg-chans-none">No channels connected yet — connect them under Settings › Connected apps.</span> : f.list.map((c) => (
+                          <div key={c.id} className="gs-row lg-r lg-chanrow">
+                            <span className="lg-name"><b>{c.brand ?? "—"}</b><small>{PLATFORM[c.provider] ?? c.provider} · {c.name}</small></span>
+                            <span className="c lg-auto"><b>{n0(c.now)}</b><small>in all</small></span>
+                            <span className="c lg-auto"><b>{elapsed === 0 ? "—" : plus(c.r1)}</b><small>Review 1</small></span>
+                            <span className="c lg-auto"><b>{r1Over ? plus(c.r2) : "—"}</b><small>Review 2</small></span>
+                            <span className="c lg-auto"><b>{elapsed === 0 ? "—" : plus(c.month)}</b><small>this month</small></span>
+                            <span className="r lg-st"><em className="gs-need">{f.month > 0 && c.month > 0 ? `${Math.round((c.month / f.month) * 100)}% of the new` : ""}</em></span>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                    </Fragment>
                   );
                 })}
                 {canEdit && (

@@ -420,3 +420,12 @@ select.lg-in{font:600 12px 'Plus Jakarta Sans',sans-serif;text-align:left}
 .gl-disc-n{display:flex;flex-direction:column;align-items:flex-end;gap:1px}
 .gl-disc-n b{font-weight:700}
 .gl-disc-n small{font-size:10px;font-weight:600;color:var(--gl-text3);white-space:nowrap}
+
+/* Lead goals › Followers: new followers, and channel by channel */
+.lg-chan{align-self:flex-start;padding:0;border:0;background:transparent;color:var(--gl-acText);font:700 10.5px 'Plus Jakarta Sans',sans-serif;cursor:pointer;white-space:nowrap}
+.lg-chan:hover{text-decoration:underline}
+.lg-chans{background:var(--gl-sunk)}
+.lg-chanrow{padding-top:6px;padding-bottom:6px}
+.lg-chanrow .lg-name b{font-size:12.5px}
+.lg-chanrow .lg-name small,.lg-chanrow .lg-name b{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.lg-chans-none{display:block;padding:10px 18px;font-size:12px;color:var(--gl-text3)}

@@ -60,27 +60,42 @@ async function teamLeads(orgId) {
   return rows;
 }
 
-// Every connected account's followers added up: now, and as each review closed
-// (the last count on or before its last day), and as the month began.
+// New followers this month, channel by channel and added up: what each
+// connected account gained from the month's start to the 15th (Review 1), from
+// the 15th to the month's end (Review 2), and over the month — from the daily
+// follower counts (follower_snapshot). A channel's start is its last count of
+// last month, or, connected during this one, its first count here (so its
+// existing followers aren't "new"). A review not over yet runs to now. Net:
+// unfollows come off.
 async function followerTotals(orgId, month) {
-  const end1 = `${month.slice(0, 8)}15`, end2 = lastDayOf(month), before = lastDayOf(prevMonth(month));
-  const { rows } = await pool.query(
-    `select coalesce(sum(c.follower_count), 0)::int as now,
-            coalesce(sum((select s.follower_count from follower_snapshot s where s.connection_id = c.id and s.day <= $2::date order by s.day desc limit 1)), 0)::int as r1,
-            coalesce(sum((select s.follower_count from follower_snapshot s where s.connection_id = c.id and s.day <= $3::date order by s.day desc limit 1)), 0)::int as r2,
-            coalesce(sum((select s.follower_count from follower_snapshot s where s.connection_id = c.id and s.day <= $4::date order by s.day desc limit 1)), 0)::int as start,
-            count(*)::int as accounts
-       from platform_connection c where c.org_id = $1 and c.follower_count is not null`,
-    [orgId, end1, end2, before],
-  ).catch(() => ({ rows: [{ now: 0, r1: 0, r2: 0, start: 0, accounts: 0 }] }));
+  const end1 = `${month.slice(0, 8)}15`, end2 = lastDayOf(month), prevEnd = lastDayOf(prevMonth(month));
   const today = todayIst();
-  const f = rows[0];
-  // a review not over yet reads as now
-  return {
-    accounts: f.accounts, now: f.now, start: f.start || null,
-    r1: today > end1 ? f.r1 || f.now : f.now,
-    r2: today > end2 ? f.r2 || f.now : f.now,
-  };
+  const { rows } = await pool.query(
+    `select c.id, c.provider, coalesce(c.external_name, a.handle, p.key) as name, w.name as brand, c.follower_count as now,
+            (select s.follower_count from follower_snapshot s where s.connection_id = c.id and s.day <= $2::date order by s.day desc limit 1) as before,
+            (select s.follower_count from follower_snapshot s where s.connection_id = c.id and s.day > $2::date and s.day <= $4::date order by s.day asc limit 1) as first_in,
+            (select s.follower_count from follower_snapshot s where s.connection_id = c.id and s.day > $2::date and s.day <= $3::date order by s.day desc limit 1) as at15,
+            (select s.follower_count from follower_snapshot s where s.connection_id = c.id and s.day > $2::date and s.day <= $4::date order by s.day desc limit 1) as at_end
+       from platform_connection c
+       join account a on a.id = c.account_id
+       join platform p on p.id = a.platform_id
+       left join workspace w on w.id = a.workspace_id
+      where c.org_id = $1 and c.follower_count is not null
+      order by w.name nulls last, c.provider`,
+    [orgId, prevEnd, end1, end2],
+  ).catch(() => ({ rows: [] }));
+  const future = today < month;
+  const list = rows.map((r) => {
+    const now = Number(r.now) || 0;
+    if (future) return { id: r.id, provider: r.provider, name: r.name, brand: r.brand, now, r1: 0, r2: 0, month: 0 };
+    const start = r.before ?? r.first_in ?? now;
+    // the count when Review 1 closed: none on file by the 15th (connected later) — no Review 1 growth
+    const mid = today > end1 ? (r.at15 ?? (r.before != null ? r.before : start)) : now;
+    const end = today > end2 ? (r.at_end ?? now) : now;
+    return { id: r.id, provider: r.provider, name: r.name, brand: r.brand, now, r1: mid - start, r2: today > end1 ? end - mid : 0, month: end - start };
+  });
+  const sum = (k) => list.reduce((n, x) => n + x[k], 0);
+  return { accounts: list.length, now: sum("now"), r1: sum("r1"), r2: sum("r2"), month: sum("month"), list };
 }
 
 // How each member's goals stand in each review — Team goals' rule: a review's
