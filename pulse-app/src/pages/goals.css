@@ -228,7 +228,8 @@ em.bad{color:var(--gl-bad)}
 .gl-stars{display:flex}
 .gl-stars button{width:19px;height:24px;display:grid;place-items:center;padding:0;border:0;background:transparent;color:var(--gl-line);cursor:pointer}
 html:not([data-theme="dark"]) .gl-stars button{color:rgba(30,20,80,.18)}
-.gl-stars button.on{color:var(--gl-star)}
+/* a given star is yellow in both themes (the light theme greys the empty ones above, and that rule must not win) */
+.gl-stars button.on,html:not([data-theme="dark"]) .gl-stars button.on{color:var(--gl-star)}
 .gl-stars button:hover{transform:scale(1.15)}
 .gl-stars button:focus-visible{outline:2px solid var(--gl-ac);outline-offset:1px;border-radius:4px}
 .gl .num.lg{font-size:15px}
