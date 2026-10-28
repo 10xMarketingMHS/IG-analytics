@@ -5,6 +5,7 @@ import { api, ApiError } from "@/lib/api";
 import { useEditors } from "@/lib/use-editors";
 import { gradFor } from "@/lib/editor-visuals";
 import { goalPointsTotal } from "@/lib/goal-points";
+import { countsInTaskScore } from "@/lib/task-points";
 import { monthName } from "@/lib/goal-periods";
 import { fmtHours } from "@/pages/settings-ui";
 import { giveWords } from "@/pages/goals-brand";
@@ -136,7 +137,11 @@ export function SetGoals() {
     );
   }
   if (editors === null || data === null) return <div className="gl-card gl-empty">Loading goals…</div>;
-  const loaded = people.filter((p) => data[p.id]);
+  // Someone exempt from task scoring (Team › Roster › Task score) isn't given goals: left out,
+  // unless they still have some this month — then listed, tagged, so they can be cleared.
+  const hasGoals = (id: string) => data[id].rows.some((r) => r.jc != null);
+  const loaded = people.filter((p) => data[p.id] && (countsInTaskScore(p) || hasGoals(p.id)));
+  const leftOut = people.filter((p) => data[p.id] && !countsInTaskScore(p) && !hasGoals(p.id));
   if (!loaded.length) return <div className="gl-card gl-empty">No team members to set goals for yet.</div>;
 
   const sel = loaded.find((p) => p.id === selId) ?? loaded[0];
@@ -151,7 +156,7 @@ export function SetGoals() {
   const balance = c.capH - c.plan;
   const setJobs = (id: string, v: string) => setDrafts((s) => ({ ...s, [sel.id]: { ...(s[sel.id] ?? draftOf(sd)), [id]: v } }));
   // how many of a type the whole team's goals give out, as typed (unsaved too)
-  const givenOf = (cf: string) => loaded.reduce((n, p) => n + Number((drafts[p.id] ?? draftOf(data[p.id]))[cf] || 0), 0);
+  const givenOf = (cf: string) => loaded.filter(countsInTaskScore).reduce((n, p) => n + Number((drafts[p.id] ?? draftOf(data[p.id]))[cf] || 0), 0);
 
   async function save() {
     if (!dirty) return;
@@ -203,13 +208,16 @@ export function SetGoals() {
                   <Face editor={p} size="sm" />
                   <span>
                     <b>{p.name}</b>
-                    <small>{unsaved.includes(p.id) ? "Unsaved · " : ""}{fmtHours(pc.plan)} of {fmtHours(pc.capH)}</small>
+                    <small>{unsaved.includes(p.id) ? "Unsaved · " : ""}{!countsInTaskScore(p) ? "Exempt · clear their goals · " : ""}{fmtHours(pc.plan)} of {fmtHours(pc.capH)}</small>
                   </span>
                   <em className={"gs-u " + pb.cls}>{Math.floor(pc.util * 100)}%</em>
                 </button>
               );
             })}
           </div>
+          {leftOut.length > 0 && (
+            <p className="gs-leftout">Not listed, exempt from task score: {leftOut.map((p) => p.name).join(", ")}. Change it on Team › Roster.</p>
+          )}
         </section>
 
         <div className="gs-main">

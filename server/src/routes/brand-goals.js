@@ -71,9 +71,14 @@ brandGoalsRouter.get("/brand-goals", requirePermission("edit_goals"), async (req
           group by 1, 2, 3`,
         [req.orgId, month],
       ),
-      // what the team's goals give out, per type (Set goals)
+      // what the team's goals give out, per type (Set goals) — not counting anyone
+      // exempt from task scoring (Team › Roster › Task score), who isn't given goals
       pool.query(
-        "select content_format_id as id, sum(jc)::int as n from editor_goal where org_id = $1 and period_month = $2 and jc > 0 group by content_format_id",
+        `select g.content_format_id as id, sum(g.jc)::int as n
+           from editor_goal g join editor e on e.id = g.editor_id
+          where g.org_id = $1 and g.period_month = $2 and g.jc > 0 and e.active
+            and coalesce((to_jsonb(e)->>'in_task_score')::boolean, true)
+          group by g.content_format_id`,
         [req.orgId, month],
       ),
     ]);
