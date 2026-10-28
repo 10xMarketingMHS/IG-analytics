@@ -18,6 +18,7 @@ import type { Editor } from "@/lib/types";
 import { OrgGoals } from "@/pages/goals-org";
 import { SetGoals } from "@/pages/goals-set";
 import { BrandGoals } from "@/pages/goals-brand";
+import { LeadGoals } from "@/pages/goals-lead";
 import "./goals.css";
 
 // Goals (Pulse Redesign v5): Team goals — each person's monthly goals by
@@ -27,7 +28,7 @@ import "./goals.css";
 // the month, checked against their hours; and Discipline — the five ratings
 // that make up 20% of each person's score.
 
-type Tab = "team" | "org" | "brand" | "set" | "disc";
+type Tab = "team" | "org" | "brand" | "lead" | "set" | "disc";
 const sv = (d: ReactNode, size = 16) => (
   <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">{d}</svg>
 );
@@ -37,6 +38,7 @@ const IC = {
   verified: sv(<><path d="M12 3 4 6v6c0 4.5 3.4 8.3 8 9 4.6-.7 8-4.5 8-9V6z" /><path d="m9 12 2 2 4-4" /></>),
   tune: sv(<><path d="M4 7h10M18 7h2M4 17h4M12 17h8" /><circle cx="16" cy="7" r="2" /><circle cx="10" cy="17" r="2" /></>),
   brand: sv(<><path d="M3 9 5 4h14l2 5" /><path d="M4 9v11h16V9" /><path d="M3 9h18" /><path d="M9 20v-6h6v6" /></>),
+  lead: sv(<><circle cx="12" cy="8" r="4" /><path d="M5 21a7 7 0 0 1 14 0" /><path d="m17 3 1.5 1.5L21 2" /></>),
   download: sv(<><path d="M12 3v12" /><path d="m7 10 5 5 5-5" /><path d="M5 21h14" /></>, 15),
   group: sv(<><circle cx="9" cy="8" r="3.5" /><path d="M2.5 20a6.5 6.5 0 0 1 13 0" /></>, 14),
   edit: sv(<><path d="M12 20h9" /><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z" /></>, 14),
@@ -60,10 +62,15 @@ export function GoalsPage() {
   const canDisc = isAdmin || hasPermission("discipline");
   // Set goals is for whoever sets them; everyone else has My goals.
   const canSet = hasPermission("edit_goals");
+  // Lead goals: whoever sets the goals, and the Team Leads themselves (their own)
+  const { user } = useAuth();
+  const { editors: roster } = useEditors();
+  const isTeamLead = (roster ?? []).find((e) => e.id === user?.editorId)?.designation?.trim().toLowerCase() === "team lead";
+  const seesLead = canSet || isTeamLead;
   // Everyone but admins and the goal grants sees only their own goals.
   const selfOnly = !isAdmin && !hasPermission("edit_goals") && !hasPermission("discipline");
   const raw = params.get("tab");
-  const tab: Tab = raw === "org" ? "org" : raw === "brand" && canSet ? "brand" : raw === "set" && canSet ? "set" : raw === "disc" && canDisc ? "disc" : "team";
+  const tab: Tab = raw === "org" ? "org" : raw === "brand" && canSet ? "brand" : raw === "lead" && seesLead ? "lead" : raw === "set" && canSet ? "set" : raw === "disc" && canDisc ? "disc" : "team";
   const setTab = (t: Tab) => setParams(t === "team" ? {} : { tab: t }, { replace: true });
   const thisMonth = ymd(new Date()).slice(0, 7);
   const [month, setMonth] = useState(thisMonth);
@@ -74,6 +81,7 @@ export function GoalsPage() {
     { k: "team", l: selfOnly ? "My goals" : "Team goals", icon: IC.team, show: true },
     { k: "org", l: "Org goals", icon: IC.flag, show: isAdmin },
     { k: "brand", l: "Brand goals", icon: IC.brand, admin: true, show: canSet },
+    { k: "lead", l: "Lead goals", icon: IC.lead, admin: !isTeamLead, show: seesLead },
     { k: "set", l: "Set goals", icon: IC.tune, admin: true, show: canSet },
     { k: "disc", l: "Discipline", icon: IC.verified, admin: true, show: canDisc },
   ];
@@ -86,7 +94,7 @@ export function GoalsPage() {
           </button>
         ))}
         <span className="gl-grow" />
-        {tab !== "org" && tab !== "set" && tab !== "brand" && (
+        {tab !== "org" && tab !== "set" && tab !== "brand" && tab !== "lead" && (
           <select className="gl-select gl-month" value={month} onChange={(e) => setMonth(e.target.value)} aria-label="Month">
             {months.map((m) => <option key={m} value={m}>{monthName(m)}</option>)}
           </select>
@@ -95,6 +103,7 @@ export function GoalsPage() {
       {tab === "team" && <TeamGoals month={month} isCurrent={month === thisMonth} focusId={params.get("editor")} selfOnly={selfOnly} />}
       {tab === "org" && <OrgGoals />}
       {tab === "brand" && <BrandGoals />}
+      {tab === "lead" && <LeadGoals />}
       {tab === "set" && <SetGoals />}
       {tab === "disc" && <Discipline month={month} />}
     </section>
