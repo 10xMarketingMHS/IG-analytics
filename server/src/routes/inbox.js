@@ -51,7 +51,7 @@ inboxRouter.get("/inbox", async (req, res, next) => {
     const who = new Map(people.map((p) => [p.id, p]));
     const person = (id) => ({ editorId: id, name: who.get(id)?.name ?? "Someone", imageUrl: who.get(id)?.imageUrl ?? null });
 
-    const [leaves, perms, corrections, review, toAccept, myLeave, myPerms, resets, toSchedule] = await Promise.all([
+    const [leaves, perms, corrections, review, toAccept, myLeave, myPerms, resets, toSchedule, toDecide] = await Promise.all([
       leaveOn && isApprover(caller)
         ? pool.query(`select ${LEAVE_COLS} from leave_request where org_id = $1 and status = 'pending' and editor_id is distinct from $2 order by date_from`, [req.orgId, me])
         : none,
@@ -127,6 +127,20 @@ inboxRouter.get("/inbox", async (req, res, next) => {
           [req.orgId, me],
         )
         : none,
+      // approved R&D work (AI Job) waiting to be made a Reel, an Ad, both or nothing
+      // (routes/tasks.js POST /tasks/:id/use), from the last 30 days: for whoever
+      // approved it, and every Manager and Asst. Manager
+      schedOn && (caller.role === "manager" || caller.role === "lead")
+        ? pool.query(
+          `select t.id, t.title, ${REF} as ref, t.completed_at as "at", e.name as "editorName", e.image_url as "imageUrl", f.name as "typeName"
+             from task t join task_content_format f on f.id = t.content_format_id and f.to_scheduling
+             left join editor e on e.id = t.editor_id
+            where t.org_id = $1 and t.task_type = 'service' and t.status = 'done' and t.meta->'use' is null
+              and t.completed_at > now() - interval '30 days'
+              and ($2 or exists (select 1 from task_review_log l where l.task_id = t.id and l.action = 'approved' and l.actor_id = $3))`,
+          [req.orgId, caller.role === "manager", req.user.sub],
+        )
+        : none,
     ]);
     // each asker's balance this year, beside their request
     const [reviewed, bal] = await Promise.all([
@@ -162,6 +176,8 @@ inboxRouter.get("/inbox", async (req, res, next) => {
           linksDueAt: dueAt, late: !!dueAt && Date.now() > Date.parse(dueAt),
           name: t.editorName, imageUrl: t.imageUrl }] : [];
       }),
+      ...toDecide.rows.map((t) => ({ kind: "decide", key: `decide:${t.id}`, at: t.at, taskId: t.id, title: t.title, ref: t.ref,
+        typeName: t.typeName, name: t.editorName, imageUrl: t.imageUrl })),
     ];
     const sent = [
       ...myLeave.rows.map((l) => ({ kind: "leave", key: `leave:${l.id}`, at: l.createdAt, leave: { ...l, decideBy: decideBy(l.from, today) } })),

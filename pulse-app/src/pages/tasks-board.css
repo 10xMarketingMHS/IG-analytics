@@ -655,3 +655,8 @@ html[data-theme="dark"] .task-panel-scrim.tp2-scrim{background:rgba(0,0,0,.55)}
 .tp2-sec h3 .tp2-req{margin-left:auto;font-style:normal;font-size:11px;font-weight:700;color:var(--tb-acText)}
 .tp2-sec h3 .tp2-req.ok{color:var(--tb-good)}
 .tp2 .tp-desc.tp2-desc.need{border-color:color-mix(in srgb,var(--tb-ac) 55%,var(--tb-line));border-style:dashed}
+
+/* approved R&D work (AI Job) still to decide: a Reel, an Ad or both */
+.tb-rnd{display:inline-flex;align-items:center;gap:4px;height:20px;padding:0 7px;border-radius:999px;font-size:10.5px;font-weight:800;
+  background:color-mix(in srgb,oklch(0.6 0.16 330) 14%,transparent);color:oklch(0.55 0.16 330)}
+.tp-from{display:flex;align-items:center;gap:6px;font-size:12.5px}

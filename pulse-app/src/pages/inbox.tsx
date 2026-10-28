@@ -32,11 +32,12 @@ const KINDS: { k: Kind; label: string; tag: string }[] = [
   { k: "review", label: "Reviews", tag: "REVIEW" },
   { k: "accept", label: "To accept", tag: "TO ACCEPT" },
   { k: "schedule", label: "To post", tag: "TO POST" },
+  { k: "decide", label: "To decide", tag: "REEL OR AD?" },
   { k: "reset", label: "Password resets", tag: "PASSWORD" },
 ];
 const ORDER = new Map(KINDS.map((x, i) => [x.k, i]));
 const TAG = new Map(KINDS.map((x) => [x.k, x.tag]));
-const ICON: Record<Kind, string> = { leave: "🌴", permission: "⏱️", correction: "🕘", handover: "🔁", review: "👀", accept: "📥", schedule: "🗓️", reset: "🔑" };
+const ICON: Record<Kind, string> = { leave: "🌴", permission: "⏱️", correction: "🕘", handover: "🔁", review: "👀", accept: "📥", schedule: "🗓️", decide: "🧪", reset: "🔑" };
 const day = (ymd: string) => new Date(`${ymd}T12:00:00`).toLocaleDateString("en-IN", { day: "numeric", month: "short" });
 const n1 = (n: number) => (Number.isInteger(n) ? String(n) : n.toFixed(1));
 
@@ -161,6 +162,13 @@ export function InboxPage() {
         open = () => openTask(i.taskId);
         acts = btn(i.step === "links" ? "Add links" : "Open", () => openTask(i.taskId), "pri");
         break;
+      case "decide":
+        what = <>{i.ref && <span className="ib-ref">{i.ref}</span>}{i.title}</>;
+        who = <Person name={i.name} imageUrl={i.imageUrl} kind="decide" />;
+        details = <span className="ib-faint">{i.typeName ?? "R&D work"} approved: make it a Reel, an Ad or both, or not used</span>;
+        open = () => openTask(i.taskId);
+        acts = btn("Decide", () => openTask(i.taskId), "pri");
+        break;
       case "reset":
         what = <>Forgot their password</>;
         who = <Person name={i.name} kind="reset" />;
@@ -235,7 +243,7 @@ export function InboxPage() {
 const WORDS: Record<Kind, [string, string]> = {
   leave: ["leave request", "leave requests"], permission: ["permission", "permissions"], correction: ["correction", "corrections"],
   handover: ["hand-over", "hand-overs"], review: ["review", "reviews"], accept: ["task to accept", "tasks to accept"],
-  schedule: ["post to schedule", "posts to schedule"], reset: ["password reset", "password resets"],
+  schedule: ["post to schedule", "posts to schedule"], decide: ["job to decide (Reel or Ad)", "jobs to decide (Reel or Ad)"], reset: ["password reset", "password resets"],
 };
 export function InboxCard() {
   const { user } = useAuth();

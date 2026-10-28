@@ -1048,6 +1048,8 @@ tasksRouter.patch("/tasks/:id", requireEditor, requireActiveEod, async (req, res
       const next = { ...(d.meta !== undefined ? d.meta : prior.meta ?? {}) };
       const asked = d.requestedBy !== undefined ? d.requestedBy || null : prior.meta?.requestedBy ?? null;
       if (asked) next.requestedBy = asked; else delete next.requestedBy;
+      // what R&D work became, and what a follow-up was made from (POST /tasks/:id/use), stay
+      for (const k of ["use", "fromTask"]) { if (prior.meta?.[k] !== undefined) next[k] = prior.meta[k]; else delete next[k]; }
       push("meta", JSON.stringify(next));
     }
 
@@ -1240,6 +1242,89 @@ tasksRouter.patch("/tasks/:id", requireEditor, requireActiveEod, async (req, res
     res.json({ task: await withReview(req, full[0]) });
   } catch (err) {
     next(err);
+  }
+});
+
+// R&D work — a Service task whose type's Next step is ticked (Settings › Tasks &
+// time: AI Job, whose video goes for approval before anyone knows what it'll be).
+// Once it's approved, a Manager, Asst. Manager or Team Lead decides what it
+// becomes: a Reel, an Ad, both, or nothing. The app makes the follow-up tasks
+// the usual way (POST /tasks, so they're numbered, timed and given like any
+// other) and then records the decision here with them: meta.use on the R&D task,
+// meta.fromTask on each follow-up. The R&D task keeps its points whatever is
+// decided; the follow-ups earn their own. Once decided, it stays decided.
+//   POST /tasks/:id/use  { decision: "reel" | "ad" | "both" | "none", taskIds: [] }
+const UseSchema = z.object({
+  decision: z.enum(["reel", "ad", "both", "none"]),
+  taskIds: z.array(z.string().uuid()).max(2).default([]),
+});
+const REF_OF = "coalesce(t.sid, regexp_replace(t.ad_id, '^AdID', 'AID', 'i'), t.svid, t.pid, t.tid)";
+tasksRouter.post("/tasks/:id/use", requireEditor, async (req, res, next) => {
+  const parsed = UseSchema.safeParse(req.body ?? {});
+  if (!parsed.success) return res.status(400).json({ error: "Say what it becomes: a Reel, an Ad, both, or not used." });
+  const { decision, taskIds } = parsed.data;
+  const client = await pool.connect();
+  try {
+    const { role } = await callerScope(req);
+    if (role !== "manager" && role !== "lead" && req.role !== "admin") {
+      return res.status(403).json({ error: "A Manager, Asst. Manager or Team Lead decides what R&D work becomes." });
+    }
+    await client.query("begin");
+    const t = (await client.query(
+      `select t.id, t.title, t.status, t.task_type, t.meta, ${REF_OF} as ref, coalesce(f.to_scheduling, false) as decides
+         from task t left join task_content_format f on f.id = t.content_format_id
+        where t.id = $1 and t.org_id = $2 for update of t`,
+      [req.params.id, req.orgId],
+    )).rows[0];
+    if (!t) { await client.query("rollback"); return res.status(404).json({ error: "Task not found" }); }
+    if (t.task_type !== "service" || !t.decides) {
+      await client.query("rollback");
+      return res.status(400).json({ error: "This isn't R&D work that waits for a decision (Settings › Tasks & time › Next step)." });
+    }
+    if (t.status !== "done") { await client.query("rollback"); return res.status(400).json({ error: "Decide once it's approved." }); }
+    if (t.meta?.use) { await client.query("rollback"); return res.status(409).json({ error: "What it becomes is already decided." }); }
+    const want = { reel: ["social"], ad: ["ad"], both: ["ad", "social"], none: [] }[decision];
+    const made = taskIds.length
+      ? (await client.query(
+        `select t.id, t.task_type, t.created_by, t.meta, ${REF_OF} as ref from task t where t.org_id = $1 and t.id = any($2::uuid[]) for update of t`,
+        [req.orgId, taskIds],
+      )).rows
+      : [];
+    // the new tasks it becomes: one of each kind asked for, made by you, not already made from something else
+    if (new Set(taskIds).size !== taskIds.length || made.length !== want.length
+      || made.map((m) => m.task_type).sort().join() !== want.join()
+      || made.some((m) => m.created_by !== req.user.sub || m.meta?.fromTask)) {
+      await client.query("rollback");
+      return res.status(400).json({ error: decision === "none" ? "Not used: there's nothing to make." : "Those aren't the follow-up tasks you just made for it." });
+    }
+    const me = (await client.query(
+      "select coalesce(e.name, u.name, u.email) as name from app_user u left join editor e on e.id = u.editor_id where u.id = $1",
+      [req.user.sub],
+    )).rows[0];
+    const use = {
+      decision, at: new Date().toISOString(), by: req.user.sub, byName: me?.name ?? null,
+      tasks: made.map((m) => ({ id: m.id, ref: m.ref, kind: m.task_type })),
+    };
+    await client.query("update task set meta = coalesce(meta, '{}'::jsonb) || jsonb_build_object('use', $2::jsonb) where id = $1", [t.id, JSON.stringify(use)]);
+    for (const m of made) {
+      await client.query(
+        "update task set meta = coalesce(meta, '{}'::jsonb) || jsonb_build_object('fromTask', $2::jsonb) where id = $1",
+        [m.id, JSON.stringify({ id: t.id, ref: t.ref, title: t.title })],
+      );
+    }
+    await client.query("commit");
+    const words = { reel: "a Reel", ad: "an Ad", both: "a Reel and an Ad", none: "not used" }[decision];
+    await logActivity({
+      orgId: req.orgId, actorId: req.user.sub, verb: "decided", entityType: "task", entityId: t.id,
+      summary: decision === "none" ? `Decided “${t.title}” isn't used` : `Decided “${t.title}” becomes ${words} (${made.map((m) => m.ref).join(", ")})`,
+      meta: { decision, taskIds: made.map((m) => m.id) },
+    });
+    res.json({ use });
+  } catch (err) {
+    await client.query("rollback").catch(() => {});
+    next(err);
+  } finally {
+    client.release();
   }
 });
 

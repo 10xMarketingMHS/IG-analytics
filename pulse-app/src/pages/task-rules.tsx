@@ -196,6 +196,11 @@ export function TaskRulesSection() {
                   onSched={(to_scheduling) => patchFormat(f.id, { to_scheduling }, "Could not update the next step.", ({ schedulingMoved: n = 0 }) => {
                     const tasks = `${n} approved task${n === 1 ? "" : "s"}`;
                     const list = f.category === "ad" ? "Ad uploads" : "Scheduling";
+                    if (f.category === "service") {
+                      return to_scheduling
+                        ? `Approved ${f.name} tasks now wait for a decision: a Reel, an Ad or both.`
+                        : `Approved ${f.name} tasks no longer wait for a decision.`;
+                    }
                     return to_scheduling
                       ? `Approved ${f.name} work now goes to ${list}.${n ? ` ${tasks} from this month added to the list.` : ""}`
                       : `${f.name} no longer goes to ${list}.${n ? ` ${tasks} still waiting left the list.` : ""}`;
@@ -223,7 +228,8 @@ export function TaskRulesSection() {
       <span className="st-note">
         Link — a task of this type can't go to review without a delivery link (untick it for scheduling, data or technical work). Next step — an approved
         Social task of this type goes to Scheduling, for its post date and links (untick it for thumbnails and other work that isn't posted on its own); an approved
-        Ads task goes to Ad uploads, for the ad numbers it became. Points — on or
+        Ads task goes to Ad uploads, for the ad numbers it became; an approved Service task of the type is R&D (AI Job): a Manager or Team Lead decides
+        whether it becomes a Reel, an Ad, both, or isn't used, and the Reel and Ad are made from it as new tasks. Points — on or
         before the due date earns them in full, 1 day late half, 2 days none, 3 or more costs them back. Removing a type doesn't touch tasks already using it.
       </span>
 
@@ -388,12 +394,14 @@ function TypeRow({
         <Toggle on={format.review_link_required} onChange={onLink} label={`${format.name} needs a delivery link for review`} />
       </span>
       <span className="st-c-sched">
-        {(format.category === "social" || format.category === "ad") && format.to_scheduling !== undefined ? (
-          <><span className="st-mlabel">{format.category === "ad" ? "Ad uploads" : "Scheduling"}</span>
+        {(format.category === "social" || format.category === "ad" || format.category === "service") && format.to_scheduling !== undefined ? (
+          <><span className="st-mlabel">{format.category === "ad" ? "Ad uploads" : format.category === "service" ? "Reel / Ad" : "Scheduling"}</span>
             <Toggle on={format.to_scheduling} onChange={onSched}
-              label={`Approved ${format.name} work goes to ${format.category === "ad" ? "Ad uploads" : "Scheduling"}`} /></>
+              label={format.category === "service"
+                ? `Approved ${format.name} tasks wait for a decision: a Reel, an Ad or both`
+                : `Approved ${format.name} work goes to ${format.category === "ad" ? "Ad uploads" : "Scheduling"}`} /></>
         ) : <span className="st-note" style={{ justifyContent: "center" }}
-          title={format.category === "social" || format.category === "ad" ? "Needs the scheduling database update" : "Only Social and Ads work goes on after approval"}>—</span>}
+          title={format.category === "social" || format.category === "ad" || format.category === "service" ? "Needs the scheduling database update" : "Only Social, Ads and Service work goes on after approval"}>—</span>}
       </span>
       <span className="st-c-metric">
         {!isProject && <span className="st-mlabel">Metric</span>}

@@ -22,6 +22,8 @@ export type InboxItem =
   | { kind: "review"; key: string; at: string; taskId: string; title: string; ref: string | null; name?: string | null; imageUrl?: string | null; reviewBy?: string | null }
   | { kind: "accept"; key: string; at: string; taskId: string; title: string; ref: string | null; due: string | null; name: string | null }
   | { kind: "reset"; key: string; at: string; userId: string; name: string }
+  // approved R&D work (AI Job) to make a Reel, an Ad, both — or not used
+  | { kind: "decide"; key: string; at: string; taskId: string; title: string; ref: string | null; typeName: string | null; name: string | null; imageUrl: string | null }
   // approved social work you schedule: set its date · post it today · add its links
   | { kind: "schedule"; key: string; at: string; taskId: string; title: string; ref: string | null; step: "date" | "post" | "links";
       postOn: string | null; postTime: string | null; linksDueOn: string | null; linksDueAt?: string | null; late?: boolean;

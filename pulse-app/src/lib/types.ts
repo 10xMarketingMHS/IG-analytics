@@ -134,6 +134,10 @@ export type TaskType = "content" | "short_task" | "general" | "social" | "ad" | 
 export type TaskMeta = {
   // Other work: which team asked for a task given to someone (server/src/goal-score.js)
   requestedBy?: string;
+  // R&D work (AI Job): what it became once approved (POST /tasks/:id/use)
+  use?: { decision: "reel" | "ad" | "both" | "none"; at: string; by: string; byName: string | null; tasks: { id: string; ref: string | null; kind: string }[] };
+  // a Reel or Ad made from R&D work: which task it was made from
+  fromTask?: { id: string; ref: string | null; title: string };
   platform?: string;
   caption?: string;
   assetLinks?: string;

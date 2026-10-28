@@ -27,6 +27,7 @@ import "./tasks-board.css";
 import { HandoverBlock, HandoverInbox, HandoverPill, useHandovers } from "@/components/handover";
 import { ScheduleBlock } from "@/components/schedule-block";
 import { AdUploadBlock } from "@/components/ad-upload-block";
+import { RndUseBlock } from "@/components/rnd-use-block";
 import { placeOf, useAdTeams } from "@/lib/ad-teams";
 import { clockTime, clockTimeShort, dateTime } from "@/lib/time-format";
 
@@ -462,6 +463,9 @@ export function TasksPage() {
   const canWrite = active?.role !== "viewer";
   const isOwner = (t: Task) => !!user?.editorId && t.editor_id === user.editorId;
   const isGeneral = (t: Task) => t.task_type === "admin";
+  // approved R&D work (AI Job) not yet made a Reel, an Ad or both (components/rnd-use-block.tsx)
+  const isRnd = (t: Task) => t.task_type === "service" && !!(contentFormats ?? []).find((f) => f.id === t.content_format_id)?.to_scheduling;
+  const rndWaiting = (t: Task) => isRnd(t) && t.status === "done" && !t.meta?.use;
   // Review is a checkpoint, not just another column: the assignee moves a
   // task through todo -> in_progress -> review on their own; only an admin
   // can resolve a review — approve it into done, or send it back to
@@ -753,6 +757,7 @@ export function TasksPage() {
       toast.success(
         t.status === "done" ? `Reopened “${t.title}”.`
           : status === "done" && isGeneral(t) ? `Completed “${t.title}”.`
+          : status === "done" && isRnd(t) ? `Approved “${t.title}”. Open it to decide what it becomes: a Reel, an Ad or both.`
           : status === "done" ? `Approved “${t.title}”.`
           : t.status === "review" ? `Sent “${t.title}” back for rework.`
           : status === "review" ? `Submitted “${t.title}” for review.`
@@ -1194,6 +1199,7 @@ export function TasksPage() {
                       <div className="task-top">
                         <span className="tb-ref" title={t.tid && t.tid !== ref ? `${t.tid}` : undefined}>{ref}</span>
                         {t.revision > 1 && <span className="tb-rev" title="Sent back for rework">Rev {t.revision}</span>}
+                        {rndWaiting(t) && <span className="tb-rnd" title="Approved: decide what it becomes, a Reel, an Ad or both">🧪 Reel or Ad?</span>}
                         {t.on_hold && (
                           <span className="task-hold-badge" title={t.held_by_name ? `Held by ${t.held_by_name} — its timer is paused` : "This task is on hold — its timer is paused"}>
                             {TB_ICON.hold} On hold
@@ -2114,6 +2120,8 @@ export function TaskPanel({ mode, task, canWrite, editors, channels, onClose, on
   }, [editors, user?.editorId, isAdmin, isSuper, task?.editor_id, assignTo]);
   // Access grants: assign tasks to others, and resolve reviews.
   const canAssign = isAdmin || hasPermission("assign_tasks");
+  // A Manager, Asst. Manager or Team Lead decides what approved R&D work becomes (the server holds the same line)
+  const decidesRnd = isAdmin || homeRoleOf(editors.find((e) => e.id === user?.editorId)?.designation, isAdmin) !== "editor";
   const ro = !canWrite;
   // Delivery Link is writable by the task's assignee or an admin (mirrors the
   // server check); everyone else who can open the panel sees it read-only.
@@ -2927,6 +2935,14 @@ export function TaskPanel({ mode, task, canWrite, editors, channels, onClose, on
           {t.schedule_from && <ScheduleBlock task={t} editors={editors} onChanged={onChanged} />}
           {/* approved Ad work: the Managers and Team Leads record the ads it became */}
           {t.upload_from && <AdUploadBlock task={t} onChanged={onChanged} />}
+          {/* approved R&D work (AI Job): what it becomes, a Reel, an Ad, both or not used */}
+          {t.task_type === "service" && t.status === "done" && (t.meta?.use || selectedFormat?.to_scheduling) && (
+            <RndUseBlock task={t} formats={contentFormats ?? []} people={canAssign ? assignPeople : assignPeople.filter((e) => e.id === user?.editorId)}
+              channels={channels} adTeams={adTeams ?? []} canDecide={decidesRnd} onChanged={onChanged} />
+          )}
+          {t.meta?.fromTask && (
+            <div className="hint tp-from">🧪 Made from <b>{t.meta.fromTask.ref}</b> · {t.meta.fromTask.title}</div>
+          )}
           {!ro && briefRo && (
             <div className="hint tp-locked">
               🔒 {isDoneTask ? "This task is completed — only an admin can change it."
