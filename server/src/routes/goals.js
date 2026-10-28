@@ -14,6 +14,7 @@ import { editorRanks, seesEditor, taskViewer } from "../hierarchy.js";
 import { scoreMonthAll } from "../goal-score.js";
 import { monthFrozen } from "../leave-math.js";
 import { brandNeedByType } from "./brand-goals.js";
+import { disciplineByEditor, disciplineShares, raterOf, reviewsReady } from "../discipline.js";
 
 export const goalsRouter = Router();
 
@@ -755,10 +756,29 @@ goalsRouter.get("/goals/export", requireAdmin, async (req, res, next) => {
   }
 });
 
+// Discipline is rated by the Manager (and anyone with the discipline permission),
+// the Asst. Manager and the Team Leads, each as their position's part
+// (../discipline.js). req.rater = { editorId, role }.
+async function disciplineRater(req, res, next) {
+  try {
+    const grant = await new Promise((resolve, reject) => {
+      requirePermission("discipline")(req, { status: () => ({ json: () => resolve(false) }) }, (err) => (err ? reject(err) : resolve(true)));
+    });
+    const rater = await raterOf(req, grant);
+    if (!rater.role) return res.status(403).json({ error: "Discipline is rated by the Manager, the Asst. Manager and the Team Leads." });
+    req.rater = rater;
+    next();
+  } catch (err) {
+    next(err);
+  }
+}
+
 // GET /goals/discipline?month= — admin bulk view: one entry per active editor
 // with the raw per-type goal/actual/points data (frontend computes Total/Earned/
 // Overall via the shared goalBreakdown), plus the stored Discipline Points/note.
-goalsRouter.get("/goals/discipline", requirePermission("discipline"), async (req, res, next) => {
+// Each person also brings their stars by role (byRole), and the caller's own
+// (ratings: what they edit); with the shares of the 20% and the caller's role.
+goalsRouter.get("/goals/discipline", disciplineRater, async (req, res, next) => {
   const monthIn = req.query.month;
   if (!monthIn) return res.status(400).json({ error: "month is required." });
   try {
@@ -768,7 +788,8 @@ goalsRouter.get("/goals/discipline", requirePermission("discipline"), async (req
     // approved leave, each type up to 150%, covered work on top; their ratings;
     // and the attendance points lost this month (late, absent), which come off
     // discipline. All read together.
-    const [{ rows: editors }, scores, { rows: disc }, penalties] = await Promise.all([
+    const { role, editorId: me } = req.rater;
+    const [{ rows: editors }, scores, { rows: disc }, penalties, byEditor, shares, viewer, ranks, superHere] = await Promise.all([
       pool.query("select id, name from editor where org_id=$1 and active order by name", [req.orgId]),
       scoreMonthAll(req.orgId, String(month).slice(0, 10)),
       pool.query(
@@ -776,19 +797,27 @@ goalsRouter.get("/goals/discipline", requirePermission("discipline"), async (req
         [req.orgId, month],
       ),
       monthPenalties(req.orgId, String(month).slice(0, 7)),
+      disciplineByEditor(req.orgId, month),
+      disciplineShares(req.orgId),
+      taskViewer(req), editorRanks(req.orgId), isSuperHere(req),
     ]);
     const discBy = new Map(disc.map((d) => [d.editor_id, d]));
+    const none = { punctuality: null, quality_responsibility: null, behaviour: null, attendance_availability: null, deadline_adherence: null };
     const rowsOf = (s) => (s?.types ?? []).map((t) => ({ goalJC: t.goal, actualJC: t.done, countedJC: t.counted, points: t.points }));
     res.json({
-      month,
-      editors: editors.map((e) => {
+      month, shares, myRole: role,
+      // you don't rate yourself, nor anyone above you (a Team Lead rates the team, not the Manager)
+      editors: editors.filter((e) => e.id !== me && (superHere || seesEditor(viewer, ranks, e.id))).map((e) => {
         const d = discBy.get(e.id);
+        const b = byEditor.get(e.id);
+        const own = role === "manager" ? ratingsOf(d) : b?.raters.find((x) => x.role === role && x.userId === req.user.sub)?.ratings ?? none;
         return {
           editorId: e.id, editorName: e.name,
           rows: rowsOf(scores.get(e.id)),
           coveredPoints: scores.get(e.id)?.coveredPoints ?? 0,
           leaveDays: scores.get(e.id)?.leaveDays ?? 0,
-          ratings: ratingsOf(d),
+          ratings: own,
+          byRole: { manager: b?.manager ?? null, asst_manager: b?.asst_manager ?? null, lead: b?.lead ?? null },
           attendancePenalty: penalties.get(e.id) ?? 0,
           note: d?.note ?? null,
           updatedAt: d?.updated_at ?? null,
@@ -816,7 +845,9 @@ const DisciplineSchema = z.object({
 // PUT /goals/discipline — admin bulk save of the 5 criterion ratings per editor.
 // Each rating is bounded [0,5] (zod). Discipline Points themselves are derived
 // live from these ratings + the editor's live ceiling, never stored.
-goalsRouter.put("/goals/discipline", requirePermission("discipline"), async (req, res, next) => {
+// The Manager's stars are editor_discipline_points; an Asst. Manager's or a Team
+// Lead's go in editor_discipline_review, as theirs (../discipline.js).
+goalsRouter.put("/goals/discipline", disciplineRater, async (req, res, next) => {
   const parsed = DisciplineSchema.safeParse(req.body);
   if (!parsed.success) return res.status(400).json({ error: "Ratings must each be 0–5." });
   const d = parsed.data;
@@ -827,8 +858,28 @@ goalsRouter.put("/goals/discipline", requirePermission("discipline"), async (req
       const why = await goalWriteError(req, e.editorId, month, "rating");
       if (why) return res.status(403).json({ error: why });
     }
+    const { role } = req.rater;
+    if (role !== "manager" && !(await reviewsReady())) {
+      return res.status(409).json({ error: "Team Lead ratings need a database update first — ask whoever runs the database to apply 20261113120000_discipline_review." });
+    }
     for (const e of d.entries) {
       const vals = CRITERIA.map((k) => e.ratings[k] ?? null);
+      if (role !== "manager") {
+        await pool.query(
+          `insert into editor_discipline_review
+             (org_id, editor_id, period_month, rater_role, rater_user_id, ${RATINGS_SELECT}, note, updated_at)
+           values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11, now())
+           on conflict (org_id, editor_id, period_month, rater_role, rater_user_id) do update set
+             punctuality = excluded.punctuality,
+             quality_responsibility = excluded.quality_responsibility,
+             behaviour = excluded.behaviour,
+             attendance_availability = excluded.attendance_availability,
+             deadline_adherence = excluded.deadline_adherence,
+             note = excluded.note, updated_at = now()`,
+          [req.orgId, e.editorId, month, role, req.user.sub, ...vals, e.note ?? null],
+        );
+        continue;
+      }
       await pool.query(
         `insert into editor_discipline_points
            (org_id, editor_id, period_month, ${RATINGS_SELECT}, note, updated_by, updated_at)

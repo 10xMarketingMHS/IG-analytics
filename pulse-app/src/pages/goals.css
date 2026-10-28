@@ -415,3 +415,8 @@ select.lg-in{font:600 12px 'Plus Jakarta Sans',sans-serif;text-align:left}
 .lg-bar i.good{background:var(--gl-good)} .lg-bar i.warn{background:var(--gl-warn)} .lg-bar i.bad{background:var(--gl-bad)}
 .lg-pct{font:700 12.5px 'Geist Mono',monospace;text-align:right}
 .lg-pct.good{color:var(--gl-good)} .lg-pct.warn{color:var(--gl-warn)} .lg-pct.bad{color:var(--gl-bad)}
+
+/* Discipline: each rater's stars under the total (M Manager · AM Asst. Manager · TL Team Lead) */
+.gl-disc-n{display:flex;flex-direction:column;align-items:flex-end;gap:1px}
+.gl-disc-n b{font-weight:700}
+.gl-disc-n small{font-size:10px;font-weight:600;color:var(--gl-text3);white-space:nowrap}

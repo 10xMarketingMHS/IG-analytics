@@ -9,7 +9,7 @@ import { useTasks } from "@/lib/use-tasks";
 import { useResource } from "@/lib/use-resource";
 import { gradFor } from "@/lib/editor-visuals";
 import { ymd } from "@/lib/task-points";
-import { DISCIPLINE_CRITERIA, goalBreakdown, type Ratings } from "@/lib/goal-points";
+import { DEFAULT_SHARES, DISCIPLINE_CRITERIA, disciplineParts, goalBreakdown, RATER_LABEL, RATER_ROLES, type ByRole, type RaterRole, type Ratings, type Shares } from "@/lib/goal-points";
 import {
   achievement, bandOf, currentPeriod, doneByType, goalLines, monthName, pctText, periodBounds, periodLabel, tenths,
   type GoalLine, type PerfRow, type Period,
@@ -59,7 +59,6 @@ function Face({ editor, size = "md" }: { editor: Pick<Editor, "name" | "image_ur
 export function GoalsPage() {
   const { isAdmin, hasPermission } = useWorkspaces();
   const [params, setParams] = useSearchParams();
-  const canDisc = isAdmin || hasPermission("discipline");
   // Set goals is for whoever sets them; everyone else has My goals.
   const canSet = hasPermission("edit_goals");
   // Lead goals: whoever sets the goals, and the Team Leads themselves (their own)
@@ -67,6 +66,9 @@ export function GoalsPage() {
   const { editors: roster } = useEditors();
   const isTeamLead = (roster ?? []).find((e) => e.id === user?.editorId)?.designation?.trim().toLowerCase() === "team lead";
   const seesLead = canSet || isTeamLead;
+  // Discipline: whoever has its permission, and the Manager, Asst. Manager and Team Leads (each rates their part)
+  const myPos = (roster ?? []).find((e) => e.id === user?.editorId)?.designation?.trim().toLowerCase() ?? "";
+  const canDisc = isAdmin || hasPermission("discipline") || ["manager", "asst. manager", "assistant manager", "team lead"].includes(myPos);
   // Everyone but admins and the goal grants sees only their own goals.
   const selfOnly = !isAdmin && !hasPermission("edit_goals") && !hasPermission("discipline");
   const raw = params.get("tab");
@@ -381,6 +383,8 @@ type DiscEditor = {
   // per type: the goal after approved leave, jobs done, jobs that count (server/src/goal-score.js)
   rows: { goalJC: number; actualJC: number; countedJC?: number; points: number }[];
   coveredPoints?: number; leaveDays?: number;
+  // everyone's stars by role (two Team Leads averaged); `ratings` is the caller's own
+  byRole?: ByRole;
   ratings: Ratings; note: string | null; updatedAt: string | null; attendancePenalty?: number;
 };
 
@@ -390,12 +394,14 @@ function Discipline({ month }: { month: string }) {
   const epi = bands?.epiMinPct ?? 85, mpi = bands?.mpiMinPct ?? 75;
   const { editors } = useEditors();
   const [data, setData] = useState<DiscEditor[] | null>(null);
+  const [shares, setShares] = useState<Shares>(DEFAULT_SHARES);
+  const [myRole, setMyRole] = useState<RaterRole>("manager");
   const [draft, setDraft] = useState<Record<string, Ratings>>({});
   const [saving, setSaving] = useState(false);
   const load = () => {
     setData(null);
-    api<{ editors: DiscEditor[] }>(`/goals/discipline?month=${month}-01`)
-      .then((d) => { setData(d.editors); setDraft({}); })
+    api<{ editors: DiscEditor[]; shares?: Shares; myRole?: RaterRole }>(`/goals/discipline?month=${month}-01`)
+      .then((d) => { setData(d.editors); setShares(d.shares ?? DEFAULT_SHARES); setMyRole(d.myRole ?? "manager"); setDraft({}); })
       .catch(() => setData([]));
   };
   useEffect(load, [month]);
@@ -426,7 +432,10 @@ function Discipline({ month }: { month: string }) {
     <section className="gl-card gl-disc">
       <div className="gl-sechd">
         <b>Discipline · {monthName(month)}</b>
-        <span className="gl-hint">20% of each person's score. Unrated criteria count as full marks; tap a star again to clear it.</span>
+        <span className="gl-hint">
+          20% of each person's score: {RATER_ROLES.filter((r) => shares[r] > 0).map((r) => `${RATER_LABEL[r]} ${shares[r]}%`).join(" · ")}.
+          You're rating as <b>{RATER_LABEL[myRole]}</b>. Unrated criteria count as full marks; tap a star again to clear it.
+        </span>
         <span className="gl-grow" />
         <button type="button" className="gl-btn pri" onClick={save} disabled={saving || !dirty.length}>
           {saving ? "Saving…" : dirty.length ? `Save ratings (${dirty.length})` : "Save ratings"}
@@ -441,9 +450,12 @@ function Discipline({ month }: { month: string }) {
             {data.map((e) => {
               const r = ratingsOf(e);
               const ed = editors?.find((x) => x.id === e.editorId);
-              const bd = goalBreakdown(e.rows, r, e.attendancePenalty ?? 0, e.coveredPoints ?? 0);
-              const rated = DISCIPLINE_CRITERIA.some((c) => r[c.key] != null);
-              const disc = bd ? Math.round((bd.discipline / bd.total) * 100) : Math.round((DISCIPLINE_CRITERIA.reduce((s, c) => s + (r[c.key] ?? 5), 0) / 25) * 20);
+              // everyone's stars, with yours as you set them
+              const byRole: ByRole = { ...(e.byRole ?? {}), [myRole]: draft[e.editorId] ? r : e.byRole?.[myRole] ?? r };
+              const bd = goalBreakdown(e.rows, byRole, shares, e.attendancePenalty ?? 0, e.coveredPoints ?? 0);
+              const parts = bd?.parts ?? disciplineParts(100, byRole, shares).parts;
+              const rated = Object.values(parts).some((p) => p?.any);
+              const disc = bd ? Math.round((bd.discipline / bd.total) * 100) : Math.round(disciplineParts(100, byRole, shares).points);
               const overall = bd ? Math.round((bd.overall / bd.total) * 100) : null;
               const st = !rated ? { l: "Not rated yet", t: "" } : overall == null ? { l: "No goals", t: "" } : overall >= epi ? { l: "Excellent", t: "good" } : overall >= mpi ? { l: "On track", t: "ac" } : { l: "Needs support", t: "warn" };
               return (
@@ -457,7 +469,10 @@ function Discipline({ month }: { month: string }) {
                       ))}
                     </span>
                   ))}
-                  <b className="num" title={e.attendancePenalty ? `Includes −${e.attendancePenalty} attendance pt${e.attendancePenalty === 1 ? "" : "s"} (late, absent)` : undefined}>{disc}/20</b>
+                  <span className="num gl-disc-n" title={e.attendancePenalty ? `Includes −${e.attendancePenalty} attendance pt${e.attendancePenalty === 1 ? "" : "s"} (late, absent)` : undefined}>
+                    <b>{disc}/20</b>
+                    <small>{RATER_ROLES.filter((k) => parts[k]).map((k) => `${k === "manager" ? "M" : k === "lead" ? "TL" : "AM"} ${parts[k]!.any ? `${parts[k]!.stars}/25` : "—"}`).join(" · ")}</small>
+                  </span>
                   <b className="num lg">{overall ?? "–"}</b>
                   <span>{<span className={"gl-tag " + st.t}>{st.l}</span>}</span>
                 </div>
