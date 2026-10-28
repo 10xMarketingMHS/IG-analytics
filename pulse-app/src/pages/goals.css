@@ -429,3 +429,9 @@ select.lg-in{font:600 12px 'Plus Jakarta Sans',sans-serif;text-align:left}
 .lg-chanrow .lg-name b{font-size:12.5px}
 .lg-chanrow .lg-name small,.lg-chanrow .lg-name b{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .lg-chans-none{display:block;padding:10px 18px;font-size:12px;color:var(--gl-text3)}
+
+/* Discipline for an Asst. Manager or a Team Lead: their own part, no Overall or Status */
+.gl-table.disc.part{min-width:880px}
+.gl-table.disc.part .gl-th,.gl-table.disc.part .gl-tr{grid-template-columns:1.6fr repeat(5,1fr) .8fr}
+/* Set goals: start the month from last month's goals */
+.gs-copy{display:inline-flex;align-items:center;gap:6px}

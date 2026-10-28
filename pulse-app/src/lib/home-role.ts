@@ -42,6 +42,19 @@ export function rankOf(designation: string | null | undefined, isAdmin: boolean)
   if (isAdmin && !EDITOR_TITLES.includes(p)) return 0;
   return 3;
 }
+// The order people are listed in (Goals › Set goals, Discipline): by position —
+// Manager, Asst. Manager, Team Lead, Senior Editor, Editor, Junior Editor, then
+// any other title, Viewer last — and by name within a position.
+const LIST_ORDER = ["manager", "asst. manager", "team lead", "senior editor", "editor", "junior editor"];
+export function listOrderOf(designation: string | null | undefined): number {
+  const p = String(designation || "").trim().toLowerCase();
+  if (p === "assistant manager") return 1;
+  if (p === "viewer") return LIST_ORDER.length + 1;
+  const i = LIST_ORDER.indexOf(p);
+  return i < 0 ? LIST_ORDER.length : i;
+}
+export const byPosition = <T extends { name: string; designation?: string | null }>(a: T, b: T) =>
+  listOrderOf(a.designation) - listOrderOf(b.designation) || a.name.localeCompare(b.name);
 // Who someone sees in lists of people: the Super Admin sees everyone; anyone
 // else, admins included, sees people at their own level or below (and
 // themselves), never above them, as with tasks. `keep` stays listed

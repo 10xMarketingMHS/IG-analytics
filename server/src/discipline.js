@@ -41,6 +41,11 @@ export function raterRoleOf(designation, isAdmin, hasDisciplineGrant = false) {
   if (isAdmin && !p) return "manager";
   return hasDisciplineGrant || isAdmin ? "manager" : null;
 }
+// What a rater sees of the others' stars: their own, and those of the roles
+// below theirs. The Manager sees everyone's; an Asst. Manager theirs and the
+// Team Leads'; a Team Lead only their own. No one sees a role above theirs.
+const RANK = { manager: 0, asst_manager: 1, lead: 2 };
+export const rolesSeenBy = (role) => ROLES.filter((k) => RANK[k] >= RANK[role]);
 export async function raterOf(req, hasDisciplineGrant = false) {
   const { rows } = await pool.query(
     "select u.editor_id, e.designation from app_user u left join editor e on e.id = u.editor_id where u.id = $1",
@@ -67,7 +72,7 @@ export async function disciplineByEditor(orgId, month, editorId = null) {
   const [mgr, rev] = await Promise.all([
     pool.query(`select editor_id, ${CRITERIA.join(", ")} from editor_discipline_points where org_id = $1 and period_month = $2${one}`, P),
     (await reviewsReady())
-      ? pool.query(`select editor_id, rater_role, rater_user_id, ${CRITERIA.join(", ")} from editor_discipline_review where org_id = $1 and period_month = $2${one}`, P)
+      ? pool.query(`select editor_id, rater_role, rater_user_id, ${CRITERIA.join(", ")}, note, updated_at from editor_discipline_review where org_id = $1 and period_month = $2${one}`, P)
       : { rows: [] },
   ]);
   const out = new Map();
@@ -78,7 +83,7 @@ export async function disciplineByEditor(orgId, month, editorId = null) {
     const k = `${r.editor_id}:${r.rater_role}`;
     if (!byRole.has(k)) byRole.set(k, []);
     byRole.get(k).push(r);
-    get(r.editor_id).raters.push({ role: r.rater_role, userId: r.rater_user_id, ratings: ratingsOf(r) });
+    get(r.editor_id).raters.push({ role: r.rater_role, userId: r.rater_user_id, ratings: ratingsOf(r), note: r.note ?? null, updatedAt: r.updated_at ?? null });
   }
   for (const [k, rows] of byRole) { const [id, role] = k.split(":"); get(id)[role] = averaged(rows); }
   return out;

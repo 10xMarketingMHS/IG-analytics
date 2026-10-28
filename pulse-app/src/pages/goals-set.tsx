@@ -6,6 +6,7 @@ import { useEditors } from "@/lib/use-editors";
 import { gradFor } from "@/lib/editor-visuals";
 import { goalPointsTotal } from "@/lib/goal-points";
 import { countsInTaskScore } from "@/lib/task-points";
+import { byPosition } from "@/lib/home-role";
 import { monthName } from "@/lib/goal-periods";
 import { fmtHours } from "@/pages/settings-ui";
 import { giveWords } from "@/pages/goals-brand";
@@ -17,8 +18,9 @@ import type { Editor } from "@/lib/types";
 // is each type's time from Settings › Tasks & time, and working days and hours
 // come from the work calendar in Settings › General — shown here as numbers,
 // changed there. The list on the left shows how much of everyone's time is
-// planned; the bar at the bottom has the totals and Save, which stays off while
-// the plan is more than they have time for.
+// planned, Senior before Junior; the bar at the bottom has the totals and Save,
+// which stays off while the plan is more than they have time for. A month with
+// no goals yet starts from last month's: "Copy October's goals" (POST /goals/copy).
 
 // durationDays: a project's days, each one a full work day of hours (server/src/routes/goals.js)
 type Row = { contentFormatId: string; name: string; icon: string; category: string | null; jc: number | null; jph: number; points: number; budget?: number | null; durationDays?: number | null };
@@ -46,6 +48,7 @@ const IC = {
   ok: sv(<><circle cx="12" cy="12" r="9" /><path d="m8 12 3 3 5-5" /></>, 15),
   err: sv(<><circle cx="12" cy="12" r="9" /><path d="M12 7v6M12 16.5v.5" /></>, 15),
   info: sv(<><circle cx="12" cy="12" r="9" /><path d="M12 11v6M12 7.5v.5" /></>, 15),
+  copy: sv(<><rect x="9" y="9" width="12" height="12" rx="2" /><path d="M5 15V5a2 2 0 0 1 2-2h10" /></>, 15),
 };
 
 const draftOf = (d: GoalsResp): Draft => Object.fromEntries(d.rows.map((r) => [r.contentFormatId, r.jc == null ? "" : String(r.jc)]));
@@ -82,14 +85,17 @@ export function SetGoals() {
     return [-1, 0, 1].map((k) => ymOf(new Date(d.getFullYear(), d.getMonth() + k, 1)));
   }, []);
   const [month, setMonthRaw] = useState(months[1]);
-  const people = useMemo(() => (editors ?? []).filter((e) => e.active), [editors]);
+  const people = useMemo(() => (editors ?? []).filter((e) => e.active).sort(byPosition), [editors]);
   const ids = people.map((e) => e.id).join(",");
   const [data, setData] = useState<Record<string, GoalsResp> | null>(null);
   const [drafts, setDrafts] = useState<Record<string, Draft>>({});
   const [selId, setSelId] = useState<string | null>(null);
   // what the brands need of each type this month (Goals › Brand goals)
   const [need, setNeed] = useState<Record<string, number>>({});
+  // who had goals last month, to start this one from
+  const [copyFrom, setCopyFrom] = useState<string[]>([]);
   const [saving, setSaving] = useState(false);
+  const [copying, setCopying] = useState(false);
 
   // Everyone's goals and capacity for the month, in one request.
   const [loadError, setLoadError] = useState(false);
@@ -102,11 +108,12 @@ export function SetGoals() {
     setDrafts({});
     setLoadError(false);
     const want = new Set(ids.split(","));
-    api<{ people: Record<string, GoalsResp>; brandNeed?: Record<string, number> }>(`/goals/set-all?month=${month}-01`)
+    api<{ people: Record<string, GoalsResp>; brandNeed?: Record<string, number>; copyFrom?: string[] }>(`/goals/set-all?month=${month}-01`)
       .then((d) => {
         if (!live) return;
         setData(Object.fromEntries(Object.entries(d.people).filter(([id]) => want.has(id))));
         setNeed(d.brandNeed ?? {});
+        setCopyFrom(d.copyFrom ?? []);
       })
       .catch(() => { if (live) setLoadError(true); });
     return () => { live = false; };
@@ -185,12 +192,38 @@ export function SetGoals() {
   }
   const discard = () => setDrafts((s) => { const n = { ...s }; delete n[sel.id]; return n; });
 
+  // Last month's goals, for everyone with none this month yet (a month that's over stays locked)
+  const [py, pm] = month.split("-").map(Number);
+  const prev = ymOf(new Date(py, pm - 2, 1));
+  const prevName = monthName(prev).split(" ")[0];
+  const toCopy = month >= months[1] ? loaded.filter((p) => countsInTaskScore(p) && !hasGoals(p.id) && copyFrom.includes(p.id)) : [];
+  async function copyLast() {
+    if (unsaved.length) { toast.error("Save or discard the goals you've typed first."); return; }
+    setCopying(true);
+    try {
+      const r = await api<{ copied: number }>("/goals/copy", { method: "POST", body: JSON.stringify({ month: `${month}-01` }) });
+      if (r.copied) toast.success(`${prevName}'s goals copied for ${r.copied} ${r.copied === 1 ? "person" : "people"} — change anyone's here and save.`);
+      else toast.message("Nothing to copy — everyone already has goals this month.");
+      setReload((n) => n + 1);
+    } catch (e) {
+      toast.error(e instanceof ApiError ? e.message : "Couldn't copy the goals.");
+    } finally {
+      setCopying(false);
+    }
+  }
+
   return (
     <div className="gl-stack">
       <div className="gl-bar">
         <div className="gl-seg gs-months" role="group" aria-label="Month">
           {months.map((m) => <button key={m} type="button" className={month === m ? "on" : ""} aria-pressed={month === m} onClick={() => setMonth(m)}><span className="gs-ml">{monthName(m)}</span><span className="gs-ms">{monthName(m, "short")}</span></button>)}
         </div>
+        {toCopy.length > 0 && (
+          <button type="button" className="gl-btn gs-copy" disabled={copying} onClick={copyLast}
+            title={`Gives ${toCopy.map((p) => p.name.split(" ")[0]).join(", ")} the same goals as in ${prevName} — then change anyone's and save. Whoever already has goals this month is left as they are.`}>
+            {IC.copy}{copying ? "Copying…" : `Copy ${prevName}'s goals · ${toCopy.length} ${toCopy.length === 1 ? "person" : "people"}`}
+          </button>
+        )}
         <span className="gl-grow" />
         <span className="gs-who">{IC.lock}Admins and goal editors · editable any time</span>
       </div>

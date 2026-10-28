@@ -14,7 +14,7 @@ import { editorRanks, seesEditor, taskViewer } from "../hierarchy.js";
 import { scoreMonthAll } from "../goal-score.js";
 import { monthFrozen } from "../leave-math.js";
 import { brandNeedByType } from "./brand-goals.js";
-import { disciplineByEditor, disciplineShares, raterOf, reviewsReady } from "../discipline.js";
+import { disciplineByEditor, disciplineShares, raterOf, reviewsReady, rolesSeenBy } from "../discipline.js";
 
 export const goalsRouter = Router();
 
@@ -111,6 +111,10 @@ function monthStart(monthIn) {
   return m ? `${m[1]}-${m[2].padStart(2, "0")}-01` : null;
 }
 // The first day of this month (or offset months away), on India time.
+const prevMonthOf = (first) => {
+  const [y, m] = first.split("-").map(Number);
+  return m === 1 ? `${y - 1}-12-01` : `${y}-${String(m - 1).padStart(2, "0")}-01`;
+};
 function istMonthStart(offset = 0) {
   const ist = new Date(Date.now() + 330 * 60_000);
   return new Date(Date.UTC(ist.getUTCFullYear(), ist.getUTCMonth() + offset, 1)).toISOString().slice(0, 10);
@@ -285,7 +289,7 @@ goalsRouter.get("/goals/set-all", requirePermission("edit_goals"), async (req, r
   try {
     const month = monthStart(monthIn);
     if (!month) return res.status(400).json({ error: "That month couldn't be read." });
-    const [eds, formats, goals, rules, caps, orgEff] = await Promise.all([
+    const [eds, formats, goals, rules, caps, orgEff, last] = await Promise.all([
       pool.query("select id from editor where org_id=$1 and active", [req.orgId]),
       // the types tracked in goals (Settings › Tasks & time › Goal)
       pool.query("select id, name, icon, category, sort_order, points, duration_days from task_content_format where org_id=$1 and active and coalesce((to_jsonb(task_content_format)->>'counts_in_goal')::boolean, true) order by category, sort_order, name", [req.orgId]),
@@ -294,6 +298,8 @@ goalsRouter.get("/goals/set-all", requirePermission("edit_goals"), async (req, r
       pool.query("select editor_id, working_days, hours_per_day from editor_capacity where org_id=$1 and period_month=$2", [req.orgId, month]),
       // a person with no capacity of their own gets the org's (or the calendar's)
       effectiveCapacity(req.orgId, NIL_ID, month),
+      // who had goals last month (POST /goals/copy)
+      pool.query("select distinct editor_id from editor_goal where org_id=$1 and period_month=$2", [req.orgId, prevMonthOf(month)]),
     ]);
     // the type's time for a person: theirs, else the org's (as resolveBudgetHours)
     const rule = new Map(rules.rows.map((r) => [`${r.content_format_id}:${r.editor_id ?? ""}`, r.hours]));
@@ -324,8 +330,9 @@ goalsRouter.get("/goals/set-all", requirePermission("edit_goals"), async (req, r
         }),
       };
     }
-    // what the brands need of each type (Goals › Brand goals), for "15 to give out"
-    res.json({ month, people, brandNeed: await brandNeedByType(req.orgId, month) });
+    // what the brands need of each type (Goals › Brand goals), for "15 to give out";
+    // copyFrom: who had goals last month, to start this one from (POST /goals/copy)
+    res.json({ month, people, brandNeed: await brandNeedByType(req.orgId, month), copyFrom: last.rows.map((r) => r.editor_id) });
   } catch (err) {
     next(err);
   }
@@ -570,6 +577,47 @@ goalsRouter.put("/goals", requirePermission("edit_goals"), async (req, res, next
   }
 });
 
+// POST /goals/copy { month } — start a month from the one before: everyone
+// with no goals in it yet gets last month's (the same job counts), to change in
+// Set goals. Left as they are: anyone who already has goals this month, anyone
+// exempt from task score, and anyone whose goals the caller can't set (your own,
+// someone above you). A type no longer tracked in goals isn't copied; each goal
+// takes its type's points today, as a new goal does in PUT /goals.
+goalsRouter.post("/goals/copy", requirePermission("edit_goals"), async (req, res, next) => {
+  const month = monthStart(req.body?.month);
+  if (!month) return res.status(400).json({ error: "Say which month to copy into." });
+  try {
+    if (month < istMonthStart(0)) return res.status(403).json({ error: "That month is over, so its goals are locked." });
+    const scored = (await hasColumn("editor", "in_task_score")) ? " and coalesce(e.in_task_score, true)" : "";
+    const { rows: who } = await pool.query(
+      `select e.id, e.name from editor e
+        where e.org_id = $1 and e.active${scored}
+          and exists (select 1 from editor_goal g where g.org_id = $1 and g.editor_id = e.id and g.period_month = $2)
+          and not exists (select 1 from editor_goal g where g.org_id = $1 and g.editor_id = e.id and g.period_month = $3)
+        order by e.name`,
+      [req.orgId, prevMonthOf(month), month],
+    );
+    const withPoints = await hasColumn("editor_goal", "points");
+    const copied = [];
+    for (const e of who) {
+      if (await goalWriteError(req, e.id, month, "goals")) continue;
+      const { rowCount } = await pool.query(
+        `insert into editor_goal (org_id, editor_id, content_format_id, period_month, jc, jph${withPoints ? ", points" : ""})
+         select g.org_id, g.editor_id, g.content_format_id, $3::date, g.jc, g.jph${withPoints ? ", cf.points" : ""}
+           from editor_goal g join task_content_format cf on cf.id = g.content_format_id
+          where g.org_id = $1 and g.editor_id = $2 and g.period_month = $4::date
+            and cf.active and coalesce((to_jsonb(cf)->>'counts_in_goal')::boolean, true)
+         on conflict (org_id, editor_id, content_format_id, period_month) do nothing`,
+        [req.orgId, e.id, month, prevMonthOf(month)],
+      );
+      if (rowCount) copied.push(e.name);
+    }
+    res.json({ ok: true, copied: copied.length, people: copied });
+  } catch (err) {
+    next(err);
+  }
+});
+
 // GET /goals/performance?editorId=&month= — read-only monthly performance:
 // Goal JC vs Actual JC (completed tasks of that content type in the month),
 // with Goal/Actual hours from the SAME stored jph, balance and achievement %.
@@ -778,6 +826,9 @@ async function disciplineRater(req, res, next) {
 // Overall via the shared goalBreakdown), plus the stored Discipline Points/note.
 // Each person also brings their stars by role (byRole), and the caller's own
 // (ratings: what they edit); with the shares of the 20% and the caller's role.
+// byRole holds only the roles the caller sees (sees): their own and those below
+// it, so a Team Lead never gets the Manager's or an Asst. Manager's stars, nor
+// their note; their own role is just their own stars.
 goalsRouter.get("/goals/discipline", disciplineRater, async (req, res, next) => {
   const monthIn = req.query.month;
   if (!monthIn) return res.status(400).json({ error: "month is required." });
@@ -804,23 +855,25 @@ goalsRouter.get("/goals/discipline", disciplineRater, async (req, res, next) => 
     const discBy = new Map(disc.map((d) => [d.editor_id, d]));
     const none = { punctuality: null, quality_responsibility: null, behaviour: null, attendance_availability: null, deadline_adherence: null };
     const rowsOf = (s) => (s?.types ?? []).map((t) => ({ goalJC: t.goal, actualJC: t.done, countedJC: t.counted, points: t.points }));
+    const sees = rolesSeenBy(role);
     res.json({
-      month, shares, myRole: role,
+      month, shares, myRole: role, sees,
       // you don't rate yourself, nor anyone above you (a Team Lead rates the team, not the Manager)
       editors: editors.filter((e) => e.id !== me && (superHere || seesEditor(viewer, ranks, e.id))).map((e) => {
         const d = discBy.get(e.id);
         const b = byEditor.get(e.id);
-        const own = role === "manager" ? ratingsOf(d) : b?.raters.find((x) => x.role === role && x.userId === req.user.sub)?.ratings ?? none;
+        const mine = role === "manager" ? null : b?.raters.find((x) => x.role === role && x.userId === req.user.sub) ?? null;
+        const own = role === "manager" ? ratingsOf(d) : mine?.ratings ?? none;
         return {
           editorId: e.id, editorName: e.name,
           rows: rowsOf(scores.get(e.id)),
           coveredPoints: scores.get(e.id)?.coveredPoints ?? 0,
           leaveDays: scores.get(e.id)?.leaveDays ?? 0,
           ratings: own,
-          byRole: { manager: b?.manager ?? null, asst_manager: b?.asst_manager ?? null, lead: b?.lead ?? null },
+          byRole: Object.fromEntries(sees.map((k) => [k, role !== "manager" && k === role ? mine?.ratings ?? null : b?.[k] ?? null])),
           attendancePenalty: penalties.get(e.id) ?? 0,
-          note: d?.note ?? null,
-          updatedAt: d?.updated_at ?? null,
+          note: role === "manager" ? d?.note ?? null : mine?.note ?? null,
+          updatedAt: role === "manager" ? d?.updated_at ?? null : mine?.updatedAt ?? null,
         };
       }),
     });

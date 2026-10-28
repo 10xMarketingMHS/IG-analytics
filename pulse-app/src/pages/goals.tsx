@@ -9,6 +9,7 @@ import { useTasks } from "@/lib/use-tasks";
 import { useResource } from "@/lib/use-resource";
 import { gradFor } from "@/lib/editor-visuals";
 import { ymd } from "@/lib/task-points";
+import { byPosition } from "@/lib/home-role";
 import { DEFAULT_SHARES, DISCIPLINE_CRITERIA, disciplineParts, goalBreakdown, RATER_LABEL, RATER_ROLES, type ByRole, type RaterRole, type Ratings, type Shares } from "@/lib/goal-points";
 import {
   achievement, bandOf, currentPeriod, doneByType, goalLines, monthName, pctText, periodBounds, periodLabel, tenths,
@@ -396,12 +397,14 @@ function Discipline({ month }: { month: string }) {
   const [data, setData] = useState<DiscEditor[] | null>(null);
   const [shares, setShares] = useState<Shares>(DEFAULT_SHARES);
   const [myRole, setMyRole] = useState<RaterRole>("manager");
+  // the roles whose stars you see: yours and those below it (server/src/discipline.js)
+  const [sees, setSees] = useState<RaterRole[]>(RATER_ROLES);
   const [draft, setDraft] = useState<Record<string, Ratings>>({});
   const [saving, setSaving] = useState(false);
   const load = () => {
     setData(null);
-    api<{ editors: DiscEditor[]; shares?: Shares; myRole?: RaterRole }>(`/goals/discipline?month=${month}-01`)
-      .then((d) => { setData(d.editors); setShares(d.shares ?? DEFAULT_SHARES); setMyRole(d.myRole ?? "manager"); setDraft({}); })
+    api<{ editors: DiscEditor[]; shares?: Shares; myRole?: RaterRole; sees?: RaterRole[] }>(`/goals/discipline?month=${month}-01`)
+      .then((d) => { setData(d.editors); setShares(d.shares ?? DEFAULT_SHARES); setMyRole(d.myRole ?? "manager"); setSees(d.sees ?? RATER_ROLES); setDraft({}); })
       .catch(() => setData([]));
   };
   useEffect(load, [month]);
@@ -428,13 +431,24 @@ function Discipline({ month }: { month: string }) {
     }
   }
 
+  // The Manager sees every rater's stars, the total and the Overall. An Asst.
+  // Manager or a Team Lead doesn't see a role above theirs: their column is
+  // only their own part (and the roles below), with no total or Overall.
+  const full = RATER_ROLES.every((k) => !(shares[k] > 0) || sees.includes(k));
+  const shown: Shares = full ? shares : { ...shares, ...Object.fromEntries(RATER_ROLES.filter((k) => !sees.includes(k)).map((k) => [k, 0])) };
+  const myShare = RATER_ROLES.reduce((s, k) => s + (shown[k] ?? 0), 0);
+  const hidden = RATER_ROLES.filter((k) => shares[k] > 0 && !sees.includes(k)).map((k) => RATER_LABEL[k]);
+  const desOf = (id: string) => editors?.find((x) => x.id === id)?.designation;
+  // Senior before Junior
+  const list = [...(data ?? [])].sort((a, b) => byPosition({ name: a.editorName, designation: desOf(a.editorId) }, { name: b.editorName, designation: desOf(b.editorId) }));
+
   return (
     <section className="gl-card gl-disc">
       <div className="gl-sechd">
         <b>Discipline · {monthName(month)}</b>
         <span className="gl-hint">
           20% of each person's score: {RATER_ROLES.filter((r) => shares[r] > 0).map((r) => `${RATER_LABEL[r]} ${shares[r]}%`).join(" · ")}.
-          You're rating as <b>{RATER_LABEL[myRole]}</b>. Unrated criteria count as full marks; tap a star again to clear it.
+          You're rating as <b>{RATER_LABEL[myRole]}</b>{full ? "" : ` — your part is ${myShare}%; the ${hidden.join(" and ")}'s ratings aren't shown to you`}. Unrated criteria count as full marks; tap a star again to clear it.
         </span>
         <span className="gl-grow" />
         <button type="button" className="gl-btn pri" onClick={save} disabled={saving || !dirty.length}>
@@ -443,19 +457,22 @@ function Discipline({ month }: { month: string }) {
       </div>
       {data === null ? <div className="gl-empty">Loading…</div> : data.length === 0 ? <div className="gl-empty">No team members to rate.</div> : (
         <div className="gl-tablewrap">
-          <div className="gl-table disc">
+          <div className={"gl-table disc" + (full ? "" : " part")}>
             <div className="gl-th">
-              <span>Person</span>{DISCIPLINE_CRITERIA.map((c) => <span key={c.key}>{c.label}</span>)}<span className="num">Disc.</span><span className="num">Overall</span><span>Status</span>
+              <span>Person</span>{DISCIPLINE_CRITERIA.map((c) => <span key={c.key}>{c.label}</span>)}
+              {full ? <><span className="num">Disc.</span><span className="num">Overall</span><span>Status</span></> : <span className="num">Your part</span>}
             </div>
-            {data.map((e) => {
+            {list.map((e) => {
               const r = ratingsOf(e);
               const ed = editors?.find((x) => x.id === e.editorId);
               // everyone's stars, with yours as you set them
               const byRole: ByRole = { ...(e.byRole ?? {}), [myRole]: draft[e.editorId] ? r : e.byRole?.[myRole] ?? r };
-              const bd = goalBreakdown(e.rows, byRole, shares, e.attendancePenalty ?? 0, e.coveredPoints ?? 0);
-              const parts = bd?.parts ?? disciplineParts(100, byRole, shares).parts;
+              // the attendance points lost come off the total, so only with it
+              const bd = goalBreakdown(e.rows, byRole, shown, full ? e.attendancePenalty ?? 0 : 0, e.coveredPoints ?? 0);
+              const parts = bd?.parts ?? disciplineParts(100, byRole, shown).parts;
               const rated = Object.values(parts).some((p) => p?.any);
-              const disc = bd ? Math.round((bd.discipline / bd.total) * 100) : Math.round(disciplineParts(100, byRole, shares).points);
+              const discX = bd ? (bd.discipline / bd.total) * 100 : disciplineParts(100, byRole, shown).points;
+              const disc = full ? Math.round(discX) : Math.round(discX * 10) / 10;
               const overall = bd ? Math.round((bd.overall / bd.total) * 100) : null;
               const st = !rated ? { l: "Not rated yet", t: "" } : overall == null ? { l: "No goals", t: "" } : overall >= epi ? { l: "Excellent", t: "good" } : overall >= mpi ? { l: "On track", t: "ac" } : { l: "Needs support", t: "warn" };
               return (
@@ -469,12 +486,12 @@ function Discipline({ month }: { month: string }) {
                       ))}
                     </span>
                   ))}
-                  <span className="num gl-disc-n" title={e.attendancePenalty ? `Includes −${e.attendancePenalty} attendance pt${e.attendancePenalty === 1 ? "" : "s"} (late, absent)` : undefined}>
-                    <b>{disc}/20</b>
+                  <span className="num gl-disc-n" title={full && e.attendancePenalty ? `Includes −${e.attendancePenalty} attendance pt${e.attendancePenalty === 1 ? "" : "s"} (late, absent)` : undefined}>
+                    <b>{disc}/{full ? 20 : myShare}</b>
                     <small>{RATER_ROLES.filter((k) => parts[k]).map((k) => `${k === "manager" ? "M" : k === "lead" ? "TL" : "AM"} ${parts[k]!.any ? `${parts[k]!.stars}/25` : "—"}`).join(" · ")}</small>
                   </span>
-                  <b className="num lg">{overall ?? "–"}</b>
-                  <span>{<span className={"gl-tag " + st.t}>{st.l}</span>}</span>
+                  {full && <b className="num lg">{overall ?? "–"}</b>}
+                  {full && <span>{<span className={"gl-tag " + st.t}>{st.l}</span>}</span>}
                 </div>
               );
             })}
