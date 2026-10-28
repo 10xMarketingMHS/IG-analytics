@@ -354,3 +354,32 @@ html:not([data-theme="dark"]) .gl-stars button{color:rgba(30,20,80,.18)}
 .gl-awayrow b{font-size:12.5px;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .gl-awayrow span{grid-column:1;font-size:11.5px;color:var(--gl-text3)}
 .gl-awayrow em{grid-column:2;grid-row:1 / span 2;align-self:center;font-style:normal;font-size:13px;font-weight:800}
+
+/* Goals › Brand goals (goals-brand.tsx): jobs per type for each brand, Ads per Ads team */
+.gb-head{display:flex;align-items:baseline;gap:8px;padding:14px 18px 6px}
+.gb-head b{font-size:14px;font-weight:800}
+.gb-head span{font-size:12px;color:var(--gl-text3)}
+.gb-row{display:grid;gap:10px;align-items:center;padding:7px 18px;border-top:1px solid var(--gl-line2)}
+.gb-row.gb-th{padding:10px 18px;border-top:0;font-size:11px;font-weight:800;letter-spacing:.06em;text-transform:uppercase;color:var(--gl-text3)}
+.gb-row.gb-th span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.gb-row .c{text-align:center}
+.gb-row .r{text-align:right}
+.gb-cell{display:flex;flex-direction:column;align-items:stretch;gap:2px;min-width:0}
+.gb-cell input{width:100%;min-width:0;height:32px;padding:0 8px;border:1px solid var(--gl-line);border-radius:8px;background:var(--gl-solid);color:var(--gl-text);
+  font:500 13px 'Geist Mono',monospace;text-align:center;outline:none}
+.gb-cell input:focus{border-color:var(--gl-ac);box-shadow:0 0 0 3px var(--gl-acGlow)}
+.gb-cell small,.gb-total small{font-size:10.5px;font-weight:600;color:var(--gl-text3);text-align:center;white-space:nowrap}
+.gb-cell small.met{color:var(--gl-good)}
+.gb-total{display:flex;flex-direction:column;align-items:center;gap:2px}
+.gb-total b{font:700 13px 'Geist Mono',monospace}
+.gb-given em,.gs-need{font-style:normal;font-size:11.5px;font-weight:700;color:var(--gl-text3);white-space:nowrap}
+.gb-given em.warn,.gs-need.warn{color:var(--gl-warn)}
+.gb-given em.good,.gs-need.good{color:var(--gl-good)}
+.gb-given em.over,.gs-need.over{color:var(--gl-rev)}
+.gb-row.none .gs-type b{color:var(--gl-text2)}
+.gb-sum{justify-content:space-between}
+.gb-say{flex:1 1 320px;font-size:12px;color:var(--gl-text3);text-wrap:pretty}
+.gb-say b{color:var(--gl-text2)}
+/* Set goals: the type's brand need under its name */
+.gs-typecell{min-width:0;display:flex;flex-direction:column;gap:1px}
+.gs-need{font-size:11px}

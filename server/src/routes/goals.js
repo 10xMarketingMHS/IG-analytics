@@ -13,6 +13,7 @@ import { isSuperHere } from "../super-admin.js";
 import { editorRanks, seesEditor, taskViewer } from "../hierarchy.js";
 import { scoreMonthAll } from "../goal-score.js";
 import { monthFrozen } from "../leave-math.js";
+import { brandNeedByType } from "./brand-goals.js";
 
 export const goalsRouter = Router();
 
@@ -322,7 +323,8 @@ goalsRouter.get("/goals/set-all", requirePermission("edit_goals"), async (req, r
         }),
       };
     }
-    res.json({ month, people });
+    // what the brands need of each type (Goals › Brand goals), for "15 to give out"
+    res.json({ month, people, brandNeed: await brandNeedByType(req.orgId, month) });
   } catch (err) {
     next(err);
   }

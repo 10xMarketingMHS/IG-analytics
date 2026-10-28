@@ -7,6 +7,7 @@ import { gradFor } from "@/lib/editor-visuals";
 import { goalPointsTotal } from "@/lib/goal-points";
 import { monthName } from "@/lib/goal-periods";
 import { fmtHours } from "@/pages/settings-ui";
+import { giveWords } from "@/pages/goals-brand";
 import type { Editor } from "@/lib/types";
 
 // Goals › Set goals (Pulse Redesign v5) — for admins and the edit_goals grant:
@@ -85,6 +86,8 @@ export function SetGoals() {
   const [data, setData] = useState<Record<string, GoalsResp> | null>(null);
   const [drafts, setDrafts] = useState<Record<string, Draft>>({});
   const [selId, setSelId] = useState<string | null>(null);
+  // what the brands need of each type this month (Goals › Brand goals)
+  const [need, setNeed] = useState<Record<string, number>>({});
   const [saving, setSaving] = useState(false);
 
   // Everyone's goals and capacity for the month, in one request.
@@ -98,8 +101,12 @@ export function SetGoals() {
     setDrafts({});
     setLoadError(false);
     const want = new Set(ids.split(","));
-    api<{ people: Record<string, GoalsResp> }>(`/goals/set-all?month=${month}-01`)
-      .then((d) => { if (live) setData(Object.fromEntries(Object.entries(d.people).filter(([id]) => want.has(id)))); })
+    api<{ people: Record<string, GoalsResp>; brandNeed?: Record<string, number> }>(`/goals/set-all?month=${month}-01`)
+      .then((d) => {
+        if (!live) return;
+        setData(Object.fromEntries(Object.entries(d.people).filter(([id]) => want.has(id))));
+        setNeed(d.brandNeed ?? {});
+      })
       .catch(() => { if (live) setLoadError(true); });
     return () => { live = false; };
   }, [editors, ids, month, reload]);
@@ -143,6 +150,8 @@ export function SetGoals() {
   const goalPoints = goalPointsTotal(c.rows.map((x) => ({ jc: x.jobs || null, points: x.r.points })));
   const balance = c.capH - c.plan;
   const setJobs = (id: string, v: string) => setDrafts((s) => ({ ...s, [sel.id]: { ...(s[sel.id] ?? draftOf(sd)), [id]: v } }));
+  // how many of a type the whole team's goals give out, as typed (unsaved too)
+  const givenOf = (cf: string) => loaded.reduce((n, p) => n + Number((drafts[p.id] ?? draftOf(data[p.id]))[cf] || 0), 0);
 
   async function save() {
     if (!dirty) return;
@@ -236,7 +245,13 @@ export function SetGoals() {
                   <div className="gl-empty">No task types yet — add them in Settings · Tasks & time.</div>
                 ) : c.rows.map((x) => (
                   <div className={"gs-row" + (x.jobs ? "" : " none")} key={x.r.contentFormatId}>
-                    <span className="gs-type"><b>{x.r.icon} {x.r.name}</b><small>{x.r.category ? CAT[x.r.category] ?? x.r.category : ""}</small></span>
+                    <span className="gs-typecell">
+                      <span className="gs-type"><b>{x.r.icon} {x.r.name}</b><small>{x.r.category ? CAT[x.r.category] ?? x.r.category : ""}</small></span>
+                      {need[x.r.contentFormatId] > 0 && (() => {
+                        const g = giveWords(need[x.r.contentFormatId], givenOf(x.r.contentFormatId));
+                        return <small className={"gs-need " + g.cls} title="From Goals › Brand goals: what the brands need of it this month, and how much the team's goals give out">Brands need {need[x.r.contentFormatId]} · {g.text}</small>;
+                      })()}
+                    </span>
                     <input type="number" min={0} step={1} placeholder="—" aria-label={`Jobs of ${x.r.name}`}
                       value={dr[x.r.contentFormatId] ?? ""} onChange={(e) => setJobs(x.r.contentFormatId, e.target.value)} />
                     {x.r.durationDays ? (
@@ -254,7 +269,7 @@ export function SetGoals() {
             </div>
             <p className="gs-hint">
               Leave Jobs blank when there's no goal for that type. Hrs / job is each type's time from Settings › Tasks &amp; time. R1 · R2 splits
-              the target across the two reviews.
+              the target across the two reviews. "Brands need" comes from Brand goals: how much of it is still to give out to the team.
             </p>
           </section>
 
