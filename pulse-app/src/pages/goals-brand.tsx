@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, type ReactNode } from "react";
+import { Fragment, useEffect, useMemo, useState, type ReactNode } from "react";
 import { Link } from "react-router-dom";
 import { toast } from "sonner";
 import { api, ApiError } from "@/lib/api";
@@ -6,8 +6,10 @@ import { gradFor } from "@/lib/editor-visuals";
 import { monthName } from "@/lib/goal-periods";
 
 // Goals › Brand goals — for admins and the edit_goals grant, laid out like Set
-// goals (server/src/routes/brand-goals.js). The brands and the Ads teams down
-// the left with how far along this month is; on the right, the one picked: how
+// goals (server/src/routes/brand-goals.js). Total counts first — every task
+// type across all brands and Ads teams, against what Set goals gives out to the
+// editors — then the brands and the Ads teams down the left with how far along
+// this month is; on the right, the one picked: how
 // many jobs of each task type it needs, what's been done for it, and — across
 // all of them — how much of each type the team's goals give out (Set goals shows
 // the same as people's jobs are typed in). Brand goals don't change anyone's score.
@@ -132,6 +134,30 @@ export function BrandGoals() {
     // toward: what's done of the types it has goals for, never more than each goal
     return { rows, need, toward, pct, band };
   };
+  // Total counts: each type across every brand (Ads: every Ads team), against what Set goals gives out
+  const totalOn = (selKey ?? "total") === "total";
+  const totals = data.types.map((t) => {
+    const places = spots.filter((x) => x.team === (t.category === "ad"));
+    const need = places.reduce((n, x) => n + Number(text(keyOf(t.id, x.id)) || 0), 0);
+    const done = places.reduce((n, x) => n + (doneOf.get(keyOf(t.id, x.id)) ?? 0), 0);
+    return { t, need, done, given: data.given[t.id] ?? 0 };
+  });
+  const tNeed = totals.reduce((n, r) => n + r.need, 0);
+  // given toward the brand goals (never more than each needs); what goes to types with no brand goal, apart
+  const tGiven = totals.reduce((n, r) => n + Math.min(r.given, r.need), 0);
+  const tExtra = totals.reduce((n, r) => n + (r.need ? 0 : r.given), 0);
+  const tToGive = totals.reduce((n, r) => n + Math.max(0, r.need - r.given), 0);
+  const tOver = totals.reduce((n, r) => n + (r.need > 0 ? Math.max(0, r.given - r.need) : 0), 0);
+  const tPct = tNeed ? tGiven / tNeed : 0;
+  const tBand = !tNeed ? { cls: "", icon: IC.info, l: `No brand goals for ${monthName(month)} yet` }
+    : tToGive === 0 && tOver === 0 ? { cls: "good", icon: IC.ok, l: "Team goals match the brand goals" }
+    : tToGive === 0 ? { cls: "good", icon: IC.ok, l: `All given · ${tOver} more than the brands need` }
+    : { cls: "warn", icon: IC.info, l: `${tToGive} job${tToGive === 1 ? "" : "s"} still to give out in Set goals` };
+  const matchOf = (r: { need: number; given: number }) => (!r.need && !r.given ? { cls: "", text: "—" }
+    : !r.need ? { cls: "", text: `No brand goal · ${r.given} given` }
+    : r.given === r.need ? { cls: "good", text: "✓ Matches" }
+    : r.given < r.need ? { cls: "warn", text: `${r.need - r.given} to give` }
+    : { cls: "over", text: `${r.given - r.need} over` });
   const sel = spots.find((s) => s.key === selKey) ?? spots[0];
   const c = calc(sel);
   const selDirty = dirtyKeys.filter((k) => k.endsWith(`:${sel.id}`));
@@ -139,7 +165,7 @@ export function BrandGoals() {
   const allNeed = (t: TypeRow, s: Spot) => others(s).reduce((n, x) => n + Number(text(keyOf(t.id, x.id)) || 0), 0);
 
   async function save() {
-    if (!selDirty.length || busy) return;
+    if (totalOn || !selDirty.length || busy) return;
     const bad = selDirty.find((k) => { const v = drafts[k].trim(); return v && (!Number.isInteger(Number(v)) || Number(v) < 0); });
     if (bad) { toast.error("Each brand goal is a whole number of jobs."); return; }
     const goals = selDirty.map((k) => {
@@ -178,7 +204,7 @@ export function BrandGoals() {
 
   const listGroup = (team: boolean) => spots.filter((s) => s.team === team).map((s) => {
     const pc = calc(s);
-    const on = s.key === sel.key;
+    const on = !totalOn && s.key === sel.key;
     const unsaved = dirtyKeys.some((k) => k.endsWith(`:${s.id}`));
     return (
       <button key={s.key} type="button" className={"gs-person" + (on ? " on" : "")} aria-pressed={on} onClick={() => setSelKey(s.key)}>
@@ -211,12 +237,94 @@ export function BrandGoals() {
 
       <div className="gs-wrap">
         <section className="gl-card gs-list" aria-label="Brands and Ads teams">
-          <div className="gs-listhead"><b>Brands</b><span>% done</span></div>
+          <div className="gs-listhead"><b>Total counts</b><span>% given</span></div>
+          <div className="gs-people">
+            <button type="button" className={"gs-person" + (totalOn ? " on" : "")} aria-pressed={totalOn} onClick={() => setSelKey("total")}>
+              <span className="gl-ava sm gb-ava gb-sigma">Σ</span>
+              <span>
+                <b>All brands &amp; teams</b>
+                <small>{tNeed ? `${tNeed} needed · ${tGiven} given` : "No brand goals yet"}</small>
+              </span>
+              {tNeed > 0 && <em className={"gs-u " + (tToGive === 0 ? "good" : "warn")}>{Math.floor(tPct * 100)}%</em>}
+            </button>
+          </div>
+          <div className="gs-listhead gb-listsub"><b>Brands</b><span>% done</span></div>
           <div className="gs-people">{data.brands.length ? listGroup(false) : <small className="gb-none">No brands yet</small>}</div>
           <div className="gs-listhead gb-listsub"><b>Ads teams</b></div>
           <div className="gs-people">{data.teams.length ? listGroup(true) : <small className="gb-none">No Ads teams yet</small>}</div>
         </section>
 
+        {totalOn ? (
+        <div className="gs-main">
+          <section className="gl-card">
+            <div className="gs-phead">
+              <span className="gl-ava md gb-ava gb-sigma">Σ</span>
+              <span>
+                <b>Total counts</b>
+                <small>All brands and Ads teams · {monthName(month)} goals</small>
+              </span>
+              <Link to="/goals-board?tab=set" className="gs-cal">{IC.gear}Set goals</Link>
+            </div>
+            <div className="gs-tiles">
+              <div><b>{tNeed}</b><span>jobs needed</span></div>
+              <div><b>{tGiven}</b><span>given to editors toward them</span></div>
+              <div className="ac"><b>{tToGive}</b><span>still to give</span></div>
+            </div>
+            <div className="gs-capline">
+              <span className="gs-formula">
+                {tNeed ? `Brands ${totals.filter((r) => r.t.category !== "ad").reduce((n, r) => n + r.need, 0)} + Ads teams ${totals.filter((r) => r.t.category === "ad").reduce((n, r) => n + r.need, 0)} = ${tNeed} jobs` : "No brand goals set yet"}
+                <small>Given to editors comes from Set goals{tExtra ? ` · ${tExtra} more given for types with no brand goal` : ""} · done counts what's completed in {monthName(month)}</small>
+              </span>
+            </div>
+          </section>
+
+          <section className="gl-card">
+            <div className="gs-tscroll">
+              <div className="gs-table">
+                <div className="gs-row gb-t gs-th"><span>Task type</span><span className="c">Brands need</span><span className="c">Given</span><span className="c">Done</span><span className="r">Match</span></div>
+                {([["Social, Service & Projects", false], ["Ads", true]] as const).map(([label, ad]) => {
+                  const rs = totals.filter((r) => (r.t.category === "ad") === ad);
+                  if (!rs.length) return null;
+                  return (
+                    <Fragment key={label}>
+                      <div className="gb-grp">{label}<small>{ad ? "every Ads team" : "every brand"}</small></div>
+                      {rs.map((r) => {
+                        const mt = matchOf(r);
+                        return (
+                          <div className={"gs-row gb-t" + (r.need || r.given ? "" : " none")} key={r.t.id}>
+                            <span className="gs-type"><b>{r.t.icon} {r.t.name}</b><small>{CAT[r.t.category]}</small></span>
+                            <b className="c gb-done">{r.need || "—"}</b>
+                            <b className="c gb-done">{r.given || "—"}</b>
+                            <b className={"c gb-done" + (r.need > 0 && r.done >= r.need ? " met" : "")}>{elapsed === 0 ? "—" : r.done || "—"}</b>
+                            <span className="r"><em className={"gs-need " + mt.cls}>{mt.text}</em></span>
+                          </div>
+                        );
+                      })}
+                    </Fragment>
+                  );
+                })}
+              </div>
+            </div>
+            <p className="gs-hint">
+              Brands need adds up every brand's goal for the type (Ads: every Ads team's). Given is what the editors' goals in Set goals add up to.
+              When they match, everything the brands need has someone on it. Done counts the type's tasks completed this month.
+            </p>
+          </section>
+
+          <section className="gl-card gs-sum">
+            <span className="gs-num"><b className="ac">{tNeed}</b><span>Jobs needed</span></span>
+            <span className="gs-num"><b>{tGiven}</b><span>Given</span></span>
+            <span className="gs-num"><b>{tToGive}</b><span>To give</span></span>
+            <span className={"gs-band " + tBand.cls}>
+              <span>{tBand.icon}<span>{tBand.l}</span>{tNeed > 0 && <em>{Math.floor(tPct * 100)}%</em>}</span>
+              <i><i style={{ width: `${Math.min(100, tPct * 100)}%` }} /></i>
+            </span>
+            <span className="gs-acts">
+              <Link to="/goals-board?tab=set" className="gl-btn pri">{IC.check}Give out in Set goals</Link>
+            </span>
+          </section>
+        </div>
+        ) : (
         <div className="gs-main">
           <section className="gl-card">
             <div className="gs-phead">
@@ -288,6 +396,7 @@ export function BrandGoals() {
             </span>
           </section>
         </div>
+        )}
       </div>
     </div>
   );
