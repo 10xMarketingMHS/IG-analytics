@@ -271,7 +271,7 @@ export function SetGoals() {
               {dirty && <button type="button" className="gl-btn" onClick={discard}>Discard</button>}
               <button type="button" className="gl-btn pri" disabled={!dirty || c.over || saving} onClick={save}
                 title={c.over ? "Planned hours are more than the capacity" : !dirty ? "No changes" : undefined}>
-                {IC.check}{saving ? "Saving…" : "Save goals"}
+                {IC.check}{saving ? "Saving…" : `Save ${first}'s goals`}
               </button>
             </span>
           </section>
