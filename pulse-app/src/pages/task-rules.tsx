@@ -18,9 +18,15 @@ import { AdTeamsCard } from "@/pages/ad-teams-card";
 
 // A curated set — enough variety for common content work without turning the
 // picker into an unscrollable wall of emoji.
+// A row each: content, devices and tools, video and audio, ads and marketing,
+// writing and the web, AI / R&D and operations.
 const ICON_OPTIONS = [
   "🎬", "🖼️", "📷", "🎥", "▶️", "🎙️", "📝", "🎨",
   "📱", "🖥️", "📊", "🗓️", "💡", "✂️", "🔊", "🔧",
+  "🎞️", "📹", "📸", "🎤", "🎧", "🎵", "🎭", "🖌️",
+  "📣", "📢", "🎯", "📈", "💰", "🛒", "🏷️", "🎁",
+  "✍️", "📄", "📋", "📧", "💬", "🌐", "💻", "🔗",
+  "🤖", "🧪", "🧠", "📦", "🗂️", "🔍", "⚙️", "✅",
 ];
 
 type Cat = "social" | "ad" | "service" | "project";
