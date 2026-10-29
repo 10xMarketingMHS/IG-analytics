@@ -332,7 +332,11 @@ goalsRouter.get("/goals/set-all", requirePermission("edit_goals"), async (req, r
     }
     // what the brands need of each type (Goals › Brand goals), for "15 to give out";
     // copyFrom: who had goals last month, to start this one from (POST /goals/copy)
-    res.json({ month, people, brandNeed: await brandNeedByType(req.orgId, month), copyFrom: last.rows.map((r) => r.editor_id) });
+    // — never yourself nor anyone above you, as the copy skips them (goalWriteError)
+    const [superHere, viewer, ranks] = await Promise.all([isSuperHere(req), taskViewer(req), editorRanks(req.orgId)]);
+    const copyFrom = last.rows.map((r) => r.editor_id)
+      .filter((id) => superHere || (id !== viewer.editorId && seesEditor(viewer, ranks, id)));
+    res.json({ month, people, brandNeed: await brandNeedByType(req.orgId, month), copyFrom });
   } catch (err) {
     next(err);
   }
@@ -667,13 +671,11 @@ goalsRouter.get("/goals/performance", goalView, async (req, res, next) => {
         covered: scored?.coveredByType?.[g.content_format_id] ?? 0,
       };
     });
-    // Stored Admin Discipline criterion ratings for this editor+month.
-    const disc = (await pool.query(
-      `select ${RATINGS_SELECT}, note from editor_discipline_points where org_id=$1 and editor_id=$2 and period_month=$3`,
-      [req.orgId, editorId, month],
-    )).rows[0];
+    // No Discipline stars here: these are the Manager's, and a Team Lead or an
+    // Asst. Manager who views goals mustn't see them (GET /goals/discipline
+    // gives each rater what their rank may see).
     res.json({
-      month, rows, ratings: ratingsOf(disc), note: disc?.note ?? null,
+      month, rows,
       leaveDays: scored?.leaveDays ?? 0, workingDays: scored?.workingDays ?? 0,
       coveredJobs: scored?.coveredJobs ?? 0, coveredPoints: scored?.coveredPoints ?? 0,
       scorePct: scored?.pct == null ? null : Math.round(scored.pct * 10) / 10,

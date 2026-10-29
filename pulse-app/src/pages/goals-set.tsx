@@ -294,13 +294,15 @@ export function SetGoals() {
                   return [grp.main, ...(open ? grp.subs : [])].map((x) => {
                   const subs = x === grp.main ? grp.subs : [];
                   const subJobs = subs.reduce((n, s) => n + s.jobs, 0), subHrs = subs.reduce((n, s) => n + s.hrs, 0);
+                  // folded, the sub-types' "Brands need" would go unseen: the button says it
+                  const subNeed = open ? 0 : subs.reduce((n, s) => n + Math.max(0, need[s.r.contentFormatId] ?? 0), 0);
                   return (
                   <div className={"gs-row" + (x.jobs || subJobs ? "" : " none") + (x !== grp.main ? " sub" : "")} key={x.r.contentFormatId}>
                     <span className="gs-typecell">
                       <span className="gs-type"><b>{x.r.icon} {x.r.name}</b><small>{x.r.category ? CAT[x.r.category] ?? x.r.category : ""}</small></span>
                       {subs.length > 0 && (
                         <button type="button" className="gs-fold" aria-expanded={open} onClick={() => folds.toggle(id)} title={open ? "Hide its sub-types" : "Show its sub-types — each has its own jobs"}>
-                          {kindsWord(subs.length)}{subJobs ? ` · ${subJobs} job${subJobs === 1 ? "" : "s"}${subHrs ? ` · ${fmtHours(subHrs)}` : ""}` : ""} {open ? "▴" : "▾"}
+                          {kindsWord(subs.length)}{subJobs ? ` · ${subJobs} job${subJobs === 1 ? "" : "s"}${subHrs ? ` · ${fmtHours(subHrs)}` : ""}` : ""}{subNeed ? ` · brands need ${subNeed}` : ""} {open ? "▴" : "▾"}
                         </button>
                       )}
                       {need[x.r.contentFormatId] > 0 && (() => {

@@ -59,19 +59,39 @@ const NEEDS_PARENT = "Sub-types need a database update first — ask whoever run
 // Can this type go under that main type? Null when it can, else what to say.
 // The main type: this workspace's, still in use, in the same category, and not
 // a sub-type itself; and a type with sub-types of its own can't go under one.
-async function parentError(orgId, parentId, category, selfId = null) {
+async function parentError(db, orgId, parentId, category, selfId = null) {
   if (!parentId) return null;
   if (parentId === selfId) return "A type can't go under itself.";
-  const { rows } = await pool.query("select name, category, parent_id, active from task_content_format where id = $1 and org_id = $2", [parentId, orgId]);
+  const { rows } = await db.query("select name, category, parent_id, active from task_content_format where id = $1 and org_id = $2", [parentId, orgId]);
   const p = rows[0];
   if (!p || !p.active) return "That main type wasn't found.";
   if (p.parent_id) return `${p.name} is a sub-type itself — put it under ${p.name}'s main type instead.`;
   if (category && p.category !== category) return `A sub-type is in the same category as its main type, and ${p.name} isn't.`;
   if (selfId) {
-    const { rowCount } = await pool.query("select 1 from task_content_format where parent_id = $1 and active", [selfId]);
+    const { rowCount } = await db.query("select 1 from task_content_format where parent_id = $1 and active", [selfId]);
     if (rowCount) return "This type has sub-types of its own, so it can't go under another type.";
   }
   return null;
+}
+
+// Changes to who sits under whom, one at a time per workspace, each checked and
+// written in one transaction: two at once (A under B while B goes under A) can't
+// make a loop or a second level, and a main type's move to another category
+// happens whole or not at all.
+async function treeTx(orgId, fn) {
+  const client = await pool.connect();
+  try {
+    await client.query("begin");
+    await client.query("select pg_advisory_xact_lock(hashtext('type-tree:' || $1::text))", [orgId]);
+    const out = await fn(client);
+    await client.query("commit");
+    return out;
+  } catch (err) {
+    await client.query("rollback").catch(() => {});
+    throw err;
+  } finally {
+    client.release();
+  }
 }
 const CATEGORIES = ["social", "ad", "service", "project"];
 
@@ -107,29 +127,33 @@ contentFormatsRouter.post("/content-formats", requirePermission("task_settings")
       return res.status(403).json({ error: POINTS_SUPER_ONLY });
     }
     const parentId = parsed.data.parent_id ?? null;
-    if (parentId) {
-      if (!(await parentCol())) return res.status(409).json({ error: NEEDS_PARENT });
-      const why = await parentError(req.orgId, parentId, category);
-      if (why) return res.status(400).json({ error: why });
-    }
-    // Sort order is per category, so each list numbers from 1 independently.
-    const { rows: maxRow } = await pool.query(
-      "select coalesce(max(sort_order), 0) + 1 as n from task_content_format where org_id = $1 and category = $2",
-      [req.orgId, category],
-    );
+    if (parentId && !(await parentCol())) return res.status(409).json({ error: NEEDS_PARENT });
     // a new Social or Ads type goes on unless it's unticked (most of that work is posted or run)
     const sched = await schedCol();
-    const { rows } = await pool.query(
-      `insert into task_content_format
-         (org_id, name, icon, sort_order, category, metric_tier, points, duration_days, metrics_description${sched ? ", to_scheduling" : ""}${parentId ? ", parent_id" : ""})
-       values ($1, $2, $3, $4, $5, $6, coalesce($7, 1), $8, $9${sched ? ", $10" : ""}${parentId ? `, $${sched ? 11 : 10}` : ""}) returning ${await select()}`,
-      [req.orgId, parsed.data.name, parsed.data.icon || "🔧", maxRow[0].n, category,
-       parsed.data.metric_tier ?? null, parsed.data.points ?? null,
-       parsed.data.duration_days ?? null, parsed.data.metrics_description ?? null,
-       ...(sched ? [parsed.data.to_scheduling ?? (category === "social" || category === "ad")] : []),
-       ...(parentId ? [parentId] : [])],
-    );
-    res.status(201).json({ contentFormat: rows[0] });
+    const cols = await select();
+    const add = async (db) => {
+      const why = await parentError(db, req.orgId, parentId, category);
+      if (why) return { why };
+      // Sort order is per category, so each list numbers from 1 independently.
+      const { rows: maxRow } = await db.query(
+        "select coalesce(max(sort_order), 0) + 1 as n from task_content_format where org_id = $1 and category = $2",
+        [req.orgId, category],
+      );
+      const { rows } = await db.query(
+        `insert into task_content_format
+           (org_id, name, icon, sort_order, category, metric_tier, points, duration_days, metrics_description${sched ? ", to_scheduling" : ""}${parentId ? ", parent_id" : ""})
+         values ($1, $2, $3, $4, $5, $6, coalesce($7, 1), $8, $9${sched ? ", $10" : ""}${parentId ? `, $${sched ? 11 : 10}` : ""}) returning ${cols}`,
+        [req.orgId, parsed.data.name, parsed.data.icon || "🔧", maxRow[0].n, category,
+         parsed.data.metric_tier ?? null, parsed.data.points ?? null,
+         parsed.data.duration_days ?? null, parsed.data.metrics_description ?? null,
+         ...(sched ? [parsed.data.to_scheduling ?? (category === "social" || category === "ad")] : []),
+         ...(parentId ? [parentId] : [])],
+      );
+      return { row: rows[0] };
+    };
+    const out = parentId ? await treeTx(req.orgId, add) : await add(pool);
+    if (out.why) return res.status(400).json({ error: out.why });
+    res.status(201).json({ contentFormat: out.row });
   } catch (err) {
     if (err.code === "23505") return res.status(409).json({ error: "That format already exists." });
     next(err);
@@ -156,12 +180,10 @@ contentFormatsRouter.patch("/content-formats/:id", requirePermission("task_setti
   const parentIn = parsed.data.parent_id;
   if (parentIn !== undefined) {
     if (!(await parentCol())) return res.status(409).json({ error: NEEDS_PARENT });
-    const { rows: me } = await pool.query("select category from task_content_format where id = $1 and org_id = $2", [req.params.id, req.orgId]);
-    if (!me.length) return res.status(404).json({ error: "Format not found." });
-    const why = await parentError(req.orgId, parentIn, parsed.data.category ?? me[0].category, req.params.id);
-    if (why) return res.status(400).json({ error: why });
     vals.push(parentIn); sets.push(`parent_id = $${vals.length}`);
   }
+  // who sits under whom may change: checked and written together (treeTx)
+  const tree = (parentIn !== undefined || parsed.data.category !== undefined) && (await parentCol());
   const tick = parsed.data.to_scheduling;
   if (tick !== undefined) {
     if (!(await schedCol())) return res.status(409).json({ error: "Scheduling needs a database update first — ask whoever runs the database to apply 20261104120000_task_scheduling." });
@@ -178,27 +200,39 @@ contentFormatsRouter.patch("/content-formats/:id", requirePermission("task_setti
     }
     const { rows: was } = tick !== undefined
       ? await pool.query("select to_scheduling from task_content_format where id = $1 and org_id = $2", [req.params.id, req.orgId]) : { rows: [] };
-    const { rows } = await pool.query(
-      `update task_content_format set ${sets.join(", ")}
-       where id = $${vals.length - 1} and org_id = $${vals.length} returning ${await select()}`,
-      vals,
-    );
-    if (!rows.length) return res.status(404).json({ error: "Format not found." });
-    // A main type moved to another category takes its sub-types with it; a
-    // sub-type moved away from its main type's category leaves it.
-    if (parsed.data.category !== undefined && (await parentCol())) {
-      await pool.query("update task_content_format set category = $1 where parent_id = $2 and org_id = $3", [parsed.data.category, req.params.id, req.orgId]);
-      const { rows: left } = await pool.query(
-        `update task_content_format c set parent_id = null from task_content_format p
-          where c.id = $1 and c.org_id = $2 and p.id = c.parent_id and p.category is distinct from c.category returning c.id`,
-        [req.params.id, req.orgId],
+    const cols = await select();
+    const write = async (db) => {
+      if (parentIn !== undefined) {
+        const { rows: me } = await db.query("select category from task_content_format where id = $1 and org_id = $2", [req.params.id, req.orgId]);
+        if (!me.length) return { status: 404, error: "Format not found." };
+        const why = await parentError(db, req.orgId, parentIn, parsed.data.category ?? me[0].category, req.params.id);
+        if (why) return { status: 400, error: why };
+      }
+      const { rows } = await db.query(
+        `update task_content_format set ${sets.join(", ")}
+         where id = $${vals.length - 1} and org_id = $${vals.length} returning ${cols}`,
+        vals,
       );
-      if (left.length) rows[0].parent_id = null;
-    }
+      if (!rows.length) return { status: 404, error: "Format not found." };
+      // A main type moved to another category takes its sub-types with it; a
+      // sub-type moved away from its main type's category leaves it.
+      if (tree && parsed.data.category !== undefined) {
+        await db.query("update task_content_format set category = $1 where parent_id = $2 and org_id = $3", [parsed.data.category, req.params.id, req.orgId]);
+        const { rows: left } = await db.query(
+          `update task_content_format c set parent_id = null from task_content_format p
+            where c.id = $1 and c.org_id = $2 and p.id = c.parent_id and p.category is distinct from c.category returning c.id`,
+          [req.params.id, req.orgId],
+        );
+        if (left.length) rows[0].parent_id = null;
+      }
+      return { row: rows[0] };
+    };
+    const out = tree ? await treeTx(req.orgId, write) : await write(pool);
+    if (out.error) return res.status(out.status).json({ error: out.error });
     // the Scheduling and Ad uploads lists follow the tick: how many tasks came in or went out
     const moved = was[0] && was[0].to_scheduling !== tick
       ? (await followTypeTick(req.orgId, req.params.id, tick)) + (await followAdTypeTick(req.orgId, req.params.id, tick)) : 0;
-    res.json({ contentFormat: rows[0], ...(tick !== undefined ? { schedulingMoved: moved } : {}) });
+    res.json({ contentFormat: out.row, ...(tick !== undefined ? { schedulingMoved: moved } : {}) });
   } catch (err) {
     if (err.code === "23505") return res.status(409).json({ error: "That format already exists." });
     next(err);
@@ -209,13 +243,17 @@ contentFormatsRouter.patch("/content-formats/:id", requirePermission("task_setti
 // (name/icon still resolve); it just stops being offered for new ones.
 contentFormatsRouter.delete("/content-formats/:id", requirePermission("task_settings"), async (req, res, next) => {
   try {
-    const { rowCount } = await pool.query(
-      "update task_content_format set active = false where id = $1 and org_id = $2",
-      [req.params.id, req.orgId],
-    );
-    if (!rowCount) return res.status(404).json({ error: "Format not found." });
-    // its sub-types stay, on their own
-    if (await parentCol()) await pool.query("update task_content_format set parent_id = null where parent_id = $1 and org_id = $2", [req.params.id, req.orgId]);
+    const tree = await parentCol();
+    const remove = async (db) => {
+      const { rowCount } = await db.query(
+        "update task_content_format set active = false where id = $1 and org_id = $2",
+        [req.params.id, req.orgId],
+      );
+      // its sub-types stay, on their own
+      if (rowCount && tree) await db.query("update task_content_format set parent_id = null where parent_id = $1 and org_id = $2", [req.params.id, req.orgId]);
+      return rowCount;
+    };
+    if (!(tree ? await treeTx(req.orgId, remove) : await remove(pool))) return res.status(404).json({ error: "Format not found." });
     res.status(204).end();
   } catch (err) {
     next(err);

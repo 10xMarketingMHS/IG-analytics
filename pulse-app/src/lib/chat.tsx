@@ -314,13 +314,18 @@ export function ChatProvider({ children }: { children: ReactNode }) {
 
   // The live stream, once we know chat is ours. EventSource reconnects by
   // itself; after a drop, refetch the list and tell the page to catch up.
+  // `handle` is read through a ref: it changes with every page change (it
+  // holds `navigate`), and reopening the stream each time would miss messages
+  // in the gap and flicker this person offline and online for everyone.
   const hasState = !!state;
+  const handleRef = useRef(handle);
+  handleRef.current = handle;
   useEffect(() => {
     if (!available || !hasState) return;
     const es = new EventSource(`${API_BASE}/chat/stream`, { withCredentials: true });
     let dropped = false;
     es.onmessage = (ev) => {
-      try { handle(JSON.parse(ev.data)); } catch { /* ignore a malformed frame */ }
+      try { handleRef.current(JSON.parse(ev.data)); } catch { /* ignore a malformed frame */ }
     };
     es.onerror = () => { dropped = true; };
     es.onopen = () => {
@@ -330,7 +335,7 @@ export function ChatProvider({ children }: { children: ReactNode }) {
       listeners.current.forEach((fn) => fn({ type: "resync" }));
     };
     return () => es.close();
-  }, [available, hasState, handle, refresh]);
+  }, [available, hasState, refresh]);
 
   // Belt and braces: counts drift if the stream misses something (a deploy, a
   // sleeping laptop), so re-read them now and then and whenever the tab returns.
