@@ -4,6 +4,8 @@ import { toast } from "sonner";
 import { api, ApiError } from "@/lib/api";
 import { gradFor } from "@/lib/editor-visuals";
 import { monthName } from "@/lib/goal-periods";
+import { useContentFormats } from "@/lib/use-content-formats";
+import { groupTypes, kindsWord, useFolds } from "@/lib/type-groups";
 
 // Goals › Brand goals — for admins and the edit_goals grant, laid out like Set
 // goals (server/src/routes/brand-goals.js). Total counts first — every task
@@ -64,6 +66,9 @@ export function BrandGoals() {
   const [drafts, setDrafts] = useState<Record<string, string>>({});
   const [selKey, setSelKey] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  // a main type's sub-types fold under its row (Settings › Tasks & time)
+  const { contentFormats } = useContentFormats();
+  const folds = useFolds();
 
   useEffect(() => {
     let live = true;
@@ -153,6 +158,17 @@ export function BrandGoals() {
     : tToGive === 0 && tOver === 0 ? { cls: "good", icon: IC.ok, l: "Team goals match the brand goals" }
     : tToGive === 0 ? { cls: "good", icon: IC.ok, l: `All given · ${tOver} more than the brands need` }
     : { cls: "warn", icon: IC.info, l: `${tToGive} job${tToGive === 1 ? "" : "s"} still to give out in Set goals` };
+  // rows by main type, each with its sub-types after it, the sub-types showing only when it's open
+  const parentOf = (id: string) => contentFormats?.find((f) => f.id === id)?.parent_id;
+  function folded<R extends { t: TypeRow }>(rs: R[]) {
+    return groupTypes(rs, (r) => r.t.id, parentOf).flatMap((g) => [g.main, ...(folds.isOpen(g.main.t.id) ? g.subs : [])]
+      .map((r) => ({ r, sub: r !== g.main, subs: r === g.main ? g.subs : [], open: folds.isOpen(g.main.t.id) })));
+  }
+  const foldBtn = (t: TypeRow, n: number, open: boolean, sum: string) => (
+    <button type="button" className="gs-fold" aria-expanded={open} onClick={() => folds.toggle(t.id)} title={open ? "Hide its sub-types" : "Show its sub-types — each has its own count"}>
+      {kindsWord(n)}{sum ? ` · ${sum}` : ""} {open ? "▴" : "▾"}
+    </button>
+  );
   const matchOf = (r: { need: number; given: number }) => (!r.need && !r.given ? { cls: "", text: "—" }
     : !r.need ? { cls: "", text: `No brand goal · ${r.given} given` }
     : r.given === r.need ? { cls: "good", text: "✓ Matches" }
@@ -288,11 +304,15 @@ export function BrandGoals() {
                   return (
                     <Fragment key={label}>
                       <div className="gb-grp">{label}<small>{ad ? "every Ads team" : "every brand"}</small></div>
-                      {rs.map((r) => {
+                      {folded(rs).map(({ r, sub, subs, open }) => {
                         const mt = matchOf(r);
+                        const subNeed = subs.reduce((n, s) => n + s.need, 0), subGiven = subs.reduce((n, s) => n + s.given, 0);
                         return (
-                          <div className={"gs-row gb-t" + (r.need || r.given ? "" : " none")} key={r.t.id}>
-                            <span className="gs-type"><b>{r.t.icon} {r.t.name}</b><small>{CAT[r.t.category]}</small></span>
+                          <div className={"gs-row gb-t" + (r.need || r.given || subNeed || subGiven ? "" : " none") + (sub ? " sub" : "")} key={r.t.id}>
+                            <span className="gs-typecell">
+                              <span className="gs-type"><b>{r.t.icon} {r.t.name}</b><small>{CAT[r.t.category]}</small></span>
+                              {subs.length > 0 && foldBtn(r.t, subs.length, open, subNeed || subGiven ? `${subNeed} needed · ${subGiven} given` : "")}
+                            </span>
                             <b className="c gb-done">{r.need || "—"}</b>
                             <b className="c gb-done">{r.given || "—"}</b>
                             <b className={"c gb-done" + (r.need > 0 && r.done >= r.need ? " met" : "")}>{elapsed === 0 ? "—" : r.done || "—"}</b>
@@ -354,12 +374,16 @@ export function BrandGoals() {
                 <div className="gs-row gb-r gs-th"><span>Task type</span><span className="c">Jobs</span><span className="c">Done</span><span className="r">{sel.team ? "All teams" : "All brands"} · team goals</span></div>
                 {c.rows.length === 0 ? (
                   <div className="gl-empty">No {sel.team ? "Ads" : "Social, Service or Project"} types are tracked in goals yet — add them in Settings · Tasks & time.</div>
-                ) : c.rows.map((r) => {
+                ) : folded(c.rows).map(({ r, sub, subs, open }) => {
                   const all = allNeed(r.t, sel);
                   const g = all > 0 ? giveWords(all, data.given[r.t.id] ?? 0) : null;
+                  const subJobs = subs.reduce((n, s) => n + s.jobs, 0);
                   return (
-                    <div className={"gs-row gb-r" + (r.jobs ? "" : " none")} key={r.t.id}>
-                      <span className="gs-type"><b>{r.t.icon} {r.t.name}</b><small>{CAT[r.t.category]}</small></span>
+                    <div className={"gs-row gb-r" + (r.jobs || subJobs ? "" : " none") + (sub ? " sub" : "")} key={r.t.id}>
+                      <span className="gs-typecell">
+                        <span className="gs-type"><b>{r.t.icon} {r.t.name}</b><small>{CAT[r.t.category]}</small></span>
+                        {subs.length > 0 && foldBtn(r.t, subs.length, open, subJobs ? `${subJobs} job${subJobs === 1 ? "" : "s"}` : "")}
+                      </span>
                       <input type="number" min={0} step={1} placeholder="—" aria-label={`${r.t.name} jobs for ${sel.name}`}
                         value={text(r.k)} onChange={(e) => setJobs(r.k, e.target.value)} />
                       <b className={"c gb-done" + (r.jobs > 0 && r.done >= r.jobs ? " met" : "")}>

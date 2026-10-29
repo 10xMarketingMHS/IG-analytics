@@ -23,6 +23,7 @@ import { api, ApiError } from "@/lib/api";
 import { Modal } from "@/components/modal";
 import { toast } from "sonner";
 import type { Task, TaskStatus, TaskPriority, TaskType, TaskMeta, TaskAttachment, TaskReviewLogEntry, ContentFormatDef, Editor, Subtask, TaskComment } from "@/lib/types";
+import { groupTypes, kindsWord } from "@/lib/type-groups";
 import "./tasks-board.css";
 import { HandoverBlock, HandoverInbox, HandoverPill, useHandovers } from "@/components/handover";
 import { ScheduleBlock } from "@/components/schedule-block";
@@ -2708,15 +2709,36 @@ export function TaskPanel({ mode, task, canWrite, editors, channels, onClose, on
                     if (g.need > 0) return { cls: "need", text: `${g.need} to go${g.open ? ` · ${g.open} on the board` : ""}` };
                     return { cls: "met", text: g.done >= g.goal ? "Goal met" : "Rest on the board" };
                   };
-                  const chip = (f: ContentFormatDef) => {
+                  // a main type's sub-types (Settings › Tasks & time) fold into its chip: "+2 sub-types"
+                  const chip = (f: ContentFormatDef, subs: ContentFormatDef[] = []) => {
                     const note = goalNote(f);
+                    const within = subs.some((s) => s.id === cur.content_format_id);
+                    const subNeed = subs.reduce((n, s) => n + Math.max(0, goalOf.get(s.id)?.need ?? 0), 0);
                     return (
-                      <button key={f.id} type="button" className={"tp2-type" + (f.counts_in_goal === false ? " off" : "") + (note?.cls === "need" ? " goal" : "") + (cur.content_format_id === f.id ? " on" : "")} aria-pressed={cur.content_format_id === f.id}
+                      <button key={f.id} type="button" className={"tp2-type" + (f.counts_in_goal === false ? " off" : "") + (note?.cls === "need" ? " goal" : "") + (cur.content_format_id === f.id ? " on" : within ? " within" : "")} aria-pressed={cur.content_format_id === f.id}
                         onClick={() => { setOtherPick(false); onPickContentType(cur.content_format_id === f.id ? null : f.id); }}>
                         <span>{f.icon} {f.name}</span>
                         <small>{tenths(f.points ?? 0)} {Number(f.points) === 1 ? "pt" : "pts"}{isProject ? (f.duration_days ? ` · ${f.duration_days} day${f.duration_days === 1 ? "" : "s"}` : "") : f.hours != null ? ` · ${fmtHours(Number(f.hours))}h` : ""}</small>
                         {note && <em className={"tp2-type-goal " + note.cls}>{note.text}</em>}
+                        {subs.length > 0 && <em className="tp2-type-kinds">+{kindsWord(subs.length)}{subNeed ? ` · ${subNeed} to go` : ""} ▾</em>}
                       </button>
+                    );
+                  };
+                  // Main types once each; with one of a group picked, a row of its kinds to choose from
+                  const parentOf = (id: string) => (contentFormats ?? []).find((x) => x.id === id)?.parent_id;
+                  const chips = (list: ContentFormatDef[], label: string, tail?: ReactNode) => {
+                    const gs = groupTypes(list, (f) => f.id, parentOf);
+                    const open = gs.find((g) => g.subs.length > 0 && (g.main.id === cur.content_format_id || g.subs.some((s) => s.id === cur.content_format_id)));
+                    return (
+                      <>
+                        <div className="tp2-types" role="group" aria-label={label}>{gs.map((g) => chip(g.main, g.subs))}{tail}</div>
+                        {open && (
+                          <div className="tp2-subtypes">
+                            <span className="tp2-subhead">Which {open.main.name}?</span>
+                            <div className="tp2-types" role="group" aria-label={`Kinds of ${open.main.name}`}>{[open.main, ...open.subs].map((f) => chip(f))}</div>
+                          </div>
+                        )}
+                      </>
                     );
                   };
                   // what the goal still needs most comes first; the rest keep their order
@@ -2736,19 +2758,19 @@ export function TaskPanel({ mode, task, canWrite, editors, channels, onClose, on
                     return <span className="tp2-faint">Your goal this month has no {isProject ? "project" : CATEGORY_LABEL[category]} work. Ask your lead if you need to make one.</span>;
                   }
                   if (!offGoal.length && !elsePick) {
-                    return <div className="tp2-types" role="group" aria-label={isProject ? "Project type" : "Content type"}>{inGoal.map(chip)}</div>;
+                    return <div className="tp2-typegroup">{chips(inGoal, isProject ? "Project type" : "Content type")}</div>;
                   }
                   return (
                     <div className="tp2-typegroups">
                       {inGoal.length > 0 && (
                         <div className="tp2-typegroup">
                           <span className="tp2-typehead goal">Counts in goals</span>
-                          <div className="tp2-types" role="group" aria-label="Types that count in goals">{inGoal.map(chip)}</div>
+                          {chips(inGoal, "Types that count in goals")}
                         </div>
                       )}
                       <div className="tp2-typegroup">
                         <span className="tp2-typehead off">Off-goal · help for another team, takes its time off the goal</span>
-                        <div className="tp2-types" role="group" aria-label="Off-goal types">{offGoal.map(chip)}{elsePick}</div>
+                        {chips(offGoal, "Off-goal types", elsePick)}
                       </div>
                     </div>
                   );

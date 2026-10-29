@@ -660,3 +660,9 @@ html[data-theme="dark"] .task-panel-scrim.tp2-scrim{background:rgba(0,0,0,.55)}
 .tb-rnd{display:inline-flex;align-items:center;gap:4px;height:20px;padding:0 7px;border-radius:999px;font-size:10.5px;font-weight:800;
   background:color-mix(in srgb,oklch(0.6 0.16 330) 14%,transparent);color:oklch(0.55 0.16 330)}
 .tp-from{display:flex;align-items:center;gap:6px;font-size:12.5px}
+
+/* New task: a main type's chip folds its sub-types (Settings › Tasks & time); picking it asks which one */
+.tp2-type-kinds{font-style:normal;font-size:10.5px;font-weight:700;color:var(--tb-acText)}
+.tp2-type.within{border-color:var(--tb-ac);border-style:solid}
+.tp2-subtypes{display:flex;flex-direction:column;gap:6px;margin-top:2px;padding:9px 10px;border-left:2px solid var(--tb-ac);border-radius:0 10px 10px 0;background:color-mix(in srgb,var(--tb-ac) 5%,transparent)}
+.tp2-subhead{font-size:11.5px;font-weight:700;color:var(--tb-text2)}

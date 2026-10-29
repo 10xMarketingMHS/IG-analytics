@@ -363,3 +363,11 @@ html[data-theme="dark"] .st-box{border-color:rgba(255,255,255,.22)}
 .st-tt-goal{font-size:11px;font-weight:600;color:var(--st-text3)}
 .st-tt-goal.off{color:var(--st-text3);font-style:italic}
 @media (max-width:720px){.st-c-goal{width:auto}}
+
+/* Tasks & time: sub-types under their main type */
+.st-tt.sub{padding-left:46px;background:var(--st-sunk)}
+.st-tt.sub .st-tt-name{position:relative}
+.st-tt.sub .st-tt-name::before{content:"";position:absolute;left:-16px;top:50%;width:10px;border-top:1.5px solid var(--st-line);}
+.st-tt-fold{flex:none;padding:0 2px;border:0;background:transparent;color:var(--st-acText);font:700 11.5px inherit;cursor:pointer;white-space:nowrap}
+.st-tt-fold:hover{text-decoration:underline}
+.st-kind.none{color:var(--st-text3)}

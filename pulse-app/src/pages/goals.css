@@ -435,3 +435,10 @@ select.lg-in{font:600 12px 'Plus Jakarta Sans',sans-serif;text-align:left}
 .gl-table.disc.part .gl-th,.gl-table.disc.part .gl-tr{grid-template-columns:1.6fr repeat(5,1fr) .8fr}
 /* Set goals: start the month from last month's goals */
 .gs-copy{display:inline-flex;align-items:center;gap:6px}
+
+/* Set goals, Brand goals: a main type's sub-types fold under its row (Settings › Tasks & time) */
+.gs-row.sub{background:var(--gl-sunk)}
+.gs-row.sub>.gs-typecell{position:relative;padding-left:18px}
+.gs-row.sub>.gs-typecell::before{content:"";position:absolute;left:4px;top:.75em;width:9px;border-top:1.5px solid var(--gl-line)}
+.gs-fold{align-self:flex-start;padding:0;border:0;background:transparent;color:var(--gl-acText);font:700 10.5px 'Plus Jakarta Sans',sans-serif;cursor:pointer;white-space:nowrap}
+.gs-fold:hover{text-decoration:underline}

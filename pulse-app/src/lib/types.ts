@@ -166,6 +166,9 @@ export type ContentFormatDef = {
   counts_in_goal?: boolean;
   // how many people have a goal for it this month
   goal_people?: number;
+  // the main type it sits under (Carousel for Video Carousel), or null: on its own
+  // (lib/type-groups.ts). Absent before the database has it.
+  parent_id?: string | null;
   // Management-metric tag — surfaces goal-vs-achieved for this format under
   // Key / Critical Metrics in Management Performance. null = untagged.
   metric_tier: "key" | "critical" | null;

@@ -7,6 +7,7 @@ import { useIsSuper } from "@/lib/use-org";
 import type { ContentFormatDef, TaskTimeRule } from "@/lib/types";
 import { LookOnly, SI, Stepper, Toggle, fmtHours } from "@/pages/settings-ui";
 import { AdTeamsCard } from "@/pages/ad-teams-card";
+import { groupTypes, kindsWord, useFolds } from "@/lib/type-groups";
 
 // Settings › Tasks & time (Pulse Redesign v5): every task type in one list,
 // grouped Social / Ads / Service / Project — its icon, name, category, whether
@@ -64,7 +65,11 @@ export function TaskRulesSection() {
   const [newName, setNewName] = useState("");
   const [newCat, setNewCat] = useState<Cat>("social");
   const [newIcon, setNewIcon] = useState("🔧");
+  // the main type a new type goes under ("" on its own)
+  const [newParent, setNewParent] = useState("");
   const [adding, setAdding] = useState(false);
+  // main types showing their sub-types
+  const folds = useFolds();
 
   const load = useCallback(() => {
     api<{ rules: TaskTimeRule[] }>("/task-time-rules")
@@ -116,9 +121,11 @@ export function TaskRulesSection() {
     if (!name) return;
     setAdding(true);
     try {
-      await api("/content-formats", { method: "POST", body: JSON.stringify({ name, icon: newIcon, category: newCat }) });
+      const under = (contentFormats ?? []).find((x) => x.id === newParent);
+      await api("/content-formats", { method: "POST", body: JSON.stringify({ name, icon: newIcon, category: newCat, ...(under ? { parent_id: under.id } : {}) }) });
+      if (under) folds.show(under.id);
       await refetchFormats();
-      toast.success(`${name} added · now on New task and Goals.`);
+      toast.success(`${name} added${under ? ` under ${under.name}` : ""} · now on New task and Goals.`);
       setNewName("");
       setNewIcon("🔧");
     } catch (err) {
@@ -130,11 +137,16 @@ export function TaskRulesSection() {
   async function moveFormat(f: ContentFormatDef, category: Cat) {
     const to = CATS.find((c) => c.key === category)?.label ?? category;
     const from = CATS.find((c) => c.key === f.category)?.label ?? f.category;
-    if (!window.confirm(`Move "${f.name}" from ${from} to ${to}? New tasks of this type are made as ${to}; tasks already made stay ${from}.`)) return;
+    const subs = (contentFormats ?? []).filter((x) => x.parent_id === f.id).length;
+    const main = (contentFormats ?? []).find((x) => x.id === f.parent_id);
+    if (!window.confirm(`Move "${f.name}" from ${from} to ${to}? New tasks of this type are made as ${to}; tasks already made stay ${from}.`
+      + (subs ? ` Its ${kindsWord(subs)} move with it.` : main ? ` It stops being a sub-type of ${main.name}.` : ""))) return;
     await patchFormat(f.id, { category }, "Could not change the category.", `${f.name} moved to ${to}.`);
   }
   async function removeFormat(f: ContentFormatDef) {
-    if (!window.confirm(`Remove "${f.name}"? Tasks and rules already using it keep working — it just won't be offered for new ones.`)) return;
+    const subs = (contentFormats ?? []).filter((x) => x.parent_id === f.id).length;
+    if (!window.confirm(`Remove "${f.name}"? Tasks and rules already using it keep working — it just won't be offered for new ones.`
+      + (subs ? ` Its ${kindsWord(subs)} stay, each on its own.` : ""))) return;
     try {
       await api(`/content-formats/${f.id}`, { method: "DELETE" });
       await refetchFormats();
@@ -146,13 +158,21 @@ export function TaskRulesSection() {
 
   const formats = contentFormats ?? [];
   const globalFor = (f: ContentFormatDef) => rules?.find((r) => r.content_format_id === f.id && !r.editor_id) ?? null;
+  const parentOf = (id: string) => formats.find((x) => x.id === id)?.parent_id;
+  // the database has sub-types (parent_id comes with 20261114120000_type_parent)
+  const parentReady = formats.some((f) => f.parent_id !== undefined);
+  function setParent(f: ContentFormatDef, parent_id: string | null) {
+    const to = formats.find((x) => x.id === parent_id);
+    if (to) folds.show(to.id);
+    patchFormat(f.id, { parent_id }, "Could not change its main type.", to ? `${f.name} is a sub-type of ${to.name} now.` : `${f.name} is on its own now.`);
+  }
 
   return (
     <LookOnly on={!canManage}>
       <section className="st-card">
         <div className="st-cardhead">
           <span className="st-titleline"><b>Task types</b><span className="st-count">{formats.length}</span></span>
-          <span>One list for the whole workspace. Points are what a finished job earns; time budget is how long the timer gives it. A change to points counts from now on: jobs already completed, and goals already set, keep the points they had.{canPoints ? "" : " Only a Super Admin can change points."}</span>
+          <span>One list for the whole workspace. Points are what a finished job earns; time budget is how long the timer gives it. A change to points counts from now on: jobs already completed, and goals already set, keep the points they had.{canPoints ? "" : " Only a Super Admin can change points."} A type can go under a main type, as Video Carousel under Carousel: it keeps its own points, time and goals, and the lists fold it under the main type.</span>
           <span className="st-uses">
             <span>{SI.addTask}New task picker</span>
             <span>{SI.flag}Goal types</span>
@@ -180,10 +200,16 @@ export function TaskRulesSection() {
           return (
             <Fragment key={c.key}>
               <div className="st-ttgroup">{c.icon}{c.label}<span className="st-count">{rows.length}</span></div>
-              {rows.map((f) => (
+              {groupTypes(rows, (f) => f.id, parentOf).flatMap((g) => [g.main, ...(folds.isOpen(g.main.id) ? g.subs : [])].map((f) => (
                 <TypeRow
                   key={f.id}
                   format={f}
+                  sub={f !== g.main}
+                  subCount={f === g.main ? g.subs.length : 0}
+                  open={folds.isOpen(f.id)}
+                  onFold={() => folds.toggle(f.id)}
+                  mains={rows.filter((m) => !m.parent_id && m.id !== f.id)}
+                  onParent={(parent_id) => setParent(f, parent_id)}
                   rule={globalFor(f)}
                   canPoints={canPoints}
                   onCategory={(category) => moveFormat(f, category)}
@@ -217,7 +243,7 @@ export function TaskRulesSection() {
                   onMetrics={(metrics_description) => patchFormat(f.id, { metrics_description }, "Could not save that note.")}
                   onRemove={() => removeFormat(f)}
                 />
-              ))}
+              )))}
             </Fragment>
           );
         })}
@@ -225,9 +251,15 @@ export function TaskRulesSection() {
           <IconPicker value={newIcon} onPick={setNewIcon} />
           <input className="st-in grow" placeholder="New task type" value={newName} onChange={(e) => setNewName(e.target.value)}
             onKeyDown={(e) => { if (e.key === "Enter" && !adding) addFormat(); }} />
-          <select className="st-in" value={newCat} onChange={(e) => setNewCat(e.target.value as Cat)} aria-label="Kind of work" style={{ width: 130 }}>
+          <select className="st-in" value={newCat} onChange={(e) => { setNewCat(e.target.value as Cat); setNewParent(""); }} aria-label="Kind of work" style={{ width: 130 }}>
             {CATS.map((c) => <option key={c.key} value={c.key}>{c.label}</option>)}
           </select>
+          {parentReady && (
+            <select className="st-in" value={newParent} onChange={(e) => setNewParent(e.target.value)} aria-label="Main type" title="Add it as a sub-type of a main type, as Video Carousel under Carousel" style={{ width: 160 }}>
+              <option value="">On its own</option>
+              {formats.filter((f) => f.category === newCat && !f.parent_id).map((f) => <option key={f.id} value={f.id}>Under {f.name}</option>)}
+            </select>
+          )}
           <button type="button" className="st-btn pri" disabled={adding || !newName.trim()} onClick={addFormat}>{SI.plus}{adding ? "Adding…" : "Add"}</button>
         </div>
       </section>
@@ -318,9 +350,18 @@ function IconPicker({ value, onPick }: { value: string; onPick: (icon: string) =
 // One task type: icon, name (click to rename), link toggle, scheduling toggle
 // (Social types), metric tag, points and time (or duration). Every field saves on its own.
 function TypeRow({
-  format, rule, canPoints, onCategory, onIcon, onRename, onPoints, onMetric, onGoal, onLink, onSched, onHours, onClearHours, onDuration, onMetrics, onRemove,
+  format, sub = false, subCount = 0, open = false, onFold, mains, onParent,
+  rule, canPoints, onCategory, onIcon, onRename, onPoints, onMetric, onGoal, onLink, onSched, onHours, onClearHours, onDuration, onMetrics, onRemove,
 }: {
   format: ContentFormatDef;
+  // a sub-type (indented under its main type); a main type's sub-types, shown or folded
+  sub?: boolean;
+  subCount?: number;
+  open?: boolean;
+  onFold?: () => void;
+  // the types it could go under: this category's main types
+  mains: ContentFormatDef[];
+  onParent: (parentId: string | null) => void;
   rule: TaskTimeRule | null;
   canPoints: boolean;
   onCategory: (category: Cat) => void;
@@ -367,7 +408,7 @@ function TypeRow({
   const blurOnEnter = (e: React.KeyboardEvent<HTMLInputElement>) => { if (e.key === "Enter") (e.target as HTMLInputElement).blur(); };
 
   return (
-    <div className="st-tt">
+    <div className={"st-tt" + (sub ? " sub" : "")}>
       <span className="st-tt-name">
         <IconPicker value={format.icon} onPick={onIcon} />
         <span>
@@ -377,6 +418,17 @@ function TypeRow({
               onChange={(e) => onCategory(e.target.value as Cat)}>
               {CATS.map((c) => <option key={c.key} value={c.key}>{c.label}</option>)}
             </select>
+            {subCount > 0 ? (
+              <button type="button" className="st-tt-fold" aria-expanded={open} onClick={onFold} title={open ? "Hide its sub-types" : "Show its sub-types"}>
+                {kindsWord(subCount)} {open ? "▴" : "▾"}
+              </button>
+            ) : format.parent_id !== undefined && (mains.length > 0 || format.parent_id) ? (
+              <select className={"st-kind" + (format.parent_id ? "" : " none")} value={format.parent_id ?? ""} aria-label={`${format.name} main type`} title="Put it under a main type, as Video Carousel under Carousel"
+                onChange={(e) => onParent(e.target.value || null)}>
+                <option value="">{format.parent_id ? "On its own" : "Put under…"}</option>
+                {mains.map((m) => <option key={m.id} value={m.id}>Under {m.name}</option>)}
+              </select>
+            ) : null}
             {format.counts_in_goal !== undefined && (
               <small className={"st-tt-goal" + (format.counts_in_goal ? "" : " off")}>
                 {!format.counts_in_goal ? "Not tracked in goals" : format.goal_people ? `In ${format.goal_people} ${format.goal_people === 1 ? "person's" : "people's"} goals` : "Tracked in goals"}

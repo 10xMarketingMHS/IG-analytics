@@ -7,6 +7,8 @@ import { gradFor } from "@/lib/editor-visuals";
 import { goalPointsTotal } from "@/lib/goal-points";
 import { countsInTaskScore } from "@/lib/task-points";
 import { byPosition } from "@/lib/home-role";
+import { useContentFormats } from "@/lib/use-content-formats";
+import { groupTypes, kindsWord, useFolds } from "@/lib/type-groups";
 import { monthName } from "@/lib/goal-periods";
 import { fmtHours } from "@/pages/settings-ui";
 import { giveWords } from "@/pages/goals-brand";
@@ -96,6 +98,9 @@ export function SetGoals() {
   const [copyFrom, setCopyFrom] = useState<string[]>([]);
   const [saving, setSaving] = useState(false);
   const [copying, setCopying] = useState(false);
+  // a main type's sub-types fold under its row (Settings › Tasks & time)
+  const { contentFormats } = useContentFormats();
+  const folds = useFolds();
 
   // Everyone's goals and capacity for the month, in one request.
   const [loadError, setLoadError] = useState(false);
@@ -284,10 +289,20 @@ export function SetGoals() {
                 <div className="gs-row gs-th"><span>Task type</span><span className="c">Jobs</span><span className="c">Hrs / job</span><span className="r">Hours</span><span className="r">R1 · R2</span></div>
                 {c.rows.length === 0 ? (
                   <div className="gl-empty">No task types yet — add them in Settings · Tasks & time.</div>
-                ) : c.rows.map((x) => (
-                  <div className={"gs-row" + (x.jobs ? "" : " none")} key={x.r.contentFormatId}>
+                ) : groupTypes(c.rows, (x) => x.r.contentFormatId, (id) => contentFormats?.find((f) => f.id === id)?.parent_id).flatMap((grp) => {
+                  const id = grp.main.r.contentFormatId, open = folds.isOpen(id);
+                  return [grp.main, ...(open ? grp.subs : [])].map((x) => {
+                  const subs = x === grp.main ? grp.subs : [];
+                  const subJobs = subs.reduce((n, s) => n + s.jobs, 0), subHrs = subs.reduce((n, s) => n + s.hrs, 0);
+                  return (
+                  <div className={"gs-row" + (x.jobs || subJobs ? "" : " none") + (x !== grp.main ? " sub" : "")} key={x.r.contentFormatId}>
                     <span className="gs-typecell">
                       <span className="gs-type"><b>{x.r.icon} {x.r.name}</b><small>{x.r.category ? CAT[x.r.category] ?? x.r.category : ""}</small></span>
+                      {subs.length > 0 && (
+                        <button type="button" className="gs-fold" aria-expanded={open} onClick={() => folds.toggle(id)} title={open ? "Hide its sub-types" : "Show its sub-types — each has its own jobs"}>
+                          {kindsWord(subs.length)}{subJobs ? ` · ${subJobs} job${subJobs === 1 ? "" : "s"}${subHrs ? ` · ${fmtHours(subHrs)}` : ""}` : ""} {open ? "▴" : "▾"}
+                        </button>
+                      )}
                       {need[x.r.contentFormatId] > 0 && (() => {
                         const g = giveWords(need[x.r.contentFormatId], givenOf(x.r.contentFormatId));
                         return <small className={"gs-need " + g.cls} title="From Goals › Brand goals: what the brands need of it this month, and how much the team's goals give out">Brands need {need[x.r.contentFormatId]} · {g.text}</small>;
@@ -305,7 +320,9 @@ export function SetGoals() {
                     <b className="r">{x.jobs ? fmtHours(x.hrs) : "—"}</b>
                     <span className="r gs-split">{x.jobs ? `${Math.ceil(x.jobs / 2)} · ${x.jobs - Math.ceil(x.jobs / 2)}` : "—"}</span>
                   </div>
-                ))}
+                  );
+                  });
+                })}
               </div>
             </div>
             <p className="gs-hint">
