@@ -6,6 +6,7 @@ import { isSuperHere } from "../super-admin.js";
 import { hasColumn } from "../schema-flags.js";
 import { followTypeTick } from "../scheduling.js";
 import { followAdTypeTick } from "../ad-uploads.js";
+import { headingFieldError, headingTypes } from "../type-tree.js";
 
 // What a type is worth is the Super Admin's call; an admin adds, renames and
 // times types, and sees their points.
@@ -192,6 +193,11 @@ contentFormatsRouter.patch("/content-formats/:id", requirePermission("task_setti
   if (!sets.length) return res.status(400).json({ error: "Nothing to update." });
   vals.push(req.params.id, req.orgId);
   try {
+    // a main type with sub-types keeps only its name, icon and category (../type-tree.js)
+    if (["points", "metric_tier", "duration_days", "review_link_required", "counts_in_goal", "to_scheduling"].some((k) => parsed.data[k] !== undefined)) {
+      const heading = (await headingTypes(req.orgId, [req.params.id])).get(req.params.id);
+      if (heading) return res.status(400).json({ error: headingFieldError(heading) });
+    }
     if (parsed.data.points !== undefined) {
       const { rows: cur } = await pool.query("select points from task_content_format where id = $1 and org_id = $2", [req.params.id, req.orgId]);
       if (cur[0] && Number(cur[0].points) !== Number(parsed.data.points) && !(await isSuperHere(req))) {

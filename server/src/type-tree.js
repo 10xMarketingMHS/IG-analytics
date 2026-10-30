@@ -21,6 +21,10 @@ export async function headingTypes(orgId, ids) {
 
 export const headingError = (name) => `${name} has sub-types, so it's only a heading. Pick one of them instead.`;
 
+// Its points, time and switches are its sub-types' too (Settings › Tasks & time
+// shows their totals). What it keeps of its own: its name, icon and category.
+export const headingFieldError = (name) => `${name} has sub-types, so it's only a heading. Set this on its sub-types instead.`;
+
 // What a task of this type can't be, as words to say; null when it can.
 export async function taskTypeError(orgId, contentFormatId) {
   const name = (await headingTypes(orgId, [contentFormatId])).get(contentFormatId);

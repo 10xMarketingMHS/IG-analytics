@@ -371,3 +371,8 @@ html[data-theme="dark"] .st-box{border-color:rgba(255,255,255,.22)}
 .st-tt-fold{flex:none;padding:0 2px;border:0;background:transparent;color:var(--st-acText);font:700 11.5px inherit;cursor:pointer;white-space:nowrap}
 .st-tt-fold:hover{text-decoration:underline}
 .st-kind.none{color:var(--st-text3)}
+
+/* Tasks & time: a main type with sub-types shows their totals, not controls */
+.st-total{display:flex;align-items:center;justify-content:center;gap:5px;height:32px;padding:0 6px;border:1px dashed var(--st-line);border-radius:9px;background:var(--st-sunk);color:var(--st-text2);font:600 12.5px 'Geist Mono',monospace;white-space:nowrap}
+.st-total small{font:700 9px 'Plus Jakarta Sans',sans-serif;letter-spacing:.05em;text-transform:uppercase;color:var(--st-text3)}
+.st-total.plain{height:auto;padding:0;border:0;background:transparent}

@@ -161,6 +161,16 @@ export function TaskRulesSection() {
   const parentOf = (id: string) => formats.find((x) => x.id === id)?.parent_id;
   // the database has sub-types (parent_id comes with 20261114120000_type_parent)
   const parentReady = formats.some((f) => f.parent_id !== undefined);
+  // what a main type's row shows: its sub-types added up
+  const totalsOf = (subs: ContentFormatDef[]): SubTotals | null => (!subs.length ? null : {
+    n: subs.length,
+    points: subs.reduce((n, s) => n + Number(s.points ?? 0), 0),
+    hours: subs.reduce((n, s) => n + Number(globalFor(s)?.hours ?? 0), 0),
+    days: subs.reduce((n, s) => n + (s.duration_days ?? 0), 0),
+    goal: subs.filter((s) => s.counts_in_goal).length,
+    link: subs.filter((s) => s.review_link_required).length,
+    sched: subs.filter((s) => s.to_scheduling).length,
+  });
   function setParent(f: ContentFormatDef, parent_id: string | null) {
     const to = formats.find((x) => x.id === parent_id);
     if (to) folds.show(to.id);
@@ -172,7 +182,7 @@ export function TaskRulesSection() {
       <section className="st-card">
         <div className="st-cardhead">
           <span className="st-titleline"><b>Task types</b><span className="st-count">{formats.length}</span></span>
-          <span>One list for the whole workspace. Points are what a finished job earns; time budget is how long the timer gives it. A change to points counts from now on: jobs already completed, and goals already set, keep the points they had.{canPoints ? "" : " Only a Super Admin can change points."} A type can go under a main type, as Video Carousel under Carousel: it keeps its own points, time and goals, and the lists fold it under the main type. A main type with sub-types is only a heading: goals and new tasks go on its sub-types.</span>
+          <span>One list for the whole workspace. Points are what a finished job earns; time budget is how long the timer gives it. A change to points counts from now on: jobs already completed, and goals already set, keep the points they had.{canPoints ? "" : " Only a Super Admin can change points."} A type can go under a main type, as Video Carousel under Carousel: it keeps its own points, time and goals, and the lists fold it under the main type. A main type with sub-types is only a heading: its points and time are its sub-types' totals, and goals and new tasks go on its sub-types.</span>
           <span className="st-uses">
             <span>{SI.addTask}New task picker</span>
             <span>{SI.flag}Goal types</span>
@@ -206,6 +216,7 @@ export function TaskRulesSection() {
                   format={f}
                   sub={f !== g.main}
                   subCount={f === g.main ? g.subs.length : 0}
+                  totals={f === g.main ? totalsOf(g.subs) : null}
                   open={folds.isOpen(f.id)}
                   onFold={() => folds.toggle(f.id)}
                   mains={rows.filter((m) => !m.parent_id && m.id !== f.id)}
@@ -347,16 +358,26 @@ function IconPicker({ value, onPick }: { value: string; onPick: (icon: string) =
   );
 }
 
+// A main type's sub-types added up: points, time (or days), and how many have each switch on.
+type SubTotals = { n: number; points: number; hours: number; days: number; goal: number; link: number; sched: number };
+// How many of its sub-types have a switch on, in place of the switch.
+const SubCount = ({ n, of, what }: { n: number; of: number; what: string }) => (
+  <span className="st-total plain" title={`Sub-types ${what}: ${n} of ${of}. Set it on each of them.`}>{n} / {of}</span>
+);
+
 // One task type: icon, name (click to rename), link toggle, scheduling toggle
-// (Social types), metric tag, points and time (or duration). Every field saves on its own.
+// (Social types), metric tag, points and time (or duration). Every field saves on
+// its own. A main type with sub-types (`totals`) is only a heading: it keeps its
+// name, icon and category, and the rest shows what's on its sub-types.
 function TypeRow({
-  format, sub = false, subCount = 0, open = false, onFold, mains, onParent,
+  format, sub = false, subCount = 0, totals = null, open = false, onFold, mains, onParent,
   rule, canPoints, onCategory, onIcon, onRename, onPoints, onMetric, onGoal, onLink, onSched, onHours, onClearHours, onDuration, onMetrics, onRemove,
 }: {
   format: ContentFormatDef;
   // a sub-type (indented under its main type); a main type's sub-types, shown or folded
   sub?: boolean;
   subCount?: number;
+  totals?: SubTotals | null;
   open?: boolean;
   onFold?: () => void;
   // the types it could go under: this category's main types
@@ -429,7 +450,7 @@ function TypeRow({
                 {mains.map((m) => <option key={m.id} value={m.id}>Under {m.name}</option>)}
               </select>
             ) : null}
-            {format.counts_in_goal !== undefined && (
+            {format.counts_in_goal !== undefined && !totals && (
               <small className={"st-tt-goal" + (format.counts_in_goal ? "" : " off")}>
                 {!format.counts_in_goal ? "Not tracked in goals" : format.goal_people ? `In ${format.goal_people} ${format.goal_people === 1 ? "person's" : "people's"} goals` : "Tracked in goals"}
               </small>
@@ -443,27 +464,29 @@ function TypeRow({
       </span>
       <span className="st-c-goal">
         <span className="st-mlabel">Goal</span>
-        {format.counts_in_goal !== undefined
+        {totals ? <SubCount n={totals.goal} of={totals.n} what="that count in goals" />
+          : format.counts_in_goal !== undefined
           ? <Toggle on={format.counts_in_goal} onChange={onGoal} label={`${format.name} counts in goals`} />
           : <span className="st-note" title="Needs the database update 20261110120000_type_counts_in_goal">—</span>}
       </span>
       <span className="st-c-link">
         <span className="st-mlabel">Link</span>
-        <Toggle on={format.review_link_required} onChange={onLink} label={`${format.name} needs a delivery link for review`} />
+        {totals ? <SubCount n={totals.link} of={totals.n} what="that need a delivery link" />
+          : <Toggle on={format.review_link_required} onChange={onLink} label={`${format.name} needs a delivery link for review`} />}
       </span>
       <span className="st-c-sched">
         {(format.category === "social" || format.category === "ad" || format.category === "service") && format.to_scheduling !== undefined ? (
           <><span className="st-mlabel">{format.category === "ad" ? "Ad uploads" : format.category === "service" ? "Reel / Ad" : "Scheduling"}</span>
-            <Toggle on={format.to_scheduling} onChange={onSched}
+            {totals ? <SubCount n={totals.sched} of={totals.n} what="that go on after approval" /> : <Toggle on={format.to_scheduling} onChange={onSched}
               label={format.category === "service"
                 ? `Approved ${format.name} tasks wait for a decision: a Reel, an Ad or both`
-                : `Approved ${format.name} work goes to ${format.category === "ad" ? "Ad uploads" : "Scheduling"}`} /></>
+                : `Approved ${format.name} work goes to ${format.category === "ad" ? "Ad uploads" : "Scheduling"}`} />}</>
         ) : <span className="st-note" style={{ justifyContent: "center" }}
           title={format.category === "social" || format.category === "ad" || format.category === "service" ? "Needs the scheduling database update" : "Only Social, Ads and Service work goes on after approval"}>—</span>}
       </span>
       <span className="st-c-metric">
         {!isProject && <span className="st-mlabel">Metric</span>}
-        {isProject ? <span className="st-note" style={{ justifyContent: "center" }}>—</span> : (
+        {isProject || totals ? <span className="st-note" style={{ justifyContent: "center" }} title={totals ? "Each sub-type has its own metric tag" : undefined}>—</span> : (
           <select className="st-in" value={format.metric_tier ?? ""} onChange={(e) => onMetric((e.target.value || null) as "key" | "critical" | null)}
             aria-label={`${format.name} metric tag`} title="Tag it as a Key or Critical metric for Management Performance">
             <option value="">None</option>
@@ -474,13 +497,24 @@ function TypeRow({
       </span>
       <span className="st-c-pts">
         <span className="st-mlabel">Points</span>
-        <Stepper className="sm acc pts" label={`points for ${format.name}`} value={trim(points)}
-          onDec={() => setPoints((p) => Math.max(0, Math.round((p - 1) * 100) / 100))} onInc={() => setPoints((p) => Math.min(1000, Math.round((p + 1) * 100) / 100))}
-          decDisabled={!canPoints || points <= 0} incDisabled={!canPoints} />
+        {totals ? (
+          <span className="st-total" title={`Added up from its ${kindsWord(totals.n)}. Set the points on each of them.`}><small>Total</small>{trim(totals.points)}</span>
+        ) : (
+          <Stepper className="sm acc pts" label={`points for ${format.name}`} value={trim(points)}
+            onDec={() => setPoints((p) => Math.max(0, Math.round((p - 1) * 100) / 100))} onInc={() => setPoints((p) => Math.min(1000, Math.round((p + 1) * 100) / 100))}
+            decDisabled={!canPoints || points <= 0} incDisabled={!canPoints} />
+        )}
       </span>
       <span className="st-c-time">
         <span className="st-mlabel">{isProject ? "Days" : "Time"}</span>
-        {isProject ? (
+        {totals ? (
+          <span className="st-total" title={`Added up from its ${kindsWord(totals.n)}. Set the ${isProject ? "days" : "time"} on each of them.`}>
+            <small>Total</small>
+            {isProject
+              ? (totals.days ? `${totals.days} day${totals.days === 1 ? "" : "s"}` : "No limit")
+              : (totals.hours ? fmtHours(totals.hours) : "No timer")}
+          </span>
+        ) : isProject ? (
           <Stepper className={"sm time" + (days == null ? " none" : "")} label={`days for ${format.name}`} value={days == null ? "No limit" : `${days} day${days === 1 ? "" : "s"}`}
             onDec={() => setDays((d) => (d == null || d <= 1 ? null : d - 1))} onInc={() => setDays((d) => Math.min(3650, (d ?? 0) + 1))} decDisabled={days == null} />
         ) : (
