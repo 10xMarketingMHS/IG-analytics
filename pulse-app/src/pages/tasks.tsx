@@ -723,6 +723,12 @@ export function TasksPage() {
   // prompt (see sendBackPrompt below) rather than an instant move.
   async function move(t: Task, status: TaskStatus, reviewNote?: string) {
     if (t.status === status) return;
+    // No due date, no start (the server holds the same): pick one, then it starts.
+    if (t.status === "todo" && status === "in_progress" && !t.due_date && !isGeneral(t) && canTransition(t, status)) {
+      setDueValue("");
+      setDuePrompt(t);
+      return;
+    }
     if (!canTransition(t, status)) {
       toast.error(
         t.status === "review"
@@ -788,6 +794,24 @@ export function TasksPage() {
   }
 
   const [sendBackPrompt, setSendBackPrompt] = useState<{ task: Task } | null>(null);
+  const [duePrompt, setDuePrompt] = useState<Task | null>(null);
+  const [dueValue, setDueValue] = useState("");
+  const [dueBusy, setDueBusy] = useState(false);
+  async function setDueAndStart() {
+    const t = duePrompt;
+    if (!t || !dueValue || dueBusy) return;
+    setDueBusy(true);
+    try {
+      await api(`/tasks/${t.id}`, { method: "PATCH", body: JSON.stringify({ dueDate: dueValue }) });
+      setDuePrompt(null);
+      await refetch();
+      await move({ ...t, due_date: dueValue }, "in_progress");
+    } catch (err) {
+      toast.error(err instanceof ApiError ? err.message : "Could not set the due date.");
+    } finally {
+      setDueBusy(false);
+    }
+  }
   const [sendBackNote, setSendBackNote] = useState("");
   const [sendingBackBusy, setSendingBackBusy] = useState(false);
   async function confirmSendBack() {
@@ -1446,6 +1470,34 @@ export function TasksPage() {
                 }}
               >
                 Got it, continue
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+      {duePrompt && (
+        <div className="modal-bg show" onClick={() => setDuePrompt(null)}>
+          <div className="modal" style={{ width: 440 }} onClick={(e) => e.stopPropagation()}>
+            <div className="mhead">
+              <span style={{ fontSize: 18 }}>📅</span>
+              <h3>When is it due?</h3>
+              <button className="x" onClick={() => setDuePrompt(null)}>×</button>
+            </div>
+            <div className="mbody">
+              <p style={{ margin: "0 0 10px", fontSize: 13.5, lineHeight: 1.6 }}>
+                <b>{duePrompt.title}</b> has no due date, and a task can't start without one. Once it's set, only an admin or whoever assigned it can change it.
+              </p>
+              <div className="tp2-inline">
+                {quickDues().map((q) => (
+                  <button key={q.value} type="button" className={"tp2-pill" + (dueValue === q.value ? " on" : "")} onClick={() => setDueValue(q.value)}>{q.label}</button>
+                ))}
+                <input className="t tp2-date" type="date" aria-label="Due date" min={today()} value={dueValue} onChange={(e) => setDueValue(e.target.value)} />
+              </div>
+            </div>
+            <div className="mfoot">
+              <button type="button" className="btn" onClick={() => setDuePrompt(null)}>Cancel</button>
+              <button type="button" className="btn btn-primary" disabled={dueBusy || !dueValue || dueValue < today()} onClick={setDueAndStart}>
+                {dueBusy ? "Starting…" : "Set date and start"}
               </button>
             </div>
           </div>
@@ -2152,6 +2204,10 @@ export function TaskPanel({ mode, task, canWrite, editors, channels, onClose, on
   const canEditWork = creating || (!ro && (isAdmin || (!isDoneTask && (isOwnerTask || canAssign))));
   const canTake = !creating && !ro && !canReassign && !isDoneTask && !!user?.editorId && !task?.editor_id;
   const briefRo = !canEditBrief;
+  // No due date yet: the person doing it may fill it in (it can't start without
+  // one). Once it's set, it's the assigner's, like the rest of the brief.
+  const canFillDue = !creating && isOwnerTask && !task?.due_date && task?.status !== "done";
+  const dueRo = briefRo && !canFillDue;
   const canEditDelivery = canEditWork && (isAdmin || isOwnerTask);
   // Whether it needs a review link: an admin, or someone who may assign work
   // and set this task up (gave it, or made it for themselves) — the server's rule.
@@ -2421,7 +2477,8 @@ export function TaskPanel({ mode, task, canWrite, editors, channels, onClose, on
     // In progress → Review (a General task: → Completed, no review). Never back to
     // To Do once started, never on without starting (the server holds the same).
     const general = task.task_type === "admin";
-    const next = task.status === "todo" ? c.key === "in_progress"
+    // (no due date, no start: the Due Date row says so)
+    const next = task.status === "todo" ? c.key === "in_progress" && (general || !!task.due_date)
       : task.status === "in_progress" ? c.key === (general ? "done" : "review")
       : false;
     return next && !!user?.editorId && task.editor_id === user.editorId && task.accepted;
@@ -2503,14 +2560,24 @@ export function TaskPanel({ mode, task, canWrite, editors, channels, onClose, on
   const dueRow = (
     <Row label="Due Date" icon={ic(TB_ICON.event)}>
       <div className="tp2-inline">
-        <input className="t tp2-date" type="date" disabled={briefRo} value={cur.due_date ?? ""}
-          min={isProject ? (cur.start_date ?? undefined) : undefined} max={dueMax}
-          onChange={(e) => set("due_date", "dueDate", e.target.value || null)} />
-        {creating && !isProject && !briefRo && quickDues().map((q) => (
+        <input className="t tp2-date" type="date" disabled={dueRo} value={cur.due_date ?? ""}
+          min={isProject ? (cur.start_date ?? undefined) : canFillDue ? today() : undefined} max={dueMax}
+          onChange={(e) => {
+            const v = e.target.value || null;
+            // part-typed years read as long-past dates: only a real choice saves
+            if (canFillDue && (!v || v < today())) return;
+            set("due_date", "dueDate", v);
+          }} />
+        {(creating || canFillDue) && !isProject && !dueRo && quickDues().map((q) => (
           <button key={q.value} type="button" className={"tp2-pill" + (cur.due_date === q.value ? " on" : "")} onClick={() => set("due_date", "dueDate", q.value)}>{q.label}</button>
         ))}
         {!creating && task!.due_date && <span className={"tp2-faint" + (overdueEdit ? " bad" : "")}>{dueLabel(task!.due_date)}</span>}
       </div>
+      {canFillDue && (
+        <span className="hint" style={{ display: "block", marginTop: 4 }}>
+          No due date yet. {task!.status === "todo" && task!.task_type !== "admin" ? "Pick one to start this task. " : "Pick one. "}Once it's set, only an admin or whoever assigned it can change it.
+        </span>
+      )}
       {isProject && projectDuration != null && (
         <span className="hint" style={{ display: "block", marginTop: 4 }}>Within {projectDuration} day{projectDuration === 1 ? "" : "s"} of the Start Date{dueMax ? ` (by ${dueMax})` : ""}.</span>
       )}
@@ -2888,6 +2955,7 @@ export function TaskPanel({ mode, task, canWrite, editors, channels, onClose, on
                       min={isProject ? (cur.start_date ?? undefined) : undefined} max={dueMax}
                       onChange={(e) => setDraft((d) => ({ ...d, due_date: e.target.value || null }))} />
                     {isProject && projectDuration != null && <small className="tp2-faint">Within {projectDuration} day{projectDuration === 1 ? "" : "s"} of the start{dueMax ? ` (by ${dueMax})` : ""}.</small>}
+                    {!cur.due_date && !adminTask && <small className="tp2-faint">With no due date, it can't start until one is picked.</small>}
                   </div>
                   <div className="tp2-ncell">
                     <span>Priority</span>
@@ -2996,7 +3064,7 @@ export function TaskPanel({ mode, task, canWrite, editors, channels, onClose, on
           {!ro && briefRo && (
             <div className="hint tp-locked">
               🔒 {isDoneTask ? "This task is completed — only an admin can change it."
-                : isOwnerTask ? "This task was assigned to you. You can add your work link, checklist and comments; only an admin can change its details."
+                : isOwnerTask ? `This task was assigned to you. You can add your work link, checklist and comments${canFillDue ? ", and set its due date" : ""}; only an admin can change its details.`
                 : "Only an admin can change this task. You can still comment on it."}
             </div>
           )}

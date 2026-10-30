@@ -634,7 +634,8 @@ tasksRouter.patch("/tasks/:id", requireEditor, requireActiveEod, async (req, res
     //    belongs to whoever set the task up: an assigner, or the assignee when
     //    they created the task for themselves. The due date and content type in
     //    particular drive points and the review-link rule, so an assigned task's
-    //    can't be moved by the person doing it;
+    //    can't be moved by the person doing it. One exception: a task with no due
+    //    date can't start, so they may fill in an empty one, once;
     //  - the working fields (links, platforms, post) are the assignee's.
     // Values that arrive unchanged are fine — the edit forms resend them.
     if (req.role !== "admin") {
@@ -643,6 +644,10 @@ tasksRouter.patch("/tasks/:id", requireEditor, requireActiveEod, async (req, res
       const own = !!myEid && prior.editor_id === myEid;
       const same = (a, b) => (a ?? null) === (b ?? null);
       const json = (v) => JSON.stringify(v ?? null);
+      const fillingDue = own && prior.created_by !== req.user.sub && !prior.due_date && !!d.dueDate && prior.status !== "done";
+      if (fillingDue && d.dueDate < new Date(Date.now() + 330 * 60_000).toISOString().slice(0, 10)) {
+        return res.status(400).json({ error: "Pick today or a later date." });
+      }
       const briefChanged =
         (d.title !== undefined && d.title !== prior.title)
         || (d.requestedBy !== undefined && !same(d.requestedBy || null, prior.meta?.requestedBy ?? null))
@@ -650,7 +655,7 @@ tasksRouter.patch("/tasks/:id", requireEditor, requireActiveEod, async (req, res
         || (d.description !== undefined && (d.description ?? "") !== (prior.description ?? ""))
         || (d.channelId !== undefined && !same(d.channelId, prior.channel_id))
         || (d.priority !== undefined && d.priority !== prior.priority)
-        || (d.dueDate !== undefined && !same(d.dueDate || null, prior.due_date))
+        || (d.dueDate !== undefined && !fillingDue && !same(d.dueDate || null, prior.due_date))
         || (d.startDate !== undefined && !same(d.startDate || null, prior.start_date))
         || (d.recurrence !== undefined && d.recurrence !== prior.recurrence)
         || (d.contentType !== undefined && !same(d.contentType, prior.content_type))
@@ -843,6 +848,12 @@ tasksRouter.patch("/tasks/:id", requireEditor, requireActiveEod, async (req, res
           // task on, and, after a send-back, where they read what needs fixing.
           if (!prior.accepted) {
             return res.status(400).json({ error: "Accept this task first, then you can move it." });
+          }
+          // No due date, no start: its points and whether it's late go by that
+          // date. A General task has neither, so it needs none.
+          if (prior.status === "todo" && d.status === "in_progress" && prior.task_type !== "admin"
+              && !(d.dueDate !== undefined ? d.dueDate : prior.due_date)) {
+            return res.status(400).json({ error: "Set a due date first: a task can't start without one.", code: "needs_due_date" });
           }
         }
       }

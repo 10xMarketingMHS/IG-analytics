@@ -209,7 +209,7 @@ type StartPrompt =
 
 function actionOf(t: Task): "accept" | "start" | "open" {
   if (!t.accepted && (t.status === "todo" || t.status === "in_progress")) return "accept";
-  if (t.status === "todo") return "start";
+  if (t.status === "todo") return t.due_date || t.task_type === "admin" ? "start" : "open";
   return "open";
 }
 
