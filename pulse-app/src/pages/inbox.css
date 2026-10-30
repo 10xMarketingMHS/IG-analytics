@@ -1,0 +1,93 @@
+/* The Inbox (pages/inbox.tsx), laid out like the Social & Ads Pipeline table
+   (pipeline.css): a toolbar of segments, then one glass panel with a header
+   row and a row per item, its kind's colour down the left edge. Rows only
+   tint on hover — nothing lifts. Home's card links here. */
+.ib{--ib-text:#18181b;--ib-text2:#52525b;--ib-text3:#85858f;--ib-line:rgba(30,20,80,.08);--ib-line2:rgba(30,20,80,.05);
+  --ib-panel:rgba(255,255,255,.84);--ib-sunk:rgba(30,20,80,.035);
+  --ib-sh1:0 1px 2px rgba(30,20,80,.04),0 10px 28px -8px rgba(60,40,140,.14);
+  --ib-acSoft:oklch(0.96 0.025 var(--acH));--ib-acText:oklch(0.48 0.19 var(--acH));
+  --ib-good:oklch(0.55 0.14 155);--ib-warn:oklch(0.62 0.14 65);--ib-bad:oklch(0.58 0.2 25);
+  display:flex;flex-direction:column;gap:14px;font-family:'Plus Jakarta Sans',system-ui,sans-serif;color:var(--ib-text)}
+html[data-theme="dark"] .ib{--ib-text:#ededf0;--ib-text2:#b4b4bc;--ib-text3:#8b8b96;--ib-line:rgba(255,255,255,.08);--ib-line2:rgba(255,255,255,.055);
+  --ib-panel:rgba(26,24,40,.78);--ib-sunk:rgba(255,255,255,.04);
+  --ib-sh1:0 1px 2px rgba(0,0,0,.3),0 12px 30px -10px rgba(0,0,0,.55);
+  --ib-acSoft:oklch(0.3 0.07 var(--acH));--ib-acText:oklch(0.82 0.11 var(--acH));
+  --ib-good:oklch(0.72 0.14 155);--ib-warn:oklch(0.78 0.13 75);--ib-bad:oklch(0.7 0.17 25)}
+
+/* toolbar: what you're looking at, which kinds, how many */
+.ib-bar{display:flex;align-items:center;flex-wrap:wrap;gap:10px;padding:12px;border:1px solid var(--ib-line);border-radius:18px;background:var(--ib-panel);
+  box-shadow:var(--ib-sh1);backdrop-filter:blur(16px) saturate(160%)}
+.ib-seg{display:flex;flex-wrap:wrap;padding:3px;border:1px solid var(--ib-line);border-radius:12px;background:var(--ib-sunk)}
+.ib-seg button{display:inline-flex;align-items:center;gap:6px;height:30px;padding:0 12px;border:0;border-radius:9px;background:transparent;color:var(--ib-text3);
+  font:700 12.5px 'Plus Jakarta Sans',sans-serif;cursor:pointer;white-space:nowrap}
+.ib-seg button.on{background:var(--ib-panel);color:var(--ib-text);box-shadow:var(--ib-sh1)}
+.ib-n{font:600 10.5px 'Geist Mono',ui-monospace,monospace;color:var(--ib-text3)}
+.ib-n.hot{display:inline-grid;place-items:center;min-width:18px;height:18px;padding:0 5px;border-radius:999px;background:var(--rose,#f43f5e);color:#fff;box-sizing:border-box}
+.ib-grow{flex:1}
+.ib-showing{font-size:12.5px;color:var(--ib-text2);white-space:nowrap;padding-right:6px}
+.ib-showing b{color:var(--ib-text)}
+
+/* the table */
+.ib-panel{overflow:hidden;border:1px solid var(--ib-line);border-radius:18px;background:var(--ib-panel);box-shadow:var(--ib-sh1);backdrop-filter:blur(16px) saturate(160%)}
+.ib-scroll{overflow-x:auto}
+.ib-grid{min-width:880px}
+.ib-th,.ib-tr{display:grid;grid-template-columns:minmax(240px,1.3fr) 170px minmax(180px,1fr) 90px 200px;gap:12px;align-items:center}
+.ib-th{padding:11px 18px 11px 21px;border-bottom:1px solid var(--ib-line2);font-size:11px;font-weight:800;letter-spacing:.06em;text-transform:uppercase;color:var(--ib-text3)}
+.ib-th .r{text-align:right}
+.ib-tr{min-height:58px;padding:9px 18px;border-bottom:1px solid var(--ib-line2);border-left:3px solid var(--tc,var(--ib-line));font-size:13px;transition:background .12s}
+.ib-tr:last-child{border-bottom:0}
+.ib-tr:hover{background:var(--ib-sunk)}
+.ib-tr.link{cursor:pointer}
+.ib-tr.k-leave{--tc:oklch(0.62 0.15 155)}
+.ib-tr.k-permission{--tc:oklch(0.62 0.15 235)}
+.ib-tr.k-correction{--tc:oklch(0.7 0.14 70)}
+.ib-tr.k-handover{--tc:oklch(0.58 0.2 300)}
+.ib-tr.k-review{--tc:oklch(0.58 0.18 265)}
+.ib-tr.k-accept{--tc:oklch(0.62 0.17 200)}
+.ib-tr.k-reset{--tc:oklch(0.62 0.2 15)}
+.ib-what{display:flex;flex-direction:column;gap:4px;min-width:0}
+.ib-what b{font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.ib-what>span{display:flex;align-items:center;gap:6px}
+.ib-type{font-style:normal;padding:1px 6px;border-radius:5px;background:color-mix(in srgb,var(--tc) 14%,transparent);color:var(--tc);
+  font-size:10px;font-weight:800;letter-spacing:.05em}
+.ib-ref{margin-right:6px;padding:2px 7px;border-radius:6px;background:var(--ib-acSoft);color:var(--ib-acText);font:600 11px 'Geist Mono',ui-monospace,monospace;vertical-align:1px}
+.ib-tag{display:inline-block;margin-left:8px;padding:1px 8px;border-radius:999px;font-size:11px;font-weight:800;vertical-align:1px}
+.ib-tag.warn{background:color-mix(in srgb,var(--ib-warn) 16%,transparent);color:var(--ib-warn)}
+.ib-due{color:var(--ib-warn);font-weight:700}
+.ib-person{display:flex;align-items:center;gap:8px;min-width:0}
+.ib-person b{font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.ib-face{flex:none;width:28px;height:28px;border-radius:50%;overflow:hidden;display:inline-grid}
+.ib-face>*{width:100% !important;height:100% !important;font-size:10px}
+.ib-ic{flex:none;width:28px;height:28px;border-radius:9px;display:grid;place-items:center;font-size:14px;background:var(--ib-sunk,var(--panel2));border:1px solid var(--ib-line,var(--border))}
+.ib-details{display:flex;flex-direction:column;gap:2px;min-width:0;font-size:12.5px;color:var(--ib-text2)}
+.ib-details>span{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.ib-faint{color:var(--ib-text3)}
+.ib-late{color:var(--ib-bad);font-weight:600}
+.ib-when{font-size:12px;color:var(--ib-text3);white-space:nowrap}
+.ib-acts{display:flex;justify-content:flex-end;gap:6px}
+.ib-btn{height:30px;padding:0 12px;border:1px solid var(--ib-line);border-radius:9px;background:var(--ib-panel);color:var(--ib-text);
+  font:700 12px 'Plus Jakarta Sans',sans-serif;cursor:pointer;white-space:nowrap}
+.ib-btn:hover:not(:disabled){background:var(--ib-sunk)}
+.ib-btn:disabled{opacity:.5;cursor:default}
+.ib-btn.ghost{background:transparent}
+.ib-btn.good{background:var(--ib-good);border-color:var(--ib-good);color:#fff}
+.ib-btn.good:hover:not(:disabled){background:var(--ib-good);filter:brightness(1.06)}
+html[data-theme="dark"] .ib-btn.good{color:#0b1f14}
+.ib-btn.pri{background:var(--accent);border-color:var(--accent);color:#fff}
+.ib-btn.pri:hover:not(:disabled){background:var(--accent);filter:brightness(1.06)}
+.ib-none{padding:40px;text-align:center;color:var(--ib-text3)}
+@media (max-width:768px){.ib-bar{padding:10px}.ib-showing{display:none}}
+
+/* Home: how much waits in the Inbox (no lift on hover) */
+.ib-card{display:flex;align-items:center;gap:12px;margin:0 0 14px;padding:12px 16px;border:1px solid color-mix(in srgb,var(--accent) 35%,var(--border));
+  border-radius:14px;background:color-mix(in srgb,var(--accent) 7%,var(--glass-solid,var(--panel2)));color:var(--text);text-decoration:none}
+.ib-card:hover{border-color:var(--accent)}
+.ib-card .ib-ic{width:34px;height:34px;border-radius:10px;font-size:16px}
+.ib-main{flex:1;min-width:0;display:flex;flex-direction:column;gap:3px}
+.ib-title{font-size:14px;color:var(--text);line-height:1.4}
+.ib-title b{font-weight:800}
+.ib-sub{font-size:12.5px;color:var(--muted);line-height:1.4}
+.ib-go{flex:none;font-size:13px;font-weight:800;color:var(--accent-ink);white-space:nowrap}
+
+/* approved R&D work to decide: a Reel, an Ad or both (components/rnd-use-block.tsx) */
+.ib-tr.k-decide{--tc:oklch(0.6 0.16 330)}

@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 import { api } from "@/lib/api";
+import { whileVisible } from "@/lib/visible-poll";
 import { notifyTasksChanged } from "@/lib/task-events";
 import type { BreakStatus } from "@/lib/types";
 
@@ -28,8 +29,8 @@ export function useBreak() {
 
   useEffect(() => {
     refresh();
-    const id = setInterval(refresh, 30_000);
-    return () => clearInterval(id);
+    // while the tab is in view (the countdown below runs on its own)
+    return whileVisible(refresh, 30_000);
   }, [refresh]);
 
   // Local per-second countdown display, derived from the last server fetch.

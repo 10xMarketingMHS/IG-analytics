@@ -2,6 +2,7 @@ import { Router } from "express";
 import { z } from "zod";
 import { pool } from "../db.js";
 import { requirePermission } from "../permissions.js";
+import { headingFieldError, headingTypes } from "../type-tree.js";
 
 export const taskRulesRouter = Router();
 
@@ -57,6 +58,9 @@ taskRulesRouter.post("/task-time-rules", requirePermission("task_settings"), asy
       [contentFormatId, req.orgId],
     );
     if (!frows.length) return res.status(400).json({ error: "That content format wasn't found." });
+    // a main type with sub-types has no time of its own (../type-tree.js)
+    const heading = (await headingTypes(req.orgId, [contentFormatId])).get(contentFormatId);
+    if (heading) return res.status(400).json({ error: headingFieldError(heading) });
     if (editorId) {
       const { rows: erows } = await pool.query("select 1 from editor where id = $1 and org_id = $2", [editorId, req.orgId]);
       if (!erows.length) return res.status(400).json({ error: "That team member wasn't found." });

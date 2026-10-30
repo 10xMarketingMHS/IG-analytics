@@ -2,7 +2,7 @@
   "name": "pulse",
   "version": "1.0.0",
   "private": true,
-  "description": "Pulse — Instagram Content Analytics (single-service deploy: Node serves the React build)",
+  "description": "Echo connects daily effort with feedback, progress and results. (Single-service deploy: Node serves the React build.)",
   "engines": {
     "node": ">=20"
   },

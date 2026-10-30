@@ -1,0 +1,151 @@
+/* Sign in (login.tsx), full screen. Left: rings of small coloured dashes
+   turning slowly, spreading around the pointer, their colours travelling round
+   on their own (particle-field.tsx), a soft light gliding after the pointer
+   (usePointerLight), the mini
+   game (echo-run.tsx) and the words — a near-white panel with dark words in
+   the light theme, a deep one with light words in the dark. Right: the form.
+   Colours follow the accent the person picked (--acH). */
+/* full screen: the art fills the left (a small inset), the form the right */
+/* (lg-screen, not lg: "lg" is the large size of avatars, bars and numbers elsewhere) */
+.lg-screen{position:fixed;inset:0;z-index:200;overflow:auto;
+  background:radial-gradient(45% 55% at 95% 100%,oklch(0.75 0.13 calc(var(--acH) - 70) / .1),transparent 70%),var(--panel)}
+.lg-card{min-height:100%;display:grid;grid-template-columns:minmax(0,1.1fr) minmax(0,1fr);gap:12px;padding:14px}
+
+/* the art, and its colours per theme (the game reads the --run-* ones) */
+/* clip (not just hidden): the panel can't be scrolled, so focusing the game never shifts it */
+.lg-art{
+  --art-bg:linear-gradient(160deg,oklch(0.99 0.008 var(--acH)) 0%,oklch(0.975 0.016 var(--acH)) 60%,oklch(0.965 0.022 calc(var(--acH) - 50)) 100%);
+  --art-fade:oklch(0.985 0.01 var(--acH));
+  --art-ink:oklch(0.24 0.09 var(--acH));--art-ink2:oklch(0.42 0.1 var(--acH));
+  --art-glass:rgba(255,255,255,.75);--art-glass-line:oklch(0.88 0.045 var(--acH));--art-shadow:none;
+  --run-line:oklch(0.45 0.16 var(--acH) / .55);--run-dash:oklch(0.45 0.16 var(--acH) / .3);
+  --run-orb:oklch(0.52 0.24 var(--acH));--run-mark:#fff;--run-glow:oklch(0.6 0.25 var(--acH) / .5);--run-trail:oklch(0.55 0.24 var(--acH));
+  --run-block:#fff;--run-block-line:oklch(0.55 0.2 var(--acH) / .5);--run-shadow:oklch(0.45 0.2 var(--acH) / .22);--run-spark:#f59e0b;
+  position:relative;overflow:hidden;overflow:clip;isolation:isolate;border-radius:22px;color:var(--art-ink);min-height:420px;
+  display:flex;flex-direction:column;justify-content:space-between;padding:30px 32px 34px;
+  background:var(--art-bg);box-shadow:inset 0 0 0 1px var(--border)}
+html[data-theme="dark"] .lg-art{
+  --art-bg:radial-gradient(120% 90% at 56% 40%,oklch(0.23 0.075 var(--acH)) 0%,oklch(0.16 0.05 var(--acH)) 55%,oklch(0.12 0.035 calc(var(--acH) - 30)) 100%);
+  --art-fade:oklch(0.13 0.04 var(--acH));
+  --art-ink:#fff;--art-ink2:rgba(255,255,255,.82);
+  --art-glass:rgba(255,255,255,.12);--art-glass-line:rgba(255,255,255,.26);--art-shadow:0 1px 12px rgba(10,5,30,.55);
+  --run-line:rgba(255,255,255,.7);--run-dash:rgba(255,255,255,.38);
+  --run-orb:#fff;--run-mark:oklch(0.62 0.2 var(--acH));--run-glow:rgba(255,255,255,.9);--run-trail:#fff;
+  --run-block:rgba(255,255,255,.88);--run-block-line:rgba(40,20,110,.28);--run-shadow:rgba(10,5,30,.5);--run-spark:#ffe08a;
+  box-shadow:inset 0 0 0 1px rgba(255,255,255,.06)}
+.lg-light{position:absolute;inset:0;z-index:0;pointer-events:none;overflow:hidden;border-radius:inherit}
+.lg-particles{position:absolute;inset:0;width:100%;height:100%;display:block;transition:opacity .45s ease}
+/* while a round is on, the dashes step back */
+.lg-art:has(.lg-game[data-on]) .lg-particles{opacity:.35}
+/* the light under the pointer: soft always, stronger while the pointer is on the panel.
+   Moved with a transform (usePointerLight) from its resting place here; its colour turns slowly on its own */
+.lg-glow{position:absolute;left:30%;top:42%;width:360px;height:360px;margin:-180px 0 0 -180px;border-radius:50%;
+  opacity:.5;will-change:transform;transition:opacity .5s ease;animation:lg-hue 16s ease-in-out infinite alternate;
+  background:radial-gradient(closest-side,oklch(0.78 0.14 var(--acH) / .22),transparent)}
+html[data-theme="dark"] .lg-glow{mix-blend-mode:screen;
+  background:radial-gradient(closest-side,oklch(0.75 0.16 calc(var(--acH) + 20) / .34),transparent)}
+/* from blue round to pink and orange, the dashes' own colours (never through green) */
+@keyframes lg-hue{from{filter:hue-rotate(-45deg)}to{filter:hue-rotate(70deg)}}
+.lg-art[data-lit] .lg-glow{opacity:1}
+.lg-grain{position:absolute;inset:0;opacity:.05;mix-blend-mode:overlay;
+  background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.85' numOctaves='2' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E")}
+html[data-theme="dark"] .lg-grain{opacity:.12}
+/* the words stay readable: the dashes fade out toward the bottom */
+.lg-art::after{content:"";position:absolute;inset:auto 0 0 0;height:46%;z-index:1;pointer-events:none;
+  background:linear-gradient(to top,var(--art-fade) 0%,color-mix(in srgb,var(--art-fade) 72%,transparent) 42%,transparent)}
+.lg-mark{position:relative;z-index:2;width:46px;height:46px;display:grid;place-items:center;border-radius:14px;font-size:22px;color:var(--art-ink);
+  background:var(--art-glass);border:1px solid var(--art-glass-line);backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px);
+  box-shadow:0 8px 24px -10px oklch(0.3 0.15 var(--acH) / .35)}
+/* the mini game (components/echo-run.tsx): the panel's width, between the mark
+   and the words. Nothing of it shows until Play: the panel is its particles. */
+.lg-game{position:relative;z-index:2;flex:1;min-height:170px;margin:10px -32px 14px;outline:none}
+.lg-game canvas{position:absolute;inset:0;width:100%;height:100%;display:block;opacity:0;pointer-events:none;transition:opacity .45s ease;
+  touch-action:manipulation;-webkit-tap-highlight-color:transparent}
+.lg-game[data-on] canvas{opacity:1;pointer-events:auto;cursor:pointer}
+.lg-game:focus-visible:not([data-pointer]){box-shadow:inset 0 0 0 2px var(--art-glass-line);border-radius:14px}
+/* top-right of the panel, level with the mark: Play, the score, the result */
+.lg-gamebar{position:absolute;z-index:3;top:34px;right:32px;display:flex;align-items:center;gap:10px}
+.lg-score{display:flex;flex-direction:column;align-items:flex-end;line-height:1.15;text-shadow:var(--art-shadow)}
+.lg-score b{font-size:16px;font-weight:800;font-variant-numeric:tabular-nums;letter-spacing:.02em}
+.lg-score span{font-size:11.5px;font-weight:600;color:var(--art-ink2)}
+.lg-score.over b{font-size:13.5px;letter-spacing:0}
+.lg-play{display:inline-flex;align-items:center;gap:8px;height:38px;padding:0 18px 0 15px;
+  border:1px solid var(--art-glass-line);border-radius:999px;background:var(--art-glass);color:var(--art-ink);
+  backdrop-filter:blur(12px);-webkit-backdrop-filter:blur(12px);
+  font-family:inherit;font-size:13.5px;font-weight:750;cursor:pointer;text-shadow:var(--art-shadow);
+  box-shadow:0 8px 24px -12px oklch(0.3 0.15 var(--acH) / .45),inset 0 1px 0 rgba(255,255,255,.35);transition:background-color .15s,color .15s,box-shadow .15s}
+.lg-play:hover{background:#fff;color:var(--accent-ink);text-shadow:none}
+html[data-theme="dark"] .lg-play:hover{background:rgba(255,255,255,.92);color:oklch(0.42 0.22 var(--acH))}
+.lg-play:focus-visible{outline:3px solid var(--accent);outline-offset:3px}
+.lg-pitch{position:relative;z-index:2;display:flex;flex-direction:column;gap:12px;max-width:420px;text-shadow:var(--art-shadow)}
+.lg-pitch span{font-size:13.5px;font-weight:600;color:var(--art-ink2)}
+.lg-pitch b{font-size:clamp(24px,2.6vw,32px);font-weight:800;line-height:1.18;letter-spacing:-.02em;text-wrap:balance}
+
+/* the form */
+.lg-side{position:relative;display:grid;place-items:center;padding:40px 28px}
+/* light / dark, top-right of the form side */
+.lg-theme{position:absolute;top:22px;right:24px;display:flex;gap:2px;padding:3px;border:1px solid var(--border);border-radius:999px;background:var(--panel2)}
+.lg-theme button{width:34px;height:28px;display:grid;place-items:center;padding:0;border:0;border-radius:999px;background:transparent;color:var(--muted);
+  cursor:pointer;transition:background-color .15s,color .15s}
+.lg-theme button:hover{color:var(--text)}
+.lg-theme button[aria-checked="true"]{background:color-mix(in srgb,var(--accent) 16%,var(--panel));color:var(--accent-ink);
+  box-shadow:0 1px 2px oklch(0.3 0.1 var(--acH) / .12),0 4px 10px -4px oklch(0.45 0.2 var(--acH) / .4)}
+.lg-theme button:focus-visible{outline:2px solid var(--accent);outline-offset:1px}
+.lg-form{width:min(380px,100%);display:flex;flex-direction:column}
+.lg-logo{width:58px;height:auto;margin-bottom:22px}
+.lg-mark .echo-mark{width:30px;height:auto}
+.lg-form h1{margin:0;font-size:30px;font-weight:800;letter-spacing:-.025em;color:var(--text)}
+.lg-sub{margin:8px 0 28px;font-size:14px;line-height:1.5;color:var(--muted)}
+.lg-form form{display:flex;flex-direction:column}
+.lg-form label{font-size:13px;font-weight:650;color:var(--text);margin-bottom:7px}
+.lg-labelrow{display:flex;align-items:baseline;justify-content:space-between;gap:10px;margin-top:18px}
+.lg-labelrow label{margin-bottom:7px}
+.lg-in{width:100%;height:48px;padding:0 15px;border:1px solid var(--border);border-radius:13px;background:var(--panel);color:var(--text);
+  font-family:inherit;font-size:14px;font-weight:500;outline:none;transition:border-color .15s,box-shadow .15s}
+.lg-in::placeholder{color:var(--faint)}
+.lg-in:hover{border-color:color-mix(in srgb,var(--accent) 35%,var(--border))}
+.lg-in:focus{border-color:var(--accent);box-shadow:0 0 0 4px var(--accent-weak)}
+.lg-in:-webkit-autofill{-webkit-box-shadow:0 0 0 40px var(--panel) inset;-webkit-text-fill-color:var(--text);caret-color:var(--text)}
+.lg-pass{position:relative}
+.lg-pass .lg-in{padding-right:50px}
+.lg-eye{position:absolute;right:6px;top:50%;translate:0 -50%;width:38px;height:38px;display:grid;place-items:center;padding:0;border:0;border-radius:10px;
+  background:transparent;color:var(--muted);cursor:pointer}
+.lg-eye:hover{background:var(--panel2);color:var(--text)}
+.lg-eye:focus-visible{outline:2px solid var(--accent);outline-offset:1px}
+.lg-err{margin:14px 0 0;padding:10px 12px;border-radius:11px;background:color-mix(in srgb,var(--rose) 10%,transparent);color:var(--rose);font-size:13px;font-weight:600}
+.lg-submit{margin-top:24px;height:50px;border:0;border-radius:13px;color:#fff;font-family:inherit;font-size:14.5px;font-weight:700;cursor:pointer;
+  background:linear-gradient(135deg,oklch(0.55 0.24 var(--acH)),oklch(0.62 0.22 calc(var(--acH) + 28)));
+  box-shadow:0 12px 26px -10px oklch(0.55 0.24 var(--acH) / .7),inset 0 1px 0 rgba(255,255,255,.18);transition:filter .15s,box-shadow .15s}
+.lg-submit:hover:not(:disabled){filter:brightness(1.07);box-shadow:0 16px 34px -10px oklch(0.55 0.24 var(--acH) / .85),inset 0 1px 0 rgba(255,255,255,.2)}
+.lg-submit:focus-visible{outline:3px solid var(--accent-weak);outline-offset:2px}
+.lg-submit:disabled{opacity:.7;cursor:default}
+.lg-link{border:0;background:transparent;padding:0;color:var(--accent-ink);font-family:inherit;font-size:13px;font-weight:650;cursor:pointer}
+.lg-link:hover{text-decoration:underline}
+.lg-note{padding:14px 16px;border-radius:13px;background:var(--panel2);border:1px solid var(--border);font-size:13.5px;line-height:1.55;color:var(--text)}
+.lg-foot{margin:26px 0 0;text-align:center;font-size:13px;color:var(--muted)}
+
+/* one column: the art becomes a banner above the form */
+@media (max-width:880px){
+  .lg-screen{padding:16px;place-items:start center}
+  .lg-card{grid-template-columns:minmax(0,1fr);min-height:0;border-radius:26px}
+  .lg-art{min-height:330px;padding:22px 22px 24px}
+  .lg-game{min-height:150px;margin:6px -22px 10px}
+  .lg-gamebar{top:26px;right:22px}
+  .lg-pitch b{font-size:24px}
+  .lg-side{padding:28px 14px 22px}
+  .lg-theme{top:16px;right:14px}
+  .lg-logo{display:none}
+}
+@media (max-width:480px){
+  .lg-screen{padding:10px}
+  .lg-card{padding:8px;border-radius:22px}
+  .lg-art{min-height:300px;border-radius:16px}
+  .lg-game{min-height:140px}
+  .lg-pitch span{display:none}
+  .lg-pitch b{font-size:21px}
+  .lg-form h1{font-size:26px}
+  .lg-sub{margin-bottom:22px}
+}
+@media (prefers-reduced-motion:reduce){
+  .lg-glow{transition:none;animation:none}
+}

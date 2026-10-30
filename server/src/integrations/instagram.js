@@ -157,8 +157,9 @@ const INSIGHT_ATTEMPTS = [
   ["reach"],
 ];
 
+// A number Meta didn't give is null, not 0 (see getMediaMetricsBatch).
 export async function getMediaMetrics(media, token) {
-  const out = { views: 0, reach: 0, likes: media.like_count ?? 0, comments: media.comments_count ?? 0, shares: 0, saves: 0 };
+  const out = { views: null, reach: null, likes: media.like_count ?? null, comments: media.comments_count ?? null, shares: null, saves: null };
   for (const metrics of INSIGHT_ATTEMPTS) {
     try {
       const json = await graphGet(`${media.id}/insights`, { metric: metrics.join(","), access_token: token });
@@ -203,10 +204,13 @@ async function graphBatch(requests, token) {
 // instead of one per media. Mirrors the per-item metric-set fallback: try the
 // richest set for all pending media, then re-request only those that rejected it
 // with the next, smaller set. Returns { metrics: Map(mediaId -> {...}), usage }.
+// A number Meta didn't give this time is null, not 0 — a media whose insights
+// were refused (rate-limited, say) keeps the views and reach it already had,
+// rather than having them wiped to 0 until the next good sync.
 export async function getMediaMetricsBatch(mediaList, token) {
   const out = new Map();
   for (const m of mediaList) {
-    out.set(m.id, { views: 0, reach: 0, likes: m.like_count ?? 0, comments: m.comments_count ?? 0, shares: 0, saves: 0 });
+    out.set(m.id, { views: null, reach: null, likes: m.like_count ?? null, comments: m.comments_count ?? null, shares: null, saves: null });
   }
   let usage = null;
   let pending = mediaList.map((m) => m.id);

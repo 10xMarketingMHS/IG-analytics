@@ -1,6 +1,7 @@
 import { Router } from "express";
 import { z } from "zod";
 import { pool } from "../db.js";
+import { hasColumn } from "../schema-flags.js";
 import { createWorkspace } from "../bootstrap.js";
 import { logActivity } from "../activity.js";
 import { requirePermission } from "../permissions.js";
@@ -53,19 +54,19 @@ workspacesRouter.post("/workspaces", resolveWorkspace, requirePermission("channe
   const client = await pool.connect();
   try {
     await client.query("BEGIN");
-    // Resolve the caller's org + an existing channel to copy taxonomy from.
+    // The new channel goes in the org this request is for (where the Channels
+    // permission was checked), copying the taxonomy of one of its channels.
+    const orgId = req.orgId ?? (await client.query("select id from org order by created_at limit 1")).rows[0]?.id ?? null;
     const ctx = await client.query(
-      `select w.id as ws_id, w.org_id from workspace w
-       join membership m on m.workspace_id = w.id
-       where m.user_id = $1 and w.org_id is not null
-       order by w.created_at asc limit 1`,
-      [req.user.sub],
+      "select id from workspace where org_id = $1 order by created_at asc limit 1",
+      [orgId],
     );
-    let orgId = ctx.rows[0]?.org_id ?? null;
-    const sourceWorkspaceId = ctx.rows[0]?.ws_id ?? null;
-    if (!orgId) orgId = (await client.query("select id from org order by created_at limit 1")).rows[0]?.id ?? null;
+    const sourceWorkspaceId = ctx.rows[0]?.id ?? null;
+    // An admin makes it as its admin; someone with only the Channels grant joins
+    // it as an editor (admin of any channel would make them admin of the org).
+    const ownerRole = req.role === "admin" ? "admin" : "editor";
 
-    const workspace = await createWorkspace(client, parsed.data.name, req.user.sub, { orgId, sourceWorkspaceId });
+    const workspace = await createWorkspace(client, parsed.data.name, req.user.sub, { orgId, sourceWorkspaceId, ownerRole });
 
     // Enable Instagram by default so the new channel is immediately usable.
     if (orgId) {
@@ -121,6 +122,45 @@ workspacesRouter.patch("/workspaces/:id", resolveWorkspace, requirePermission("c
 // accounts, taxonomy, memberships & Instagram connections; keeps the shared
 // team (editors are reassigned to another channel) and keeps tasks (their
 // channel link is just cleared). Refuses to delete the org's only channel.
+// What deleting a channel would do, said before it's done: who'd lose Echo —
+// people (switched on) for whom it's the only channel they belong to — and how
+// many tasks lose their brand (they stay, un-linked) and posts go with it.
+async function deleteCheck(db, wsId, orgId) {
+  const [{ rows: lockedOut }, { rows: [n] }] = await Promise.all([
+    db.query(
+      `select u.id, coalesce(e.name, u.name, u.email) as name
+         from app_user u join membership m on m.user_id = u.id and m.workspace_id = $1
+         left join editor e on e.id = u.editor_id
+        where u.active
+          and not exists (select 1 from membership m2 join workspace w2 on w2.id = m2.workspace_id
+                           where m2.user_id = u.id and w2.org_id = $2 and m2.workspace_id <> $1)
+        order by 2`,
+      [wsId, orgId],
+    ),
+    db.query(
+      `select (select count(*)::int from task where channel_id = $1) as tasks,
+              (select count(*)::int from post where workspace_id = $1) as posts`,
+      [wsId],
+    ),
+  ]);
+  return { lockedOut, tasks: n.tasks, posts: n.posts };
+}
+const namesOf = (people) => {
+  const n = people.map((p) => p.name);
+  return n.length <= 2 ? n.join(" and ") : `${n.slice(0, -1).join(", ")} and ${n[n.length - 1]}`;
+};
+export const lockOutWords = (people) =>
+  `${namesOf(people)} would lose Echo: this is the only channel ${people.length === 1 ? "they belong" : "they all belong"} to. `
+  + "Give them another channel first (switch to it, then add their login on Team › Roster), or delete a different one.";
+
+workspacesRouter.get("/workspaces/:id/delete-check", resolveWorkspace, requirePermission("channels"), async (req, res, next) => {
+  try {
+    const { rows: [ws] } = await pool.query("select id, org_id from workspace where id = $1 and org_id = $2", [req.params.id, req.orgId]);
+    if (!ws) return res.status(404).json({ error: "Channel not found" });
+    res.json(await deleteCheck(pool, ws.id, ws.org_id));
+  } catch (err) { next(err); }
+});
+
 workspacesRouter.delete("/workspaces/:id", resolveWorkspace, requirePermission("channels"), async (req, res, next) => {
   const client = await pool.connect();
   try {
@@ -145,6 +185,29 @@ workspacesRouter.delete("/workspaces/:id", resolveWorkspace, requirePermission("
       await client.query("ROLLBACK");
       return res.status(409).json({ error: "This is your only channel — you can't delete it." });
     }
+    // The Super Admin's only admin role must not go with it (they'd lose the
+    // Super Admin settings).
+    if (await hasColumn("app_user", "is_super_admin")) {
+      const { rows: only } = await client.query(
+        `select 1 from app_user u
+          where u.is_super_admin
+            and exists (select 1 from membership m where m.user_id = u.id and m.workspace_id = $1 and m.role = 'admin')
+            and not exists (select 1 from membership m join workspace w on w.id = m.workspace_id
+                             where m.user_id = u.id and m.role = 'admin' and w.org_id = $2 and m.workspace_id <> $1)
+          limit 1`,
+        [ws.id, ws.org_id],
+      );
+      if (only.length) {
+        await client.query("ROLLBACK");
+        return res.status(409).json({ error: "This channel holds the Super Admin's admin role. Make them an admin of another channel first." });
+      }
+    }
+    // Nobody is locked out of Echo by it: for anyone switched on, it mustn't be their only channel.
+    const check = await deleteCheck(client, ws.id, ws.org_id);
+    if (check.lockedOut.length) {
+      await client.query("ROLLBACK");
+      return res.status(409).json({ error: lockOutWords(check.lockedOut), lockedOut: check.lockedOut });
+    }
     // Editors are the org's shared team (NOT NULL workspace_id cascades) — move
     // them to another channel so they survive.
     await client.query("update editor set workspace_id = $1 where workspace_id = $2", [other.id, ws.id]);
@@ -156,6 +219,11 @@ workspacesRouter.delete("/workspaces/:id", resolveWorkspace, requirePermission("
     // deleted. Deleting posts now keeps those audit rows valid; the workspace
     // delete then cascades them away.
     await client.query("delete from post where workspace_id = $1", [ws.id]);
+    // Recorded ad numbers and their results belong to the task, not the brand:
+    // they let go of it rather than go with it (task_ad's brand link cascades).
+    if (await hasColumn("task_ad", "workspace_id")) {
+      await client.query("update task_ad set workspace_id = null where workspace_id = $1", [ws.id]);
+    }
     await client.query("delete from workspace where id = $1", [ws.id]);
     await client.query("COMMIT");
     res.status(204).end();

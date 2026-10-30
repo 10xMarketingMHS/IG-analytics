@@ -26,6 +26,8 @@ export type AppUser = {
   name: string | null;
   active: boolean;
   role: Role;
+  // An admin who can also manage other admins (Team › Roster).
+  isSuperAdmin?: boolean;
   isSelf: boolean;
   editor_id: string | null;
   // Set while a "Forgot password?" request is waiting for the admin.
@@ -38,6 +40,13 @@ export type Editor = {
   designation: string;
   image_url: string | null;
   active: boolean;
+  // Company ID shown on the roster, e.g. MHS001.
+  employee_code?: string | null;
+  // Counts in the Task Points rankings: false when a Super Admin switched them
+  // out on the roster; null or true counts (see countsInTaskScore in lib/task-points).
+  in_task_score?: boolean | null;
+  // The Team Lead this person reports to (Team › Roster); null for none.
+  lead_editor_id?: string | null;
   // True when this editor is linked to a user with an admin role. Admins are
   // hidden from "assign an editor" pickers (they don't get assigned editing).
   is_admin?: boolean;
@@ -123,6 +132,12 @@ export type TaskType = "content" | "short_task" | "general" | "social" | "ad" | 
 // Type-specific extras for social/ad tasks — optional, only meaningful when
 // task_type is "social" or "ad" respectively.
 export type TaskMeta = {
+  // Other work: which team asked for a task given to someone (server/src/goal-score.js)
+  requestedBy?: string;
+  // R&D work (AI Job): what it became once approved (POST /tasks/:id/use)
+  use?: { decision: "reel" | "ad" | "both" | "none"; at: string; by: string; byName: string | null; tasks: { id: string; ref: string | null; kind: string }[] };
+  // a Reel or Ad made from R&D work: which task it was made from
+  fromTask?: { id: string; ref: string | null; title: string };
   platform?: string;
   caption?: string;
   assetLinks?: string;
@@ -145,11 +160,23 @@ export type ContentFormatDef = {
   // Points Formula base_points for this format — independent of budget_hours
   // (task_time_rule). See taskPoints() in leaderboard.tsx.
   points: number;
+  // its usual time (the team-wide time rule), for the New task sheet's type chips
+  hours?: number | null;
+  // tracked in goals (Settings › Tasks & time › Goal); false: off-goal work. Absent before the database has it.
+  counts_in_goal?: boolean;
+  // how many people have a goal for it this month
+  goal_people?: number;
+  // the main type it sits under (Carousel for Video Carousel), or null: on its own
+  // (lib/type-groups.ts). Absent before the database has it.
+  parent_id?: string | null;
   // Management-metric tag — surfaces goal-vs-achieved for this format under
   // Key / Critical Metrics in Management Performance. null = untagged.
   metric_tier: "key" | "critical" | null;
   // Must a task of this type carry a delivery link before going to review?
   review_link_required: boolean;
+  // Does an approved Social task of this type go to Scheduling? Missing until
+  // the scheduling database update is applied.
+  to_scheduling?: boolean;
   // Project-type-only (category='project'): duration bounds a project's Due
   // Date; metrics_description is free-form documentation only (no scoring use).
   duration_days?: number | null;
@@ -225,11 +252,17 @@ export type Task = {
   link_required: boolean;
   budget_hours: number | null;
   budget_started_at: string | null;
+  // Time banked while the clock waits (on hold, or the day closed).
+  budget_used_seconds?: number | null;
   // Time spent waiting for a reviewer, which never counts against the assignee:
   // when it last went into Review (null while it isn't there), and every
   // finished wait added up. See workedUntil() in task-points.ts.
   review_started_at?: string | null;
   review_wait_seconds?: number;
+  // In Review: whether you may approve or send it back, and who it's waiting
+  // for in words ("Rahul", "a Team Lead") — server/src/review-route.js.
+  can_review?: boolean;
+  review_by?: string | null;
   // The assignee's break state — offsets the countdown by however long
   // they've been (or are currently) on break, shared across every task
   // they have running. See use-break.ts.
@@ -249,6 +282,21 @@ export type Task = {
   post_permalink: string | null;
   platform_key: "instagram" | "facebook" | "youtube" | string | null;
   platform_name: string | null;
+  // Scheduling after approval (lib/schedule.ts): who posts it, since when it's
+  // theirs (null: not in scheduling), its post date and how many posts its links made.
+  scheduler_id?: string | null;
+  scheduler_name?: string | null;
+  schedule_from?: string | null;
+  post_on?: string | null;
+  post_time?: string | null;
+  linked_posts?: number;
+  // Ad uploads after approval (lib/ad-upload.ts): since when it's waiting for
+  // its ads to be recorded (null: not in the list), and how many are.
+  upload_from?: string | null;
+  ad_count?: number;
+  // Ads: the team it's made for (lib/ad-teams.ts), which numbers it instead of a brand
+  ad_team_id?: string | null;
+  ad_team_name?: string | null;
 };
 
 // GET/POST /break/* — one editor's shared daily break budget (see
@@ -290,8 +338,18 @@ export type TaskTimeRule = {
 export type ActivityVerb =
   | "created" | "completed" | "assigned" | "commented" | "published"
   | "stage_completed" | "channel_added" | "editor_added"
-  | "review_requested" | "sent_back" | "reopened" | "deleted"
-  | "held" | "resumed" | "password_reset_requested" | "password_reset" | "sod_submitted";
+  | "review_requested" | "review_copied" | "sent_back" | "reopened" | "deleted"
+  | "held" | "resumed" | "accepted" | "password_reset_requested" | "password_reset" | "sod_submitted"
+  // Attendance (Start day, a lead's marks, nudges, corrections, the no-SOD alert)
+  | "attendance_check_in" | "attendance_no_sod" | "attendance_nudge" | "attendance_marked" | "attendance_excused"
+  | "attendance_undone" | "attendance_correction" | "attendance_correction_answered" | "attendance_late_reason"
+  // Hand over (components/handover.tsx)
+  | "handover_offered" | "handover_accepted" | "handover_declined" | "handover_cancelled" | "handover_escalated" | "handover_moved"
+  // Leave: CL and SL (components/leave-ask.tsx)
+  | "leave_asked" | "leave_approved" | "leave_declined" | "leave_cancelled" | "leave_topped_up" | "leave_allowance_set"
+  | "leave_counting_started" | "leave_rules_changed" | "attendance_leave_worked"
+  // Scheduling approved social work (components/schedule-block.tsx)
+  | "schedule_ready" | "schedule_set" | "schedule_linked" | "ad_recorded" | "ad_unrecorded";
 
 export type Activity = {
   id: string;

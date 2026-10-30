@@ -1,33 +1,75 @@
-import { Fragment, useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
+import { Link } from "react-router-dom";
 import { toast } from "sonner";
 import { api, ApiError } from "@/lib/api";
 import type { PermissionKey } from "@/lib/workspaces-context";
 import { useEditors } from "@/lib/use-editors";
-import { useTasks } from "@/lib/use-tasks";
-import type { ReviewScope } from "@/lib/use-review-access";
+import { gradFor } from "@/lib/editor-visuals";
+import type { AssignScope } from "@/lib/use-review-access";
+import { useContentFormats } from "@/lib/use-content-formats";
+import type { ContentFormatDef } from "@/lib/types";
+import { SI, Seg } from "@/pages/settings-ui";
 
-// Settings → Access — admin-only. Grant SPECIFIC named permissions to a
-// SPECIFIC user, additive on top of their role. Same "pick someone, tick what
-// they get, Save" shape as Set Goals — an occasional action, not a bulk table.
-// Grants are meaningless for admins, so admin users are left out of the picker.
+// Settings › Access (Pulse Redesign v5) — admin or the access_manage grant.
+// Pick a person, tick the extra permissions they get on top of their role,
+// Save. Grants are meaningless for admins, so admins are left out of the
+// picker. Assign tasks can be limited to some content types, and to some
+// people. Who reviews a task isn't handed out here: it follows one rule
+// (server/src/review-route.js).
 
 type UserRow = { id: string; email: string; name: string | null; active: boolean; editor_id: string | null; role: "admin" | "editor" | "viewer" };
 
+const ROLE_LABEL: Record<UserRow["role"], string> = { admin: "Admin", editor: "Editor", viewer: "Viewer" };
+
 // Two groups: self-scoped grants (only ever act on the grantee's own data) and
 // admin-capability grants (act as admin for one feature — cross-user/org power).
-const PERMISSIONS: { key: PermissionKey; label: string; desc: string; scope: "self" | "admin" }[] = [
-  { key: "create_post", label: "Create posts", scope: "self", desc: "Add posts via Add Post. Any editing task it creates is always assigned to them — never to anyone else." },
-  { key: "goal_setting_access", label: "View Goal Setting", scope: "self", desc: "Read-only access to their OWN Set Goals & Performance. Cannot edit targets or award discipline." },
-  { key: "task_settings", label: "Task Settings", scope: "admin", desc: "Manage content formats, points per format, and time budgets — org-wide, affects everyone's scoring." },
-  { key: "channels", label: "Channels & Integrations", scope: "admin", desc: "Add/rename/delete channels and connect Instagram, Facebook & YouTube." },
-  { key: "content_taxonomy", label: "Content Taxonomy", scope: "admin", desc: "Edit the shared pillars, avatars, content types and formats." },
-  { key: "access_manage", label: "Manage Access", scope: "admin", desc: "Grant or revoke permissions for other users. ⚠️ Lets them extend their own access too." },
-  { key: "assign_tasks", label: "Assign tasks", scope: "admin", desc: "Assign tasks to other editors (not just themselves) when creating a task." },
-  { key: "resolve_tasks", label: "Resolve reviews", scope: "admin", desc: "Approve or send back tasks sitting in Review — for everyone, or only the people and tasks you choose below." },
-  { key: "hold_tasks", label: "Hold any task", scope: "admin", desc: "Put on hold / resume anyone's task, not only their own." },
-  { key: "edit_goals", label: "Edit Goals", scope: "admin", desc: "Set and edit any editor's goals and capacity." },
-  { key: "discipline", label: "Discipline", scope: "admin", desc: "Award discipline ratings for any editor (the whole-team Discipline table)." },
+const GROUPS: { scope: "self" | "admin"; l: string; d: string }[] = [
+  { scope: "self", l: "Self-scoped", d: "Acts only on their own work" },
+  { scope: "admin", l: "Admin capabilities", d: "Power over other people's work and org settings" },
 ];
+const PERMISSIONS: { key: PermissionKey; label: string; desc: string; scope: "self" | "admin"; warn?: boolean }[] = [
+  { key: "create_post", label: "Create posts", scope: "self", desc: "Add posts; any editing task it creates is assigned to them, never to anyone else" },
+  { key: "task_settings", label: "Task settings", scope: "admin", desc: "Task types, points and time budgets — affects everyone's scoring" },
+  { key: "channels", label: "Channels & integrations", scope: "admin", desc: "Add, rename and delete channels; connect Instagram, Facebook and YouTube" },
+  { key: "content_taxonomy", label: "Content taxonomy", scope: "admin", desc: "Pillars, avatars, content types and formats" },
+  { key: "access_manage", label: "Manage access", scope: "admin", desc: "Grant or revoke permissions for other people", warn: true },
+  { key: "assign_tasks", label: "Assign tasks", scope: "admin", desc: "Assign tasks to other editors, not only themselves" },
+  { key: "hold_tasks", label: "Hold any task", scope: "admin", desc: "Pause or resume anyone's task, not only their own" },
+  { key: "edit_goals", label: "Edit goals", scope: "admin", desc: "Set any editor's goals and capacity" },
+  { key: "discipline", label: "Discipline", scope: "admin", desc: "Give discipline ratings for the whole team" },
+];
+
+const CATEGORY_LABEL: Record<string, string> = { social: "Social", ad: "Ads", service: "Services", project: "Projects" };
+
+// Content-type chips, grouped by category, for the Assign tasks limit.
+function FormatPicker({ formats, picked, onChange, label }: { formats: ContentFormatDef[]; picked: string[]; onChange: (ids: string[]) => void; label: string }) {
+  if (formats.length === 0) return <span className="st-note">No content types yet. Add them in Settings › Content.</span>;
+  const groups = [...new Set(formats.map((f) => f.category ?? "other"))];
+  return (
+    <div className="st-fmts" aria-label={label}>
+      {groups.map((g) => (
+        <div className="st-fmtgroup" key={g}>
+          <span className="st-fmtcat">{CATEGORY_LABEL[g] ?? "Other"}</span>
+          <div className="st-people">
+            {formats.filter((f) => (f.category ?? "other") === g).map((f) => {
+              const on = picked.includes(f.id);
+              return (
+                <button key={f.id} type="button" className={"st-pill fmt" + (on ? " on" : "")} aria-pressed={on}
+                  onClick={() => onChange(on ? picked.filter((id) => id !== f.id) : [...picked, f.id])}>
+                  {f.icon && <span className="st-fmticon" aria-hidden="true">{f.icon}</span>}
+                  {f.name}
+                </button>
+              );
+            })}
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+const initials = (n: string) => n.split(/\s+/).filter(Boolean).map((w) => w[0]).join("").slice(0, 2).toUpperCase();
+const sameJson = (a: unknown, b: unknown) => JSON.stringify(a) === JSON.stringify(b);
 
 export function AccessSection() {
   const [users, setUsers] = useState<UserRow[] | null>(null);
@@ -35,31 +77,43 @@ export function AccessSection() {
   const [checked, setChecked] = useState<Record<string, boolean>>({});
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
-  // Resolve reviews scope: everyone, or only the ticked people — and for each
-  // of them either all their tasks or a hand-picked few.
-  const [reviewAll, setReviewAll] = useState(true);
-  const [reviewWho, setReviewWho] = useState<Record<string, { all: boolean; taskIds: string[] }>>({});
+  // Assign tasks: any task, or only these content types; to anyone, or only these people.
+  const [assignAll, setAssignAll] = useState(true);
+  const [assignFmts, setAssignFmts] = useState<string[]>([]);
+  const [assignAnyone, setAssignAnyone] = useState(true);
+  const [assignWho, setAssignWho] = useState<string[]>([]);
+  // What's saved, to tell when there's something to save.
+  type Snap = { checked: Record<string, boolean>; assignAll: boolean; assignFmts: string[]; assignAnyone: boolean; assignWho: string[] };
+  const [saved, setSaved] = useState<Snap | null>(null);
   const { editors } = useEditors();
-  const { tasks } = useTasks();
+  const { contentFormats } = useContentFormats();
+  const formats = useMemo(() => (contentFormats ?? []).filter((f) => f.active), [contentFormats]);
 
   useEffect(() => {
     api<{ users: UserRow[] }>("/users")
-      .then((d) => setUsers(d.users.filter((u) => u.role !== "admin")))
-      .catch((e) => toast.error(e instanceof ApiError ? e.message : "Couldn't load users."));
+      .then((d) => {
+        const list = d.users.filter((u) => u.role !== "admin" && u.active);
+        setUsers(list);
+        setUserId((cur) => cur || list[0]?.id || "");
+      })
+      .catch((e) => toast.error(e instanceof ApiError ? e.message : "Couldn't load people."));
   }, []);
 
-  // Load the selected user's current active grants into the checklist.
+  // Load the picked person's current grants.
   useEffect(() => {
-    if (!userId) { setChecked({}); return; }
+    if (!userId) { setChecked({}); setSaved(null); return; }
     setLoading(true);
-    api<{ permissions: PermissionKey[]; reviewScope: ReviewScope }>(`/access/grants?userId=${userId}`)
+    api<{ permissions: PermissionKey[]; assignScope?: AssignScope }>(`/access/grants?userId=${userId}`)
       .then((d) => {
-        setChecked(Object.fromEntries(PERMISSIONS.map((p) => [p.key, d.permissions.includes(p.key)])));
-        setReviewAll(!d.reviewScope);
-        setReviewWho(Object.fromEntries((d.reviewScope?.editors ?? []).map((e) =>
-          [e.editorId, { all: e.taskIds == null, taskIds: e.taskIds ?? [] }])));
+        const c = Object.fromEntries(PERMISSIONS.map((p) => [p.key, d.permissions.includes(p.key)]));
+        const af = d.assignScope?.formats ?? [];
+        const aAll = af.length === 0;
+        const aw = d.assignScope?.editors ?? [];
+        const aAny = aw.length === 0;
+        setChecked(c); setAssignAll(aAll); setAssignFmts(af); setAssignAnyone(aAny); setAssignWho(aw);
+        setSaved({ checked: c, assignAll: aAll, assignFmts: af, assignAnyone: aAny, assignWho: aw });
       })
-      .catch((e) => toast.error(e instanceof ApiError ? e.message : "Couldn't load access."))
+      .catch((e) => toast.error(e instanceof ApiError ? e.message : "Couldn't load their access."))
       .finally(() => setLoading(false));
   }, [userId]);
 
@@ -67,11 +121,11 @@ export function AccessSection() {
     setSaving(true);
     try {
       const permissions = Object.fromEntries(PERMISSIONS.map((p) => [p.key, !!checked[p.key]]));
-      const reviewScope: ReviewScope = reviewAll ? null : {
-        editors: Object.entries(reviewWho).map(([editorId, w]) => ({ editorId, taskIds: w.all ? null : w.taskIds })),
-      };
-      await api("/access/grants", { method: "PUT", body: JSON.stringify({ userId, permissions, reviewScope }) });
-      toast.success("Access updated.");
+      const assignScope: AssignScope = assignAll && assignAnyone ? null
+        : { ...(assignAll ? {} : { formats: assignFmts }), ...(assignAnyone ? {} : { editors: assignWho }) };
+      await api("/access/grants", { method: "PUT", body: JSON.stringify({ userId, permissions, assignScope }) });
+      setSaved({ checked, assignAll, assignFmts, assignAnyone, assignWho });
+      toast.success("Access saved.");
     } catch (e) {
       toast.error(e instanceof ApiError ? e.message : "Couldn't save access.");
     } finally {
@@ -79,137 +133,106 @@ export function AccessSection() {
     }
   }
 
-  const activeUsers = (users ?? []).filter((u) => u.active);
-  // People whose work can be handed to this reviewer — everyone on the team
-  // except the reviewer themselves (nobody reviews their own tasks).
-  const selfEditorId = users?.find((u) => u.id === userId)?.editor_id ?? null;
-  const reviewable = (editors ?? []).filter((e) => e.active && e.id !== selfEditorId);
-  const openTasksOf = (editorId: string) =>
-    (tasks ?? []).filter((t) => t.editor_id === editorId && t.status !== "done");
+  const person = users?.find((u) => u.id === userId) ?? null;
+  const editorOf = (u: UserRow | null) => (u?.editor_id ? (editors ?? []).find((e) => e.id === u.editor_id) ?? null : null);
+  const ed = editorOf(person);
+  const nameOf = (u: UserRow) => u.name || ed?.name || u.email.split("@")[0];
+  // Who they could assign to — everyone active except themselves.
+  const reviewable = useMemo(() => (editors ?? []).filter((e) => e.active && e.id !== person?.editor_id), [editors, person?.editor_id]);
+  const extra = Object.values(saved?.checked ?? {}).filter(Boolean).length;
+  const dirty = !!saved && !sameJson(saved, { checked, assignAll, assignFmts, assignAnyone, assignWho });
+  // A content-type limit needs at least one type picked, a people limit one person.
+  const missingType = !!checked.assign_tasks && !assignAll && assignFmts.length === 0;
+  const missingPerson = !!checked.assign_tasks && !assignAnyone && assignWho.length === 0;
 
   return (
     <>
-      <div className="sectitle">
-        <span className="dot" />Access
-        <span className="s">grant specific permissions to a user — additive on top of their role</span>
-      </div>
+      <section className="st-card">
+        {users === null ? (
+          <div className="st-empty">Loading…</div>
+        ) : users.length === 0 ? (
+          <div className="st-empty">Nobody to give permissions to yet — everyone with a login is an admin.</div>
+        ) : (
+          <div className="st-who">
+            {ed?.image_url
+              ? <img className="st-ava" src={ed.image_url} alt="" />
+              : <span className="st-ava" style={{ background: gradFor(person ? nameOf(person) : "?") }}>{person ? initials(nameOf(person)) : "?"}</span>}
+            <select className="st-in" value={userId} onChange={(e) => setUserId(e.target.value)} aria-label="Person">
+              {users.map((u) => <option key={u.id} value={u.id}>{u.name || u.email} · {ROLE_LABEL[u.role]}</option>)}
+            </select>
+            {person && <span className="st-chip">{ROLE_LABEL[person.role]}</span>}
+            <span className="st-note">{extra ? `${extra} extra permission${extra === 1 ? "" : "s"} on top of ${person ? ROLE_LABEL[person.role] : "their role"}` : "No extra permissions"}</span>
+            <Link to="/my-team?tab=roster" className="st-link">Change role{SI.arrow}</Link>
+          </div>
+        )}
+      </section>
 
-      <div className="card pad" style={{ display: "flex", gap: 12, alignItems: "center", flexWrap: "wrap" }}>
-        <label className="f" style={{ margin: 0 }}>User{" "}
-          <select className="t" style={{ maxWidth: 240, display: "inline-block" }} value={userId} onChange={(e) => setUserId(e.target.value)}>
-            <option value="">Select a user…</option>
-            {activeUsers.map((u) => (
-              <option key={u.id} value={u.id}>{u.name || u.email} · {u.role}</option>
-            ))}
-          </select>
-        </label>
-      </div>
-
-      {!userId ? (
-        <div className="card pad"><div className="hint">Pick a user to grant or revoke their permissions.</div></div>
-      ) : loading ? (
-        <div className="card pad"><div className="hint">Loading…</div></div>
-      ) : (
-        <div className="card pad">
-          {(["self", "admin"] as const).map((scope) => (
-            <div key={scope} style={{ marginBottom: 18 }}>
-              <div className="f" style={{ marginBottom: 10 }}>
-                {scope === "self" ? "Self-scoped — acts only on the user's own data" : "Admin capabilities — power over other users' data & org settings"}
-              </div>
-              <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
-                {PERMISSIONS.filter((p) => p.scope === scope).map((p) => (
-                  <Fragment key={p.key}>
-                  <label style={{ display: "flex", gap: 12, alignItems: "flex-start", cursor: "pointer" }}>
-                    <input
-                      type="checkbox"
-                      checked={!!checked[p.key]}
-                      onChange={(e) => setChecked((c) => ({ ...c, [p.key]: e.target.checked }))}
-                      style={{ marginTop: 3, width: 18, height: 18, flex: "none" }}
-                    />
-                    <span>
-                      <span style={{ fontWeight: 700, fontSize: 14 }}>{p.label}</span>
-                      <span style={{ display: "block", fontSize: 12.5, color: "var(--muted)", marginTop: 2 }}>{p.desc}</span>
-                    </span>
-                  </label>
-                  {p.key === "resolve_tasks" && checked.resolve_tasks && (
-                    <div className="rv-scope">
-                      <label className="rv-opt">
-                        <input type="radio" name="rv-mode" checked={reviewAll} onChange={() => setReviewAll(true)} />
-                        <span><b>Everyone</b> — can review every task</span>
-                      </label>
-                      <label className="rv-opt">
-                        <input type="radio" name="rv-mode" checked={!reviewAll} onChange={() => setReviewAll(false)} />
-                        <span><b>Only these people</b> — tick whose work they can review</span>
-                      </label>
-                      {!reviewAll && (
-                        <div className="rv-people">
-                          {reviewable.length === 0 && <div className="hint">No other team members yet.</div>}
+      {userId && (loading ? (
+        <section className="st-card"><div className="st-empty">Loading…</div></section>
+      ) : GROUPS.map((g) => (
+        <section className="st-card" key={g.scope}>
+          <div className="st-cardhead"><b>{g.l}</b><span>{g.d}</span></div>
+          {PERMISSIONS.filter((p) => p.scope === g.scope).map((p) => (
+            <div className="st-perm" key={p.key}>
+              <label>
+                <input type="checkbox" checked={!!checked[p.key]} onChange={(e) => setChecked((c) => ({ ...c, [p.key]: e.target.checked }))} />
+                <span className="st-box" aria-hidden="true">{SI.check}</span>
+                <span><b>{p.label}</b><small>{p.desc}</small></span>
+                {p.warn && <span className="st-chip warn">{SI.warning}Can widen own access</span>}
+              </label>
+              {p.key === "assign_tasks" && checked.assign_tasks && (
+                <div className="st-scope">
+                  <div className="st-scopeline">
+                    Which tasks
+                    <Seg label="Which tasks" value={assignAll ? "all" : "types"} options={[["all", "All content types"], ["types", "Selected content types"]]}
+                      onChange={(v) => setAssignAll(v === "all")} />
+                  </div>
+                  {!assignAll && (
+                    <>
+                      <FormatPicker formats={formats} picked={assignFmts} onChange={setAssignFmts} label="Content types they can assign" />
+                      <span className="st-note">They can hand out only these tasks to other people. Their own tasks aren't limited.</span>
+                    </>
+                  )}
+                  <div className="st-scopeline">
+                    Who to
+                    <Seg label="Who they can assign to" value={assignAnyone ? "all" : "people"} options={[["all", "Anyone"], ["people", "Selected people"]]}
+                      onChange={(v) => setAssignAnyone(v === "all")} />
+                  </div>
+                  {!assignAnyone && (
+                    reviewable.length === 0 ? <span className="st-note">No other team members yet.</span> : (
+                      <>
+                        <div className="st-people" aria-label="People they can assign to">
                           {reviewable.map((e) => {
-                            const w = reviewWho[e.id];
-                            const open = openTasksOf(e.id);
+                            const on = assignWho.includes(e.id);
                             return (
-                              <div key={e.id} className="rv-person">
-                                <label className="rv-opt">
-                                  <input
-                                    type="checkbox"
-                                    checked={!!w}
-                                    onChange={(ev) => setReviewWho((s) => {
-                                      const next = { ...s };
-                                      if (ev.target.checked) next[e.id] = { all: true, taskIds: [] };
-                                      else delete next[e.id];
-                                      return next;
-                                    })}
-                                  />
-                                  <span><b>{e.name}</b></span>
-                                </label>
-                                {w && (
-                                  <select
-                                    className="t rv-which"
-                                    aria-label={`Which of ${e.name}'s tasks`}
-                                    value={w.all ? "all" : "some"}
-                                    onChange={(ev) => setReviewWho((s) => ({ ...s, [e.id]: { ...w, all: ev.target.value === "all" } }))}
-                                  >
-                                    <option value="all">All tasks</option>
-                                    <option value="some">Selected tasks</option>
-                                  </select>
-                                )}
-                                {w && !w.all && (
-                                  <div className="rv-tasks">
-                                    {open.length === 0 && <div className="hint">{e.name} has no open tasks right now.</div>}
-                                    {open.map((t) => (
-                                      <label key={t.id} className="rv-opt">
-                                        <input
-                                          type="checkbox"
-                                          checked={w.taskIds.includes(t.id)}
-                                          onChange={(ev) => setReviewWho((s) => ({
-                                            ...s,
-                                            [e.id]: {
-                                              ...w,
-                                              taskIds: ev.target.checked ? [...w.taskIds, t.id] : w.taskIds.filter((id) => id !== t.id),
-                                            },
-                                          }))}
-                                        />
-                                        <span>{t.tid ? `${t.tid} · ` : ""}{t.title}</span>
-                                      </label>
-                                    ))}
-                                  </div>
-                                )}
-                              </div>
+                              <button key={e.id} type="button" className={"st-pill" + (on ? " on" : "")} aria-pressed={on}
+                                onClick={() => setAssignWho((w) => (on ? w.filter((id) => id !== e.id) : [...w, e.id]))}>
+                                {e.image_url
+                                  ? <img className="st-ava sm" src={e.image_url} alt="" />
+                                  : <span className="st-ava sm" style={{ background: gradFor(e.name) }}>{initials(e.name)}</span>}
+                                {e.name}
+                              </button>
                             );
                           })}
                         </div>
-                      )}
-                    </div>
+                        <span className="st-note">Only these people show when they assign a task. They can still make tasks for themselves.</span>
+                      </>
+                    )
                   )}
-                  </Fragment>
-                ))}
-              </div>
+                </div>
+              )}
             </div>
           ))}
-          <div>
-            <button className="btn btn-primary" disabled={saving} onClick={save}>{saving ? "Saving…" : "Save access"}</button>
+        </section>
+      )))}
+
+      {userId && !loading && (
+        <section className="st-card">
+          <div className="st-foot" style={{ borderTop: 0 }}>
+            <span className="st-note">{missingType ? "Pick at least one content type, or choose All." : missingPerson ? "Pick at least one person, or choose Anyone." : "Permissions add to the person's role — they never take anything away."}</span>
+            <button type="button" className="st-btn grad" disabled={!dirty || saving || missingType || missingPerson} onClick={save}>{SI.check}{saving ? "Saving…" : dirty ? "Save access" : "Saved"}</button>
           </div>
-        </div>
+        </section>
       )}
     </>
   );

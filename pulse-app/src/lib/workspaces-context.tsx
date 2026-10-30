@@ -12,6 +12,7 @@ import {
   setActiveWorkspaceId,
 } from "@/lib/api";
 import { useAuth } from "@/lib/auth-context";
+import { PERM_PAGE, type PageAccess, type PageKey } from "@/lib/page-access";
 
 // Per-user permission grants (Settings → Access) — additive on top of role.
 // Keep in sync with server/src/permissions.js PERMISSION_KEYS.
@@ -41,9 +42,15 @@ type WorkspacesContextValue = {
   workspaces: Workspace[];
   active: Workspace | null;
   isAdmin: boolean;
-  // True if the caller is an admin OR holds an active grant for `key`. The
-  // real gate is server-side; this only drives UI affordance.
+  // True if the caller is an admin OR holds an active grant for `key` — or,
+  // once their position's Page access row is saved, if that row has the page's
+  // tick (or they hold the grant). The real gate is server-side; this only
+  // drives UI affordance.
   hasPermission: (key: PermissionKey) => boolean;
+  // Page access (Settings › Page access): the caller's own row, null while loading
+  pageAccess: PageAccess | null;
+  // May they see / change this page? A saved row decides; otherwise `today`, the rule before the grid.
+  pageRule: (key: PageKey, mode: "see" | "change", today: boolean) => boolean;
   loading: boolean;
   switchTo: (id: string) => void;
   createWorkspace: (name: string) => Promise<void>;
@@ -97,7 +104,7 @@ export function WorkspacesProvider({ children }: { children: ReactNode }) {
     (id: string) => {
       if (id === activeId) return;
       setActiveWorkspaceId(id);
-      window.location.assign("/dashboard");
+      window.location.assign("/analytics");
     },
     [activeId],
   );
@@ -108,7 +115,7 @@ export function WorkspacesProvider({ children }: { children: ReactNode }) {
       body: JSON.stringify({ name }),
     });
     setActiveWorkspaceId(workspace.id);
-    window.location.assign("/dashboard");
+    window.location.assign("/analytics");
   }, []);
 
   const renameWorkspace = useCallback(
@@ -121,14 +128,32 @@ export function WorkspacesProvider({ children }: { children: ReactNode }) {
 
   const active = workspaces.find((w) => w.id === activeId) ?? workspaces[0] ?? null;
   const isAdmin = active?.role === "admin";
+  // the caller's Page access row, read again for each workspace
+  const [pageAccess, setPageAccess] = useState<PageAccess | null>(null);
+  useEffect(() => {
+    if (!user || !active?.id) { setPageAccess(null); return; }
+    let off = false;
+    api<PageAccess>("/page-access/me").then((p) => { if (!off) setPageAccess(p); }).catch(() => { if (!off) setPageAccess(null); });
+    return () => { off = true; };
+  }, [user, active?.id]);
+  const rowTicks = pageAccess && !pageAccess.super ? pageAccess.pages : null;
+  const pageRule = useCallback(
+    (key: PageKey, mode: "see" | "change", today: boolean) => (pageAccess?.super ? true : rowTicks ? !!rowTicks[key]?.[mode] : today),
+    [pageAccess?.super, rowTicks],
+  );
   const hasPermission = useCallback(
-    (key: PermissionKey) => isAdmin || (active?.permissions?.includes(key) ?? false),
-    [isAdmin, active?.permissions],
+    (key: PermissionKey) => {
+      const granted = active?.permissions?.includes(key) ?? false;
+      const page = PERM_PAGE[key];
+      if (page && rowTicks) return granted || !!rowTicks[page.key]?.[page.mode];
+      return isAdmin || granted;
+    },
+    [isAdmin, active?.permissions, rowTicks],
   );
 
   return (
     <WorkspacesContext.Provider
-      value={{ workspaces, active, isAdmin, hasPermission, loading, switchTo, createWorkspace, renameWorkspace, refresh: load }}
+      value={{ workspaces, active, isAdmin, hasPermission, pageAccess, pageRule, loading, switchTo, createWorkspace, renameWorkspace, refresh: load }}
     >
       {children}
     </WorkspacesContext.Provider>

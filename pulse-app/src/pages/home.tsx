@@ -1,22 +1,31 @@
-import { useEffect, useMemo, useRef, useState } from "react";
-import { Loader } from "@/components/loader";
-import { Link, useNavigate } from "react-router-dom";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { useNavigate } from "react-router-dom";
+import { toast } from "sonner";
+import { ApiError } from "@/lib/api";
 import { useTasks } from "@/lib/use-tasks";
 import { useAuth } from "@/lib/auth-context";
 import { useWorkspaces } from "@/lib/workspaces-context";
 import { useEditors } from "@/lib/use-editors";
 import { useEodState } from "@/lib/eod-context";
 import { useResource } from "@/lib/use-resource";
-import { rangeFor, inRange, compactNum } from "@/lib/date-range";
-import { performanceScore, formatScore } from "@/lib/score";
-import { ymd, myRankInRange, topEditorsInRange } from "@/lib/task-points";
-import { breakOffsetMs, DAILY_BREAK_CAP_SEC, fmtWait, reviewWaitMs, SLOW_REVIEW_MS } from "@/lib/task-timing";
+import { rangeFor, inRange } from "@/lib/date-range";
+import { performanceScore } from "@/lib/score";
+import { ymd, daysBetween, lateDays, myRankInRange, topEditorsInRange } from "@/lib/task-points";
+import { breakOffsetMs, DAILY_BREAK_CAP_SEC, fmtWait, reviewWaitMs } from "@/lib/task-timing";
 import { Avatar } from "@/lib/editor-visuals";
-import { api, ApiError } from "@/lib/api";
-import { toast } from "sonner";
-import { useReviewAccess, scopeAllowsTask } from "@/lib/use-review-access";
+import { useReviewAccess } from "@/lib/use-review-access";
 import { TaskPanel } from "@/pages/tasks";
-import type { Editor, Post, Task, TaskStatus, TaskType } from "@/lib/types";
+import { useMyGoal, useStartFlow, type MyDayData } from "@/pages/my-day-layouts";
+import { HomeWidgets, useHomeLayout, type HomeCtx } from "@/pages/home-widgets";
+import { StartDaySection } from "@/components/start-day";
+import { useAttendanceToday } from "@/lib/use-attendance";
+import { homeRoleOf, seesTeamAttendance, type HomeRole } from "@/lib/home-role";
+import type { WidgetKey } from "@/lib/home-widgets";
+import { useOrg } from "@/lib/use-org";
+import type { Editor, Post, Task } from "@/lib/types";
+import { MyReportsModal } from "@/components/my-reports";
+import { InboxCard } from "@/pages/inbox";
+import { clockTime } from "@/lib/time-format";
 
 // DF Foods runs a 6-day week (Mon–Sat) — used to spread the monthly Goal Points
 // target across the month for the (provisional) Daily Goal pace. Change this one
@@ -27,7 +36,7 @@ function todayStr() {
   return ymd(new Date());
 }
 function fmtClock(iso: string): string {
-  return new Date(iso).toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" });
+  return clockTime(iso);
 }
 function greeting(now: Date) {
   const h = now.getHours();
@@ -61,72 +70,104 @@ function workingDaysInMonth(d: Date): number {
   }
   return n;
 }
-function hoursMins(sec: number): string {
-  const h = Math.floor(sec / 3600);
-  const m = Math.round((sec % 3600) / 60);
-  return h ? `${h}h ${m}m` : `${m}m`;
+// Working days (Mon–Sat) from today to the end of the month, today included —
+// what's left to reach the monthly goal in.
+function workingDaysLeft(d: Date): number {
+  const last = new Date(d.getFullYear(), d.getMonth() + 1, 0).getDate();
+  let n = 0;
+  for (let i = d.getDate(); i <= last; i++) {
+    if (new Date(d.getFullYear(), d.getMonth(), i).getDay() !== WORKING_WEEK_OFF_DAY) n++;
+  }
+  return n;
+}
+// The last 7 dates (YYYY-MM-DD), oldest first, ending today.
+function lastSevenDays(): string[] {
+  return Array.from({ length: 7 }, (_, i) => {
+    const d = new Date();
+    d.setDate(d.getDate() - (6 - i));
+    return ymd(d);
+  });
 }
 
-// A little extra flair once someone's actually on top of a board.
-const RANK_BADGE: Record<number, string> = { 1: "🥇", 2: "🥈", 3: "🥉" };
+// Banner size and whose numbers the page shows — remembered in this browser.
+const COMPACT_KEY = "pulse-myday-banner-compact";
+const SCOPE_KEY = "pulse-myday-scope";
+function readPref(key: string, fallback: string) {
+  try { return window.localStorage.getItem(key) ?? fallback; } catch { return fallback; }
+}
+function writePref(key: string, value: string) {
+  try { window.localStorage.setItem(key, value); } catch { /* not remembered, still works */ }
+}
 
-// Today's Tasks — status filter pills (the active statuses; "done" is excluded
-// from this list entirely, it's the working queue).
-const STATUS_PILLS: { key: "all" | TaskStatus; label: string }[] = [
-  { key: "all", label: "All" },
-  { key: "todo", label: "Not Started" },
-  { key: "in_progress", label: "In Progress" },
-  { key: "review", label: "In Review" },
-];
-// Tag chip colour by task type (the visible label prefers the content-format
-// name — Reels/Poster/etc. — falling back to this generic type label).
-const TAG_META: Record<TaskType, { label: string; cls: string }> = {
-  content: { label: "Content", cls: "t-content" },
-  short_task: { label: "Quick", cls: "t-quick" },
-  general: { label: "General", cls: "t-general" },
-  social: { label: "Social", cls: "t-social" },
-  ad: { label: "Ad", cls: "t-ad" },
-  admin: { label: "Admin", cls: "t-admin" },
-  service: { label: "Service", cls: "t-service" },
-  project: { label: "Project", cls: "t-project" },
-};
+// The 7 dates (YYYY-MM-DD) of the current Monday-start week.
+function weekDates(): string[] {
+  const start = new Date(weekStartStr() + "T00:00:00");
+  return Array.from({ length: 7 }, (_, i) => {
+    const d = new Date(start);
+    d.setDate(start.getDate() + i);
+    return ymd(d);
+  });
+}
 
-const STAGE_META: Record<string, { label: string; cls: string }> = {
-  not_started: { label: "Not Started", cls: "ns" },
-  in_progress: { label: "In Progress", cls: "ip" },
-  in_review: { label: "In Review", cls: "ir" },
-  pending: { label: "Pending", cls: "pd" },
-  completed: { label: "Completed", cls: "cp" },
-};
+// Where each podium chip goes in the banner video, as a share of the frame
+// (measured on the 2520×1080 clips): centred over the step's number, just
+// above the top of the step. The video fills the banner like
+// object-fit: cover, anchored 30% from the top (.mh-video), so the same maths
+// finds each step at any banner size.
+const PODIUM_STEPS: Record<1 | 2 | 3, [number, number]> = { 1: [0.491, 0.537], 2: [0.281, 0.605], 3: [0.71, 0.621] };
+const VIDEO_ASPECT = 2520 / 1080;
+type Spot = { x: number; y: number };
+function usePodiumSpots(ref: React.RefObject<HTMLDivElement | null>, on: boolean): Record<1 | 2 | 3, Spot> | null {
+  const [spots, setSpots] = useState<Record<1 | 2 | 3, Spot> | null>(null);
+  useLayoutEffect(() => {
+    const el = ref.current;
+    if (!el || !on) { setSpots(null); return; }
+    const fit = () => {
+      const W = el.clientWidth, H = el.clientHeight;
+      if (!W || !H) return;
+      const s = Math.max(W / VIDEO_ASPECT, H);
+      const rw = VIDEO_ASPECT * s, rh = s;
+      const offX = (W - rw) * 0.5, offY = (H - rh) * 0.3;
+      const at = (r: 1 | 2 | 3): Spot => ({ x: offX + PODIUM_STEPS[r][0] * rw, y: offY + PODIUM_STEPS[r][1] * rh });
+      setSpots({ 1: at(1), 2: at(2), 3: at(3) });
+    };
+    fit();
+    const ro = new ResizeObserver(fit);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [ref, on]);
+  return spots;
+}
 
 export function HomePage() {
-  const navigate = useNavigate();
   const { user } = useAuth();
-  const { active, isAdmin, workspaces, hasPermission } = useWorkspaces();
-  const { session: eodSession, start: startEod, busy: eodBusy, openSod, openEod } = useEodState();
+  const { active, isAdmin, workspaces } = useWorkspaces();
+  const { session: eodSession, start: startDay, busy: dayBusy } = useEodState();
+  const navigate = useNavigate();
   const isEditor = active?.role === "editor";
+  // My reports (your own SOD and EOD, today and past days), opened from the
+  // Start of day bar.
+  const [reportsOpen, setReportsOpen] = useState(false);
+  // Attendance: your own day (the Start of day card) and your team's (Team today).
+  const { data: att, missing: attMissing } = useAttendanceToday(!!user, user?.id ?? "");
+  const { org } = useOrg();
   const { tasks, refetch: refetchTasks } = useTasks();
-  // Tasks in Review that THIS person may resolve: all of them for an admin; for
-  // a resolve_tasks grantee, whatever their review scope covers; for an assigner,
-  // the tasks they assigned — never their own.
+  // Tasks in Review that THIS person may resolve: the server says so on each
+  // (can_review, server/src/review-route.js) — never their own.
   const review = useReviewAccess();
-  const canAssign = isAdmin || hasPermission("assign_tasks");
-  const canReview = isAdmin || review.granted || canAssign;
+  const canReview = review.reviewer;
   // The task whose details panel is open (from a review row). Held by id so the
   // panel always shows the freshest copy after a refetch.
   const [openTaskId, setOpenTaskId] = useState<string | null>(null);
   const openTask = (tasks ?? []).find((t) => t.id === openTaskId) ?? null;
   const reviewQueue = useMemo(
     () => (tasks ?? [])
-      .filter((t) => t.status === "review")
-      .filter((t) => isAdmin || (t.editor_id !== user?.editorId && (
-        (review.granted && scopeAllowsTask(review.scope, t))
-        || (canAssign && !!user && t.assigned_by === user.id))))
+      .filter((t) => t.status === "review" && !!t.can_review && t.editor_id !== user?.editorId)
       // Longest-waiting first — the assignee isn't charged for the wait, but
       // their work is stuck until someone looks at it.
       .sort((a, b) => (a.review_started_at ?? "9999").localeCompare(b.review_started_at ?? "9999")
         || (a.due_date ?? "9999").localeCompare(b.due_date ?? "9999")),
-    [tasks, isAdmin, review, canAssign, user],
+    [tasks, user],
   );
   const { editors } = useEditors();
   const { data: postData } = useResource<{ posts: (Post & { channel_name?: string })[] }>("/posts?channel=all");
@@ -135,6 +176,41 @@ export function HomePage() {
 
   const today = todayStr();
   const firstName = (user?.name || user?.email || "").split(" ")[0].split("@")[0];
+
+  // Compact banner: an 84px strip instead of the full hero. Team / Just me: an
+  // admin's counts cover the whole team or only their own work; everyone else
+  // always sees their own.
+  const [compact, setCompact] = useState(() => readPref(COMPACT_KEY, "0") === "1");
+  const [scopePref, setScopePref] = useState<"team" | "me">(() => (readPref(SCOPE_KEY, "team") === "me" ? "me" : "team"));
+  const teamScope = isAdmin && scopePref === "team";
+  const [replay, setReplay] = useState(0);
+  const heroRef = useRef<HTMLDivElement>(null);
+  const heroFrom = useRef<number | null>(null);
+  function toggleCompact() {
+    heroFrom.current = heroRef.current?.offsetHeight ?? null;
+    setCompact((c) => { writePref(COMPACT_KEY, c ? "0" : "1"); return !c; });
+  }
+  // Resize the banner smoothly: measure the height it had and the height it
+  // lands on, then animate between the two. (A CSS transition can't reach the
+  // full banner's natural height, so expanding snapped most of the way first.)
+  // The new contents fade in as it opens.
+  useLayoutEffect(() => {
+    const el = heroRef.current;
+    const from = heroFrom.current;
+    heroFrom.current = null;
+    if (!el || from == null || typeof el.animate !== "function") return;
+    if (window.matchMedia?.("(prefers-reduced-motion: reduce)").matches) return;
+    const to = el.offsetHeight;
+    const ease = "cubic-bezier(.2,.8,.2,1)";
+    el.animate([{ height: `${from}px`, minHeight: `${from}px` }, { height: `${to}px`, minHeight: `${to}px` }], { duration: 450, easing: ease });
+    el.querySelectorAll(compact ? ".mhc" : ".mh-inner, .mh-podium, .mh-compact-btn").forEach((n) => {
+      n.animate([{ opacity: 0, transform: "translateY(6px)" }, { opacity: 1, transform: "none" }], { duration: 320, delay: 150, easing: "ease-out", fill: "backwards" });
+    });
+  }, [compact]);
+  function pickScope(s: "team" | "me") {
+    setScopePref(s);
+    writePref(SCOPE_KEY, s);
+  }
 
   // The greeting + date need an actual clock tick to stay correct — without one,
   // a tab left open across noon/5pm/midnight keeps showing what it computed on
@@ -161,21 +237,51 @@ export function HomePage() {
         return ad.localeCompare(bd);
       });
     const completedToday = scoped.filter((t) => t.completed_at && ymd(new Date(t.completed_at)) === today).length;
-    // The count boxes: an admin oversees everyone, so theirs cover the whole
-    // team; everyone else's cover their own tasks.
-    const counted = isAdmin ? (tasks ?? []) : scoped;
+    // The counts: on Team, an admin's cover the whole team; on Just me (and
+    // for everyone who isn't an admin) they cover your own tasks.
+    const counted = teamScope ? (tasks ?? []) : scoped;
     const countedOpen = counted.filter((t) => t.status !== "done");
+    const overdueList = countedOpen.filter((t) => t.due_date != null && t.due_date < today);
+    const dueTodayList = countedOpen.filter((t) => t.due_date === today);
+
+    // Trend lines for the Dashboard counts, worked out from the tasks: how many
+    // were overdue / due on each of the last 7 days, and the share of tasks
+    // finished on time in the 7 days up to each day.
+    const days = lastSevenDays();
+    const doneOn = (t: Task) => (t.completed_at ? ymd(new Date(t.completed_at)) : null);
+    const overdueSeries = days.map((d) => counted.filter((t) => t.due_date != null && t.due_date < d
+      && ymd(new Date(t.created_at)) <= d && (t.status !== "done" || (doneOn(t) ?? "9999") >= d)).length);
+    const dueSeries = days.map((d) => counted.filter((t) => t.due_date === d).length);
+    const finishedIn = (from: string, to: string) => counted.filter((t) => {
+      const d = doneOn(t);
+      return t.status === "done" && t.due_date != null && d != null && d >= from && d <= to;
+    });
+    const rate = (list: Task[]) => (list.length ? Math.round((list.filter((t) => lateDays(t) <= 0).length / list.length) * 100) : null);
+    const onTimeSeries = days.map((d) => {
+      const from = new Date(d + "T00:00:00");
+      from.setDate(from.getDate() - 6);
+      return rate(finishedIn(ymd(from), d));
+    });
+    const monthFinished = finishedIn(monthStartStr(), today);
     return {
-      overdue: countedOpen.filter((t) => t.due_date != null && t.due_date < today).length,
-      dueToday: countedOpen.filter((t) => t.due_date === today).length,
-      inReview: counted.filter((t) => t.status === "review").length,
+      overdue: overdueList.length,
+      dueToday: dueTodayList.length,
+      // Mine in review (Just me) — the team's waiting count comes from the review queue.
+      myInReview: counted.filter((t) => t.status === "review").length,
+      openCount: countedOpen.length,
+      countedOpen,
+      // The line of detail under each count.
+      oldestLate: overdueList.reduce((m, t) => Math.max(m, daysBetween(t.due_date!, today)), 0),
+      dueTodayStarted: dueTodayList.filter((t) => t.status === "in_progress" || t.status === "review").length,
+      overdueSeries, dueSeries, onTimeSeries,
+      onTime: { pct: rate(monthFinished), finished: monthFinished.length },
       active, completedToday,
     };
-  }, [tasks, today, user?.editorId, isAdmin]);
+  }, [tasks, today, user?.editorId, teamScope]);
 
   // ---- Personal Task Points (same formula the Media House Leaders board scores
-  // by — see lib/task-points). Today feeds Today's Progress; week/month feed the
-  // cards below and the rank character. Only meaningful when roster-linked.
+  // by — see lib/task-points). Today feeds Today's progress; week/month feed
+  // Your score. Only meaningful when roster-linked.
   const scoreWindows = useMemo(() => {
     if (!editors || !tasks || !user?.editorId) return null;
     const eid = user.editorId;
@@ -185,7 +291,6 @@ export function HomePage() {
       month: myRankInRange(editors, tasks, monthStartStr(), today, eid),
     };
   }, [editors, tasks, today, user?.editorId]);
-  const monthRank = scoreWindows?.month.rank ?? null;
 
   // The Media House top 3 this month (same org-scoped Task Points ranking as the
   // leaderboard) — shown as name/points cards over the hero video's podium.
@@ -262,122 +367,265 @@ export function HomePage() {
   }, [posts]);
 
   const loading = tasks === null || posts === null;
-  const pipelineTotal = Object.values(pipeline).reduce((a, b) => a + b, 0);
 
-  const STATS: { label: string; value: number; tone: string; to: string; icon: string }[] = [
-    { label: isAdmin ? "Team tasks overdue" : "Overdue tasks", value: ops.overdue, tone: "danger", to: "/tasks", icon: "⏰" },
-    { label: isAdmin ? "Team tasks due today" : "Due today", value: ops.dueToday, tone: "warn", to: "/tasks", icon: "📅" },
-    { label: "Posts awaiting metrics", value: awaitingMetrics, tone: "accent", to: "/posts", icon: "📊" },
-    { label: isAdmin ? "Tasks waiting for review" : "My tasks in review", value: ops.inReview, tone: "info", to: "/tasks", icon: "👁️" },
-  ];
+  // Points per day this week, for the Dashboard layout's bars.
+  const weekDays = useMemo(() => {
+    if (!editors || !tasks || !user?.editorId) return null;
+    const eid = user.editorId;
+    return weekDates().map((date) => ({
+      date,
+      label: new Date(date + "T00:00:00").toLocaleDateString(undefined, { weekday: "short" }),
+      isToday: date === today,
+      future: date > today,
+      points: date > today ? 0 : myRankInRange(editors, tasks, date, date, eid).points,
+    }));
+  }, [editors, tasks, today, user?.editorId]);
 
-  // One podium name/points card (gold styling for #1). Null slot → nothing.
-  const podCard = (entry: { row: { points: number }; editor: Editor } | null, gold = false) =>
+  // Views on posts published each day this month, day 1 to today.
+  const viewsByDay = useMemo(() => {
+    const b = rangeFor("thismonth");
+    const byDay = new Map<number, number>();
+    for (const p of posts ?? []) {
+      if (p.status !== "published" || !inRange(p.date, b.from, b.to)) continue;
+      const day = Number(p.date.slice(8, 10));
+      byDay.set(day, (byDay.get(day) ?? 0) + p.views);
+    }
+    return Array.from({ length: now.getDate() }, (_, i) => ({ day: i + 1, views: byDay.get(i + 1) ?? 0 }));
+  }, [posts, now]);
+
+  const oldestReviewWait = reviewQueue.reduce((m, t) => Math.max(m, reviewWaitMs(t, now.getTime())), 0);
+  const avgReviewWait = reviewQueue.length
+    ? reviewQueue.reduce((s, t) => s + reviewWaitMs(t, now.getTime()), 0) / reviewQueue.length : 0;
+  const waitingOnYou = canReview ? reviewQueue.length : 0;
+  const inReviewCount = teamScope ? waitingOnYou : ops.myInReview;
+  const myDay: MyDayData = {
+    loading,
+    today,
+    nowMs: now.getTime(),
+    isAdmin,
+    teamScope,
+    openCount: ops.openCount,
+    waitingOnYou,
+    scopeTasks: ops.countedOpen,
+    series: { overdue: ops.overdueSeries, dueToday: ops.dueSeries, onTime: ops.onTimeSeries },
+    onTime: ops.onTime,
+    avgReviewWait,
+    oldestReviewWait,
+    workingDaysLeft: workingDaysLeft(now),
+    linked: !!user?.editorId,
+    hint: user?.editorId ? null
+      : active?.role === "viewer" ? "You have view-only access: you can look at tasks, posts and analytics, but not change them."
+      : isAdmin ? "You're not on the team roster yet, so nothing personal shows here. Add yourself on Team › Roster (Edit on your own row)."
+      : "You're not on the team roster yet, so nothing personal shows here. Ask an admin to link you on Team › Roster.",
+    counts: { overdue: ops.overdue, dueToday: ops.dueToday, inReview: inReviewCount, awaitingMetrics },
+    countNotes: {
+      overdue: ops.overdue ? `Oldest is ${ops.oldestLate} day${ops.oldestLate === 1 ? "" : "s"} late` : "Everything is on time",
+      dueToday: ops.dueToday ? `${ops.dueToday - ops.dueTodayStarted} not started` : "Nothing due today",
+      inReview: teamScope
+        ? (reviewQueue.length ? `Oldest has waited ${fmtWait(oldestReviewWait)}` : "Nothing waiting")
+        : (ops.myInReview ? "Waiting on a reviewer" : "Nothing in review"),
+      awaitingMetrics: awaitingMetrics ? "Published, no numbers yet" : "Every post has its numbers",
+    },
+    myTasks: ops.active,
+    completedToday: ops.completedToday,
+    pointsToday: scoreWindows?.today.points ?? 0,
+    focusSeconds,
+    dailyGoalPct: dailyGoal?.pct ?? null,
+    clockedInSince: eodSession ? fmtClock(eodSession.startedAt) : null,
+    week: scoreWindows?.week ?? null,
+    month: scoreWindows?.month ?? null,
+    weekDays,
+    canReview,
+    reviewQueue,
+    pipeline,
+    analytics,
+    viewsByDay,
+  };
+
+  // ---- Home role, from the position: a Manager sees the Manager Home, a Team
+  // Lead the Team lead Home, an Editor the Editor Home. (A Super Admin can see
+  // anyone's Echo with View as.)
+  const myEditor = (editors ?? []).find((e) => e.id === user?.editorId) ?? null;
+  const role: HomeRole = homeRoleOf(myEditor?.designation, isAdmin);
+  const homeLayout = useHomeLayout(role);
+  const goal = useMyGoal(!!user?.editorId);
+  const flow = useStartFlow(ops.active, refetchTasks);
+  // Team leads and managers look after the whole team.
+  const teamIds: Set<string> | null = null;
+  // Team today only for positions Settings › Attendance lets see the team.
+  const teamView = org?.attendance?.teamView;
+  const seesTeam = att ? att.scope === "all" : seesTeamAttendance(myEditor?.designation, isAdmin, teamView);
+  const blocked: WidgetKey[] = seesTeam ? [] : ["attend"];
+  // Start of day: team leads and editors who check in.
+  // Until attendance answers, go by the position so the bar shows at once.
+  const showSod = role !== "manager" && (att ? att.checksIn : !!user?.editorId && active?.role !== "viewer");
+  const ctx: HomeCtx = {
+    role, d: myDay, tasks: tasks ?? [], editors: editors ?? [], posts: posts ?? [],
+    goalTotals: goalTotals?.totals ?? [], att: att ?? null, cal: org?.calendar ?? null,
+    myEditorId: user?.editorId ?? null, firstName, nowMs: now.getTime(), today,
+    teamIds, checkedIn: !!eodSession, goal, flow,
+    onOpenTask: setOpenTaskId, onChanged: refetchTasks,
+  };
+
+  // One podium chip: the avatar ringed in its medal colour, name and points.
+  // Null slot → nothing.
+  const podCard = (entry: { row: { points: number }; editor: Editor } | null, rank: 1 | 2 | 3, withRank = false) =>
     entry ? (
-      <div className={"mh-pod-card" + (gold ? " gold" : "")}>
-        <Avatar editor={entry.editor} />
+      <div className={"mh-pod-card r" + rank} title={`${entry.editor.name}: ${Math.round(entry.row.points)} points this month`}>
+        <span className="mh-pod-ava"><Avatar editor={entry.editor} />{withRank && <span className="mh-pod-rank">{rank}</span>}</span>
         <div className="mh-pod-meta">
           <span className="mh-pod-name">{entry.editor.name}</span>
           <span className="mh-pod-pts">{Math.round(entry.row.points).toLocaleString()} pts</span>
         </div>
       </div>
     ) : null;
+  const hasPodium = !!(podium.first || podium.second || podium.third);
+  const spots = usePodiumSpots(heroRef, hasPodium && !compact);
+  const greetText = `${greeting(now)}${firstName ? `, ${firstName}` : ""}`;
+  const shortDate = now.toLocaleDateString("en-GB", { weekday: "short", day: "numeric", month: "short" });
+  // A locked editor's first move is Start Work, in either banner size.
+  const locked = isEditor && !eodSession;
+  // The banner's main button follows your day: Start day, then End day (which
+  // opens the wrap-up below), then nothing once it's closed; Task Board sits
+  // beside it. Managers, who don't check in, get Task Board.
+  const dayIn = !!eodSession || (!!att?.me?.checkInAt && !att?.me?.checkOutAt);
+  const dayClosed = !eodSession && !!att?.me?.checkOutAt;
+  // A closed day can be reopened: the same Start day, and the task clocks run on.
+  const dayAction: "start" | "end" | "reopen" | null = !showSod ? null : dayClosed ? "reopen" : dayIn ? "end" : "start";
+  async function bannerStart() {
+    try {
+      await startDay();
+      toast.success(dayClosed ? "Day reopened. Your task timers are running again." : "Day started — add today's plan from the bar below if you like.");
+    } catch (e) {
+      toast.error(e instanceof ApiError ? e.message : "Couldn't start your day. Check your connection and try again.");
+    }
+  }
+  const bannerEnd = () => window.dispatchEvent(new Event("pulse:end-day"));
+
+  // Team / Just me — only an admin has the team's numbers to switch to.
+  const scopeToggle = isAdmin ? (
+    <div className="mh-scope" role="group" aria-label="Whose numbers to show">
+      {(["team", "me"] as const).map((s) => (
+        <button key={s} type="button" aria-pressed={scopePref === s} className={scopePref === s ? "on" : undefined} onClick={() => pickScope(s)}>
+          {s === "team" ? "Team" : "Just me"}
+        </button>
+      ))}
+    </div>
+  ) : null;
 
   return (
     <section className="screen myday">
       {/* Hero banner — a shared intro→loop video + text overlay, identical for
-          every role. The video is decorative; a gradient shows through until the
-          assets are present, and a scrim keeps the text legible. */}
-      <div className="myday-hero">
-        <HeroVideo />
+          every role. Full size, or a compact strip (remembered per browser). The
+          video is decorative; a gradient shows through until the assets are
+          present, and a scrim keeps the text legible. */}
+      {homeLayout.banner && (
+      <div ref={heroRef} className={"myday-hero" + (compact ? " compact" : "")}>
+        <HeroVideo replay={replay} />
+        {/* Two shadings, cross-faded: the full banner's, and the compact strip's. */}
         <div className="mh-scrim" />
-        <div className="mh-inner">
-          <div className="mh-left">
-            <h1 className="mh-headline">Small Tasks<br /><span className="mh-headline-g">Big Wins</span></h1>
-            <p className="mh-tag">Create. Collaborate. Grow.<br />Level up every day.</p>
-            {/* Locked editor → the primary slot IS Start Work (kept live in color
-                by .eod-live even while the rest of the app is grayscaled). Once
-                clocked in, Task Board returns as primary, with End Work secondary. */}
-            {isEditor && !eodSession ? (
-              <div className="mh-startwrap">
-                <button className="btn btn-primary mh-cta eod-live" onClick={() => startEod()} disabled={eodBusy}>
-                  {eodBusy ? "Starting…" : "▶ Start Work"}
-                </button>
-                {/* Before Start Work the rest of the app is greyed out — say why. */}
-                <p className="mh-lockhint">Press Start Work to begin your day. The menu and your tasks unlock once you do.</p>
-              </div>
-            ) : (
-              <div className="mh-cta-row">
-                <button className="btn btn-primary mh-cta" onClick={() => navigate("/tasks")}>▶ Task Board</button>
-                {isEditor && eodSession && (
-                  <>
-                    <button
-                      className="btn mh-endeod"
-                      onClick={() => openEod()}
-                      title="Write today's notes and end your work day"
-                      disabled={eodBusy}
-                    >
-                      {eodBusy ? "Ending…" : "⏹ End Work"}
-                    </button>
-                    <span className="mh-clockedin">🟢 Clocked in since {fmtClock(eodSession.startedAt)}</span>
-                    {/* Start of Day: today's tasks and the report to copy for WhatsApp. */}
-                    <button className="btn mh-endeod" onClick={openSod} title="Copy today's Start of Day report">
-                      📋 Start of Day
-                    </button>
-                  </>
-                )}
+        <div className="mh-scrim c" />
+        {compact ? (
+          <div className="mhc">
+            <div className="mhc-brand" aria-hidden="true"><b>Small Tasks</b><b className="g">Big Wins</b></div>
+            <span className="mhc-sep" aria-hidden="true" />
+            <div className="mhc-main">
+              <b>{greetText}</b>
+              <span>{shortDate} · {ops.overdue} overdue · {waitingOnYou} waiting on you</span>
+            </div>
+            {hasPodium && (
+              <div className="mhc-podium">
+                {podCard(podium.first, 1, true)}{podCard(podium.second, 2, true)}{podCard(podium.third, 3, true)}
               </div>
             )}
+            {scopeToggle}
+            {dayAction === "start" && (
+              <button className="mhc-primary eod-live" onClick={bannerStart} disabled={dayBusy}>{HeroIcon.play}<span>{dayBusy ? "Starting…" : "Start day"}</span></button>
+            )}
+            {dayAction === "end" && (
+              <button className="mhc-primary" onClick={bannerEnd}>{HeroIcon.stop}<span className="mhc-label">End day</span></button>
+            )}
+            {dayAction === "reopen" && (
+              <button className="mhc-primary eod-live" onClick={bannerStart} disabled={dayBusy}>{HeroIcon.play}<span>{dayBusy ? "Reopening…" : "Reopen day"}</span></button>
+            )}
+            {dayAction ? (
+              <button className="mhc-ghost" onClick={() => navigate("/tasks")}>Task Board</button>
+            ) : (
+              <button className="mhc-primary" onClick={() => navigate("/tasks")}>{HeroIcon.play}<span className="mhc-label">Task Board</span></button>
+            )}
+            <button className="mhc-icon" onClick={toggleCompact} title="Expand banner" aria-label="Expand banner">{HeroIcon.expand}</button>
           </div>
-          <div className="mh-right">
-            <div className="mh-date">{dateStr}</div>
-            <h2 className="mh-greet">{greeting(now)}{firstName ? `, ${firstName}` : ""} 👋</h2>
-            <div className="mh-greetsub">Let's make today legendary!</div>
-          </div>
-        </div>
-        {/* Real Media House top 3 this month, as name/points cards over the
-            video's podium (2 left · 1 centre · 3 right). Hidden when nobody has
-            scored yet. */}
-        {(podium.first || podium.second || podium.third) && (
-          <div className="mh-podium">
-            <div className="mh-pod-slot">{podCard(podium.second)}</div>
-            <div className="mh-pod-slot mh-pod-center">{podCard(podium.first, true)}</div>
-            <div className="mh-pod-slot">{podCard(podium.third)}</div>
-          </div>
+        ) : (
+          <>
+            <div className="mh-inner">
+              <div className="mh-left">
+                <h1 className="mh-headline">Small Tasks<br /><span className="mh-headline-g">Big Wins</span></h1>
+                <p className="mh-tag">Create. Collaborate. Grow.<br />Level up every day.</p>
+                {/* Before Start day an editor's app is greyed out — say why. */}
+                <div className="mh-cta-row">
+                  {dayAction === "start" && (
+                    <button className="btn btn-primary mh-cta eod-live" onClick={bannerStart} disabled={dayBusy}>{dayBusy ? "Starting…" : "▶ Start day"}</button>
+                  )}
+                  {dayAction === "end" && (
+                    <button className="btn btn-primary mh-cta" onClick={bannerEnd}>■ End day</button>
+                  )}
+                  {dayAction === "reopen" && (
+                    <button className="btn btn-primary mh-cta eod-live" onClick={bannerStart} disabled={dayBusy}>{dayBusy ? "Reopening…" : "↻ Reopen day"}</button>
+                  )}
+                  {dayAction ? (
+                    <button className="btn mh-endeod" onClick={() => navigate("/tasks")}>Task Board</button>
+                  ) : (
+                    <button className="btn btn-primary mh-cta" onClick={() => navigate("/tasks")}>▶ Task Board</button>
+                  )}
+                </div>
+                {locked && <p className="mh-lockhint">{dayClosed
+                  ? "Your day is closed and your task timers are paused. Reopen it to keep working."
+                  : "Start your day to begin. Pipeline, Posts, Leaderboard and Goals open once you do."}</p>}
+              </div>
+              <div className="mh-right">
+                <div className="mh-date">{dateStr}</div>
+                <h2 className="mh-greet">{greetText} 👋</h2>
+                <div className="mh-greetsub">Let's make today legendary!</div>
+                {scopeToggle}
+              </div>
+            </div>
+            {/* Real Media House top 3 this month, as name/points chips over the
+                video's podium (2 left · 1 centre · 3 right). Hidden when nobody has
+                scored yet. */}
+            {hasPodium && (
+              <div className="mh-podium on-steps">
+                {spots && ([[podium.first, 1], [podium.second, 2], [podium.third, 3]] as const).map(([entry, rank]) => entry && (
+                  <div key={rank} className="mh-pod-spot" style={{ left: spots[rank].x, top: spots[rank].y }}>{podCard(entry, rank)}</div>
+                ))}
+              </div>
+            )}
+            {/* Bottom-right corner: replay the intro (a small icon) and fold the banner. */}
+            <div className="mh-corner">
+              <button className="mh-glass mh-replay-btn" onClick={() => setReplay((n) => n + 1)} title="Replay intro" aria-label="Replay intro">{HeroIcon.replay}</button>
+              <button className="mh-glass mh-compact-btn" onClick={toggleCompact} title="Shrink the banner to a strip">{HeroIcon.shrink} Compact</button>
+            </div>
+          </>
         )}
       </div>
-
-      {!user?.editorId && (
-        <div className="card pad" style={{ color: "var(--muted)", fontSize: 13, marginBottom: 16 }}>
-          {active?.role === "viewer" ? (
-            "You have view-only access: you can look at tasks, posts and analytics, but not change them."
-          ) : (
-            <>
-              Your account isn't on the team roster yet, so My Day and your score have nothing personal to show.{" "}
-              {isAdmin
-                ? "To add yourself, go to Settings → Team and press Edit on your own row."
-                : "Ask an admin to link you under Settings → Team."}
-            </>
-          )}
-        </div>
       )}
 
-      {/* Attention strip — same four metrics, restyled (icon chip + left rail). */}
-      <div className="myday-stats">
-        {STATS.map((s) => (
-          <button key={s.label} className={"myday-stat " + s.tone} onClick={() => navigate(s.to)}>
-            <span className="ms-ic">{s.icon}</span>
-            <span className="ms-body">
-              <span className="ms-v">{loading ? "—" : s.value}</span>
-              <span className="ms-l">{s.label}</span>
-            </span>
-          </button>
-        ))}
-      </div>
-
-      {canReview && (
-        <ReviewQueue tasks={reviewQueue} loading={tasks === null} nowMs={now.getTime()} onChanged={refetchTasks} onOpen={(t) => setOpenTaskId(t.id)} />
-      )}
+      {/* What waits on you — requests, hand-overs, reviews — is in the Inbox; this says how much */}
+      <InboxCard />
+      {/* Everything under the banner: the greeting row, Start of day (team leads
+          and editors), and the widgets for this Home role (home-widgets.tsx). */}
+      <HomeWidgets
+        c={ctx} layout={homeLayout} showHello={!homeLayout.banner} hello={greetText}
+        canPublish={isAdmin} blocked={blocked}
+        sod={showSod ? (
+          <StartDaySection
+            att={att} attMissing={attMissing} firstName={firstName} today={today}
+            myTasks={ops.active} completedToday={ops.completedToday} pointsToday={scoreWindows?.today.points ?? 0}
+            preview={false} onOpenReports={() => setReportsOpen(true)} onOpenTask={setOpenTaskId}
+          />
+        ) : null}
+      />
+      {flow.ui}
+      {reportsOpen && <MyReportsModal onClose={() => setReportsOpen(false)} />}
       {openTask && (
         <TaskPanel
           mode="edit" task={openTask} canWrite={active?.role !== "viewer"} editors={editors ?? []} channels={workspaces ?? []}
@@ -386,99 +634,22 @@ export function HomePage() {
           onCreated={() => {}}
         />
       )}
-
-      {/* Today's Tasks + Today's Progress */}
-      <div className="myday-grid2">
-        <TodaysTasks tasks={ops.active} loading={loading} navigate={navigate} />
-        {scoreWindows && (
-          <TodaysProgress
-            completedToday={ops.completedToday}
-            openCount={ops.active.length}
-            pointsToday={scoreWindows.today.points}
-            focusSeconds={focusSeconds}
-            dailyGoalPct={dailyGoal?.pct ?? null}
-            monthRank={monthRank}
-          />
-        )}
-      </div>
-
-      {/* This Week · This Month · Achievements */}
-      {scoreWindows && (
-        <div className="myday-grid3">
-          <ScoreCard icon="🎯" title="This Week" window={scoreWindows.week} />
-          <ScoreCard icon="👑" title="This Month" window={scoreWindows.month} />
-          <GoalCard />
-        </div>
-      )}
-
-      {/* Existing operational + analytics detail — kept below the redesigned
-          personal panels (no mockup equivalent, still useful). */}
-      <div className="home-cols">
-        <div className="home-col">
-          <div className="home-colhead" style={{ marginTop: 6 }}>
-            <span className="hc-tag ops">Pipeline</span><h3>Editing progress</h3>
-            <Link to="/metrics" className="hc-link">Open →</Link>
-          </div>
-          <div className="card pad">
-            {pipelineTotal === 0 ? (
-              <div className="home-empty">No content in the pipeline yet.</div>
-            ) : (
-              <>
-                <div className="pipe-bar">
-                  {(["completed", "in_review", "pending", "in_progress", "not_started"] as const).map((k) =>
-                    pipeline[k] > 0 ? (
-                      <div key={k} className={"pipe-seg " + STAGE_META[k].cls}
-                        style={{ flex: pipeline[k] }} title={`${STAGE_META[k].label}: ${pipeline[k]}`} />
-                    ) : null,
-                  )}
-                </div>
-                <div className="pipe-legend">
-                  {(["not_started", "in_progress", "in_review", "pending", "completed"] as const).map((k) => (
-                    <span key={k} className="pipe-leg"><span className={"pipe-dot " + STAGE_META[k].cls} />{STAGE_META[k].label} <b>{pipeline[k]}</b></span>
-                  ))}
-                </div>
-              </>
-            )}
-          </div>
-        </div>
-
-        <div className="home-col">
-          <div className="home-colhead" style={{ marginTop: 6 }}><span className="hc-tag ana">Analytics</span><h3>This month</h3>
-            <Link to="/dashboard" className="hc-link">Dashboard →</Link>
-          </div>
-          <div className="grid g2" style={{ gap: 14 }}>
-            <div className="card kpi"><div className="ic">👁️</div><div className="l">Total Views</div><div className="v">{loading ? "—" : compactNum(analytics.views)}</div><div className="d flat">{analytics.posts} published</div></div>
-            <div className="card kpi"><div className="ic">⚡</div><div className="l">Engagement Rate</div><div className="v">{analytics.engRate == null ? "—" : analytics.engRate.toFixed(1) + "%"}</div><div className="d flat">of accounts reached</div></div>
-          </div>
-
-          <div className="home-colhead" style={{ marginTop: 22 }}>
-            <span className="hc-tag ana">Top mover</span><h3>Best post this month</h3>
-          </div>
-          <div className="card pad">
-            {loading ? (
-              <Loader label="Loading…" />
-            ) : analytics.top ? (
-              <div className="topmover">
-                <div className="tm-rank">🥇</div>
-                <div className="tm-main">
-                  <div className="tm-title">{analytics.top.title}</div>
-                  <div className="tm-meta">{(analytics.top as Post & { channel_name?: string }).channel_name ?? ""}</div>
-                  <div className="tm-stats">
-                    <span>Score <b>{formatScore(analytics.top)}</b></span>
-                    <span>Views <b>{compactNum(analytics.top.views)}</b></span>
-                    <span>Saves <b>{compactNum(analytics.top.saves)}</b></span>
-                  </div>
-                </div>
-              </div>
-            ) : (
-              <div className="home-empty">No published posts this month yet.</div>
-            )}
-          </div>
-        </div>
-      </div>
     </section>
   );
 }
+
+// Line icons for the banner's buttons (stroke takes the text colour).
+const heroSvg = (d: string) => (
+  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d={d} /></svg>
+);
+const HeroIcon = {
+  play: <svg width="18" height="18" viewBox="0 0 24 24" aria-hidden="true"><path d="M8 5.5v13l10-6.5z" fill="currentColor" /></svg>,
+  replay: heroSvg("M3 12a9 9 0 1 0 3-6.7M3 4v5h5"),
+  shrink: heroSvg("m7 20 5-5 5 5M7 4l5 5 5-5"),
+  expand: heroSvg("m7 15 5 5 5-5M7 9l5-5 5 5"),
+  stop: <svg width="16" height="16" viewBox="0 0 24 24" aria-hidden="true"><rect x="6" y="6" width="12" height="12" rx="2" fill="currentColor" /></svg>,
+  reports: heroSvg("M9 3.5h6v3H9zM6.5 5H6a1.5 1.5 0 0 0-1.5 1.5v13A1.5 1.5 0 0 0 6 21h12a1.5 1.5 0 0 0 1.5-1.5v-13A1.5 1.5 0 0 0 18 5h-.5M9 12h6M9 16h4"),
+};
 
 // Hero banner video — an intro clip that plays ONCE per page load, then hands
 // off to a loop clip that plays forever. Both muted/inline (autoplay-safe). The
@@ -489,11 +660,24 @@ export function HomePage() {
 // the hero's gradient background shows through. Files:
 //   /media/myday-intro.mp4  — plays once, after the boot splash
 //   /media/myday-loop.mp4   — loops continuously afterwards
-function HeroVideo() {
+// `replay` going up plays the intro again (the banner's Replay intro button).
+function HeroVideo({ replay }: { replay: number }) {
   const [phase, setPhase] = useState<"intro" | "loop">("intro");
   const [introReady, setIntroReady] = useState(false);
   const introRef = useRef<HTMLVideoElement>(null);
   const loopRef = useRef<HTMLVideoElement>(null);
+
+  useEffect(() => {
+    if (!replay) return;
+    setPhase("intro");
+    const v = introRef.current;
+    if (!v) return;
+    try {
+      v.currentTime = 0;
+      const p = v.play();
+      if (p && typeof p.catch === "function") p.catch(() => setPhase("loop"));
+    } catch { setPhase("loop"); }
+  }, [replay]);
 
   // Hand off to the loop clip: reveal it and play from the start. Called when the
   // intro ends, and also if the intro is missing/unplayable so we never stall on
@@ -566,289 +750,3 @@ function HeroVideo() {
     </>
   );
 }
-
-// ---- Waiting for your review: tasks this person can approve or send back,
-// resolved right here. Sending back needs a note (the assignee sees it when they
-// re-accept), so that button opens an inline note box instead of acting at once.
-function ReviewQueue({ tasks, loading, nowMs, onChanged, onOpen }: {
-  tasks: Task[]; loading: boolean; nowMs: number; onChanged: () => Promise<unknown>; onOpen: (t: Task) => void;
-}) {
-  const slow = tasks.filter((t) => reviewWaitMs(t, nowMs) >= SLOW_REVIEW_MS).length;
-  const [busyId, setBusyId] = useState<string | null>(null);
-  const [noteFor, setNoteFor] = useState<string | null>(null);
-  const [note, setNote] = useState("");
-
-  async function resolve(t: Task, status: "done" | "in_progress", reviewNote?: string) {
-    // Approving work that was never attached needs a deliberate yes.
-    const noWork = status === "done" && t.link_required && !t.delivery_link;
-    if (noWork && !window.confirm(`No work is attached to "${t.title}". Approve it anyway?`)) return;
-    setBusyId(t.id);
-    try {
-      await api(`/tasks/${t.id}`, { method: "PATCH", body: JSON.stringify({
-        status, ...(reviewNote ? { reviewNote } : {}), ...(noWork ? { approveWithoutWork: true } : {}),
-      }) });
-      toast.success(status === "done" ? `Approved “${t.title}”.` : `Sent “${t.title}” back for rework.`);
-      setNoteFor(null);
-      setNote("");
-      await onChanged();
-    } catch (e) {
-      toast.error(e instanceof ApiError ? e.message : "Couldn't update that task.");
-    } finally {
-      setBusyId(null);
-    }
-  }
-
-  return (
-    <div className="card myday-panel rvq">
-      <div className="mp-head">
-        <h3><span className="mp-ic">👀</span> Waiting for your review</h3>
-        {tasks.length > 0 && <span className="rvq-count">{tasks.length}</span>}
-        {slow > 0 && <span className="rvq-slow" title="These are holding up someone's work">⏳ {slow} waiting over a day</span>}
-        <Link to="/tasks" className="mp-link">Task Board →</Link>
-      </div>
-      {loading ? (
-        <Loader label="Loading…" />
-      ) : tasks.length === 0 ? (
-        <div className="home-empty">Nothing is waiting for your review.</div>
-      ) : (
-        <div className="rvq-list">
-          {tasks.map((t) => {
-            const meta = [t.editor_name ?? "Unassigned", t.content_format_name, t.tid].filter(Boolean).join(" · ");
-            const busy = busyId === t.id;
-            const wait = reviewWaitMs(t, nowMs);
-            return (
-              <div key={t.id} className="rvq-row">
-                <div className="rvq-main">
-                  <button type="button" className="rvq-open" onClick={() => onOpen(t)} title="Open the task's details">
-                    <span className="rvq-title">{t.title}</span>
-                    <span className="rvq-view">View details ›</span>
-                  </button>
-                  {t.self_created && <span className="self-chip" title="The assignee created this task for themselves">🙋 Self-created</span>}
-                  <span className="rvq-meta">
-                    {t.review_started_at && (
-                      <span className={"rvq-wait" + (wait >= SLOW_REVIEW_MS ? " slow" : "")} title="Time waiting for review doesn't count against the assignee">
-                        ⏳ Waiting {fmtWait(wait)}
-                      </span>
-                    )}
-                    {meta}
-                    {t.delivery_link ? (
-                      <> · <a href={t.delivery_link} target="_blank" rel="noreferrer">Open the work ↗</a></>
-                    ) : (
-                      <> · {t.link_required ? "No work attached" : "No link needed"}</>
-                    )}
-                  </span>
-                </div>
-                {noteFor === t.id ? (
-                  <form
-                    className="rvq-note"
-                    onSubmit={(e) => { e.preventDefault(); if (note.trim()) resolve(t, "in_progress", note.trim()); }}
-                  >
-                    <input
-                      className="t" autoFocus value={note} onChange={(e) => setNote(e.target.value)}
-                      placeholder={`What does ${t.editor_name ?? "the assignee"} need to fix?`}
-                      aria-label="What needs fixing"
-                    />
-                    <button type="submit" className="btn btn-sm btn-primary" disabled={busy || !note.trim()}>
-                      {busy ? "Sending…" : "Send back"}
-                    </button>
-                    <button type="button" className="btn btn-sm" disabled={busy} onClick={() => { setNoteFor(null); setNote(""); }}>
-                      Cancel
-                    </button>
-                  </form>
-                ) : (
-                  <div className="rvq-actions">
-                    <button className="btn btn-sm" disabled={busy} onClick={() => { setNoteFor(t.id); setNote(""); }}>
-                      Send back
-                    </button>
-                    <button className="btn btn-sm btn-primary" disabled={busy} onClick={() => resolve(t, "done")}>
-                      {busy ? "Approving…" : "Approve"}
-                    </button>
-                  </div>
-                )}
-              </div>
-            );
-          })}
-        </div>
-      )}
-    </div>
-  );
-}
-
-// ---- Today's Tasks: the viewer's working queue with status pills, format tag
-// chips and per-task point values (the base points the format is worth). ----
-function TodaysTasks({ tasks, loading, navigate }: { tasks: Task[]; loading: boolean; navigate: (to: string) => void }) {
-  const [filter, setFilter] = useState<"all" | TaskStatus>("all");
-  const counts = useMemo(() => {
-    const c: Record<string, number> = { all: tasks.length, todo: 0, in_progress: 0, review: 0 };
-    for (const t of tasks) c[t.status] = (c[t.status] ?? 0) + 1;
-    return c;
-  }, [tasks]);
-  const shown = filter === "all" ? tasks : tasks.filter((t) => t.status === filter);
-
-  return (
-    <div className="card myday-panel">
-      <div className="mp-head">
-        <h3><span className="mp-ic">🗂️</span> Today's Tasks</h3>
-        <Link to="/tasks" className="mp-link">View all →</Link>
-      </div>
-      <div className="tt-pills">
-        {STATUS_PILLS.map((p) => (
-          <button
-            key={p.key}
-            className={"tt-pill" + (filter === p.key ? " active" : "")}
-            onClick={() => setFilter(p.key)}
-          >
-            {p.label}<span className="tt-pill-n">{counts[p.key] ?? 0}</span>
-          </button>
-        ))}
-      </div>
-      {loading ? (
-        <Loader label="Loading…" />
-      ) : shown.length === 0 ? (
-        <div className="home-empty">🎉 Nothing here — you're all caught up.</div>
-      ) : (
-        <div className="tt-list">
-          {shown.slice(0, 8).map((t) => {
-            const tag = TAG_META[t.task_type] ?? TAG_META.general;
-            const tagLabel = t.content_format_name || tag.label;
-            const pts = t.content_format_points != null ? Number(t.content_format_points) : 1;
-            return (
-              <button key={t.id} className="tt-row" onClick={() => navigate("/tasks")}>
-                <span className="tt-check" aria-hidden />
-                <span className="tt-main">
-                  <span className="tt-title">{t.title}</span>
-                  <span className={"tt-tag " + tag.cls}>{tagLabel}</span>
-                </span>
-                <span className="tt-pts">+{pts} pts</span>
-                <span className="tt-go">›</span>
-              </button>
-            );
-          })}
-        </div>
-      )}
-    </div>
-  );
-}
-
-// ---- Today's Progress: completion ring + points/focus/daily-goal stats, with
-// the rank character shown only for the current month's top 3. ----
-function TodaysProgress({
-  completedToday, openCount, pointsToday, focusSeconds, dailyGoalPct, monthRank,
-}: {
-  completedToday: number; openCount: number; pointsToday: number;
-  focusSeconds: number; dailyGoalPct: number | null; monthRank: number | null;
-}) {
-  const total = completedToday + openCount;
-  const frac = total > 0 ? completedToday / total : 0;
-  const R = 52;
-  const C = 2 * Math.PI * R;
-
-  return (
-    <div className="card myday-panel prog-panel">
-      <div className="mp-head">
-        <h3><span className="mp-ic">🌱</span> Today's Progress</h3>
-        {monthRank && monthRank <= 3 && <span className="prog-rankbadge">#{monthRank}</span>}
-      </div>
-      <div className="prog-body">
-        <div className="prog-left">
-          <div className="prog-ring">
-            <svg viewBox="0 0 120 120" aria-hidden>
-              <circle cx="60" cy="60" r={R} className="prog-ring-bg" />
-              <circle
-                cx="60" cy="60" r={R} className="prog-ring-fg"
-                strokeDasharray={C} strokeDashoffset={C * (1 - frac)}
-                transform="rotate(-90 60 60)"
-              />
-            </svg>
-            <div className="prog-ring-c">
-              <b>{completedToday}<span>/{total}</span></b>
-              <small>tasks done</small>
-            </div>
-          </div>
-          <div className="prog-stats">
-            <div className="prog-stat"><span className="prog-si">⭐</span><span><b>{Math.round(pointsToday)}</b><small>Points today</small></span></div>
-            <div className="prog-stat"><span className="prog-si">⚡</span><span><b>{hoursMins(focusSeconds)}</b><small>Focus time <i title="Approximate — derived from task time budgets, not a tracked metric.">≈</i></small></span></div>
-            <div className="prog-stat"><span className="prog-si">🎯</span><span><b>{dailyGoalPct == null ? "—" : dailyGoalPct + "%"}</b><small>Daily goal{dailyGoalPct != null ? <i title="Provisional: today's points vs the month's goal spread across working days."> *</i> : ""}</small></span></div>
-          </div>
-        </div>
-        <RankCharacter rank={monthRank} />
-      </div>
-      {dailyGoalPct != null && (
-        <div className="prog-goalbar">
-          <div className="prog-goalbar-fill" style={{ width: `${Math.min(100, dailyGoalPct)}%` }} />
-        </div>
-      )}
-    </div>
-  );
-}
-
-// The rank illustration — only rendered for the current month's top 3, and only
-// if the matching asset actually exists. Anything else (unranked, or a missing
-// PNG) collapses to nothing so the stats fill the panel cleanly.
-function RankCharacter({ rank }: { rank: number | null }) {
-  const [broken, setBroken] = useState(false);
-  useEffect(() => setBroken(false), [rank]);
-  if (!rank || rank > 3 || broken) return null;
-  return (
-    <div className="prog-char">
-      <img src={`/media/rank-${rank}.png`} alt={`Rank ${rank} character`} width={600} height={800} decoding="async" onError={() => setBroken(true)} />
-    </div>
-  );
-}
-
-// ---- This Week / This Month score cards (same windows the score strip used). --
-function ScoreCard({ icon, title, window: w }: { icon: string; title: string; window: ReturnType<typeof myRankInRange> }) {
-  const pct = w.rank ? Math.max(6, Math.round((1 - (w.rank - 1) / Math.max(1, w.totalRanked)) * 100)) : 0;
-  return (
-    <div className="card myday-scorecard">
-      <div className="msc-head"><span className="msc-ic">{icon}</span>{title}<Link to="/leaderboard" className="msc-link">View →</Link></div>
-      <div className="msc-body">
-        <div>
-          <div className="msc-pts">{w.points.toFixed(1)} <span>pts</span></div>
-          <div className="msc-sub">{w.rank ? `of ${w.totalRanked} scoring` : "no points yet"}</div>
-        </div>
-        <div className="msc-rank">{w.rank ? (RANK_BADGE[w.rank] ?? `#${w.rank}`) : "—"}</div>
-      </div>
-      <div className="msc-bar"><div className="msc-bar-fill" style={{ width: `${pct}%` }} /></div>
-    </div>
-  );
-}
-
-// ---- Monthly Goal: the signed-in user's own current-month goal vs achieved
-// (real tracked hours + task counts), self-scoped so no admin role is needed.
-// Replaces the old placeholder Achievements card. ----
-type MyGoal = { linked: boolean; hasGoal?: boolean; goalTargetNumber: number; achievedNumber: number };
-function GoalCard() {
-  const [d, setD] = useState<MyGoal | null>(null);
-  const [failed, setFailed] = useState(false);
-  useEffect(() => {
-    api<MyGoal>("/management-performance/me").then(setD).catch(() => setFailed(true));
-  }, []);
-
-  const hasGoal = !!d?.linked && !!d.hasGoal && d.goalTargetNumber > 0;
-  const taskPct = d && d.goalTargetNumber > 0 ? Math.round((d.achievedNumber / d.goalTargetNumber) * 100) : 0;
-  const toGo = d ? Math.max(0, d.goalTargetNumber - d.achievedNumber) : 0;
-
-  return (
-    <div className="card myday-scorecard goalc">
-      <div className="msc-head"><span className="msc-ic">🎯</span>Monthly Goal</div>
-      {!d ? (
-        <div className="msc-body"><div className="msc-sub">{failed ? "Couldn't load your goal." : "Loading…"}</div></div>
-      ) : !hasGoal ? (
-        <div className="msc-body"><div className="msc-sub">No task goal set for this month yet.</div></div>
-      ) : (
-        <>
-          <div className="msc-body">
-            <div>
-              <div className="msc-pts">{d.achievedNumber} <span>/ {d.goalTargetNumber} tasks</span></div>
-              <div className="msc-sub">{toGo > 0 ? `${toGo} to go` : "goal reached 🎉"}</div>
-            </div>
-            <div className="msc-rank">{taskPct}%</div>
-          </div>
-          <div className="msc-bar"><div className="msc-bar-fill" style={{ width: `${Math.min(100, taskPct)}%` }} /></div>
-        </>
-      )}
-    </div>
-  );
-}
-

@@ -1,5 +1,8 @@
 import { useCallback, useEffect, useState } from "react";
-import { api } from "@/lib/api";
+import { api, ApiError } from "@/lib/api";
+import { whileVisible } from "@/lib/visible-poll";
+import { notifyTasksChanged } from "@/lib/task-events";
+import type { AttRow } from "@/lib/use-attendance";
 
 // 7h 40m / 45m — a length of time, not a clock time.
 export function fmtDuration(seconds: number): string {
@@ -9,6 +12,11 @@ export function fmtDuration(seconds: number): string {
 }
 
 export type EodSession = { id: string; date: string; startedAt: string; endedAt: string | null };
+
+// Start day outside office hours, answered "Not now": nothing started (callers stay quiet).
+export class StartCancelled extends Error {
+  constructor() { super("Not started."); }
+}
 export type EodSummary = {
   date: string;
   status: "not_started" | "active" | "completed";
@@ -93,6 +101,10 @@ export function useEod() {
   const [unlinked, setUnlinked] = useState(false);
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
+  // a late start waiting for its reason: the dialog (components/late-reason.tsx) is open
+  const [lateAsk, setLateAsk] = useState<AttRow | null>(null);
+  // Start day outside office hours, waiting on "do you want to continue?" (the server's words)
+  const [outsideAsk, setOutsideAsk] = useState<{ message: string; answer: (go: boolean) => void } | null>(null);
   // The just-ended day's summary. Held here (not inside a page) so it can render
   // ABOVE the gate — ending re-locks the app, so a page-level card would unmount
   // before it's seen.
@@ -115,22 +127,97 @@ export function useEod() {
   // automatic close, the server refusing work: re-check every minute, when the
   // tab comes back into view, and right after such a refusal.
   useEffect(() => {
-    const id = setInterval(refresh, 60_000);
+    const stop = whileVisible(refresh, 60_000);
     const onVisible = () => { if (!document.hidden) refresh(); };
     document.addEventListener("visibilitychange", onVisible);
     window.addEventListener("pulse:workday-changed", refresh);
     return () => {
-      clearInterval(id);
+      stop();
       document.removeEventListener("visibilitychange", onVisible);
       window.removeEventListener("pulse:workday-changed", refresh);
     };
   }, [refresh]);
 
-  const start = useCallback(async () => {
+  // Start day (attendance check-in) opens the work session, as Start Work did.
+  // Before the attendance database change is applied it falls back to plain
+  // Start Work. Outside office hours the server asks first (428): the
+  // "continue?" dialog, then again with the yes — "Not now" throws
+  // StartCancelled. Tells Home and the widgets that the day changed.
+  const start = useCallback(async (plan?: string) => {
     setBusy(true);
     try {
-      const d = await api<{ session: EodSession }>("/eod/start", { method: "POST" });
-      setSession(d.session);
+      const checkIn = (outsideHours = false) => api<{ session: EodSession; attendance?: AttRow; lateNoteNeeded?: boolean }>(
+        "/attendance/check-in", { method: "POST", body: JSON.stringify({ ...(plan ? { plan } : {}), ...(outsideHours ? { outsideHours } : {}) }) },
+      );
+      try {
+        let d: Awaited<ReturnType<typeof checkIn>>;
+        try {
+          d = await checkIn();
+        } catch (e) {
+          if (!(e instanceof ApiError && e.status === 428)) throw e;
+          setBusy(false);
+          const go = await new Promise<boolean>((answer) => setOutsideAsk({ message: e.message, answer }));
+          setOutsideAsk(null);
+          if (!go) throw new StartCancelled();
+          setBusy(true);
+          d = await checkIn(true);
+        }
+        setSession(d.session);
+        // started after the grace period: ask why, from whichever Start day button it was
+        if (d.lateNoteNeeded && d.attendance) setLateAsk(d.attendance);
+      } catch (e) {
+        if (!(e instanceof ApiError && e.status === 409)) throw e;
+        const d = await api<{ session: EodSession }>("/eod/start", { method: "POST" });
+        setSession(d.session);
+      }
+      window.dispatchEvent(new Event("pulse:attendance-changed"));
+      // task clocks pause or run on with the day: every task list reloads
+      notifyTasksChanged();
+    } finally {
+      setBusy(false);
+    }
+  }, []);
+
+  // Why late: asked again (Home, until it's answered), and sent to the lead.
+  const askLateReason = useCallback((row: AttRow) => setLateAsk(row), []);
+  const sendLateReason = useCallback(async (note: string) => {
+    await api("/attendance/late-reason", { method: "POST", body: JSON.stringify({ note }) });
+    setLateAsk(null);
+    window.dispatchEvent(new Event("pulse:attendance-changed"));
+  }, []);
+
+  // End day: the wrap-up note, then the work session closes and the summary
+  // (with the report to copy) shows. Falls back to End Work like start().
+  const checkOut = useCallback(async (note: string): Promise<EodSummary | null> => {
+    setBusy(true);
+    try {
+      let d: { summary: EodSummary };
+      try {
+        d = await api<{ summary: EodSummary }>("/attendance/check-out", { method: "POST", body: JSON.stringify({ note }) });
+      } catch (e) {
+        if (!(e instanceof ApiError && e.status === 409)) throw e;
+        d = await api<{ summary: EodSummary }>("/eod/end", { method: "PATCH" });
+      }
+      setSession(null);
+      setSummary(d.summary);
+      window.dispatchEvent(new Event("pulse:attendance-changed"));
+      // task clocks pause or run on with the day: every task list reloads
+      notifyTasksChanged();
+      return d.summary;
+    } finally {
+      setBusy(false);
+    }
+  }, []);
+
+  // Undo Start day within its first 5 minutes.
+  const undoStart = useCallback(async () => {
+    setBusy(true);
+    try {
+      await api("/attendance/undo-check-in", { method: "POST" });
+      setSession(null);
+      window.dispatchEvent(new Event("pulse:attendance-changed"));
+      // task clocks pause or run on with the day: every task list reloads
+      notifyTasksChanged();
     } finally {
       setBusy(false);
     }
@@ -198,7 +285,8 @@ export function useEod() {
   }, []);
 
   return {
-    session, unlinked, loading, busy, summary, start, end, clearSummary, refresh,
+    session, unlinked, loading, busy, summary, start, end, checkOut, undoStart, clearSummary, refresh,
+    lateAsk, askLateReason, sendLateReason, outsideAsk,
     eodOpen, openEod, closeEod, signOutAfter, clearSignOutAfter, saveNotes,
     sod, planOpen, setPlanOpen, openSod, refreshSod, saveSod,
   };

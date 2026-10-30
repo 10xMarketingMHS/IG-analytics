@@ -1,0 +1,49 @@
+/* Ads performance (ads-performance.tsx), on the Pipeline's look (pipeline.css: .pp tokens and table). */
+.ap{display:flex;flex-direction:column;gap:14px}
+.ap .pp-grow{flex:1}
+.ap-custom{display:flex;gap:10px;flex-wrap:wrap}
+.ap-custom label{display:flex;align-items:center;gap:6px;font-size:12px;font-weight:700;color:var(--pp-text3)}
+.ap-custom input,.ap-fillrow input,.ap-fillrow select{height:30px;padding:0 8px;border:1px solid var(--pp-line);border-radius:8px;background:var(--pp-solid);color:var(--pp-text);
+  font-family:inherit;font-size:12.5px;min-width:0}
+.ap-custom input:focus,.ap-fillrow input:focus,.ap-fillrow select:focus{outline:none;border-color:var(--pp-ac)}
+.ap-chips{display:flex;flex-wrap:wrap;gap:6px}
+.ap-chips button{height:30px;padding:0 12px;border:1px solid var(--pp-line);border-radius:999px;background:var(--pp-solid);color:var(--pp-text2);
+  font-family:'Plus Jakarta Sans',sans-serif;font-size:12.5px;font-weight:600;cursor:pointer}
+.ap-chips button:hover{border-color:var(--pp-ac);color:var(--pp-acText)}
+.ap-chips button.on{background:var(--pp-acSoft);border-color:transparent;color:var(--pp-acText)}
+.ap-kpis{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px}
+.ap-kpis>div{display:flex;flex-direction:column;gap:2px;padding:14px 16px;border:1px solid var(--pp-line);border-radius:16px;background:var(--pp-panel)}
+.ap-kpis span{font-size:12px;font-weight:700;color:var(--pp-text3)}
+.ap-kpis b{font-size:24px;font-weight:800;letter-spacing:-.02em;font-variant-numeric:tabular-nums}
+.ap-kpis em{font-style:normal;font-size:12px;color:var(--pp-text3)}
+.ap-card{overflow:hidden}
+.ap-head{display:flex;align-items:center;gap:8px;padding:14px 18px 10px}
+.ap-head>b{font-size:14px;font-weight:800}
+.ap-count{font:600 11.5px 'Geist Mono',ui-monospace,monospace;color:var(--pp-text3)}
+.ap-grid .pp-th,.ap-grid .pp-tr{font-variant-numeric:tabular-nums}
+.ap-grid .r{text-align:right}
+.ap-sum{min-width:1060px}
+.ap-sum .pp-th,.ap-sum .pp-tr{grid-template-columns:minmax(170px,1fr) 52px 72px 72px 64px 60px 86px 78px 92px 56px 52px 64px 74px}
+.ap-ads{min-width:1360px}
+.ap-ads .pp-th,.ap-ads .pp-tr{grid-template-columns:minmax(240px,1fr) 140px 100px 70px 110px 60px 60px 56px 52px 64px 120px 84px 110px}
+.ap-fill{min-width:1180px}
+.ap-fill .pp-th,.ap-fill .pp-tr{grid-template-columns:110px minmax(180px,1fr) 132px 64px 64px 64px 64px 64px 96px minmax(140px,1fr) 64px}
+.ap-plain{cursor:default}
+.ap-plain:hover{background:transparent}
+.ap-faint{color:var(--pp-text3);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.ap-ellipsis{min-width:0}
+.ap-refs{font:600 12px 'Geist Mono',ui-monospace,monospace;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.ap-link{color:var(--pp-acText);font-weight:600;text-decoration:none}
+.ap-link:hover{text-decoration:underline}
+.ap-status{display:flex;flex-direction:column;gap:1px;line-height:1.25}
+.ap-status b{font-size:12px}
+.ap-status b.published{color:oklch(0.5 0.12 185)}
+.ap-status b.done{color:var(--pp-warn)}
+.ap-status b.pending{color:var(--pp-text3)}
+.ap-status em{font-style:normal;font-size:11.5px;color:var(--pp-text3)}
+.ap-status em.on{color:var(--pp-good)}
+.ap-window{display:inline-flex;align-items:center;height:22px;padding:0 8px;border-radius:999px;background:var(--pp-sunk);font-size:11.5px;font-weight:700;white-space:nowrap}
+.ap-window.soon{background:color-mix(in srgb,var(--pp-warn) 16%,transparent);color:var(--pp-warn)}
+.ap-window.late{background:color-mix(in srgb,var(--pp-bad) 16%,transparent);color:var(--pp-bad)}
+.ap-empty{padding:26px 18px;text-align:center;color:var(--pp-text3);font-size:13px}
+@media (max-width:760px){.ap-kpis{grid-template-columns:repeat(2,minmax(0,1fr))}}

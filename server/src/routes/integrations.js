@@ -4,11 +4,13 @@ import { pool } from "../db.js";
 import { config } from "../config.js";
 import { requireEditor } from "../resolve-workspace.js";
 import { requirePermission } from "../permissions.js";
+import { requirePage } from "../page-access.js";
 import { encryptToken, decryptToken, encryptionReady, signState, verifyState } from "../crypto.js";
 import { logActivity } from "../activity.js";
 import * as ig from "../integrations/instagram.js";
 import * as yt from "../integrations/youtube.js";
 import * as fb from "../integrations/facebook.js";
+import { recordMetricDays } from "../post-history.js";
 
 // Upsert a platform_connection row (one per account × provider). Used by every
 // connect path so the shape stays identical across Instagram / Facebook / YouTube.
@@ -218,7 +220,7 @@ integrationsRouter.patch("/integrations/auto-sync", requirePermission("channels"
 // value as of the selected range's start (`from`) and end (`to`) — from the
 // follower_snapshot timeline — so the card can show the count for the range and
 // the growth over it. `from`/`to` are YYYY-MM-DD (omit for "all time").
-integrationsRouter.get("/integrations/followers", async (req, res, next) => {
+integrationsRouter.get("/integrations/followers", requirePage("analytics"), async (req, res, next) => {
   try {
     const dateOrNull = (v) => (/^\d{4}-\d{2}-\d{2}$/.test(String(v || "")) ? String(v) : null);
     const from = dateOrNull(req.query.from);
@@ -246,7 +248,7 @@ integrationsRouter.get("/integrations/followers", async (req, res, next) => {
 // (connection, day) from follower_snapshot over the last `days` (default 30, max
 // 180). The client groups by scope and computes each day's gain/loss vs the
 // previous day.
-integrationsRouter.get("/integrations/followers/daily", async (req, res, next) => {
+integrationsRouter.get("/integrations/followers/daily", requirePage("analytics"), async (req, res, next) => {
   try {
     const days = Math.min(180, Math.max(1, Number(req.query.days) || 30));
     const { rows } = await pool.query(
@@ -266,8 +268,8 @@ integrationsRouter.get("/integrations/followers/daily", async (req, res, next) =
   }
 });
 
-// Step 1: start OAuth for a specific Pulse account (channel × Instagram).
-integrationsRouter.get("/integrations/instagram/connect", requirePermission("channels"), async (req, res, next) => {
+// Step 1: start OAuth for a specific Echo account (channel × Instagram).
+integrationsRouter.get("/integrations/instagram/connect", requirePermission("channels", { mode: "change" }), async (req, res, next) => {
   try {
     if (!ig.metaConfigured()) return backToIntegrations(res, { error: "not_configured" });
     if (!encryptionReady()) return backToIntegrations(res, { error: "no_encryption" });
@@ -308,7 +310,7 @@ integrationsRouter.get("/integrations/instagram/callback", async (req, res, next
     const accounts = await ig.listIgAccounts(userToken);
     if (accounts.length === 0) return backToIntegrations(res, { error: "no_ig" });
 
-    // Pick the IG account: match the Pulse account's handle, else the only one.
+    // Pick the IG account: match the Echo account's handle, else the only one.
     const handle = (acct.handle || "").replace(/^@/, "").toLowerCase();
     const chosen = accounts.find((a) => a.igUsername?.toLowerCase() === handle)
       || (accounts.length === 1 ? accounts[0] : null);
@@ -340,7 +342,7 @@ integrationsRouter.get("/integrations/instagram/callback", async (req, res, next
 });
 
 // One-click connect using the server's System User token — no OAuth. Discovers
-// the Instagram account the token can see and links it to the Pulse account.
+// the Instagram account the token can see and links it to the Echo account.
 // Stores the sentinel 'SYSTEM' instead of a token (the token lives in env).
 const ConnectSchema = z.object({ accountId: z.string().uuid() });
 integrationsRouter.post("/integrations/instagram/connect-system", requirePermission("channels"), async (req, res, next) => {
@@ -741,24 +743,12 @@ integrationsRouter.post("/integrations/facebook/sync", requireEditor, async (req
       }
       const { metrics, usage } = await fb.getPostMetricsBatch(pairs.map((p) => p.externalId), pageToken);
 
-      // One bulk UPDATE for all matched posts (fewer pooled-connection round trips).
-      if (pairs.length) {
-        const ids = [], likes = [], comments = [], shares = [], extIds = [];
-        for (const { postId, externalId } of pairs) {
-          const met = metrics.get(externalId) || {};
-          ids.push(postId); likes.push(met.likes ?? 0); comments.push(met.comments ?? 0);
-          shares.push(met.shares ?? 0); extIds.push(externalId);
-        }
-        await pool.query(
-          `update post p set likes=d.likes, comments=d.comments, shares=d.shares,
-                  external_id=d.external_id, last_synced_at=now(), metrics_updated_at=now()
-             from (select unnest($1::uuid[]) as id, unnest($2::bigint[]) as likes,
-                          unnest($3::bigint[]) as comments, unnest($4::bigint[]) as shares,
-                          unnest($5::text[]) as external_id) d
-            where p.id = d.id`,
-          [ids, likes, comments, shares, extIds],
-        );
-      }
+      // One bulk write for all matched posts; a post whose read was refused keeps what it had.
+      // (Facebook gives no views, reach or saves — those stay as they are.)
+      await writeSyncedMetrics(pairs.map(({ postId, externalId }) => {
+        const met = metrics.get(externalId);
+        return { id: postId, externalId, likes: met?.likes ?? null, comments: met?.comments ?? null, shares: met?.shares ?? null };
+      }));
 
       const followers = await fb.getPageFollowers(conn.external_id, pageToken);
       if (followers != null) {
@@ -843,6 +833,34 @@ integrationsRouter.post("/integrations/youtube/connect", requirePermission("chan
   } catch (err) { next(err); }
 });
 
+// One bulk write of a sync's numbers — far fewer pooled-connection round trips
+// than an UPDATE per post (the pooler cap is the constraint). A number the
+// platform didn't give this time is null and keeps what the post had, so a
+// refused or rate-limited read never wipes a post to 0; metrics_updated_at
+// moves only for posts that got at least one number, and those save the day's
+// totals into their history (../post-history.js).
+//   rows: [{ id, externalId, views, reach, likes, comments, shares, saves }]
+export async function writeSyncedMetrics(rows, db = pool) {
+  if (!rows.length) return;
+  const col = (k) => rows.map((r) => r[k] ?? null);
+  const fresh = rows.map((r) => ["views", "reach", "likes", "comments", "shares", "saves"].some((k) => r[k] != null));
+  await db.query(
+    `update post p set views = coalesce(d.views, p.views), reach = coalesce(d.reach, p.reach),
+            likes = coalesce(d.likes, p.likes), comments = coalesce(d.comments, p.comments),
+            shares = coalesce(d.shares, p.shares), saves = coalesce(d.saves, p.saves),
+            external_id = coalesce(d.external_id, p.external_id), last_synced_at = now(),
+            metrics_updated_at = case when d.fresh then now() else p.metrics_updated_at end
+       from (select unnest($1::uuid[]) as id, unnest($2::bigint[]) as views,
+                    unnest($3::bigint[]) as reach, unnest($4::bigint[]) as likes,
+                    unnest($5::bigint[]) as comments, unnest($6::bigint[]) as shares,
+                    unnest($7::bigint[]) as saves, unnest($8::text[]) as external_id,
+                    unnest($9::boolean[]) as fresh) d
+      where p.id = d.id`,
+    [col("id"), col("views"), col("reach"), col("likes"), col("comments"), col("shares"), col("saves"), col("externalId"), fresh],
+  );
+  await recordMetricDays(rows.filter((_, i) => fresh[i]).map((r) => r.id), db);
+}
+
 // Step 3: pull fresh metrics for the connected account's posts (match by Link).
 integrationsRouter.post("/integrations/instagram/sync", requireEditor, async (req, res, next) => {
   const parsed = SyncSchema.safeParse(req.body);
@@ -890,37 +908,20 @@ integrationsRouter.post("/integrations/instagram/sync", requireEditor, async (re
       }
       const { metrics, usage } = await ig.getMediaMetricsBatch(pairs.map((p) => p.media), token);
 
-      // Write all matched posts in ONE statement — far fewer pooled-connection
-      // round trips than an UPDATE per post (the pooler cap is the constraint).
+      // Write all matched posts in ONE statement; a number Meta didn't give keeps what was there.
       if (pairs.length) {
-        const ids = [], views = [], reach = [], likes = [], comments = [], shares = [], saves = [], extIds = [];
-        for (const { post, media } of pairs) {
-          const m = metrics.get(media.id) || {};
-          ids.push(post.id); views.push(m.views ?? 0); reach.push(m.reach ?? 0);
-          likes.push(m.likes ?? 0); comments.push(m.comments ?? 0); shares.push(m.shares ?? 0);
-          saves.push(m.saves ?? 0); extIds.push(media.id);
-        }
-        await pool.query(
-          `update post p set views=d.views, reach=d.reach, likes=d.likes, comments=d.comments,
-                  shares=d.shares, saves=d.saves, external_id=d.external_id,
-                  last_synced_at=now(), metrics_updated_at=now()
-             from (select unnest($1::uuid[]) as id, unnest($2::bigint[]) as views,
-                          unnest($3::bigint[]) as reach, unnest($4::bigint[]) as likes,
-                          unnest($5::bigint[]) as comments, unnest($6::bigint[]) as shares,
-                          unnest($7::bigint[]) as saves, unnest($8::text[]) as external_id) d
-            where p.id = d.id`,
-          [ids, views, reach, likes, comments, shares, saves, extIds],
-        );
+        await writeSyncedMetrics(pairs.map(({ post, media }) => ({ id: post.id, externalId: media.id, ...(metrics.get(media.id) || {}) })));
         // Collab mirrors live on the collaborating channel's account — copy each
         // collab post's numbers onto its mirror row(s) (uncommon, so left per-post).
         for (const { post, media } of pairs) {
           if (!post.collab_group_id) continue;
           const m = metrics.get(media.id) || {};
           await pool.query(
-            `update post set views=$2, reach=$3, likes=$4, comments=$5, shares=$6, saves=$7,
+            `update post set views = coalesce($2, views), reach = coalesce($3, reach), likes = coalesce($4, likes),
+                    comments = coalesce($5, comments), shares = coalesce($6, shares), saves = coalesce($7, saves),
                     last_synced_at=now(), metrics_updated_at=now()
               where collab_group_id=$1 and is_collab_mirror = true and deleted_at is null`,
-            [post.collab_group_id, m.views ?? 0, m.reach ?? 0, m.likes ?? 0, m.comments ?? 0, m.shares ?? 0, m.saves ?? 0],
+            [post.collab_group_id, m.views ?? null, m.reach ?? null, m.likes ?? null, m.comments ?? null, m.shares ?? null, m.saves ?? null],
           );
         }
       }
@@ -1004,16 +1005,8 @@ integrationsRouter.post("/integrations/youtube/sync", requireEditor, async (req,
           matched += 1;
         }
       }
-      if (ids.length) {
-        await pool.query(
-          `update post p set views=d.views, likes=d.likes, comments=d.comments,
-                  last_synced_at=now(), metrics_updated_at=now()
-             from (select unnest($1::uuid[]) as id, unnest($2::bigint[]) as views,
-                          unnest($3::bigint[]) as likes, unnest($4::bigint[]) as comments) d
-            where p.id = d.id`,
-          [ids, views, likes, comments],
-        );
-      }
+      // views, likes and comments (reach, shares and saves stay as they are), and the day's history
+      await writeSyncedMetrics(ids.map((id, i) => ({ id, views: views[i], likes: likes[i], comments: comments[i] })));
 
       // Refresh subscriber count (best-effort — works even if no videos matched).
       let subscribers = null;

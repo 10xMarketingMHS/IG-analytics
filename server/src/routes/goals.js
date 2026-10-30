@@ -4,7 +4,18 @@ import ExcelJS from "exceljs";
 import { pool } from "../db.js";
 import { requireAdmin, requireEditor } from "../resolve-workspace.js";
 import { requirePermission } from "../permissions.js";
-import { resolveBudgetHours } from "./tasks.js";
+import { callerAccess } from "../page-access.js";
+import { callerEditorId, canAssignTasks, resolveBudgetHours } from "./tasks.js";
+import { hasColumn } from "../schema-flags.js";
+import { capacityFor } from "../work-calendar.js";
+import { monthPenalties, readSettings } from "../attendance.js";
+import { isSuperHere } from "../super-admin.js";
+import { editorRanks, seesEditor, taskViewer } from "../hierarchy.js";
+import { scoreMonthAll } from "../goal-score.js";
+import { monthFrozen } from "../leave-math.js";
+import { brandNeedByType } from "./brand-goals.js";
+import { headingError, headingTypes, notHeadingSql } from "../type-tree.js";
+import { disciplineByEditor, disciplineShares, raterOf, reviewsReady, rolesSeenBy } from "../discipline.js";
 
 export const goalsRouter = Router();
 
@@ -19,24 +30,55 @@ const DEFAULT_CAPACITY = { working_days: 22, hours_per_day: 8 };
 // Effective monthly capacity for an editor: their own override → the org-wide
 // default for that month → carry-forward (most recent org default before it) →
 // a constant. Returns the numbers plus which source they came from.
+// A month with no saved capacity follows the work calendar (Settings ›
+// General), when one is saved; before that, the last saved month carries on.
+async function calendarCapacity(orgId, month) {
+  if (!(await hasColumn("org", "settings"))) return null;
+  // the org's settings, as attendance reads them (kept a few seconds)
+  const cal = (await readSettings(orgId)).raw?.calendar;
+  if (!cal) return null;
+  const m = new Date(month);
+  const c = capacityFor(cal, m.getUTCFullYear(), m.getUTCMonth());
+  if (!c.workingDays) return null;
+  return { working_days: c.workingDays, hours_per_day: Math.round((c.minutes / 60 / c.workingDays) * 10000) / 10000 };
+}
+
+// The team's capacity for a month when a person has none of their own: the
+// org's for the month, the work calendar's, the org's latest earlier month, or
+// the default. Read together, and kept 30 seconds (several goal screens ask at
+// once); saving capacity or the work calendar clears it.
+const orgCapCache = new Map(); // `${orgId}:${month}` -> { v, exp }
+const ORG_CAP_TTL_MS = 30_000;
+export function clearCapacityCache(orgId) {
+  for (const k of orgCapCache.keys()) if (!orgId || k.startsWith(`${orgId}:`)) orgCapCache.delete(k);
+}
+async function orgCapacity(orgId, month) {
+  const key = `${orgId}:${String(month).slice(0, 10)}`;
+  const hit = orgCapCache.get(key);
+  if (hit && hit.exp > Date.now()) return hit.v;
+  const [org, fromCal, carry] = await Promise.all([
+    pool.query("select working_days, hours_per_day from editor_capacity where org_id=$1 and editor_id is null and period_month=$2", [orgId, month]),
+    calendarCapacity(orgId, month),
+    pool.query("select working_days, hours_per_day from editor_capacity where org_id=$1 and editor_id is null and period_month < $2 order by period_month desc limit 1", [orgId, month]),
+  ]);
+  const v = org.rows[0] ? { ...org.rows[0], source: "org" }
+    : fromCal ? { ...fromCal, source: "calendar" }
+    : carry.rows[0] ? { ...carry.rows[0], source: "carry" }
+    : { ...DEFAULT_CAPACITY, source: "default" };
+  orgCapCache.set(key, { v, exp: Date.now() + ORG_CAP_TTL_MS });
+  return v;
+}
+
+// A person's capacity for a month: their own, else the team's (above).
 export async function effectiveCapacity(orgId, editorId, month) {
-  const q = (sql, params) => pool.query(sql, params);
-  let r = await q(
-    "select working_days, hours_per_day from editor_capacity where org_id=$1 and editor_id=$2 and period_month=$3",
-    [orgId, editorId, month],
-  );
-  if (r.rows[0]) return { ...r.rows[0], source: "editor" };
-  r = await q(
-    "select working_days, hours_per_day from editor_capacity where org_id=$1 and editor_id is null and period_month=$2",
-    [orgId, month],
-  );
-  if (r.rows[0]) return { ...r.rows[0], source: "org" };
-  r = await q(
-    "select working_days, hours_per_day from editor_capacity where org_id=$1 and editor_id is null and period_month < $2 order by period_month desc limit 1",
-    [orgId, month],
-  );
-  if (r.rows[0]) return { ...r.rows[0], source: "carry" };
-  return { ...DEFAULT_CAPACITY, source: "default" };
+  const [own, team] = await Promise.all([
+    editorId && editorId !== NIL_ID
+      ? pool.query("select working_days, hours_per_day from editor_capacity where org_id=$1 and editor_id=$2 and period_month=$3", [orgId, editorId, month])
+      : Promise.resolve({ rows: [] }),
+    orgCapacity(orgId, month),
+  ]);
+  if (own.rows[0]) return { ...own.rows[0], source: "editor" };
+  return { ...team };
 }
 
 export const capHours = (c) => Number(c.working_days) * Number(c.hours_per_day);
@@ -60,6 +102,61 @@ const ratingsOf = (row) => Object.fromEntries(CRITERIA.map((k) => [k, row && row
 // (non-admin) may only ever view their OWN editor's goals. When the caller
 // reached the route on the grant, force the target to their own editor_id
 // (ignoring any requested editorId); an admin's requested editorId is honored.
+// A project's time is set in days (Settings › Tasks & time), not hours: each
+// day counts as one full work day at the person's hours per day, so a 5-day
+// project at 8 h a day takes 40 hours of their capacity. Every other type's
+// hours per job are the ones the goal was saved with.
+// "2026-10-19" or "2026-10" → "2026-10-01" (the period_month the goals use).
+function monthStart(monthIn) {
+  const m = /^(\d{4})-(\d{1,2})/.exec(String(monthIn ?? ""));
+  return m ? `${m[1]}-${m[2].padStart(2, "0")}-01` : null;
+}
+// The first day of this month (or offset months away), on India time.
+const prevMonthOf = (first) => {
+  const [y, m] = first.split("-").map(Number);
+  return m === 1 ? `${y - 1}-12-01` : `${y}-${String(m - 1).padStart(2, "0")}-01`;
+};
+function istMonthStart(offset = 0) {
+  const ist = new Date(Date.now() + 330 * 60_000);
+  return new Date(Date.UTC(ist.getUTCFullYear(), ist.getUTCMonth() + offset, 1)).toISOString().slice(0, 10);
+}
+// Goals, a person's capacity and discipline ratings are set for other people:
+// never for yourself, never for someone above you, and not for a month that is
+// over (ratings stay open for last month too, as they're given after it ends).
+// The Super Admin may do all of these. Null when fine, else what to say.
+async function goalWriteError(req, editorId, month, kind) {
+  if (await isSuperHere(req)) return null;
+  const { rows } = await pool.query("select editor_id from app_user where id = $1", [req.user.sub]);
+  if (editorId && editorId === rows[0]?.editor_id) {
+    return kind === "rating" ? "Only a Super Admin can rate you." : "Only a Super Admin can set your own goals.";
+  }
+  const [viewer, ranks] = await Promise.all([taskViewer(req), editorRanks(req.orgId)]);
+  if (!seesEditor(viewer, ranks, editorId)) return "You can't change this for someone above you.";
+  if (month < istMonthStart(kind === "rating" ? -1 : 0)) {
+    return kind === "rating" ? "Ratings for that month are closed." : "That month is over, so its goals are locked.";
+  }
+  // last month's ratings: only until Management Performance closes the month
+  // (the 10th), so its saved scores and these agree
+  const istToday = new Date(Date.now() + 330 * 60_000).toISOString().slice(0, 10);
+  if (kind === "rating" && month < istMonthStart(0) && monthFrozen(String(month).slice(0, 7), istToday)) {
+    return "Ratings for that month are closed: Management Performance has saved it.";
+  }
+  return null;
+}
+const isProject = (f) => f.category === "project" && f.duration_days != null;
+const projectHours = (f, hoursPerDay) => Number(f.duration_days) * Number(hoursPerDay || 0);
+const jobHours = (f, storedJph, hoursPerDay) => (isProject(f) ? projectHours(f, hoursPerDay) : Number(storedJph));
+// Everyone's capacity for a month: their own, else the org's (as effectiveCapacity).
+const NIL_ID = "00000000-0000-0000-0000-000000000000";
+async function capacityLookup(orgId, month) {
+  const [own, orgEff] = await Promise.all([
+    pool.query("select editor_id, working_days, hours_per_day from editor_capacity where org_id=$1 and period_month=$2 and editor_id is not null", [orgId, month]),
+    effectiveCapacity(orgId, NIL_ID, month),
+  ]);
+  const m = new Map(own.rows.map((r) => [r.editor_id, { ...r, source: "editor" }]));
+  return (editorId) => m.get(editorId) ?? orgEff;
+}
+
 async function scopedEditorId(req, requestedEditorId) {
   const g = req.viaGrant;
   // Admins and full-access grantees (edit_goals / discipline) may target any
@@ -71,28 +168,55 @@ async function scopedEditorId(req, requestedEditorId) {
 // The Goal Setting VIEW (Set Goals + Performance tabs) opens to any of these
 // grants; edit/discipline writes have their own, narrower gates below.
 const GOAL_VIEW_KEYS = ["goal_setting_access", "edit_goals", "discipline"];
-const GOAL_VIEW = { message: "You don't have access to Goal Setting." };
+
+// Reading goals: admins and the grants above as before; everyone else may read
+// their OWN goals and progress (Goals › My goals) — treated exactly like a
+// goal_setting_access grantee, so scopedEditorId locks them to themselves.
+async function goalView(req, res, next) {
+  try {
+    // Page access (../page-access.js): once the caller's row is saved, Goals' Change oversees everyone's, not the admin role
+    const a = await callerAccess(req);
+    if (!(a.super || (a.pages ? a.pages.goals.change : req.role === "admin"))) {
+      const { rows } = await pool.query(
+        "select permission_key from user_permission_grant where org_id=$1 and user_id=$2 and permission_key = any($3) and revoked_at is null",
+        [req.orgId, req.user.sub, GOAL_VIEW_KEYS],
+      );
+      req.viaGrant ??= {};
+      for (const r of rows) req.viaGrant[r.permission_key] = true;
+      if (!rows.length) req.viaGrant.goal_setting_access = true;
+    }
+    next();
+  } catch (err) {
+    next(err);
+  }
+}
 
 // GET /goals/totals?month=YYYY-MM — each editor's Goal Points total for the
-// month: Σ(jc × the content type's points), the same figure Goal Setting's
-// "Goal points" shows. Powers the Goal column on the Media House Leaders board,
+// month: Σ(jc × the content type's points), cut for approved leave — the same
+// goal the leaderboard and Management Performance score against (goalPointsSet:
+// before the cut). Powers the Goal column on the Media House Leaders board,
 // so it's readable by any workspace member (like the board itself) — no admin
 // gate. Editors with no goals that month simply don't appear. Defaults to the
 // current calendar month when no month is given.
 goalsRouter.get("/goals/totals", async (req, res, next) => {
   try {
-    const monthIn = req.query.month || new Date().toISOString().slice(0, 10);
-    const { rows: mrow } = await pool.query("select date_trunc('month', $1::date)::date m", [monthIn]);
-    const month = mrow[0].m;
+    const monthIn = req.query.month || istMonthStart(0);
+    const month = monthStart(monthIn);
+    if (!month) return res.status(400).json({ error: "That month couldn't be read." });
+    const scored = await scoreMonthAll(req.orgId, month);
     const { rows } = await pool.query(
-      `select g.editor_id as "editorId", coalesce(sum(g.jc * cf.points), 0)::float as "goalPoints"
+      `select g.editor_id as "editorId", coalesce(sum(g.jc * coalesce((to_jsonb(g)->>'points')::numeric, cf.points)), 0)::float as "goalPoints"
          from editor_goal g
          join task_content_format cf on cf.id = g.content_format_id
         where g.org_id = $1 and g.period_month = $2
         group by g.editor_id`,
       [req.orgId, month],
     );
-    res.json({ month, totals: rows });
+    const totals = rows.map((r) => {
+      const s = scored.get(r.editorId);
+      return { editorId: r.editorId, goalPoints: s ? Math.round(s.goalPoints * 10) / 10 : r.goalPoints, goalPointsSet: r.goalPoints };
+    });
+    res.json({ month, totals });
   } catch (err) {
     next(err);
   }
@@ -102,35 +226,40 @@ goalsRouter.get("/goals/totals", async (req, res, next) => {
 // every active content type with its JC (blank = no goal) and JPH (stored goal
 // jph, else pre-filled from the content type's time budget), plus the editor's
 // effective capacity.
-goalsRouter.get("/goals", requirePermission(GOAL_VIEW_KEYS, GOAL_VIEW), async (req, res, next) => {
+goalsRouter.get("/goals", goalView, async (req, res, next) => {
   const editorId = await scopedEditorId(req, req.query.editorId);
   const monthIn = req.query.month;
   if (!editorId || !monthIn) return res.status(400).json({ error: "editorId and month are required." });
   try {
-    const { rows: mrow } = await pool.query("select date_trunc('month', $1::date)::date m", [monthIn]);
-    const month = mrow[0].m;
+    const month = monthStart(monthIn);
+    if (!month) return res.status(400).json({ error: "That month couldn't be read." });
     const { rows: formats } = await pool.query(
-      "select id, name, icon, category, sort_order, points from task_content_format where org_id=$1 and active order by category, sort_order, name",
+      "select id, name, icon, category, sort_order, points, duration_days from task_content_format where org_id=$1 and active order by category, sort_order, name",
       [req.orgId],
     );
     const { rows: goals } = await pool.query(
-      "select content_format_id, jc, jph from editor_goal where org_id=$1 and editor_id=$2 and period_month=$3",
+      "select content_format_id, jc, jph, (to_jsonb(editor_goal)->>'points')::numeric as pts from editor_goal where org_id=$1 and editor_id=$2 and period_month=$3",
       [req.orgId, editorId, month],
     );
+    const cap = await effectiveCapacity(req.orgId, editorId, month);
     const goalBy = new Map(goals.map((g) => [g.content_format_id, g]));
     const rows = [];
     for (const f of formats) {
       const g = goalBy.get(f.id);
-      // Pre-fill JPH from the content type's time budget when no goal exists yet.
-      const budget = g ? null : await resolveBudgetHours(req.orgId, editorId, f.id);
+      // The type's time (Settings › Tasks & time) for this editor — what Set
+      // goals shows as hours per job; it pre-fills JPH when no goal exists yet.
+      // A project's days count as full work days.
+      const budget = isProject(f) ? projectHours(f, cap.hours_per_day) : await resolveBudgetHours(req.orgId, editorId, f.id);
       rows.push({
         contentFormatId: f.id, name: f.name, icon: f.icon, category: f.category,
-        points: Number(f.points),
+        // a goal already set keeps the points it was set with
+        points: g && g.pts != null ? Number(g.pts) : Number(f.points),
         jc: g ? Number(g.jc) : null,
-        jph: g ? Number(g.jph) : (budget != null ? Number(budget) : 0),
+        jph: g && !isProject(f) ? Number(g.jph) : (budget != null ? Number(budget) : 0),
+        budget: budget != null ? Number(budget) : null,
+        durationDays: isProject(f) ? Number(f.duration_days) : null,
       });
     }
-    const cap = await effectiveCapacity(req.orgId, editorId, month);
     const orgDefault = (await pool.query(
       "select working_days, hours_per_day from editor_capacity where org_id=$1 and editor_id is null and period_month=$2",
       [req.orgId, month],
@@ -145,6 +274,203 @@ goalsRouter.get("/goals", requirePermission(GOAL_VIEW_KEYS, GOAL_VIEW), async (r
       orgDefault: orgDefault && { workingDays: Number(orgDefault.working_days), hoursPerDay: Number(orgDefault.hours_per_day) },
       editorOverride: editorOverride && { workingDays: Number(editorOverride.working_days), hoursPerDay: Number(editorOverride.hours_per_day) },
       rows,
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// GET /goals/set-all?month= — Set goals for everyone at once: each active
+// person's GET /goals answer, from a handful of queries. (One request per
+// person ran ~14 queries each, most in a row, through a pool of 5 connections
+// to a remote database: with a full team the screen sat on Loading.)
+goalsRouter.get("/goals/set-all", requirePermission("edit_goals"), async (req, res, next) => {
+  const monthIn = req.query.month;
+  if (!monthIn) return res.status(400).json({ error: "month is required." });
+  try {
+    const month = monthStart(monthIn);
+    if (!month) return res.status(400).json({ error: "That month couldn't be read." });
+    const [eds, formats, goals, rules, caps, orgEff, last] = await Promise.all([
+      pool.query("select id from editor where org_id=$1 and active", [req.orgId]),
+      // the types tracked in goals (Settings › Tasks & time › Goal)
+      pool.query("select id, name, icon, category, sort_order, points, duration_days from task_content_format where org_id=$1 and active and coalesce((to_jsonb(task_content_format)->>'counts_in_goal')::boolean, true) order by category, sort_order, name", [req.orgId]),
+      pool.query("select editor_id, content_format_id, jc, jph, (to_jsonb(editor_goal)->>'points')::numeric as pts from editor_goal where org_id=$1 and period_month=$2", [req.orgId, month]),
+      pool.query("select content_format_id, editor_id, hours from task_time_rule where org_id=$1", [req.orgId]),
+      pool.query("select editor_id, working_days, hours_per_day from editor_capacity where org_id=$1 and period_month=$2", [req.orgId, month]),
+      // a person with no capacity of their own gets the org's (or the calendar's)
+      effectiveCapacity(req.orgId, NIL_ID, month),
+      // who had goals last month (POST /goals/copy)
+      pool.query("select distinct editor_id from editor_goal where org_id=$1 and period_month=$2", [req.orgId, prevMonthOf(month)]),
+    ]);
+    // the type's time for a person: theirs, else the org's (as resolveBudgetHours)
+    const rule = new Map(rules.rows.map((r) => [`${r.content_format_id}:${r.editor_id ?? ""}`, r.hours]));
+    const budgetOf = (editorId, formatId) => rule.get(`${formatId}:${editorId}`) ?? rule.get(`${formatId}:`) ?? null;
+    const goalBy = new Map(goals.rows.map((g) => [`${g.editor_id}:${g.content_format_id}`, g]));
+    const capOf = (r) => r && { workingDays: Number(r.working_days), hoursPerDay: Number(r.hours_per_day) };
+    const orgRow = caps.rows.find((r) => r.editor_id == null) ?? null;
+    const people = {};
+    for (const { id } of eds.rows) {
+      const own = caps.rows.find((r) => r.editor_id === id) ?? null;
+      const cap = own ? { ...own, source: "editor" } : orgEff;
+      people[id] = {
+        month,
+        capacity: { workingDays: Number(cap.working_days), hoursPerDay: Number(cap.hours_per_day), hours: capHours(cap), source: cap.source },
+        orgDefault: capOf(orgRow),
+        editorOverride: capOf(own),
+        rows: formats.rows.map((f) => {
+          const g = goalBy.get(`${id}:${f.id}`);
+          const budget = isProject(f) ? projectHours(f, cap.hours_per_day) : budgetOf(id, f.id);
+          return {
+            contentFormatId: f.id, name: f.name, icon: f.icon, category: f.category,
+            points: g && g.pts != null ? Number(g.pts) : Number(f.points),
+            jc: g ? Number(g.jc) : null,
+            jph: g && !isProject(f) ? Number(g.jph) : (budget != null ? Number(budget) : 0),
+            budget: budget != null ? Number(budget) : null,
+            durationDays: isProject(f) ? Number(f.duration_days) : null,
+          };
+        }),
+      };
+    }
+    // what the brands need of each type (Goals › Brand goals), for "15 to give out";
+    // copyFrom: who had goals last month, to start this one from (POST /goals/copy)
+    // — never yourself nor anyone above you, as the copy skips them (goalWriteError)
+    const [superHere, viewer, ranks] = await Promise.all([isSuperHere(req), taskViewer(req), editorRanks(req.orgId)]);
+    const copyFrom = last.rows.map((r) => r.editor_id)
+      .filter((id) => superHere || (id !== viewer.editorId && seesEditor(viewer, ranks, id)));
+    res.json({ month, people, brandNeed: await brandNeedByType(req.orgId, month), copyFrom });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// GET /goals/performance-all?month= — Team goals for everyone at once: each
+// person's GET /goals/performance rows. Only your own unless you oversee goals.
+goalsRouter.get("/goals/performance-all", goalView, async (req, res, next) => {
+  const monthIn = req.query.month;
+  if (!monthIn) return res.status(400).json({ error: "month is required." });
+  try {
+    const g0 = req.viaGrant;
+    const overseer = !g0?.goal_setting_access || g0.edit_goals || g0.discipline;
+    const self = overseer ? null : await scopedEditorId(req, null);
+    if (!overseer && !self) return res.json({ month: monthIn, people: {} });
+    const month = monthStart(monthIn);
+    if (!month) return res.status(400).json({ error: "That month couldn't be read." });
+    const one = self ? " and g.editor_id = $3" : "";
+    const P = self ? [req.orgId, month, self] : [req.orgId, month];
+    const [goals, actuals, scores, capOf] = await Promise.all([
+      pool.query(
+        `select g.editor_id, g.content_format_id, g.jc, g.jph, cf.name, cf.icon, cf.category, cf.sort_order, cf.duration_days,
+                coalesce((to_jsonb(g)->>'points')::numeric, cf.points) as points
+           from editor_goal g join task_content_format cf on cf.id = g.content_format_id
+          where g.org_id=$1 and g.period_month=$2${one}
+            and coalesce((to_jsonb(cf)->>'counts_in_goal')::boolean, true)
+          order by cf.category, cf.sort_order, cf.name`,
+        P,
+      ),
+      pool.query(
+        `select editor_id, content_format_id, count(*)::int actual
+           from task
+          where org_id=$1 and status='done' and content_format_id is not null
+            and completed_at >= ($2::date)::timestamp at time zone 'Asia/Kolkata' and completed_at < ($2::date + interval '1 month')::timestamp at time zone 'Asia/Kolkata'${self ? " and editor_id = $3" : ""}
+          group by editor_id, content_format_id`,
+        P,
+      ),
+      scoreMonthAll(req.orgId, String(month).slice(0, 10), self),
+      capacityLookup(req.orgId, month),
+    ]);
+    const actualBy = new Map(actuals.rows.map((a) => [`${a.editor_id}:${a.content_format_id}`, a.actual]));
+    const people = {};
+    for (const g of goals.rows) {
+      const scored = scores.get(g.editor_id);
+      const t = (scored?.types ?? []).find((x) => x.contentFormatId === g.content_format_id);
+      const goalJC = Number(g.jc), jph = jobHours(g, g.jph, capOf(g.editor_id).hours_per_day);
+      const actualJC = actualBy.get(`${g.editor_id}:${g.content_format_id}`) ?? 0;
+      (people[g.editor_id] ??= { rows: [] }).rows.push({
+        contentFormatId: g.content_format_id, name: g.name, icon: g.icon, category: g.category,
+        goalJC, actualJC, jph, points: Number(g.points),
+        goalHours: goalJC * jph, actualHours: actualJC * jph,
+        balance: goalJC * jph - actualJC * jph,
+        achievement: goalJC > 0 ? (actualJC / goalJC) * 100 : null,
+        goalAdjusted: t ? Math.round(t.goal * 10) / 10 : goalJC,
+        covered: scored?.coveredByType?.[g.content_format_id] ?? 0,
+      });
+    }
+    // the time off each goal: approved leave, and Other work (../goal-score.js rule 6)
+    for (const [id, p] of Object.entries(people)) {
+      const s = scores.get(id);
+      if (!s) continue;
+      p.leaveDays = s.leaveDays; p.otherHours = s.otherHours; p.otherWork = s.otherWork;
+      p.monthHours = Math.round(s.workingDays * s.hoursPerDay * 10) / 10;
+    }
+    res.json({ month, people });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// How a task would score for its person this month (the New task sheet's How
+// it scores panel): their goal and what's counted so far, whether its type is
+// in their goals, and the month's hours, so the app can show what it adds —
+// goal points for a goal type, or the time it takes off the goal when it's
+// Other work (../goal-score.js rule 6). Your own, or someone you may give work to.
+// Also each type in their goal and what it still needs (the sheet's type
+// chips: "3 to go"): jobs left after what's done and what's already on their
+// board, the most points still to win first.
+//   GET /goals/preview?editorId=&contentFormatId=
+goalsRouter.get("/goals/preview", async (req, res, next) => {
+  try {
+    const uuid = (v) => (z.string().uuid().safeParse(v).success ? v : null);
+    const mine = await callerEditorId(req);
+    const editorId = uuid(req.query.editorId) ?? mine;
+    if (!editorId) return res.json({ preview: null });
+    if (editorId !== mine) {
+      const [viewer, ranks, may] = await Promise.all([taskViewer(req), editorRanks(req.orgId), canAssignTasks(req)]);
+      if (!may || !seesEditor(viewer, ranks, editorId)) return res.status(403).json({ error: "You can only see the goals of people you give work to." });
+    }
+    const ist = new Date(Date.now() + 330 * 60_000);
+    const month = `${ist.getUTCFullYear()}-${String(ist.getUTCMonth() + 1).padStart(2, "0")}-01`;
+    const cf = uuid(req.query.contentFormatId);
+    const [scores, fmt] = await Promise.all([
+      scoreMonthAll(req.orgId, month, editorId),
+      cf ? pool.query("select name, points::float from task_content_format where id = $1 and org_id = $2", [cf, req.orgId]) : { rows: [] },
+    ]);
+    const s = scores.get(editorId);
+    const t = cf ? s?.types.find((x) => x.contentFormatId === cf) : null;
+    const goalTypes = (s?.types ?? []).filter((x) => x.goalJC > 0);
+    const ids = goalTypes.map((x) => x.contentFormatId);
+    const [kinds, open] = ids.length ? await Promise.all([
+      pool.query("select id, category from task_content_format where org_id = $1 and active and category is not null and id = any($2::uuid[])", [req.orgId, ids]),
+      pool.query(
+        `select content_format_id as id, count(*)::int as n from task
+          where org_id = $1 and editor_id = $2 and status <> 'done' and content_format_id = any($3::uuid[])
+          group by content_format_id`,
+        [req.orgId, editorId, ids],
+      ),
+    ]) : [{ rows: [] }, { rows: [] }];
+    const kindOf = new Map(kinds.rows.map((r) => [r.id, r.category]));
+    const openOf = new Map(open.rows.map((r) => [r.id, r.n]));
+    const goalNeeds = goalTypes
+      .filter((x) => kindOf.has(x.contentFormatId))
+      .map((x) => {
+        // the goal can be a part job once leave or Other work shrinks it: 4.6 to go is 5 jobs
+        const done = x.self + x.assigned;
+        const left = Math.max(0, Math.ceil(x.goal - done - 1e-9));
+        const onBoard = openOf.get(x.contentFormatId) ?? 0;
+        return {
+          contentFormatId: x.contentFormatId, name: x.name, icon: x.icon, category: kindOf.get(x.contentFormatId),
+          goal: Math.round(x.goal * 10) / 10, done, open: onBoard, need: Math.max(0, left - onBoard), points: x.points,
+        };
+      })
+      .sort((a, b) => b.need * b.points - a.need * a.points || b.need - a.need);
+    res.json({
+      preview: s ? {
+        goalPoints: Math.round(s.goalPoints * 10) / 10, reached: Math.round(s.reached * 10) / 10, pct: s.pct,
+        monthHours: Math.round(s.workingDays * s.hoursPerDay * 10) / 10, timeFactor: s.timeFactor, otherHours: s.otherHours, leaveDays: s.leaveDays,
+        inGoal: !!t, typeName: fmt.rows[0]?.name ?? null,
+        points: t ? t.points : fmt.rows[0]?.points ?? null,
+        typeGoal: t ? { goal: Math.round(t.goal * 10) / 10, done: t.done } : null,
+        goalTypes: goalNeeds,
+      } : null,
     });
   } catch (err) {
     next(err);
@@ -167,9 +493,17 @@ goalsRouter.put("/goals/capacity", requirePermission("edit_goals"), async (req, 
   const d = parsed.data;
   if (d.scope === "editor" && !d.editorId) return res.status(400).json({ error: "editorId is required for an editor override." });
   try {
-    const { rows: mrow } = await pool.query("select date_trunc('month', $1::date)::date m", [d.month]);
-    const month = mrow[0].m;
+    // The team's capacity comes from the work calendar: the Super Admin's call.
+    if (d.scope === "org" && !(await isSuperHere(req))) {
+      return res.status(403).json({ error: "Only a Super Admin can change the work calendar." });
+    }
+    const month = monthStart(d.month);
+    if (!month) return res.status(400).json({ error: "That month couldn't be read." });
     const editorId = d.scope === "editor" ? d.editorId : null;
+    if (editorId) {
+      const why = await goalWriteError(req, editorId, month, "goals");
+      if (why) return res.status(403).json({ error: why });
+    }
     // Upsert — the two scopes have separate partial unique indexes, so update-
     // else-insert keeps it simple across both.
     const upd = await pool.query(
@@ -183,6 +517,7 @@ goalsRouter.put("/goals/capacity", requirePermission("edit_goals"), async (req, 
         [req.orgId, editorId, month, d.workingDays, d.hoursPerDay],
       );
     }
+    clearCapacityCache(req.orgId);
     res.json({ ok: true });
   } catch (err) {
     next(err);
@@ -207,8 +542,27 @@ goalsRouter.put("/goals", requirePermission("edit_goals"), async (req, res, next
   if (!parsed.success) return res.status(400).json({ error: "Invalid goals." });
   const d = parsed.data;
   try {
-    const { rows: mrow } = await pool.query("select date_trunc('month', $1::date)::date m", [d.month]);
-    const month = mrow[0].m;
+    const month = monthStart(d.month);
+    if (!month) return res.status(400).json({ error: "That month couldn't be read." });
+    const why = await goalWriteError(req, d.editorId, month, "goals");
+    if (why) return res.status(403).json({ error: why });
+    // the person and every content type must be this organisation's
+    const { rowCount: mine } = await pool.query("select 1 from editor where id = $1 and org_id = $2", [d.editorId, req.orgId]);
+    if (!mine) return res.status(400).json({ error: "That team member wasn't found." });
+    const ids = [...new Set(d.goals.map((g) => g.contentFormatId))];
+    const { rows: known } = await pool.query("select id from task_content_format where id = any($1::uuid[]) and org_id = $2", [ids, req.orgId]);
+    if (known.length !== ids.length) return res.status(400).json({ error: "That content type wasn't found." });
+    // a heading takes no new goal (../type-tree.js)
+    const headings = await headingTypes(req.orgId, ids);
+    if (headings.size) {
+      const { rows: had } = await pool.query(
+        "select content_format_id, jc from editor_goal where org_id=$1 and editor_id=$2 and period_month=$3 and content_format_id = any($4::uuid[])",
+        [req.orgId, d.editorId, month, [...headings.keys()]],
+      );
+      const was = new Map(had.map((r) => [r.content_format_id, Number(r.jc)]));
+      const up = d.goals.find((g) => g.jc != null && headings.has(g.contentFormatId) && g.jc > (was.get(g.contentFormatId) ?? -1));
+      if (up) return res.status(400).json({ error: headingError(headings.get(up.contentFormatId)) });
+    }
     for (const g of d.goals) {
       if (g.jc == null) {
         await pool.query(
@@ -216,11 +570,19 @@ goalsRouter.put("/goals", requirePermission("edit_goals"), async (req, res, next
           [req.orgId, d.editorId, g.contentFormatId, month],
         );
       } else {
+        // A new goal takes the type's points today and keeps them; changing
+        // its count later doesn't change its points.
+        const withPoints = await hasColumn("editor_goal", "points");
         await pool.query(
-          `insert into editor_goal (org_id, editor_id, content_format_id, period_month, jc, jph)
-           values ($1,$2,$3,$4,$5,$6)
-           on conflict (org_id, editor_id, content_format_id, period_month)
-           do update set jc = excluded.jc, jph = excluded.jph, updated_at = now()`,
+          withPoints
+            ? `insert into editor_goal (org_id, editor_id, content_format_id, period_month, jc, jph, points)
+               values ($1,$2,$3,$4,$5,$6, (select points from task_content_format where id = $3))
+               on conflict (org_id, editor_id, content_format_id, period_month)
+               do update set jc = excluded.jc, jph = excluded.jph, points = coalesce(editor_goal.points, excluded.points), updated_at = now()`
+            : `insert into editor_goal (org_id, editor_id, content_format_id, period_month, jc, jph)
+               values ($1,$2,$3,$4,$5,$6)
+               on conflict (org_id, editor_id, content_format_id, period_month)
+               do update set jc = excluded.jc, jph = excluded.jph, updated_at = now()`,
           [req.orgId, d.editorId, g.contentFormatId, month, g.jc, g.jph],
         );
       }
@@ -231,18 +593,61 @@ goalsRouter.put("/goals", requirePermission("edit_goals"), async (req, res, next
   }
 });
 
+// POST /goals/copy { month } — start a month from the one before: everyone
+// with no goals in it yet gets last month's (the same job counts), to change in
+// Set goals. Left as they are: anyone who already has goals this month, anyone
+// exempt from task score, and anyone whose goals the caller can't set (your own,
+// someone above you). A type no longer tracked in goals, or that's only a heading
+// now (../type-tree.js), isn't copied; each goal takes its type's points today, as
+// a new goal does in PUT /goals.
+goalsRouter.post("/goals/copy", requirePermission("edit_goals"), async (req, res, next) => {
+  const month = monthStart(req.body?.month);
+  if (!month) return res.status(400).json({ error: "Say which month to copy into." });
+  try {
+    if (month < istMonthStart(0)) return res.status(403).json({ error: "That month is over, so its goals are locked." });
+    const scored = (await hasColumn("editor", "in_task_score")) ? " and coalesce(e.in_task_score, true)" : "";
+    const { rows: who } = await pool.query(
+      `select e.id, e.name from editor e
+        where e.org_id = $1 and e.active${scored}
+          and exists (select 1 from editor_goal g where g.org_id = $1 and g.editor_id = e.id and g.period_month = $2)
+          and not exists (select 1 from editor_goal g where g.org_id = $1 and g.editor_id = e.id and g.period_month = $3)
+        order by e.name`,
+      [req.orgId, prevMonthOf(month), month],
+    );
+    const withPoints = await hasColumn("editor_goal", "points");
+    const notHeading = await notHeadingSql("cf");
+    const copied = [];
+    for (const e of who) {
+      if (await goalWriteError(req, e.id, month, "goals")) continue;
+      const { rowCount } = await pool.query(
+        `insert into editor_goal (org_id, editor_id, content_format_id, period_month, jc, jph${withPoints ? ", points" : ""})
+         select g.org_id, g.editor_id, g.content_format_id, $3::date, g.jc, g.jph${withPoints ? ", cf.points" : ""}
+           from editor_goal g join task_content_format cf on cf.id = g.content_format_id
+          where g.org_id = $1 and g.editor_id = $2 and g.period_month = $4::date
+            and cf.active and coalesce((to_jsonb(cf)->>'counts_in_goal')::boolean, true)${notHeading}
+         on conflict (org_id, editor_id, content_format_id, period_month) do nothing`,
+        [req.orgId, e.id, month, prevMonthOf(month)],
+      );
+      if (rowCount) copied.push(e.name);
+    }
+    res.json({ ok: true, copied: copied.length, people: copied });
+  } catch (err) {
+    next(err);
+  }
+});
+
 // GET /goals/performance?editorId=&month= — read-only monthly performance:
 // Goal JC vs Actual JC (completed tasks of that content type in the month),
 // with Goal/Actual hours from the SAME stored jph, balance and achievement %.
-goalsRouter.get("/goals/performance", requirePermission(GOAL_VIEW_KEYS, GOAL_VIEW), async (req, res, next) => {
+goalsRouter.get("/goals/performance", goalView, async (req, res, next) => {
   const editorId = await scopedEditorId(req, req.query.editorId);
   const monthIn = req.query.month;
   if (!editorId || !monthIn) return res.status(400).json({ error: "editorId and month are required." });
   try {
-    const { rows: mrow } = await pool.query("select date_trunc('month', $1::date)::date m", [monthIn]);
-    const month = mrow[0].m;
+    const month = monthStart(monthIn);
+    if (!month) return res.status(400).json({ error: "That month couldn't be read." });
     const { rows: goals } = await pool.query(
-      `select g.content_format_id, g.jc, g.jph, cf.name, cf.icon, cf.category, cf.points
+      `select g.content_format_id, g.jc, g.jph, cf.name, cf.icon, cf.category, cf.duration_days, coalesce((to_jsonb(g)->>'points')::numeric, cf.points) as points
          from editor_goal g join task_content_format cf on cf.id = g.content_format_id
         where g.org_id=$1 and g.editor_id=$2 and g.period_month=$3
         order by cf.category, cf.sort_order, cf.name`,
@@ -254,15 +659,19 @@ goalsRouter.get("/goals/performance", requirePermission(GOAL_VIEW_KEYS, GOAL_VIE
       `select content_format_id, count(*)::int actual
          from task
         where org_id=$1 and editor_id=$2 and status='done' and content_format_id is not null
-          and completed_at >= $3 and completed_at < ($3::date + interval '1 month')
+          and completed_at >= ($3::date)::timestamp at time zone 'Asia/Kolkata' and completed_at < ($3::date + interval '1 month')::timestamp at time zone 'Asia/Kolkata'
         group by content_format_id`,
       [req.orgId, editorId, month],
     );
     const actualBy = new Map(actuals.map((a) => [a.content_format_id, a.actual]));
+    const scored = (await scoreMonthAll(req.orgId, String(month).slice(0, 10), editorId)).get(editorId);
+    const typed = new Map((scored?.types ?? []).map((t) => [t.contentFormatId, t]));
+    const hoursPerDay = (await effectiveCapacity(req.orgId, editorId, month)).hours_per_day;
     const rows = goals.map((g) => {
       const goalJC = Number(g.jc);
-      const jph = Number(g.jph);
+      const jph = jobHours(g, g.jph, hoursPerDay);
       const actualJC = actualBy.get(g.content_format_id) ?? 0;
+      const t = typed.get(g.content_format_id);
       const goalHours = goalJC * jph;
       const actualHours = actualJC * jph;
       return {
@@ -271,14 +680,20 @@ goalsRouter.get("/goals/performance", requirePermission(GOAL_VIEW_KEYS, GOAL_VIE
         goalHours, actualHours,
         balance: goalHours - actualHours,
         achievement: goalJC > 0 ? (actualJC / goalJC) * 100 : null,
+        // the goal after approved leave, and jobs taken over from someone
+        goalAdjusted: t ? Math.round(t.goal * 10) / 10 : goalJC,
+        covered: scored?.coveredByType?.[g.content_format_id] ?? 0,
       };
     });
-    // Stored Admin Discipline criterion ratings for this editor+month.
-    const disc = (await pool.query(
-      `select ${RATINGS_SELECT}, note from editor_discipline_points where org_id=$1 and editor_id=$2 and period_month=$3`,
-      [req.orgId, editorId, month],
-    )).rows[0];
-    res.json({ month, rows, ratings: ratingsOf(disc), note: disc?.note ?? null });
+    // No Discipline stars here: these are the Manager's, and a Team Lead or an
+    // Asst. Manager who views goals mustn't see them (GET /goals/discipline
+    // gives each rater what their rank may see).
+    res.json({
+      month, rows,
+      leaveDays: scored?.leaveDays ?? 0, workingDays: scored?.workingDays ?? 0,
+      coveredJobs: scored?.coveredJobs ?? 0, coveredPoints: scored?.coveredPoints ?? 0,
+      scorePct: scored?.pct == null ? null : Math.round(scored.pct * 10) / 10,
+    });
   } catch (err) {
     next(err);
   }
@@ -286,7 +701,7 @@ goalsRouter.get("/goals/performance", requirePermission(GOAL_VIEW_KEYS, GOAL_VIE
 
 // GET /goals/months — the period_months that actually have goal data, newest
 // first, so the export/performance picker only offers real periods.
-goalsRouter.get("/goals/months", requirePermission(GOAL_VIEW_KEYS, GOAL_VIEW), async (req, res, next) => {
+goalsRouter.get("/goals/months", goalView, async (req, res, next) => {
   try {
     // Self-scoped for a goal_setting_access-only grantee: only the months THEY
     // have goals in — never a hint of which other editors have data. Admins and
@@ -314,13 +729,13 @@ goalsRouter.get("/goals/export", requireAdmin, async (req, res, next) => {
   const monthIn = req.query.month;
   if (!monthIn) return res.status(400).json({ error: "month is required." });
   try {
-    const { rows: mrow } = await pool.query("select date_trunc('month', ($1||'-01')::date)::date m", [String(monthIn).slice(0, 7)]);
-    const month = mrow[0].m;
+    const month = monthStart(monthIn);
+    if (!month) return res.status(400).json({ error: "That month couldn't be read." });
     const monthStr = String(monthIn).slice(0, 7);
 
     const { rows: goals } = await pool.query(
       `select g.editor_id, e.name editor_name, g.content_format_id, cf.name cf_name,
-              cf.category, cf.sort_order, g.jc, g.jph
+              cf.category, cf.sort_order, cf.duration_days, g.jc, g.jph
          from editor_goal g
          join editor e on e.id = g.editor_id
          join task_content_format cf on cf.id = g.content_format_id
@@ -332,7 +747,7 @@ goalsRouter.get("/goals/export", requireAdmin, async (req, res, next) => {
       `select editor_id, content_format_id, count(*)::int actual
          from task
         where org_id=$1 and status='done' and content_format_id is not null
-          and completed_at >= $2 and completed_at < ($2::date + interval '1 month')
+          and completed_at >= ($2::date)::timestamp at time zone 'Asia/Kolkata' and completed_at < ($2::date + interval '1 month')::timestamp at time zone 'Asia/Kolkata'
         group by editor_id, content_format_id`,
       [req.orgId, month],
     );
@@ -349,9 +764,12 @@ goalsRouter.get("/goals/export", requireAdmin, async (req, res, next) => {
       if (!seenCt.has(g.content_format_id)) { seenCt.add(g.content_format_id); ctypes.push({ id: g.content_format_id, name: g.cf_name }); }
     }
     const goalBy = new Map(goals.map((g) => [`${g.editor_id}:${g.content_format_id}`, g]));
+    // hours per job, with a project's days as full work days
+    const capOf = await capacityLookup(req.orgId, month);
+    const jphOf = (g) => jobHours(g, g.jph, capOf(g.editor_id).hours_per_day);
 
     const wb = new ExcelJS.Workbook();
-    wb.creator = "Pulse";
+    wb.creator = "Echo";
 
     // --- Sheet 1: Goal Setting (wide, one row per editor) ---
     const s1 = wb.addWorksheet("Goal Setting");
@@ -360,15 +778,15 @@ goalsRouter.get("/goals/export", requireAdmin, async (req, res, next) => {
     s1.addRow(s1head);
     for (const ed of editors) {
       const own = goals.filter((g) => g.editor_id === ed.id);
-      const planned = own.reduce((s, g) => s + Number(g.jc) * Number(g.jph), 0);
-      const cap = await effectiveCapacity(req.orgId, ed.id, month);
+      const planned = own.reduce((s, g) => s + Number(g.jc) * jphOf(g), 0);
+      const cap = capOf(ed.id);
       const capH = capHours(cap);
       const util = capH > 0 ? (planned / capH) * 100 : 0;
       const st = statusFor(util);
       const row = [ed.name, round1(capH), round1(planned), round1(capH - planned), round1(util), st.label];
       for (const ct of ctypes) {
         const g = goalBy.get(`${ed.id}:${ct.id}`);
-        row.push(g ? Number(g.jc) : null, g ? Number(g.jph) : null);
+        row.push(g ? Number(g.jc) : null, g ? jphOf(g) : null);
       }
       const added = s1.addRow(row);
       added.getCell(6).fill = { type: "pattern", pattern: "solid", fgColor: { argb: st.fill } };
@@ -378,7 +796,7 @@ goalsRouter.get("/goals/export", requireAdmin, async (req, res, next) => {
     const s2 = wb.addWorksheet("Performance");
     s2.addRow(["Editor Name", "Content Type", "Goal JC", "Actual JC", "Goal Hours", "Actual Hours", "Balance", "Achievement %"]);
     for (const g of goals) {
-      const goalJC = Number(g.jc), jph = Number(g.jph);
+      const goalJC = Number(g.jc), jph = jphOf(g);
       const actualJC = actualBy.get(`${g.editor_id}:${g.content_format_id}`) ?? 0;
       const goalHours = goalJC * jph, actualHours = actualJC * jph;
       s2.addRow([
@@ -402,57 +820,76 @@ goalsRouter.get("/goals/export", requireAdmin, async (req, res, next) => {
   }
 });
 
+// Discipline is rated by the Manager (and anyone with the discipline permission),
+// the Asst. Manager and the Team Leads, each as their position's part
+// (../discipline.js). req.rater = { editorId, role }.
+async function disciplineRater(req, res, next) {
+  try {
+    const grant = await new Promise((resolve, reject) => {
+      requirePermission("discipline")(req, { status: () => ({ json: () => resolve(false) }) }, (err) => (err ? reject(err) : resolve(true)));
+    });
+    const rater = await raterOf(req, grant);
+    if (!rater.role) return res.status(403).json({ error: "Discipline is rated by the Manager, the Asst. Manager and the Team Leads." });
+    req.rater = rater;
+    next();
+  } catch (err) {
+    next(err);
+  }
+}
+
 // GET /goals/discipline?month= — admin bulk view: one entry per active editor
 // with the raw per-type goal/actual/points data (frontend computes Total/Earned/
 // Overall via the shared goalBreakdown), plus the stored Discipline Points/note.
-goalsRouter.get("/goals/discipline", requirePermission("discipline"), async (req, res, next) => {
+// Each person also brings their stars by role (byRole), and the caller's own
+// (ratings: what they edit); with the shares of the 20% and the caller's role.
+// byRole holds only the roles the caller sees (sees): their own and those below
+// it, so a Team Lead never gets the Manager's or an Asst. Manager's stars, nor
+// their note; their own role is just their own stars.
+goalsRouter.get("/goals/discipline", disciplineRater, async (req, res, next) => {
   const monthIn = req.query.month;
   if (!monthIn) return res.status(400).json({ error: "month is required." });
   try {
-    const { rows: mrow } = await pool.query("select date_trunc('month', $1::date)::date m", [monthIn]);
-    const month = mrow[0].m;
-    const { rows: editors } = await pool.query(
-      "select id, name from editor where org_id=$1 and active order by name", [req.orgId],
-    );
-    const { rows: goals } = await pool.query(
-      `select g.editor_id, g.content_format_id, g.jc, cf.points
-         from editor_goal g join task_content_format cf on cf.id = g.content_format_id
-        where g.org_id=$1 and g.period_month=$2`,
-      [req.orgId, month],
-    );
-    const { rows: actuals } = await pool.query(
-      `select editor_id, content_format_id, count(*)::int actual
-         from task
-        where org_id=$1 and status='done' and content_format_id is not null
-          and completed_at >= $2 and completed_at < ($2::date + interval '1 month')
-        group by editor_id, content_format_id`,
-      [req.orgId, month],
-    );
-    const { rows: disc } = await pool.query(
-      `select editor_id, ${RATINGS_SELECT}, note, updated_at from editor_discipline_points where org_id=$1 and period_month=$2`,
-      [req.orgId, month],
-    );
-    const actualBy = new Map(actuals.map((a) => [`${a.editor_id}:${a.content_format_id}`, a.actual]));
+    const month = monthStart(monthIn);
+    if (!month) return res.status(400).json({ error: "That month couldn't be read." });
+    // Each person's month, scored by the one rule (goal-score.js): goals cut for
+    // approved leave, each type up to 150%, covered work on top; their ratings;
+    // and the attendance points lost this month (late, absent), which come off
+    // discipline. All read together.
+    const { role, editorId: me } = req.rater;
+    const [{ rows: editors }, scores, { rows: disc }, penalties, byEditor, shares, viewer, ranks, superHere] = await Promise.all([
+      pool.query("select id, name from editor where org_id=$1 and active order by name", [req.orgId]),
+      scoreMonthAll(req.orgId, String(month).slice(0, 10)),
+      pool.query(
+        `select editor_id, ${RATINGS_SELECT}, note, updated_at from editor_discipline_points where org_id=$1 and period_month=$2`,
+        [req.orgId, month],
+      ),
+      monthPenalties(req.orgId, String(month).slice(0, 7)),
+      disciplineByEditor(req.orgId, month),
+      disciplineShares(req.orgId),
+      taskViewer(req), editorRanks(req.orgId), isSuperHere(req),
+    ]);
     const discBy = new Map(disc.map((d) => [d.editor_id, d]));
-    const goalsByEd = new Map();
-    for (const g of goals) {
-      if (!goalsByEd.has(g.editor_id)) goalsByEd.set(g.editor_id, []);
-      goalsByEd.get(g.editor_id).push({
-        goalJC: Number(g.jc),
-        actualJC: actualBy.get(`${g.editor_id}:${g.content_format_id}`) ?? 0,
-        points: Number(g.points),
-      });
-    }
+    const none = { punctuality: null, quality_responsibility: null, behaviour: null, attendance_availability: null, deadline_adherence: null };
+    const rowsOf = (s) => (s?.types ?? []).map((t) => ({ goalJC: t.goal, actualJC: t.done, countedJC: t.counted, points: t.points }));
+    const sees = rolesSeenBy(role);
     res.json({
-      month,
-      editors: editors.map((e) => {
+      month, shares, myRole: role, sees,
+      // you don't rate yourself, nor anyone above you (a Team Lead rates the team, not the Manager)
+      editors: editors.filter((e) => e.id !== me && (superHere || seesEditor(viewer, ranks, e.id))).map((e) => {
         const d = discBy.get(e.id);
+        const b = byEditor.get(e.id);
+        const mine = role === "manager" ? null : b?.raters.find((x) => x.role === role && x.userId === req.user.sub) ?? null;
+        const own = role === "manager" ? ratingsOf(d) : mine?.ratings ?? none;
         return {
           editorId: e.id, editorName: e.name,
-          rows: goalsByEd.get(e.id) ?? [],
-          ratings: ratingsOf(d),
-          note: d?.note ?? null,
-          updatedAt: d?.updated_at ?? null,
+          rows: rowsOf(scores.get(e.id)),
+          coveredPoints: scores.get(e.id)?.coveredPoints ?? 0,
+          leaveDays: scores.get(e.id)?.leaveDays ?? 0,
+          ratings: own,
+          byRole: Object.fromEntries(sees.map((k) => [k, role !== "manager" && k === role ? mine?.ratings ?? null : b?.[k] ?? null])),
+          attendancePenalty: penalties.get(e.id) ?? 0,
+          note: role === "manager" ? d?.note ?? null : mine?.note ?? null,
+          updatedAt: role === "manager" ? d?.updated_at ?? null : mine?.updatedAt ?? null,
         };
       }),
     });
@@ -477,19 +914,45 @@ const DisciplineSchema = z.object({
 // PUT /goals/discipline — admin bulk save of the 5 criterion ratings per editor.
 // Each rating is bounded [0,5] (zod). Discipline Points themselves are derived
 // live from these ratings + the editor's live ceiling, never stored.
-goalsRouter.put("/goals/discipline", requirePermission("discipline"), async (req, res, next) => {
+// The Manager's stars are editor_discipline_points; an Asst. Manager's or a Team
+// Lead's go in editor_discipline_review, as theirs (../discipline.js).
+goalsRouter.put("/goals/discipline", disciplineRater, async (req, res, next) => {
   const parsed = DisciplineSchema.safeParse(req.body);
   if (!parsed.success) return res.status(400).json({ error: "Ratings must each be 0–5." });
   const d = parsed.data;
   try {
-    const { rows: mrow } = await pool.query("select date_trunc('month', $1::date)::date m", [d.month]);
-    const month = mrow[0].m;
+    const month = monthStart(d.month);
+    if (!month) return res.status(400).json({ error: "That month couldn't be read." });
+    for (const e of d.entries) {
+      const why = await goalWriteError(req, e.editorId, month, "rating");
+      if (why) return res.status(403).json({ error: why });
+    }
+    const { role } = req.rater;
+    if (role !== "manager" && !(await reviewsReady())) {
+      return res.status(409).json({ error: "Team Lead ratings need a database update first — ask whoever runs the database to apply 20261113120000_discipline_review." });
+    }
     for (const e of d.entries) {
       const vals = CRITERIA.map((k) => e.ratings[k] ?? null);
+      if (role !== "manager") {
+        await pool.query(
+          `insert into editor_discipline_review
+             (org_id, editor_id, period_month, rater_role, rater_user_id, ${RATINGS_SELECT}, note, updated_at)
+           values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11, now())
+           on conflict (org_id, editor_id, period_month, rater_role, rater_user_id) do update set
+             punctuality = excluded.punctuality,
+             quality_responsibility = excluded.quality_responsibility,
+             behaviour = excluded.behaviour,
+             attendance_availability = excluded.attendance_availability,
+             deadline_adherence = excluded.deadline_adherence,
+             note = excluded.note, updated_at = now()`,
+          [req.orgId, e.editorId, month, role, req.user.sub, ...vals, e.note ?? null],
+        );
+        continue;
+      }
       await pool.query(
         `insert into editor_discipline_points
            (org_id, editor_id, period_month, ${RATINGS_SELECT}, note, updated_by, updated_at)
-         values ($1,$2,$3,$4,$5,$6,$7,$8,$9, now())
+         values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10, now())
          on conflict (org_id, editor_id, period_month) do update set
            punctuality = excluded.punctuality,
            quality_responsibility = excluded.quality_responsibility,
@@ -515,29 +978,18 @@ goalsRouter.get("/goals/my-breakdown", requireEditor, async (req, res, next) => 
   try {
     const editorId = (await pool.query("select editor_id from app_user where id=$1", [req.user.sub])).rows[0]?.editor_id;
     if (!editorId) return res.json({ month: monthIn, rows: [], discipline: null, note: null, unlinked: true });
-    const { rows: mrow } = await pool.query("select date_trunc('month', $1::date)::date m", [monthIn]);
-    const month = mrow[0].m;
-    const { rows: goals } = await pool.query(
-      `select g.content_format_id, g.jc, cf.points
-         from editor_goal g join task_content_format cf on cf.id = g.content_format_id
-        where g.org_id=$1 and g.editor_id=$2 and g.period_month=$3`,
-      [req.orgId, editorId, month],
-    );
-    const { rows: actuals } = await pool.query(
-      `select content_format_id, count(*)::int actual from task
-        where org_id=$1 and editor_id=$2 and status='done' and content_format_id is not null
-          and completed_at >= $3 and completed_at < ($3::date + interval '1 month')
-        group by content_format_id`,
-      [req.orgId, editorId, month],
-    );
-    const actualBy = new Map(actuals.map((a) => [a.content_format_id, a.actual]));
+    const month = monthStart(monthIn);
+    if (!month) return res.status(400).json({ error: "That month couldn't be read." });
+    const scored = (await scoreMonthAll(req.orgId, String(month).slice(0, 10), editorId)).get(editorId);
     const disc = (await pool.query(
       `select ${RATINGS_SELECT}, note from editor_discipline_points where org_id=$1 and editor_id=$2 and period_month=$3`,
       [req.orgId, editorId, month],
     )).rows[0];
     res.json({
       month,
-      rows: goals.map((g) => ({ goalJC: Number(g.jc), actualJC: actualBy.get(g.content_format_id) ?? 0, points: Number(g.points) })),
+      rows: (scored?.types ?? []).map((t) => ({ goalJC: t.goal, actualJC: t.done, countedJC: t.counted, points: t.points })),
+      coveredPoints: scored?.coveredPoints ?? 0,
+      leaveDays: scored?.leaveDays ?? 0,
       ratings: ratingsOf(disc),
       note: disc?.note ?? null,
     });

@@ -1,6 +1,6 @@
-# Pulse — Product Requirements Document
+# Echo — Product Requirements Document
 
-**Product:** Pulse — Content Analytics & Operations Platform
+**Product:** Echo — Content Analytics & Operations Platform
 **Organization:** Media House (DF Foods)
 **Document:** PRD v2.0 — Current build
 **Status:** Built & running
@@ -37,7 +37,7 @@
 ## 1. Overview & Goals
 
 Media House runs several health-and-food brands (Doctor Farmer, My Health School,
-My Health Summit, Fofitos) across Instagram, Facebook and YouTube. Pulse replaces
+My Health Summit, Fofitos) across Instagram, Facebook and YouTube. Echo replaces
 the scattered spreadsheets and group chats with a single system that covers the
 whole content lifecycle — from planning a post, through editing, to measuring how
 it performed and who did the work.
@@ -57,7 +57,7 @@ it performed and who did the work.
 ### Non-goals (this version)
 - Automatic metric import from platform APIs — planned; metrics are entered manually for now.
 - Platform-specific metric sets (watch-time, subscribers) — a shared metric set is used across platforms.
-- Public content publishing/scheduling — Pulse tracks content, it does not post it.
+- Public content publishing/scheduling — Echo tracks content, it does not post it.
 
 ---
 
@@ -81,7 +81,7 @@ role. Editors (the people who edit content) are a separate concept from login us
 
 ## 3. Core Concepts & Data Model
 
-Pulse is built on a small set of entities. Understanding these makes every feature obvious.
+Echo is built on a small set of entities. Understanding these makes every feature obvious.
 
 | Entity | What it is | Scope | Key fields |
 |---|---|---|---|
@@ -98,7 +98,7 @@ Pulse is built on a small set of entities. Understanding these makes every featu
 
 > **The central idea:** Content is a grid of **Channel × Platform**. Each filled
 > cell is an **Account** — the thing that has posts and analytics. This is what
-> makes Pulse scale to any number of brands and networks.
+> makes Echo scale to any number of brands and networks.
 
 ---
 
@@ -328,6 +328,6 @@ the API.
 
 ---
 
-*Pulse — Product Requirements Document v2.0. Prepared for Media House (DF Foods).
+*Echo — Product Requirements Document v2.0. Prepared for Media House (DF Foods).
 Reflects the current running build across dashboard, metrics, content, tasks, and
 leaderboard. Sections marked Pending / roadmap are not yet shipped.*

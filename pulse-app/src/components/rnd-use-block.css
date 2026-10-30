@@ -1,0 +1,14 @@
+/* "What it becomes" on approved R&D work's window (rnd-use-block.tsx), in the
+   task window's own colours (--tb-*, pages/tasks-board.css). */
+.rnd-picks{display:flex;flex-wrap:wrap;gap:8px}
+.rnd-pick{height:34px;padding:0 14px;border:1.5px solid var(--tb-line);border-radius:10px;background:var(--tb-solid);color:var(--tb-text);
+  font:inherit;font-size:12.5px;font-weight:700;cursor:pointer}
+.rnd-pick:hover:not(:disabled){border-color:var(--tb-ac)}
+.rnd-pick.on{border-color:var(--tb-ac);background:var(--tb-acSoft);color:var(--tb-acText)}
+.rnd-pick.quiet{color:var(--tb-text3)}
+.rnd-pick.quiet.on{border-color:var(--tb-text3);background:var(--tb-sunk);color:var(--tb-text2)}
+.rnd-pick:disabled{opacity:.5;cursor:default}
+.rnd-go{display:flex;align-items:center;justify-content:flex-end;gap:8px;flex-wrap:wrap}
+.rnd-why{margin-right:auto;font-size:12px;color:var(--tb-text3)}
+.rnd-by{color:var(--tb-text3)}
+.rnd-none{color:var(--tb-text3)}

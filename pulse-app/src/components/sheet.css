@@ -1,0 +1,79 @@
+/* No floating cards. Pages sit on the soft accent-tinted background (index.css)
+   and their panels lie flat on it: a thin line, no drop shadow, no lift on
+   hover. A page's main list or table runs edge to edge, touching the sidebar,
+   as Team Chat does. (Banners — the Home hero, the Leaderboard's top editor —
+   keep their own look.) */
+:root{--sheet-panel:rgba(255,255,255,.86)}
+html[data-theme="dark"]{--sheet-panel:oklch(0.2 0.04 var(--acH) / .72)}
+
+/* the top bar lets the accent tint show through, as in the design */
+.app .topbar{background:color-mix(in srgb,var(--bg) 45%,transparent);backdrop-filter:blur(16px) saturate(160%);-webkit-backdrop-filter:blur(16px) saturate(160%)}
+/* the frame's edges: a soft accent-tinted shadow (5%) under the top bar and
+   along the sidebar, so the frame doesn't sit flat on the page. The sidebar
+   lies above the top bar, so its shadow runs on past the corner. */
+.app .topbar{box-shadow:0 4px 18px oklch(0.3 0.08 var(--acH) / .05)}
+@media (min-width:769px){.app>aside.sb2{z-index:25;box-shadow:4px 0 18px oklch(0.3 0.08 var(--acH) / .05)}}
+.app .content{--content-x:26px;max-width:none}
+@media (max-width:768px){.app .content{--content-x:16px}}
+
+/* panels: flat on the sheet */
+.app .content :is(
+  .card,.an-card,.an-kpis,.an-pod,.an-topcard,
+  .mt-card,.mt-person,.mt-lcard,
+  .gl-card,.gl-kpis,
+  .md-card,.md-stat,.md-tile,
+  .tb-bar,.task-col,.task-card,.tb-list,
+  .lb-tabs,.lb-row
+){box-shadow:none}
+.app .content :is(.card,.an-card,.an-kpis,.mt-card,.gl-card,.gl-kpis,.md-card,.tb-bar,.lb-tabs){background-color:var(--sheet-panel)}
+.app .content :is(.an-topcard,.an-pod,.mt-person,.mt-lcard,.gl-goal,.lb-row,.task-card):hover{box-shadow:none}
+/* a picked person keeps its ring */
+.app .content :is(.mt-person,.mt-lcard).on{box-shadow:0 0 0 3px var(--mt-acGlow)}
+
+/* the main list or table of a page runs edge to edge */
+.app .content>.screen>.card:not(.pad),
+.app .content .act-feed .act-card{
+  margin-inline:calc(-1 * var(--content-x));border-radius:0;border-left-width:0;border-right-width:0
+}
+/* Task Board: its toolbar becomes a band joined to the top bar */
+.app .content:has(> .screen.tb){padding-top:0}
+.app .content>.screen.tb>.tb-bar{margin:0 calc(-1 * var(--content-x)) 16px;border-radius:0;border-width:0 0 1px;padding-inline:var(--content-x)}
+/* the Leaderboard's pinned column titles sit on the sheet too */
+.app .content .lb-table-wrap .lb-head{background:var(--glass-solid)}
+
+/* the accent colour picker in the top bar */
+.accent-pick{position:relative}
+.accent-dot{display:inline-block;flex:none;width:16px;height:16px;border-radius:50%;box-shadow:inset 0 0 0 2px rgba(255,255,255,.55),0 0 0 1px rgba(0,0,0,.08)}
+.accent-pop{position:absolute;top:calc(100% + 8px);right:0;z-index:60;display:flex;flex-direction:column;gap:6px;width:268px;padding:12px;
+  border:1px solid var(--border);border-radius:14px;background:var(--glass-solid);box-shadow:0 18px 44px -12px rgba(0,0,0,.35)}
+.accent-pop>b{padding:4px 8px 6px;font-size:11px;font-weight:800;letter-spacing:.06em;text-transform:uppercase;color:var(--muted)}
+.accent-pop>b{padding:0 2px}
+.accent-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:8px 6px}
+.accent-grid button{display:flex;flex-direction:column;align-items:center;gap:5px;padding:4px 0;border:0;border-radius:10px;background:transparent;color:var(--muted);
+  font:600 11px 'Plus Jakarta Sans',sans-serif;cursor:pointer}
+.accent-grid button:hover{color:var(--text)}
+.accent-grid button.on{color:var(--accent-ink)}
+.accent-tile{width:40px;height:40px;border-radius:12px;display:grid;place-items:center;color:#fff;box-shadow:inset 0 0 0 1px rgba(255,255,255,.25)}
+.accent-grid button.on .accent-tile{box-shadow:0 0 0 2px var(--glass-solid),0 0 0 4px var(--accent)}
+.accent-grid button:focus-visible{outline:2px solid var(--accent);outline-offset:1px}
+.accent-note{padding:2px 2px 0;font-size:11px;line-height:1.4;color:var(--faint)}
+/* light / dark, at the top of the same menu */
+.theme-seg{display:grid;grid-template-columns:1fr 1fr;gap:3px;padding:3px;margin-bottom:6px;border:1px solid var(--border);border-radius:11px;background:var(--panel2)}
+.theme-seg button{display:inline-flex;align-items:center;justify-content:center;gap:6px;height:32px;border:0;border-radius:8px;background:transparent;
+  color:var(--muted);font:700 12.5px 'Plus Jakarta Sans',sans-serif;cursor:pointer}
+.theme-seg button.on{background:var(--glass-solid,#fff);color:var(--text);box-shadow:0 1px 2px rgba(30,20,80,.1)}
+/* the top bar's Leave (opens the leave side panel) */
+.top-leave{display:inline-flex;align-items:center;gap:6px;font-weight:700;white-space:nowrap}
+/* phones: the choice lives in the More menu instead of the top bar */
+.sb2-accent{display:none}
+@media (max-width:768px){
+  /* phones: the top bar keeps this button too — light / dark is only here
+     (the colours are also in the More menu) */
+  .top-leave .top-leave-l{display:none}
+  .top-leave{padding:0 10px}
+  .sb2-accent{display:flex;flex-direction:column;gap:8px;padding:10px 16px;border-top:1px solid var(--sb-line);font-size:12px;font-weight:500;color:var(--sb-text3)}
+  .sb2-accent>div{display:grid;grid-template-columns:repeat(8,1fr);gap:4px}
+  .sb2-accent button{aspect-ratio:1;display:grid;place-items:center;padding:0;border:0;border-radius:9px;background:transparent;cursor:pointer}
+  .sb2-accent .accent-tile{width:100%;height:100%;max-width:28px;max-height:28px;border-radius:8px}
+  .sb2-accent button.on .accent-tile{box-shadow:0 0 0 2px var(--sb-panel),0 0 0 4px var(--sb-ac)}
+}
