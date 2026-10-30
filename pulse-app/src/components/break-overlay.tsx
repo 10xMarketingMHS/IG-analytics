@@ -98,6 +98,8 @@ export function BreakOverlay() {
           ))}
         </div>
 
+        {/* Landscape: the cup and a quote on the left, the time and the way back on the right */}
+        <div className="brk-side">
         <div className="brk-ring">
           <svg className="brk-ringsvg" viewBox="0 0 220 220" aria-hidden>
             <defs>
@@ -162,22 +164,25 @@ export function BreakOverlay() {
           </div>
         </div>
 
-        <div className="brk-eyebrow">Take a moment for yourself ✨</div>
-        <h2 className="brk-title"><span className="spark">‹</span>It's <span className="g">Break</span> Time!<span className="spark">›</span></h2>
-        <div className="brk-sub">Step away, relax, and recharge.<br />You've got this! 💜</div>
-
-        <div className="brk-div" />
-
-        <div className="brk-remlabel">Break time remaining</div>
-        <div className="brk-clock">
-          <div className="brk-unit"><span className="brk-num">{mm}</span><small>min</small></div>
-          <span className="brk-colon">:</span>
-          <div className="brk-unit"><span className="brk-num">{ss}</span><small>sec</small></div>
+        <div className="brk-quote"><span className="qm l">“</span>{quote}<span className="qm r">”</span></div>
         </div>
 
-        <div className="brk-quote"><span className="qm l">“</span>{quote}<span className="qm r">”</span></div>
+        <div className="brk-main">
+          <div className="brk-eyebrow">Take a moment for yourself ✨</div>
+          <h2 className="brk-title"><span className="spark">‹</span>It's <span className="g">Break</span> Time!<span className="spark">›</span></h2>
+          <div className="brk-sub">Step away, relax, and recharge.<br />You've got this! 💜</div>
 
-        <button type="button" className="brk-startwork" onClick={startWork}>▶ Resume Work</button>
+          <div className="brk-div" />
+
+          <div className="brk-remlabel">Break time remaining</div>
+          <div className="brk-clock">
+            <div className="brk-unit"><span className="brk-num">{mm}</span><small>min</small></div>
+            <span className="brk-colon">:</span>
+            <div className="brk-unit"><span className="brk-num">{ss}</span><small>sec</small></div>
+          </div>
+
+          <button type="button" className="brk-startwork" onClick={startWork}>▶ Resume Work</button>
+        </div>
       </div>
     </div>
   );

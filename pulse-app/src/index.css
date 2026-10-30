@@ -1563,10 +1563,11 @@ button.nt-row:hover,button.nt-row:focus-visible{background:var(--panel2)}
 }
 
 /* ===== Break-time overlay ===== */
-.brk-scrim{position:fixed;inset:0;z-index:120;display:grid;place-items:center;padding:20px;
+.brk-scrim{position:fixed;inset:0;z-index:120;display:flex;overflow:hidden auto;padding:20px;
   background:rgba(10,7,20,.55);backdrop-filter:blur(7px);animation:brk-scrim-in .45s ease both}
 @keyframes brk-scrim-in{from{opacity:0}to{opacity:1}}
-.brk-card{position:relative;width:560px;max-width:94vw;padding:34px 42px 38px;border-radius:30px;text-align:center;
+.brk-card{position:relative;display:grid;grid-template-columns:minmax(210px,290px) minmax(0,1fr);column-gap:40px;align-items:center;
+  margin:auto;width:940px;max-width:100%;padding:34px 46px;border-radius:30px;text-align:center;
   background:radial-gradient(120% 90% at 50% 0%, rgba(124,58,237,.20), transparent 60%),linear-gradient(180deg,#221a33,#1a1428);
   border:1px solid rgba(168,85,247,.42);
   box-shadow:0 0 0 1px rgba(168,85,247,.12),0 30px 90px rgba(0,0,0,.55),0 0 70px rgba(139,92,246,.35);
@@ -1574,6 +1575,7 @@ button.nt-row:hover,button.nt-row:focus-visible{background:var(--panel2)}
 @keyframes brk-card-in{from{opacity:0;transform:translateY(16px) scale(.94)}to{opacity:1;transform:none}}
 @keyframes brk-card-glow{0%,100%{box-shadow:0 0 0 1px rgba(168,85,247,.12),0 30px 90px rgba(0,0,0,.55),0 0 60px rgba(139,92,246,.30)}
   50%{box-shadow:0 0 0 1px rgba(168,85,247,.20),0 30px 90px rgba(0,0,0,.55),0 0 95px rgba(139,92,246,.55)}}
+.brk-side,.brk-main{position:relative;min-width:0}
 .brk-ring{position:relative;width:210px;height:210px;margin:2px auto 4px}
 .brk-ring svg.brk-ringsvg{width:100%;height:100%;overflow:visible}
 .brk-cup{position:absolute;inset:0;display:grid;place-items:center;pointer-events:none}
@@ -1592,8 +1594,8 @@ button.nt-row:hover,button.nt-row:focus-visible{background:var(--panel2)}
   55%{opacity:.55;transform:translateY(-12px) scaleY(1) translateX(4px)}
   100%{opacity:0;transform:translateY(-30px) scaleY(1.25) translateX(-3px)}
 }
-.brk-eyebrow{margin-top:16px;font-size:15px;color:#b3a7d4;font-weight:600}
-.brk-title{position:relative;margin:6px 0 2px;font-size:47px;line-height:1.05;font-weight:800;letter-spacing:-.02em;color:#fff}
+.brk-eyebrow{font-size:15px;color:#b3a7d4;font-weight:600}
+.brk-title{position:relative;margin:6px 0 2px;font-size:47px;line-height:1.05;font-weight:800;letter-spacing:-.02em;color:#fff;white-space:nowrap}
 .brk-title .g{background:linear-gradient(180deg,#c98bff,#8b5cf6);-webkit-background-clip:text;background-clip:text;color:transparent;
   text-shadow:0 0 30px rgba(139,92,246,.45)}
 .brk-title .spark{color:#a855f7;opacity:.85;font-weight:700;margin:0 8px;filter:drop-shadow(0 0 8px rgba(168,85,247,.7))}
@@ -1608,7 +1610,7 @@ button.nt-row:hover,button.nt-row:focus-visible{background:var(--panel2)}
 @keyframes brk-blink{50%{opacity:.25}}
 .brk-unit{display:flex;flex-direction:column;align-items:center}
 .brk-unit small{font-size:13px;color:#8a7fb0;margin-top:2px;letter-spacing:.08em}
-.brk-quote{position:relative;margin-top:22px;font-size:15px;line-height:1.5;color:#c4b5fd;font-style:italic;padding:0 26px}
+.brk-quote{position:relative;margin-top:16px;font-size:15px;line-height:1.5;color:#c4b5fd;font-style:italic}
 .brk-quote .qm{font-style:normal;font-size:34px;line-height:0;color:#a855f7;opacity:.55;vertical-align:-6px}
 .brk-quote .qm.l{margin-right:6px}.brk-quote .qm.r{margin-left:6px}
 /* "Resume Work" — end the break early and get back to it. */
@@ -1625,8 +1627,28 @@ button.nt-row:hover,button.nt-row:focus-visible{background:var(--panel2)}
 @media (prefers-reduced-motion: reduce){
   .brk-card,.brk-wisp,.brk-gy,.brk-colon{animation:none}
 }
-@media screen and (max-width:600px){
-  .brk-card{padding:26px 22px 30px}.brk-title{font-size:38px}.brk-num{font-size:66px}.brk-colon{font-size:52px}
+/* A narrower window: the left side shrinks, the title with it */
+@media screen and (max-width:900px){
+  .brk-card{column-gap:24px;padding:30px 28px}.brk-title{font-size:38px}.brk-title .spark{margin:0 5px}
+}
+/* A short window: everything tighter, so it still fits without scrolling */
+@media screen and (max-height:540px){
+  .brk-card{padding:20px 40px}
+  .brk-ring{width:150px;height:150px}.brk-cup-stage{transform:scale(.72)}
+  .brk-title{font-size:36px}.brk-sub{margin-top:6px;font-size:14px}.brk-div{margin:12px auto 10px}
+  .brk-num{font-size:60px}.brk-colon{font-size:48px}.brk-startwork{margin-top:14px;padding:11px 30px}
+  .brk-quote{margin-top:10px;font-size:14px}
+  .brk-glyphs{inset:-14px -40px}
+}
+/* Too narrow for two sides (a phone held upright): one column, in reading order */
+@media screen and (max-width:700px){
+  .brk-card{display:flex;flex-direction:column;align-items:center;padding:26px 22px 30px}
+  .brk-side,.brk-main{display:contents}
+  .brk-eyebrow{margin-top:16px}.brk-title{font-size:38px}.brk-num{font-size:66px}.brk-colon{font-size:52px}
+  .brk-div{align-self:stretch}.brk-quote{order:1;margin-top:22px;padding:0 26px}.brk-startwork{order:2}
+}
+@media screen and (max-width:400px){
+  .brk-title{font-size:31px}.brk-title .spark{margin:0 3px}
 }
 
 /* ---- Boot splash — 10X Media House logo intro on a real page load ---- */
