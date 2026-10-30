@@ -19,7 +19,7 @@
 
   /* room above the tab bar */
   .content{padding:16px 16px calc(var(--m-tab) + 24px)}
-  .break-widget{bottom:calc(var(--m-tab) + 12px)}
+  .break-widget{bottom:calc(var(--m-tab) + 12px + var(--wb-h,0px))}
 
   /* the tab bar: a floating pill above the bottom edge, New task as a round
      button beside it (ClickUp-style) */

@@ -1,5 +1,6 @@
 import { useEffect } from "react";
 import { toast } from "sonner";
+import { popup } from "@/lib/quiet-popups";
 import { useAlertGate } from "@/lib/notify-prefs";
 import { useAuth } from "@/lib/auth-context";
 import type { Task } from "@/lib/types";
@@ -58,9 +59,9 @@ export function useTaskAssignNotify(list: Task[] | null) {
         if (seen.has(t.id)) continue;
         // A task you created yourself isn't news to you.
         if (t.created_by === user.id) continue;
-        toast(`🔔 New task: "${t.title}"`, {
+        popup(() => toast(`🔔 New task: "${t.title}"`, {
           description: t.due_date ? `Due ${t.due_date}` : undefined,
-        });
+        }));
       }
     }
     tasks.forEach((t) => seen.add(t.id));

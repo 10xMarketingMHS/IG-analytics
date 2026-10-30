@@ -1,6 +1,7 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useNavigate } from "react-router-dom";
 import { toast } from "sonner";
+import { popup } from "@/lib/quiet-popups";
 import { api, API_BASE, ApiError } from "@/lib/api";
 import { gradFor } from "@/lib/editor-visuals";
 import type { TaskStatus, TaskType } from "@/lib/types";
@@ -296,13 +297,13 @@ export function ChatProvider({ children }: { children: ReactNode }) {
         const who = peopleRef.current.get(m.authorId ?? "")?.name ?? "Someone";
         const where = m.parentId ? "replied in a thread" : isDm ? "" : `in #${ch?.name ?? "a channel"}`;
         const text = toPlain(m.body, peopleRef.current, e.tasks);
-        toast(`💬 ${who}${where ? " " + where : ""}`, {
+        popup(() => toast(`💬 ${who}${where ? " " + where : ""}`, {
           description: text.length > 140 ? text.slice(0, 140) + "…" : text,
           action: {
             label: "Open",
             onClick: () => navigate(`/chat?c=${m.channelId}${m.parentId ? `&t=${m.parentId}` : ""}`),
           },
-        });
+        }));
       }
     }
     listeners.current.forEach((fn) => fn(e));

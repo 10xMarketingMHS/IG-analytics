@@ -47,6 +47,7 @@ import { attendanceRouter } from "./routes/attendance.js";
 import { inboxRouter } from "./routes/inbox.js";
 import { leaveRouter } from "./routes/leave.js";
 import { homeRouter } from "./routes/home.js";
+import { widgetsRouter } from "./routes/widgets.js";
 import { startThinning } from "./post-history.js";
 
 const app = express();
@@ -132,6 +133,7 @@ app.use("/api", requireAuth, resolveWorkspace, attendanceRouter);
 app.use("/api", requireAuth, resolveWorkspace, inboxRouter);
 app.use("/api", requireAuth, resolveWorkspace, leaveRouter);
 app.use("/api", requireAuth, resolveWorkspace, homeRouter);
+app.use("/api", requireAuth, resolveWorkspace, widgetsRouter);
 
 // In production this one service also serves the built React app, so the whole
 // thing lives on a single origin (no cross-site cookie/CORS headaches). In dev

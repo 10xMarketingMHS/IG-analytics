@@ -1544,7 +1544,7 @@ button.nt-row:hover,button.nt-row:focus-visible{background:var(--panel2)}
 /* Collapsed to a bare circle by default — hovering, or an active break
    (.on, which needs to stay legible without requiring a hover), expands it
    to show the label. */
-.break-widget{position:fixed;right:20px;bottom:20px;z-index:90;display:flex;align-items:center;gap:0;
+.break-widget{position:fixed;right:20px;bottom:calc(20px + var(--wb-h,0px));z-index:90;display:flex;align-items:center;gap:0;
   background:var(--panel);border:1px solid var(--border);border-radius:999px;padding:8px;
   box-shadow:0 12px 32px rgba(90,40,180,.22);backdrop-filter:blur(10px);
   transition:padding .18s ease,gap .18s ease}
@@ -1559,7 +1559,7 @@ button.nt-row:hover,button.nt-row:focus-visible{background:var(--panel2)}
 .break-widget-btn.pause{background:linear-gradient(135deg,#f59e0b,#d97706)}
 .break-widget-btn:disabled{opacity:.5;cursor:not-allowed}
 @media screen and (max-width:768px){
-  .break-widget{right:14px;bottom:14px}
+  .break-widget{right:14px;bottom:calc(14px + var(--wb-h,0px))}
 }
 
 /* ===== Break-time overlay ===== */

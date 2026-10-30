@@ -28,6 +28,9 @@ import { ViewAsBar, ViewAsModal } from "@/components/view-as";
 import { TaskPanel } from "@/pages/tasks";
 import { BreakWidget } from "@/components/break-widget";
 import { BreakOverlay } from "@/components/break-overlay";
+import { WidgetBar } from "@/components/widget-bar";
+import { WidgetsProvider } from "@/lib/widgets";
+import { useQuiet } from "@/lib/quiet-popups";
 import { BreakProvider, useBreakState } from "@/lib/break-context";
 import { useDayLocked, useEodState } from "@/lib/eod-context";
 import { MyProfileModal } from "@/components/my-profile-modal";
@@ -52,7 +55,7 @@ import type { Activity } from "@/lib/types";
 // that isn't placed here lands at the end of Operations.
 const SIDEBAR_GROUPS: { label: string; hrefs: string[] }[] = [
   { label: "Workspace", hrefs: ["/home", "/inbox", "/chat", "/tasks", "/analytics"] },
-  { label: "Operations", hrefs: ["/social", "/ads", "/leaderboard", "/goals-board", "/my-team", "/knowledge"] },
+  { label: "Operations", hrefs: ["/social", "/ads", "/leaderboard", "/goals-board", "/my-team", "/knowledge", "/widgets"] },
 ];
 // Social and Ads stand for these, as tabs (lib/sections.ts); they stay reachable by address and search
 const OFF_SIDEBAR = new Set(["/settings", "/posts/new", "/metrics", "/scheduling", "/posts", "/ad-uploads", "/ads-performance"]);
@@ -61,8 +64,8 @@ const OFF_SIDEBAR = new Set(["/settings", "/posts/new", "/metrics", "/scheduling
 // Knowledge Hub (SOPs and training can be read first thing). The rest of the
 // Operations group (Pipeline, Posts, Leaderboard, Goals) waits for it: those
 // links stay greyed, and clicking one asks them to start work.
-const OPEN_WHEN_LOCKED = new Set(["/home", "/inbox", "/leave", "/activity", "/chat", "/tasks", "/analytics", "/settings", "/channels", "/task-rules", "/knowledge"]);
-const LIVE_WHEN_LOCKED = new Set(["/home", "/inbox", "/chat", "/tasks", "/analytics", "/knowledge"]);
+const OPEN_WHEN_LOCKED = new Set(["/home", "/inbox", "/leave", "/activity", "/chat", "/tasks", "/analytics", "/settings", "/channels", "/task-rules", "/knowledge", "/widgets"]);
+const LIVE_WHEN_LOCKED = new Set(["/home", "/inbox", "/chat", "/tasks", "/analytics", "/knowledge", "/widgets"]);
 const openWhenLocked = (path: string) => OPEN_WHEN_LOCKED.has(path) || path.startsWith("/analytics/");
 const RAIL_KEY = "pulse-sidebar-rail";
 // The phone tab bar has ~54px a tab: two names go short there (the sidebar and
@@ -387,8 +390,14 @@ function AppShellInner() {
   // Sidebar: collapsed to an icon rail (remembered on this device), and the
   // Search or jump to… palette (also Ctrl/⌘ K).
   const [rail, setRail] = useState(() => { try { return window.localStorage.getItem(RAIL_KEY) === "1"; } catch { return false; } });
+  // Focus Mode folds it too; the same button opens it for a moment.
+  const quiet = useQuiet();
+  const [peek, setPeek] = useState(false);
+  useEffect(() => { if (!quiet) setPeek(false); }, [quiet]);
+  const folded = quiet ? !peek : rail;
   // Collapsing or expanding glides in one motion — sidebar.css does it all.
   function toggleRail() {
+    if (quiet) { setPeek((p) => !p); return; }
     setRail((r) => {
       try { window.localStorage.setItem(RAIL_KEY, r ? "0" : "1"); } catch { /* fine, just not remembered */ }
       return !r;
@@ -547,7 +556,8 @@ function AppShellInner() {
 
   return (
     <BreakProvider>
-    <div className={"app" + (menuOpen ? " menu-open" : "") + (eodLocked ? " eod-lock" : "") + (lockedOnOpenPage ? " lock-page-open" : "") + (rail ? " sb-rail" : "")}>
+    <WidgetsProvider>
+    <div className={"app" + (menuOpen ? " menu-open" : "") + (eodLocked ? " eod-lock" : "") + (lockedOnOpenPage ? " lock-page-open" : "") + (folded ? " sb-rail" : "")}>
       <div className="app-backdrop" onClick={() => setMenuOpen(false)} />
       {/* sb2: the redesign's sidebar (components/sidebar.css) — brand and
           collapse, search and new task, the Workspace / Operations groups,
@@ -566,8 +576,8 @@ function AppShellInner() {
             <b>Echo</b>
             <small>{org?.name || "Content Analytics"}</small>
           </div>
-          <button type="button" className="sb2-iconbtn sb2-railbtn" onClick={toggleRail} aria-pressed={rail}
-            title={rail ? "Expand the sidebar" : "Collapse the sidebar"} aria-label={rail ? "Expand the sidebar" : "Collapse the sidebar"}>
+          <button type="button" className="sb2-iconbtn sb2-railbtn" onClick={toggleRail} aria-pressed={folded}
+            title={folded ? "Expand the sidebar" : "Collapse the sidebar"} aria-label={folded ? "Expand the sidebar" : "Collapse the sidebar"}>
             {RAIL_ICON}
           </button>
         </div>
@@ -596,7 +606,7 @@ function AppShellInner() {
                   key={item.href}
                   to={item.area ? SECTIONS[item.area].tabs.find(canSeeTab)!.to : item.href}
                   end={item.href === "/posts"}
-                  title={rail ? item.title : undefined}
+                  title={folded ? item.title : undefined}
                   onClick={(e) => {
                     if (eodLocked && !LIVE_WHEN_LOCKED.has(item.href)) { e.preventDefault(); setLockAsk({ title: item.title, href: item.href }); return; }
                     setMenuOpen(false);
@@ -760,6 +770,7 @@ function AppShellInner() {
             ) : <Outlet />}
           </ErrorBoundary>
         </div>
+        <WidgetBar />
       </main>
       {/* Phones: an app-style tab bar (components/mobile.css) — the four
           Workspace places and More for the full menu, in a floating pill, with
@@ -824,6 +835,7 @@ function AppShellInner() {
       )}
       {user?.viewingAs && <ViewAsBar name={user.name || user.email} realName={user.viewingAs.name} />}
     </div>
+    </WidgetsProvider>
     </BreakProvider>
   );
 }

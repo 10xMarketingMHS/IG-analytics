@@ -44,6 +44,7 @@ import { useWorkspaces } from "@/lib/workspaces-context";
 import { SettingsPage } from "@/pages/settings";
 import { GoalsPage } from "@/pages/goals";
 import { KnowledgePage } from "@/pages/knowledge";
+import { WidgetsPage } from "@/pages/widgets";
 import { FormatAnalyticsPage } from "@/pages/format-analytics";
 import { LeaderboardPage } from "@/pages/leaderboard";
 import { MyTeamPage } from "@/pages/my-team";
@@ -143,6 +144,7 @@ function AppRoutes() {
             {/* Goals: Team goals, Org goals (the old Goals board), Set goals and Discipline. */}
             <Route path="/goals-board" element={<GoalsPage />} />
             <Route path="/knowledge" element={<KnowledgePage />} />
+            <Route path="/widgets" element={<WidgetsPage />} />
             {/* Old Goal Setting link — each person's goals are now Goals › Set goals. */}
             <Route path="/goals" element={<Navigate to="/goals-board?tab=set" replace />} />
             <Route path="/teams" element={<Navigate to="/my-team?tab=roster" replace />} />
@@ -173,7 +175,7 @@ export function App() {
           </WorkspacesProvider>
         </AuthProvider>
         {/* on phones, toasts rise above the tab bar (components/mobile.css) */}
-        <Toaster mobileOffset={{ bottom: "calc(var(--m-tab, 0px) + 12px)" }} />
+        <Toaster offset={{ bottom: "calc(var(--wb-h, 0px) + 24px)" }} mobileOffset={{ bottom: "calc(var(--m-tab, 0px) + var(--wb-h, 0px) + 12px)" }} />
       </BrowserRouter>
     </ThemeProvider>
   );

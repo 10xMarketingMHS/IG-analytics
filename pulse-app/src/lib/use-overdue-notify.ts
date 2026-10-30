@@ -1,5 +1,6 @@
 import { useEffect, useRef } from "react";
 import { toast } from "sonner";
+import { popup } from "@/lib/quiet-popups";
 import { useAlertGate } from "@/lib/notify-prefs";
 import { useAuth } from "@/lib/auth-context";
 import { useWorkspaces } from "@/lib/workspaces-context";
@@ -53,9 +54,9 @@ export function useOverdueTaskNotify(list: Task[] | null) {
       const key = runKey(t);
       if (notified.has(key)) continue;
       if (!isOverBudget(t, nowMs)) continue;
-      toast(`⚠️ "${t.title}" is over its time budget`, {
+      popup(() => toast(`⚠️ "${t.title}" is over its time budget`, {
         description: t.editor_name ? `Assigned to ${t.editor_name} — still not done` : "Still not done",
-      });
+      }));
       notified.add(key);
     }
     writeNotified(user.id, notified);
@@ -82,7 +83,7 @@ export function useDueOverdueNotify(list: Task[] | null) {
       if (t.status === "done" || !t.due_date || t.due_date >= today) continue;
       const key = `${t.id}:${t.due_date}`;
       if (seen.has(key)) continue;
-      toast(`⏰ "${t.title}" is overdue`, { description: `It was due ${t.due_date}` });
+      popup(() => toast(`⏰ "${t.title}" is overdue`, { description: `It was due ${t.due_date}` }));
       seen.add(key);
     }
     try { window.localStorage.setItem(DUE_KEY_PREFIX + user.id, JSON.stringify([...seen])); } catch { /* private window */ }
@@ -111,7 +112,7 @@ export function useReviewWaitingNotify(canReview: boolean, allows: (t: Task) => 
     for (const t of waiting) {
       const k = `${t.id}:${t.review_started_at ?? ""}`;
       if (seen.has(k)) continue;
-      if (!first) toast(`👀 "${t.title}" is waiting for your review`, { description: t.editor_name ? `From ${t.editor_name}` : undefined });
+      if (!first) popup(() => toast(`👀 "${t.title}" is waiting for your review`, { description: t.editor_name ? `From ${t.editor_name}` : undefined }));
       seen.add(k);
     }
     try { window.localStorage.setItem(key, JSON.stringify([...seen])); } catch { /* private window */ }
