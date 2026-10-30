@@ -8,7 +8,7 @@ import { goalPointsTotal } from "@/lib/goal-points";
 import { countsInTaskScore } from "@/lib/task-points";
 import { byPosition } from "@/lib/home-role";
 import { useContentFormats } from "@/lib/use-content-formats";
-import { groupTypes, kindsWord, useFolds } from "@/lib/type-groups";
+import { groupTypes, isHeading, kindsWord, useFolds } from "@/lib/type-groups";
 import { monthName } from "@/lib/goal-periods";
 import { fmtHours } from "@/pages/settings-ui";
 import { giveWords } from "@/pages/goals-brand";
@@ -291,36 +291,57 @@ export function SetGoals() {
                   <div className="gl-empty">No task types yet — add them in Settings · Tasks & time.</div>
                 ) : groupTypes(c.rows, (x) => x.r.contentFormatId, (id) => contentFormats?.find((f) => f.id === id)?.parent_id).flatMap((grp) => {
                   const id = grp.main.r.contentFormatId, open = folds.isOpen(id);
+                  // A main type with sub-types is only a heading: its row adds them up, and they take
+                  // the jobs. A goal saved on it from before keeps its box until it's cleared, so it
+                  // can't count unseen.
+                  const hasOld = isHeading(id, contentFormats) && grp.main.r.jc != null;
+                  const heading = isHeading(id, contentFormats) && !hasOld;
+                  if (heading && !grp.subs.length) return [];
                   return [grp.main, ...(open ? grp.subs : [])].map((x) => {
-                  const subs = x === grp.main ? grp.subs : [];
+                  const isMain = x === grp.main, sum = isMain && heading;
+                  const subs = isMain ? grp.subs : [];
                   const subJobs = subs.reduce((n, s) => n + s.jobs, 0), subHrs = subs.reduce((n, s) => n + s.hrs, 0);
-                  // folded, the sub-types' "Brands need" would go unseen: the button says it
-                  const subNeed = open ? 0 : subs.reduce((n, s) => n + Math.max(0, need[s.r.contentFormatId] ?? 0), 0);
+                  const subR1 = subs.reduce((n, s) => n + Math.ceil(s.jobs / 2), 0);
+                  // what the brands need of it; on a main type's row, of its sub-types too
+                  const needIds = [x.r.contentFormatId, ...subs.map((s) => s.r.contentFormatId)];
+                  const needAll = needIds.reduce((n, i) => n + Math.max(0, need[i] ?? 0), 0);
                   return (
-                  <div className={"gs-row" + (x.jobs || subJobs ? "" : " none") + (x !== grp.main ? " sub" : "")} key={x.r.contentFormatId}>
+                  <div className={"gs-row" + (x.jobs || subJobs ? "" : " none") + (isMain ? "" : " sub")} key={x.r.contentFormatId}>
                     <span className="gs-typecell">
                       <span className="gs-type"><b>{x.r.icon} {x.r.name}</b><small>{x.r.category ? CAT[x.r.category] ?? x.r.category : ""}</small></span>
                       {subs.length > 0 && (
                         <button type="button" className="gs-fold" aria-expanded={open} onClick={() => folds.toggle(id)} title={open ? "Hide its sub-types" : "Show its sub-types — each has its own jobs"}>
-                          {kindsWord(subs.length)}{subJobs ? ` · ${subJobs} job${subJobs === 1 ? "" : "s"}${subHrs ? ` · ${fmtHours(subHrs)}` : ""}` : ""}{subNeed ? ` · brands need ${subNeed}` : ""} {open ? "▴" : "▾"}
+                          {kindsWord(subs.length)}{!sum && subJobs ? ` · ${subJobs} job${subJobs === 1 ? "" : "s"}${subHrs ? ` · ${fmtHours(subHrs)}` : ""}` : ""} {open ? "▴" : "▾"}
                         </button>
                       )}
-                      {need[x.r.contentFormatId] > 0 && (() => {
-                        const g = giveWords(need[x.r.contentFormatId], givenOf(x.r.contentFormatId));
-                        return <small className={"gs-need " + g.cls} title="From Goals › Brand goals: what the brands need of it this month, and how much the team's goals give out">Brands need {need[x.r.contentFormatId]} · {g.text}</small>;
+                      {needAll > 0 && (() => {
+                        const g = giveWords(needAll, needIds.reduce((n, i) => n + givenOf(i), 0));
+                        return <small className={"gs-need " + g.cls} title="From Goals › Brand goals: what the brands need of it this month, and how much the team's goals give out">Brands need {needAll} · {g.text}</small>;
                       })()}
+                      {isMain && hasOld && <small className="gs-need warn" title="It has sub-types now, so it's only a heading. Clear this goal and give the jobs to its sub-types.">Goal from before its sub-types · clear it and use them</small>}
                     </span>
-                    <input type="number" min={0} step={1} placeholder="—" aria-label={`Jobs of ${x.r.name}`}
-                      value={dr[x.r.contentFormatId] ?? ""} onChange={(e) => setJobs(x.r.contentFormatId, e.target.value)} />
-                    {x.r.durationDays ? (
+                    {sum ? <b className="c gb-done" title="Added up from its sub-types">{subJobs || "—"}</b> : (
+                      <input type="number" min={0} step={1} placeholder="—" aria-label={`Jobs of ${x.r.name}`}
+                        value={dr[x.r.contentFormatId] ?? ""} onChange={(e) => setJobs(x.r.contentFormatId, e.target.value)} />
+                    )}
+                    {sum ? <span /> : x.r.durationDays ? (
                       <span className="c gs-jph" title={`A project's days count as full work days: ${x.r.durationDays} × ${fmtHours(c.cap.hoursPerDay)} = ${fmtHours(x.jph)}. Change the days in Settings › Tasks & time.`}>
                         {x.r.durationDays} day{x.r.durationDays === 1 ? "" : "s"}
                       </span>
                     ) : (
                       <span className="c gs-jph" title="The task type's time — change it in Settings › Tasks & time">{x.jph ? fmtHours(x.jph) : "—"}</span>
                     )}
-                    <b className="r">{x.jobs ? fmtHours(x.hrs) : "—"}</b>
-                    <span className="r gs-split">{x.jobs ? `${Math.ceil(x.jobs / 2)} · ${x.jobs - Math.ceil(x.jobs / 2)}` : "—"}</span>
+                    {sum ? (
+                      <>
+                        <b className="r">{subJobs ? fmtHours(subHrs) : "—"}</b>
+                        <span className="r gs-split">{subJobs ? `${subR1} · ${subJobs - subR1}` : "—"}</span>
+                      </>
+                    ) : (
+                      <>
+                        <b className="r">{x.jobs ? fmtHours(x.hrs) : "—"}</b>
+                        <span className="r gs-split">{x.jobs ? `${Math.ceil(x.jobs / 2)} · ${x.jobs - Math.ceil(x.jobs / 2)}` : "—"}</span>
+                      </>
+                    )}
                   </div>
                   );
                   });
@@ -330,6 +351,7 @@ export function SetGoals() {
             <p className="gs-hint">
               Leave Jobs blank when there's no goal for that type. Hrs / job is each type's time from Settings › Tasks &amp; time. R1 · R2 splits
               the target across the two reviews. "Brands need" comes from Brand goals: how much of it is still to give out to the team.
+              A type with sub-types is only a heading: open it and give the jobs to its sub-types.
             </p>
           </section>
 

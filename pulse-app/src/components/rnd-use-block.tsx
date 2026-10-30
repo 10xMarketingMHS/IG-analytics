@@ -3,6 +3,7 @@ import { toast } from "sonner";
 import { api, ApiError } from "@/lib/api";
 import type { AdTeam } from "@/lib/ad-teams";
 import type { ContentFormatDef, Editor, Task } from "@/lib/types";
+import { isHeading } from "@/lib/type-groups";
 import "./schedule-block.css";
 import "./rnd-use-block.css";
 
@@ -41,11 +42,13 @@ export function RndUseBlock({ task, formats, people, channels, adTeams, canDecid
   const typeName = formats.find((f) => f.id === task.content_format_id)?.name ?? "R&D work";
   const ref = task.svid ?? task.tid ?? "";
   const byTeam = adTeams.length > 0;
-  const typesOf = (k: Kind) => formats.filter((f) => f.active && f.category === k);
+  // a main type with sub-types is only a heading: the choice is one of its sub-types
+  const typesOf = (k: Kind) => formats.filter((f) => f.active && f.category === k && !isHeading(f.id, formats));
   const blank = (k: Kind): Draft => {
-    const list = typesOf(k);
+    const list = formats.filter((f) => f.active && f.category === k);
     const first = (k === "social" ? list.find((f) => /reel/i.test(f.name)) : undefined) ?? list[0];
-    return { contentFormatId: first?.id ?? "", channelId: task.channel_id ?? "", adTeamId: "", editorId: task.editor_id ?? "", dueDate: "" };
+    // starts on no type if that's a heading, rather than guess which sub-type
+    return { contentFormatId: first && !isHeading(first.id, formats) ? first.id : "", channelId: task.channel_id ?? "", adTeamId: "", editorId: task.editor_id ?? "", dueDate: "" };
   };
   const choose = (d: Decision) => {
     setPick(d);

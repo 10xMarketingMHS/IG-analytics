@@ -172,7 +172,7 @@ export function TaskRulesSection() {
       <section className="st-card">
         <div className="st-cardhead">
           <span className="st-titleline"><b>Task types</b><span className="st-count">{formats.length}</span></span>
-          <span>One list for the whole workspace. Points are what a finished job earns; time budget is how long the timer gives it. A change to points counts from now on: jobs already completed, and goals already set, keep the points they had.{canPoints ? "" : " Only a Super Admin can change points."} A type can go under a main type, as Video Carousel under Carousel: it keeps its own points, time and goals, and the lists fold it under the main type.</span>
+          <span>One list for the whole workspace. Points are what a finished job earns; time budget is how long the timer gives it. A change to points counts from now on: jobs already completed, and goals already set, keep the points they had.{canPoints ? "" : " Only a Super Admin can change points."} A type can go under a main type, as Video Carousel under Carousel: it keeps its own points, time and goals, and the lists fold it under the main type. A main type with sub-types is only a heading: goals and new tasks go on its sub-types.</span>
           <span className="st-uses">
             <span>{SI.addTask}New task picker</span>
             <span>{SI.flag}Goal types</span>

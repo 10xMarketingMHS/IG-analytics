@@ -2,10 +2,15 @@ import { useCallback, useState } from "react";
 
 // Sub-types (Settings › Tasks & time): a task type may sit under a main type of
 // the same category, as Video Carousel and Image Carousel under Carousel. Each is
-// still its own type, with its own points, time and goals, and the main type is a
-// type too; lists show the main type and fold its sub-types under it. One level
-// only (server/src/routes/content-formats.js).
+// still its own type, with its own points, time and goals; lists show the main
+// type and fold its sub-types under it. One level only
+// (server/src/routes/content-formats.js).
 export type TypeGroup<T> = { main: T; subs: T[] };
+
+// A main type with sub-types is only a heading: goals, brand goals and new tasks
+// go on its sub-types (server/src/type-tree.js). `all`: the workspace's active types.
+export const isHeading = (id: string, all: { parent_id?: string | null }[] | null | undefined) =>
+  (all ?? []).some((f) => f.parent_id === id);
 
 // A list of types as main types, each with its sub-types after it, keeping the
 // list's order. A sub-type whose main type isn't in the list stays on its own.

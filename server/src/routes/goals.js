@@ -14,6 +14,7 @@ import { editorRanks, seesEditor, taskViewer } from "../hierarchy.js";
 import { scoreMonthAll } from "../goal-score.js";
 import { monthFrozen } from "../leave-math.js";
 import { brandNeedByType } from "./brand-goals.js";
+import { headingError, headingTypes, notHeadingSql } from "../type-tree.js";
 import { disciplineByEditor, disciplineShares, raterOf, reviewsReady, rolesSeenBy } from "../discipline.js";
 
 export const goalsRouter = Router();
@@ -551,6 +552,17 @@ goalsRouter.put("/goals", requirePermission("edit_goals"), async (req, res, next
     const ids = [...new Set(d.goals.map((g) => g.contentFormatId))];
     const { rows: known } = await pool.query("select id from task_content_format where id = any($1::uuid[]) and org_id = $2", [ids, req.orgId]);
     if (known.length !== ids.length) return res.status(400).json({ error: "That content type wasn't found." });
+    // a heading takes no new goal (../type-tree.js)
+    const headings = await headingTypes(req.orgId, ids);
+    if (headings.size) {
+      const { rows: had } = await pool.query(
+        "select content_format_id, jc from editor_goal where org_id=$1 and editor_id=$2 and period_month=$3 and content_format_id = any($4::uuid[])",
+        [req.orgId, d.editorId, month, [...headings.keys()]],
+      );
+      const was = new Map(had.map((r) => [r.content_format_id, Number(r.jc)]));
+      const up = d.goals.find((g) => g.jc != null && headings.has(g.contentFormatId) && g.jc > (was.get(g.contentFormatId) ?? -1));
+      if (up) return res.status(400).json({ error: headingError(headings.get(up.contentFormatId)) });
+    }
     for (const g of d.goals) {
       if (g.jc == null) {
         await pool.query(
@@ -585,8 +597,9 @@ goalsRouter.put("/goals", requirePermission("edit_goals"), async (req, res, next
 // with no goals in it yet gets last month's (the same job counts), to change in
 // Set goals. Left as they are: anyone who already has goals this month, anyone
 // exempt from task score, and anyone whose goals the caller can't set (your own,
-// someone above you). A type no longer tracked in goals isn't copied; each goal
-// takes its type's points today, as a new goal does in PUT /goals.
+// someone above you). A type no longer tracked in goals, or that's only a heading
+// now (../type-tree.js), isn't copied; each goal takes its type's points today, as
+// a new goal does in PUT /goals.
 goalsRouter.post("/goals/copy", requirePermission("edit_goals"), async (req, res, next) => {
   const month = monthStart(req.body?.month);
   if (!month) return res.status(400).json({ error: "Say which month to copy into." });
@@ -602,6 +615,7 @@ goalsRouter.post("/goals/copy", requirePermission("edit_goals"), async (req, res
       [req.orgId, prevMonthOf(month), month],
     );
     const withPoints = await hasColumn("editor_goal", "points");
+    const notHeading = await notHeadingSql("cf");
     const copied = [];
     for (const e of who) {
       if (await goalWriteError(req, e.id, month, "goals")) continue;
@@ -610,7 +624,7 @@ goalsRouter.post("/goals/copy", requirePermission("edit_goals"), async (req, res
          select g.org_id, g.editor_id, g.content_format_id, $3::date, g.jc, g.jph${withPoints ? ", cf.points" : ""}
            from editor_goal g join task_content_format cf on cf.id = g.content_format_id
           where g.org_id = $1 and g.editor_id = $2 and g.period_month = $4::date
-            and cf.active and coalesce((to_jsonb(cf)->>'counts_in_goal')::boolean, true)
+            and cf.active and coalesce((to_jsonb(cf)->>'counts_in_goal')::boolean, true)${notHeading}
          on conflict (org_id, editor_id, content_format_id, period_month) do nothing`,
         [req.orgId, e.id, month, prevMonthOf(month)],
       );

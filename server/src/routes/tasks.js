@@ -14,6 +14,7 @@ import { hasColumn } from "../schema-flags.js";
 import { coverFrom } from "../goal-score.js";
 import { enterScheduling, leaveScheduling, schedulerIds, schedulingReady } from "../scheduling.js";
 import { adTeamsReady, enterUploads, leaveUploads, nextTeamAid, uploadsReady } from "../ad-uploads.js";
+import { parentTypeOf, taskTypeError } from "../type-tree.js";
 
 export const tasksRouter = Router();
 
@@ -266,7 +267,8 @@ async function assignLimitError(req, contentFormatId, editorId) {
     const { rows } = await pool.query("select name from editor where id = any($1::uuid[]) order by name", [lim.editors]);
     return `You can assign tasks only to ${rows.map((r) => r.name).join(", ") || "certain people"}.`;
   }
-  if (lim.formats && !(contentFormatId && lim.formats.includes(contentFormatId))) {
+  // a main type in the grant covers its sub-types: they're where its work goes (../type-tree.js)
+  if (lim.formats && !(contentFormatId && (lim.formats.includes(contentFormatId) || lim.formats.includes(await parentTypeOf(contentFormatId))))) {
     const { rows } = await pool.query("select name from task_content_format where id = any($1::uuid[]) order by name", [lim.formats]);
     return `You can assign only ${rows.map((r) => r.name).join(", ") || "certain content types"} tasks to other people.`;
   }
@@ -421,6 +423,8 @@ tasksRouter.post("/tasks", requireEditor, requireActiveEod, async (req, res, nex
         return res.status(403).json({ error: "Only a Manager, Asst. Manager or Team Lead can make a General task." });
       }
     }
+    const headingWhy = isAdminTask ? null : await taskTypeError(req.orgId, d.contentFormatId);
+    if (headingWhy) return res.status(400).json({ error: headingWhy });
     const callerEid = await callerEditorId(req);
     if (isAdminTask && !callerEid) {
       return res.status(400).json({ error: "Add yourself to the team first (Settings → Team → Edit on your row) — a General task is assigned to you." });
@@ -602,6 +606,12 @@ tasksRouter.patch("/tasks/:id", requireEditor, requireActiveEod, async (req, res
       [req.params.id, req.orgId],
     )).rows[0];
     if (!prior) return res.status(404).json({ error: "Task not found" });
+
+    // a task already on a main type keeps it, but none moves onto one (../type-tree.js)
+    if (d.contentFormatId && d.contentFormatId !== prior.content_format_id) {
+      const why = await taskTypeError(req.orgId, d.contentFormatId);
+      if (why) return res.status(400).json({ error: why });
+    }
 
     // A task waiting for review, or completed, keeps its person — for everyone,
     // admins included. Moving it then (or approving and taking it in one go)

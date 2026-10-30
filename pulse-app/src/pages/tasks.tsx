@@ -23,7 +23,7 @@ import { api, ApiError } from "@/lib/api";
 import { Modal } from "@/components/modal";
 import { toast } from "sonner";
 import type { Task, TaskStatus, TaskPriority, TaskType, TaskMeta, TaskAttachment, TaskReviewLogEntry, ContentFormatDef, Editor, Subtask, TaskComment } from "@/lib/types";
-import { groupTypes, kindsWord } from "@/lib/type-groups";
+import { groupTypes, isHeading, kindsWord } from "@/lib/type-groups";
 import "./tasks-board.css";
 import { HandoverBlock, HandoverInbox, HandoverPill, useHandovers } from "@/components/handover";
 import { ScheduleBlock } from "@/components/schedule-block";
@@ -1791,7 +1791,8 @@ export function TaskModal({
             >
               None
             </button>
-            {(contentFormats ?? []).map((f) => (
+            {/* a main type with sub-types is only a heading; a task already on one keeps it */}
+            {(contentFormats ?? []).filter((f) => !isHeading(f.id, contentFormats) || f.id === contentFormatId).map((f) => (
               <button
                 type="button"
                 key={f.id}
@@ -2207,6 +2208,7 @@ export function TaskPanel({ mode, task, canWrite, editors, channels, onClose, on
   // (each category has its own list).
   function pickCategory(next: TaskCategory) {
     setCategory(next);
+    setOpenMain(null);
     // A Project needs a Start Date (defaults to today) and its own type list.
     setDraft((d) => ({ ...d, content_format_id: null, start_date: next === "project" ? (d.start_date ?? today()) : d.start_date }));
   }
@@ -2255,16 +2257,19 @@ export function TaskPanel({ mode, task, canWrite, editors, channels, onClose, on
   // line. Your own tasks can be any type.
   const assignLimit = !isAdmin && review.assignScope?.formats ? review.assignScope.formats : null;
   const limitTypes = assignLimit && !!cur.editor_id && cur.editor_id !== user?.editorId ? assignLimit : null;
+  // a main type in the limit covers its sub-types: they're where its work goes
+  const inLimit = (f: ContentFormatDef, limit: string[]) => limit.includes(f.id) || (!!f.parent_id && limit.includes(f.parent_id));
   const typeChoices = limitTypes
-    ? contentTypeChoices.filter((f) => limitTypes.includes(f.id) || (!creating && f.id === cur.content_format_id))
+    ? contentTypeChoices.filter((f) => inLimit(f, limitTypes) || (!creating && f.id === cur.content_format_id))
     : contentTypeChoices;
   const limitNames = (contentFormats ?? []).filter((f) => assignLimit?.includes(f.id)).map((f) => f.name).join(", ") || "certain content types";
   // Picking someone else clears a type they can't be given.
   useEffect(() => {
-    if (creating && limitTypes && draft.content_format_id && !limitTypes.includes(draft.content_format_id)) {
+    const f = (contentFormats ?? []).find((x) => x.id === draft.content_format_id);
+    if (creating && limitTypes && draft.content_format_id && !(f && inLimit(f, limitTypes))) {
       setDraft((d) => ({ ...d, content_format_id: null }));
     }
-  }, [creating, limitTypes, draft.content_format_id]);
+  }, [creating, limitTypes, draft.content_format_id, contentFormats]);
   const linkRequired = creating
     ? (linkOverride ?? selectedFormat?.review_link_required ?? false)
     : !!task?.link_required;
@@ -2289,6 +2294,8 @@ export function TaskPanel({ mode, task, canWrite, editors, channels, onClose, on
   // Service › Something else: an off-goal request that has no type of its own,
   // so the Brief says what it is (required)
   const [otherPick, setOtherPick] = useState(false);
+  // the main type whose chip is open, to choose among its sub-types
+  const [openMain, setOpenMain] = useState<string | null>(null);
   const elseNeedsBrief = creating && otherPick && !description.trim();
   useEffect(() => { setOtherPick(false); }, [category]);
   const [preview, setPreview] = useState<{
@@ -2313,7 +2320,7 @@ export function TaskPanel({ mode, task, canWrite, editors, channels, onClose, on
   useEffect(() => {
     if (!ownGoalOnly || !draft.content_format_id) return;
     const f = (contentFormats ?? []).find((x) => x.id === draft.content_format_id);
-    if (f && f.counts_in_goal !== false && !goalInfo!.types.some((g) => g.contentFormatId === f.id)) setDraft((d) => ({ ...d, content_format_id: null }));
+    if (f && f.counts_in_goal !== false && !goalInfo!.types.some((g) => g.contentFormatId === f.id || g.contentFormatId === f.parent_id)) setDraft((d) => ({ ...d, content_format_id: null }));
   }, [ownGoalOnly, goalInfo, draft.content_format_id, contentFormats]);
   useEffect(() => {
     if (!creating || !draft.editor_id || !(draft.content_format_id || otherPick) || category === "admin") { setPreview(null); return; }
@@ -2553,7 +2560,8 @@ export function TaskPanel({ mode, task, canWrite, editors, channels, onClose, on
           configured in Task Settings for the active category. */}
       <select className="t tp2-narrow" disabled={briefRo} value={cur.content_format_id ?? ""} onChange={(e) => onPickContentType(e.target.value || null)}>
         <option value="">—</option>
-        {typeChoices.map((f) => (<option key={f.id} value={f.id}>{f.icon} {f.name}{!activeCategory ? ` · ${CATEGORY_LABEL[f.category ?? "social"]}` : ""}</option>))}
+        {/* a main type with sub-types is only a heading; a task already on one keeps it */}
+        {typeChoices.filter((f) => !isHeading(f.id, contentFormats) || f.id === cur.content_format_id).map((f) => (<option key={f.id} value={f.id}>{f.icon} {f.name}{!activeCategory ? ` · ${CATEGORY_LABEL[f.category ?? "social"]}` : ""}</option>))}
       </select>
       {limitTypes && !briefRo && (
         <span className="hint" style={{ display: "block", marginTop: 4 }}>
@@ -2709,45 +2717,57 @@ export function TaskPanel({ mode, task, canWrite, editors, channels, onClose, on
                     if (g.need > 0) return { cls: "need", text: `${g.need} to go${g.open ? ` · ${g.open} on the board` : ""}` };
                     return { cls: "met", text: g.done >= g.goal ? "Goal met" : "Rest on the board" };
                   };
-                  // a main type's sub-types (Settings › Tasks & time) fold into its chip: "+2 sub-types"
-                  const chip = (f: ContentFormatDef, subs: ContentFormatDef[] = []) => {
+                  const chip = (f: ContentFormatDef, inGroup = false) => {
                     const note = goalNote(f);
-                    const within = subs.some((s) => s.id === cur.content_format_id);
-                    const subNeed = subs.reduce((n, s) => n + Math.max(0, goalOf.get(s.id)?.need ?? 0), 0);
                     return (
-                      <button key={f.id} type="button" className={"tp2-type" + (f.counts_in_goal === false ? " off" : "") + (note?.cls === "need" ? " goal" : "") + (cur.content_format_id === f.id ? " on" : within ? " within" : "")} aria-pressed={cur.content_format_id === f.id}
-                        onClick={() => { setOtherPick(false); onPickContentType(cur.content_format_id === f.id ? null : f.id); }}>
+                      <button key={f.id} type="button" className={"tp2-type" + (f.counts_in_goal === false ? " off" : "") + (note?.cls === "need" ? " goal" : "") + (cur.content_format_id === f.id ? " on" : "")} aria-pressed={cur.content_format_id === f.id}
+                        onClick={() => { setOtherPick(false); if (!inGroup) setOpenMain(null); onPickContentType(cur.content_format_id === f.id ? null : f.id); }}>
                         <span>{f.icon} {f.name}</span>
                         <small>{tenths(f.points ?? 0)} {Number(f.points) === 1 ? "pt" : "pts"}{isProject ? (f.duration_days ? ` · ${f.duration_days} day${f.duration_days === 1 ? "" : "s"}` : "") : f.hours != null ? ` · ${fmtHours(Number(f.hours))}h` : ""}</small>
                         {note && <em className={"tp2-type-goal " + note.cls}>{note.text}</em>}
-                        {subs.length > 0 && <em className="tp2-type-kinds">+{kindsWord(subs.length)}{subNeed ? ` · ${subNeed} to go` : ""} ▾</em>}
                       </button>
                     );
                   };
-                  // Main types once each; with one of a group picked, a row of its kinds to choose from
+                  // A main type with sub-types (Settings › Tasks & time) is only a heading: its chip
+                  // picks nothing, it opens "Which Reels?" and the task is one of those.
+                  const mainChip = (f: ContentFormatDef, subs: ContentFormatDef[]) => {
+                    const within = subs.some((s) => s.id === cur.content_format_id);
+                    const isOpen = within || openMain === f.id;
+                    const subNeed = subs.reduce((n, s) => n + Math.max(0, goalOf.get(s.id)?.need ?? 0), 0);
+                    return (
+                      <button key={f.id} type="button" className={"tp2-type" + (f.counts_in_goal === false ? " off" : "") + (subNeed ? " goal" : "") + (within ? " within" : "")} aria-expanded={isOpen}
+                        onClick={() => { setOtherPick(false); if (cur.content_format_id) onPickContentType(null); setOpenMain(isOpen ? null : f.id); }}>
+                        <span>{f.icon} {f.name}</span>
+                        <em className="tp2-type-kinds">{kindsWord(subs.length)}{subNeed ? ` · ${subNeed} to go` : ""} {isOpen ? "▴" : "▾"}</em>
+                      </button>
+                    );
+                  };
                   const parentOf = (id: string) => (contentFormats ?? []).find((x) => x.id === id)?.parent_id;
                   const chips = (list: ContentFormatDef[], label: string, tail?: ReactNode) => {
-                    const gs = groupTypes(list, (f) => f.id, parentOf);
-                    const open = gs.find((g) => g.subs.length > 0 && (g.main.id === cur.content_format_id || g.subs.some((s) => s.id === cur.content_format_id)));
+                    // a main type whose sub-types aren't on this list has nothing to pick
+                    const gs = groupTypes(list, (f) => f.id, parentOf).filter((g) => g.subs.length > 0 || !isHeading(g.main.id, contentFormats));
+                    const open = gs.find((g) => g.subs.length > 0 && (openMain === g.main.id || g.subs.some((s) => s.id === cur.content_format_id)));
                     return (
                       <>
-                        <div className="tp2-types" role="group" aria-label={label}>{gs.map((g) => chip(g.main, g.subs))}{tail}</div>
+                        <div className="tp2-types" role="group" aria-label={label}>{gs.map((g) => (g.subs.length ? mainChip(g.main, g.subs) : chip(g.main)))}{tail}</div>
                         {open && (
                           <div className="tp2-subtypes">
                             <span className="tp2-subhead">Which {open.main.name}?</span>
-                            <div className="tp2-types" role="group" aria-label={`Kinds of ${open.main.name}`}>{[open.main, ...open.subs].map((f) => chip(f))}</div>
+                            <div className="tp2-types" role="group" aria-label={`Kinds of ${open.main.name}`}>{open.subs.map((f) => chip(f, true))}</div>
                           </div>
                         )}
                       </>
                     );
                   };
-                  // what the goal still needs most comes first; the rest keep their order
+                  // what the goal still needs most comes first (a main type: its sub-types'); the rest keep their order
                   const ask = (f: ContentFormatDef) => { const g = goalOf.get(f.id); return g && g.need > 0 ? g.need * g.points : 0; };
-                  const inGoal = typeChoices.filter((f) => f.counts_in_goal !== false && (!ownGoalOnly || goalOf.has(f.id))).sort((a, b) => ask(b) - ask(a)),
+                  const askAll = (f: ContentFormatDef) => (contentFormats ?? []).filter((x) => x.parent_id === f.id).reduce((n, s) => n + ask(s), ask(f));
+                  // for yourself: the goal types in your goal, and the sub-types of one that's a main type now
+                  const inGoal = typeChoices.filter((f) => f.counts_in_goal !== false && (!ownGoalOnly || goalOf.has(f.id) || (!!f.parent_id && goalOf.has(f.parent_id)))).sort((a, b) => askAll(b) - askAll(a)),
                     offGoal = typeChoices.filter((f) => f.counts_in_goal === false);
                   const elsePick = category === "service" && (
                     <button type="button" className={"tp2-type off" + (otherPick ? " on" : "")} aria-pressed={otherPick}
-                      onClick={() => { onPickContentType(null); setOtherPick((v) => !v); }}>
+                      onClick={() => { setOpenMain(null); onPickContentType(null); setOtherPick((v) => !v); }}>
                       <span>··· Something else</span><small>say what it is in the Brief</small>
                     </button>
                   );

@@ -4,6 +4,7 @@ import { pool } from "../db.js";
 import { requirePermission } from "../permissions.js";
 import { hasColumn } from "../schema-flags.js";
 import { logActivity } from "../activity.js";
+import { headingError, headingTypes, notHeadingSql } from "../type-tree.js";
 
 // Goals › Brand goals: how many jobs of each task type a brand needs in a month
 // (Doctor Farmer 30 Reels, My Health School 30 Reels), and for Ads each Ads team
@@ -129,6 +130,17 @@ brandGoalsRouter.put("/brand-goals", requirePermission("edit_goals"), async (req
         return res.status(400).json({ error: cat === "ad" ? "Ads goals go on an Ads team." : "That goal needs one of your brands." });
       }
     }
+    // a heading takes no new goal (../type-tree.js)
+    const headings = await headingTypes(req.orgId, typeIds);
+    if (headings.size) {
+      const { rows: had } = await pool.query(
+        "select content_format_id, coalesce(channel_id, ad_team_id) as place, jobs from brand_goal where org_id = $1 and period_month = $2 and content_format_id = any($3::uuid[])",
+        [req.orgId, month, [...headings.keys()]],
+      );
+      const was = new Map(had.map((r) => [`${r.content_format_id}:${r.place}`, r.jobs]));
+      const up = cells.find((c) => c.jobs != null && headings.has(c.contentFormatId) && c.jobs > (was.get(`${c.contentFormatId}:${c.adTeamId ?? c.channelId}`) ?? -1));
+      if (up) return res.status(400).json({ error: headingError(headings.get(up.contentFormatId)) });
+    }
     await client.query("begin");
     let saved = 0;
     for (const c of cells) {
@@ -168,13 +180,14 @@ brandGoalsRouter.post("/brand-goals/copy", requirePermission("edit_goals"), asyn
   if (!month) return res.status(400).json({ error: "That month couldn't be read." });
   try {
     if (!(await brandGoalsReady())) return res.status(409).json({ error: NEEDS_DB });
-    // last month's goals, for the types still tracked and the teams still active; this month's own stay
+    // last month's goals, for the types still tracked (and not only a heading now) and the teams still active; this month's own stay
+    const notHeading = await notHeadingSql("f");
     const { rowCount } = await pool.query(
       `insert into brand_goal (org_id, period_month, content_format_id, channel_id, ad_team_id, jobs, updated_by)
        select b.org_id, $2::date, b.content_format_id, b.channel_id, b.ad_team_id, b.jobs, $4
          from brand_goal b join task_content_format f on f.id = b.content_format_id
         where b.org_id = $1 and b.period_month = $3::date
-          and f.active and f.category in ('social', 'ad', 'service', 'project') and coalesce((to_jsonb(f)->>'counts_in_goal')::boolean, true)
+          and f.active and f.category in ('social', 'ad', 'service', 'project') and coalesce((to_jsonb(f)->>'counts_in_goal')::boolean, true)${notHeading}
           and (b.ad_team_id is null or exists (select 1 from ad_team a where a.id = b.ad_team_id and a.active))
        on conflict (org_id, period_month, content_format_id, (coalesce(channel_id, ad_team_id))) do nothing`,
       [req.orgId, month, prevMonth(month), req.user.sub],
