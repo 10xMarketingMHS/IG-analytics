@@ -223,9 +223,9 @@ goalsRouter.get("/goals/totals", async (req, res, next) => {
 });
 
 // GET /goals?editorId=&month= — the goal-setting form for one editor+month:
-// every active content type with its JC (blank = no goal) and JPH (stored goal
-// jph, else pre-filled from the content type's time budget), plus the editor's
-// effective capacity.
+// every active content type tracked in goals (Settings › Tasks & time › Goal)
+// with its JC (blank = no goal) and JPH (stored goal jph, else pre-filled from
+// the content type's time budget), plus the editor's effective capacity.
 goalsRouter.get("/goals", goalView, async (req, res, next) => {
   const editorId = await scopedEditorId(req, req.query.editorId);
   const monthIn = req.query.month;
@@ -234,7 +234,7 @@ goalsRouter.get("/goals", goalView, async (req, res, next) => {
     const month = monthStart(monthIn);
     if (!month) return res.status(400).json({ error: "That month couldn't be read." });
     const { rows: formats } = await pool.query(
-      "select id, name, icon, category, sort_order, points, duration_days from task_content_format where org_id=$1 and active order by category, sort_order, name",
+      "select id, name, icon, category, sort_order, points, duration_days from task_content_format where org_id=$1 and active and coalesce((to_jsonb(task_content_format)->>'counts_in_goal')::boolean, true) order by category, sort_order, name",
       [req.orgId],
     );
     const { rows: goals } = await pool.query(
