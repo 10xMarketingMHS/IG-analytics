@@ -72,13 +72,24 @@ leaderboardRouter.get("/leaderboard/house", requirePage("leaderboard"), async (r
       const byType = (s?.types ?? []).map((t) => ({
         contentFormatId: t.contentFormatId, name: t.name, icon: t.icon,
         goal: Math.round(t.goal * 10) / 10, done: t.done, covered: s.coveredByType?.[t.contentFormatId] ?? 0, points: t.points,
+        // jobs the time made up for (../goal-score.js rule 6)
+        filled: Math.round((t.filled ?? 0) * 10) / 10,
       }));
+      // what the % is made of, as shares of the goal's points: own goal work, the
+      // time filling missed goals split between team goal credit and Other work
+      // (it fills them evenly, so by their hours), and covered work on top
+      const gp = s?.goalPoints ?? 0, fillH = (s?.creditHours ?? 0) + (s?.otherHours ?? 0);
+      const share = fillH > 0 ? (s.creditHours ?? 0) / fillH : 0;
+      const of = (pts) => Math.round((pts / gp) * 1000) / 10;
+      const ownPts = (s?.types ?? []).reduce((n, t) => n + (t.own ?? 0) * t.points, 0);
+      const filledPts = (s?.types ?? []).reduce((n, t) => n + (t.filled ?? 0) * t.points, 0);
       return {
         editorId: p.id, points: Math.round(points * 100) / 100, completed: mine.length,
         goalPoints: Math.round((s?.goalPoints ?? 0) * 10) / 10,
         goalPct: s?.pct == null ? null : Math.round(s.pct * 10) / 10,
         coveredJobs: s?.coveredJobs ?? 0, leaveDays: s?.leaveDays ?? 0, otherHours: s?.otherHours ?? 0,
         creditHours: s?.creditHours ?? 0, carriedJobs: (s?.carried ?? []).reduce((n, c) => n + c.jobs, 0),
+        split: gp > 0 ? { own: of(ownPts), team: of(filledPts * share), co: of(filledPts * (1 - share)), covered: of(s.coveredPoints ?? 0) } : null,
         byType,
       };
     });

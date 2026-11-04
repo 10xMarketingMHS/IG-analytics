@@ -1197,18 +1197,50 @@ select.mini{font-family:inherit;font-size:12.5px;font-weight:700;color:var(--tex
 .pp-controls{display:flex;align-items:center;gap:12px;margin-left:auto;flex-wrap:wrap}
 .pp-month{max-width:170px}
 .pp-note{font-size:12px;font-weight:600;color:var(--amber-ink,#b45309);background:var(--amber-weak,rgba(245,158,11,.12));border:1px solid var(--amber-weak,rgba(245,158,11,.25));border-radius:8px;padding:6px 11px;margin:8px 0 0;display:inline-block}
-.lb-head-house,.lb-row-house{grid-template-columns:110px 1fr 100px 160px 104px}
-/* Media House Leaders — Goal column: target number + % + completion bar. */
-.lb-goal{display:flex;flex-direction:column;gap:5px;padding-right:14px}
+/* Media House Leaders' own columns: a wide Goal column (as .lb-head.x, .lb-row.x
+   so the general .lb-head/.lb-row columns further down don't win) */
+.lb-head.lb-head-house,.lb-row.lb-row-house{grid-template-columns:110px 1fr 100px 170px 104px}
+/* Media House Leaders — Goal column: target number + %, a bar of what it's made
+   of (own goal work green, team goal blue, company tasks purple, covered amber,
+   as Goals colours them), and one line of the extras. */
+.lb-goal,.lb-gcard{--g-own:oklch(0.55 0.14 155);--g-team:oklch(0.56 0.16 250);--g-co:oklch(0.55 0.2 305);--g-cov:oklch(0.66 0.15 70)}
+html[data-theme="dark"] :is(.lb-goal,.lb-gcard){--g-own:oklch(0.74 0.14 155);--g-team:oklch(0.72 0.13 250);--g-co:oklch(0.74 0.15 305);--g-cov:oklch(0.8 0.13 75)}
+.lb-goal{display:flex;flex-direction:column;gap:5px;padding-right:14px;min-width:0;border-radius:8px;outline:none;cursor:default}
+.lb-goal:focus-visible{box-shadow:0 0 0 2px var(--accent)}
 .lb-goal-top{display:flex;align-items:baseline;justify-content:space-between;gap:8px;font-variant-numeric:tabular-nums}
 .lb-goal-num{font-size:13px;font-weight:700;color:var(--text)}
 .lb-goal-pct{font-size:11.5px;font-weight:700;color:var(--muted)}
-.lb-goal-bar{height:6px;border-radius:999px;background:var(--panel2);border:1px solid var(--border);overflow:hidden}
+.lb-goal-bar{display:flex;height:6px;border-radius:999px;background:var(--panel2);border:1px solid var(--border);overflow:hidden}
 .lb-goal-fill{height:100%;border-radius:inherit;background:linear-gradient(90deg,var(--accent),var(--indigo,#6366f1))}
+.lb-goal-seg{flex:none;height:100%}
+.lb-goal-seg+.lb-goal-seg{box-shadow:inset 1px 0 0 var(--panel)}
+.lb-goal-seg.own{background:var(--g-own)}
+.lb-goal-seg.team{background:var(--g-team)}
+.lb-goal-seg.co{background:var(--g-co)}
+.lb-goal-seg.covered{background:var(--g-cov)}
 .lb-goal-none{color:var(--faint);font-size:13px}
-/* past the goal (extra or covered work), and what changed it */
+/* past the goal (covered work), and what changed it, on one line */
 .lb-goal-pct.over{color:var(--good)}
-.lb-goal-extra{display:flex;gap:8px;margin-top:4px;font-size:11px;font-weight:600;color:var(--muted)}
+.lb-goal-extra{display:flex;align-items:center;gap:10px;min-width:0;overflow:hidden;white-space:nowrap;font-size:11px;font-weight:600;line-height:1;color:var(--muted)}
+.lb-goal-extra span{display:inline-flex;align-items:center;gap:4px;flex:none}
+.lb-dot{display:inline-block;flex:none;width:7px;height:7px;border-radius:50%}
+.lb-dot.own{background:var(--g-own)}
+.lb-dot.team{background:var(--g-team)}
+.lb-dot.co{background:var(--g-co)}
+.lb-dot.covered{background:var(--g-cov)}
+/* the Goal column's hover card (leaderboard.tsx GoalCard), above the rows */
+.lb-gcard{position:fixed;z-index:1000;width:300px;padding:12px 14px;border:1px solid var(--border);border-radius:12px;background:var(--panel);
+  box-shadow:0 14px 34px -12px rgba(20,10,60,.35);font-size:12px;color:var(--text);pointer-events:none}
+.lb-gcard-hd{display:flex;align-items:baseline;gap:6px;padding-bottom:8px}
+.lb-gcard-hd b{font-size:18px;font-weight:800;letter-spacing:-.02em}
+.lb-gcard-hd span{color:var(--muted)}
+.lb-gcard-types,.lb-gcard-parts,.lb-gcard-notes{display:flex;flex-direction:column;gap:5px;padding:8px 0;border-top:1px solid var(--border)}
+.lb-gcard-row,.lb-gcard-parts div{display:flex;align-items:center;gap:8px}
+.lb-gcard-row>span:first-child,.lb-gcard-parts span{flex:1;min-width:0}
+.lb-gcard-row>span:first-child{color:var(--muted)}
+.lb-gcard-row em{font-style:normal;color:var(--muted)}
+.lb-gcard-parts b,.lb-gcard-row b{font-variant-numeric:tabular-nums}
+.lb-gcard-notes{padding-bottom:0;font-size:11.5px;color:var(--muted)}
 .lb-teamgoal{margin-top:14px;font-size:13px;color:var(--muted);text-align:right;padding-right:22px}
 .lb-teamgoal b{color:var(--text);font-variant-numeric:tabular-nums}
 .lb-statbar{display:flex;align-items:center;gap:16px;margin:0 0 16px}
@@ -1330,7 +1362,7 @@ img.lb-ava{object-fit:cover}
   .g2{grid-template-columns:1fr}
   /* Leaderboard list: drop reels/carousels + views columns */
   .lb-head,.lb-row{grid-template-columns:84px 1fr 104px}
-  .lb-head-house,.lb-row-house{grid-template-columns:84px 1fr 104px}
+  .lb-head.lb-head-house,.lb-row.lb-row-house{grid-template-columns:84px 1fr 104px}
   .lb-hidesm{display:none}
   .lb-hero{padding:9px 14px}
   .lb-hero .trophy{font-size:18px}

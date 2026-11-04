@@ -451,9 +451,10 @@ function TypeRow({
               </select>
             ) : null}
             {format.counts_in_goal !== undefined && !totals && (
-              <small className={"st-tt-goal" + (format.counts_in_goal ? "" : " off")}>
-                {!format.counts_in_goal ? "Not tracked in goals" : format.goal_people ? `In ${format.goal_people} ${format.goal_people === 1 ? "person's" : "people's"} goals` : "Tracked in goals"}
-              </small>
+              {(() => {
+                const note = !format.counts_in_goal ? "Not tracked in goals" : format.goal_people ? `In ${format.goal_people} ${format.goal_people === 1 ? "person's" : "people's"} goals` : "Tracked in goals";
+                return <small className={"st-tt-goal" + (format.counts_in_goal ? "" : " off")} title={note}>{note}</small>;
+              })()}
             )}
             {isProject && (
               <input className="st-metrics" value={metrics} placeholder="What this project delivers (a note, not scored)…" aria-label={`What ${format.name} delivers`}

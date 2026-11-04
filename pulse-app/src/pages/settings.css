@@ -184,8 +184,12 @@ html[data-theme="dark"] .st-pt.carousel{background:oklch(0.3 0.06 200);color:okl
   font:600 13px 'Plus Jakarta Sans',sans-serif;outline:none}
 .st-tt-name input.st-plain:hover{border-color:var(--st-line)}
 .st-tt-name input.st-plain:focus{border-color:var(--st-ac);background:var(--st-solid)}
-.st-tt-sub{display:flex;align-items:center;gap:6px;min-width:0}
-.st-kind{flex:none;height:22px;padding:0 2px 0 4px;margin-left:-4px;border:1px solid transparent;border-radius:6px;background:transparent;color:var(--st-text3);
+/* the name's second line (category, Put under…, Tracked in goals) stays on one
+   line in its column: a select is as wide as what it shows, not its longest
+   option, and the note shortens (its full text on hover) */
+.st-tt-sub{display:flex;align-items:center;gap:6px;min-width:0;overflow:hidden;padding-left:4px;margin-left:-4px}
+.st-tt-sub small{flex:0 1 auto;min-width:0}
+.st-kind{flex:none;max-width:100%;field-sizing:content;height:22px;padding:0 2px 0 4px;margin-left:-4px;border:1px solid transparent;border-radius:6px;background:transparent;color:var(--st-text3);
   font:600 11.5px 'Plus Jakarta Sans',sans-serif;cursor:pointer;outline:none}
 .st-kind:hover{border-color:var(--st-line);color:var(--st-text2)}
 .st-kind:focus-visible{border-color:var(--st-ac)}

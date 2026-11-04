@@ -1,4 +1,5 @@
 import { useEffect, useLayoutEffect, useMemo, useState } from "react";
+import { createPortal } from "react-dom";
 import { Loader } from "@/components/loader";
 import { PositionMark } from "@/components/position-mark";
 import { Link } from "react-router-dom";
@@ -19,9 +20,9 @@ type Row = { editor: Editor; reels: number; carousels: number; views: number; po
 // One person on Media House Leaders (server/src/routes/leaderboard.js): the
 // month's points, jobs completed, goal points, and the share of the goal
 // reached, counted in jobs per type (null with no goal set).
-type GoalType = { contentFormatId: string; name: string; icon: string | null; goal: number; done: number; covered?: number; points: number };
-type HouseRow = { editor: Editor; points: number; completed: number; goal: number; goalPct: number | null; byType: GoalType[]; coveredJobs: number; leaveDays: number; otherHours: number; creditHours: number; carriedJobs: number };
-type HouseApiRow = { editorId: string; points: number; completed: number; goalPoints: number; goalPct: number | null; byType: GoalType[]; coveredJobs?: number; leaveDays?: number; otherHours?: number; creditHours?: number; carriedJobs?: number };
+type GoalType = { contentFormatId: string; name: string; icon: string | null; goal: number; done: number; covered?: number; points: number; filled?: number };
+type HouseRow = { editor: Editor; points: number; completed: number; goal: number; goalPct: number | null; byType: GoalType[]; coveredJobs: number; leaveDays: number; otherHours: number; creditHours: number; carriedJobs: number; split: Split | null };
+type HouseApiRow = { editorId: string; points: number; completed: number; goalPoints: number; goalPct: number | null; byType: GoalType[]; coveredJobs?: number; leaveDays?: number; otherHours?: number; creditHours?: number; carriedJobs?: number; split?: Split | null };
 
 // Weighted engagement across an editor's reels & carousels.
 function pointsOf(p: Post) {
@@ -268,30 +269,88 @@ function Laurel({ rank, variant }: { rank: number; variant: "gold" | "silver" | 
 // up to its goal (cut for approved leave), the time from team goal credit and
 // Other work filling the goals that were missed, plus covered work, weighed by
 // the goal's points. Only covered work takes it past 100%, up to 150% in all.
-// Hover for each type's count. No goal set: says so.
-function GoalCell({ goal, pct, byType, coveredJobs = 0, leaveDays = 0, otherHours = 0, creditHours = 0, carriedJobs = 0 }: { goal: number; pct: number | null; byType: GoalType[]; coveredJobs?: number; leaveDays?: number; otherHours?: number; creditHours?: number; carriedJobs?: number }) {
+// The bar shows what it's made of, as Goals colours it: own goal work green,
+// team goal blue, company tasks (Other work) purple, covered amber. Hovering
+// (or focusing) opens a card with each type and each part. No goal set: says so.
+type Split = { own: number; team: number; co: number; covered: number };
+function GoalCell({ goal, pct, byType, coveredJobs = 0, leaveDays = 0, otherHours = 0, creditHours = 0, carriedJobs = 0, split = null }: { goal: number; pct: number | null; byType: GoalType[]; coveredJobs?: number; leaveDays?: number; otherHours?: number; creditHours?: number; carriedJobs?: number; split?: Split | null }) {
+  const [card, setCard] = useState<DOMRect | null>(null);
   if (pct == null || goal <= 0) return <span className="lb-goal-none">No goal set</span>;
-  const title = [
-    byType.map((g) => `${g.name}: ${g.done} of ${g.goal}${g.covered ? ` (${g.covered} covered)` : ""}`).join(" · "),
-    coveredJobs > 0 ? `Covered for others: ${coveredJobs} job${coveredJobs === 1 ? "" : "s"}, counted on top` : "",
-    leaveDays > 0 ? `Approved leave: ${leaveDays} day${leaveDays === 1 ? "" : "s"}, goal cut to match` : "",
-    creditHours > 0 ? `Team goal credit (beyond their goal, while the team still needed it): ${creditHours}h, fills missed goals` : "",
-    otherHours > 0 ? `Other work (tasks outside the team's goals): ${otherHours}h, fills missed goals` : "",
-    carriedJobs > 0 ? `Carried to next month: ${carriedJobs} job${carriedJobs === 1 ? "" : "s"} the team didn't need` : "",
-  ].filter(Boolean).join("\n");
+  const show = (e: React.SyntheticEvent<HTMLElement>) => setCard(e.currentTarget.getBoundingClientRect());
+  const hide = () => setCard(null);
+  // the bar's parts, up to the bar's end
+  const parts: [keyof Split, number][] = [];
+  if (split) {
+    let room = 100;
+    for (const k of ["own", "team", "co", "covered"] as const) {
+      const w = Math.max(0, Math.min(room, split[k]));
+      if (w > 0) parts.push([k, w]);
+      room -= w;
+    }
+  }
+  const extras = creditHours > 0 || otherHours > 0 || leaveDays > 0 || coveredJobs > 0;
   return (
-    <div className="lb-goal" title={title}>
+    <div className="lb-goal" tabIndex={0} onMouseEnter={show} onMouseLeave={hide} onFocus={show} onBlur={hide}
+      aria-label={`${Math.round(pct)}% of a ${Math.round(goal)} point goal`}>
       <div className="lb-goal-top">
         <span className="lb-goal-num">{Math.round(goal).toLocaleString()} pts</span>
         <span className={"lb-goal-pct" + (pct > 100 ? " over" : "")}>{Math.round(pct)}%</span>
       </div>
-      <div className="lb-goal-bar"><div className="lb-goal-fill" style={{ width: `${Math.min(100, pct)}%` }} /></div>
-      {(coveredJobs > 0 || leaveDays > 0 || otherHours > 0 || creditHours > 0) && (
+      <div className="lb-goal-bar">
+        {parts.length
+          ? parts.map(([k, w]) => <span key={k} className={"lb-goal-seg " + k} style={{ width: `${w}%` }} />)
+          : <div className="lb-goal-fill" style={{ width: `${Math.min(100, pct)}%` }} />}
+      </div>
+      {extras && (
         <div className="lb-goal-extra">
-          {coveredJobs > 0 && <span>+{coveredJobs} covered</span>}
+          {creditHours > 0 && <span><i className="lb-dot team" />{creditHours}h</span>}
+          {otherHours > 0 && <span><i className="lb-dot co" />{otherHours}h</span>}
+          {coveredJobs > 0 && <span><i className="lb-dot covered" />+{coveredJobs}</span>}
           {leaveDays > 0 && <span>{leaveDays}d leave</span>}
-          {creditHours > 0 && <span>{creditHours}h team goal</span>}
-          {otherHours > 0 && <span>{otherHours}h other work</span>}
+        </div>
+      )}
+      {card && createPortal(
+        <GoalCard at={card} goal={goal} pct={pct} byType={byType} split={split} coveredJobs={coveredJobs}
+          leaveDays={leaveDays} otherHours={otherHours} creditHours={creditHours} carriedJobs={carriedJobs} />,
+        document.body,
+      )}
+    </div>
+  );
+}
+
+// The Goal column's hover card: each type, then each part of the score. It sits
+// under the cell, or over it when there's no room below, and inside the window.
+function GoalCard({ at, goal, pct, byType, split, coveredJobs, leaveDays, otherHours, creditHours, carriedJobs }: {
+  at: DOMRect; goal: number; pct: number; byType: GoalType[]; split: Split | null;
+  coveredJobs: number; leaveDays: number; otherHours: number; creditHours: number; carriedJobs: number;
+}) {
+  const W = 300;
+  const left = Math.max(12, Math.min(at.right - W, window.innerWidth - W - 12));
+  const below = at.bottom + 280 < window.innerHeight;
+  const style: React.CSSProperties = below ? { left, top: at.bottom + 8 } : { left, bottom: window.innerHeight - at.top + 8 };
+  const pc = (n: number) => `${Math.round(n)}%`;
+  const s = (n: number, one: string, many = `${one}s`) => `${n} ${n === 1 ? one : many}`;
+  return (
+    <div className="lb-gcard" role="tooltip" style={style}>
+      <div className="lb-gcard-hd"><b>{pc(pct)}</b><span>of a {Math.round(goal).toLocaleString()} point goal</span></div>
+      <div className="lb-gcard-types">
+        {byType.map((g) => (
+          <div key={g.contentFormatId} className="lb-gcard-row">
+            <span>{g.name}</span>
+            <span><b>{g.done}</b> of {g.goal}{(g.filled ?? 0) > 0 && <em> · +{g.filled} filled</em>}{(g.covered ?? 0) > 0 && <em> · {g.covered} covered</em>}</span>
+          </div>
+        ))}
+      </div>
+      <div className="lb-gcard-parts">
+        {split && split.own > 0 && <div><i className="lb-dot own" /><span>Own goal work</span><b>{pc(split.own)}</b></div>}
+        {creditHours > 0 && <div><i className="lb-dot team" /><span>Team goal · {creditHours}h</span><b>{split ? pc(split.team) : ""}</b></div>}
+        {otherHours > 0 && <div><i className="lb-dot co" /><span>Company tasks · {otherHours}h</span><b>{split ? pc(split.co) : ""}</b></div>}
+        {coveredJobs > 0 && <div><i className="lb-dot covered" /><span>Covered for others · {s(coveredJobs, "job")}</span><b>{split ? `+${pc(split.covered)}` : ""}</b></div>}
+      </div>
+      {(leaveDays > 0 || carriedJobs > 0) && (
+        <div className="lb-gcard-notes">
+          {leaveDays > 0 && <span>Approved leave: {s(leaveDays, "day")}, so the goal is cut to match.</span>}
+          {carriedJobs > 0 && <span>{s(carriedJobs, "job")} carried to next month, as the team didn't need {carriedJobs === 1 ? "it" : "them"}.</span>}
         </div>
       )}
     </div>
@@ -353,7 +412,7 @@ export function LeaderboardPage() {
     const byId = new Map(editors.map((e) => [e.id, e]));
     return houseData.rows.flatMap((r) => {
       const editor = byId.get(r.editorId);
-      return editor ? [{ editor, points: r.points, completed: r.completed, goal: r.goalPoints, goalPct: r.goalPct, byType: r.byType, coveredJobs: r.coveredJobs ?? 0, leaveDays: r.leaveDays ?? 0, otherHours: r.otherHours ?? 0, creditHours: r.creditHours ?? 0, carriedJobs: r.carriedJobs ?? 0 }] : [];
+      return editor ? [{ editor, points: r.points, completed: r.completed, goal: r.goalPoints, goalPct: r.goalPct, byType: r.byType, coveredJobs: r.coveredJobs ?? 0, leaveDays: r.leaveDays ?? 0, otherHours: r.otherHours ?? 0, creditHours: r.creditHours ?? 0, carriedJobs: r.carriedJobs ?? 0, split: r.split ?? null }] : [];
     });
   }, [editors, houseData]);
 
@@ -566,7 +625,7 @@ export function LeaderboardPage() {
                       <div className="who"><b>{r.editor.name}<PositionMark designation={r.editor.designation} /></b><small>{r.editor.designation || "Editor"}</small></div>
                     </div>
                     <div className="lb-cell num lb-hidesm">{r.completed}</div>
-                    <div className="lb-cell lb-hidesm"><GoalCell goal={r.goal} pct={r.goalPct} byType={r.byType} coveredJobs={r.coveredJobs} leaveDays={r.leaveDays} otherHours={r.otherHours} creditHours={r.creditHours} carriedJobs={r.carriedJobs} /></div>
+                    <div className="lb-cell lb-hidesm"><GoalCell goal={r.goal} pct={r.goalPct} byType={r.byType} coveredJobs={r.coveredJobs} leaveDays={r.leaveDays} otherHours={r.otherHours} creditHours={r.creditHours} carriedJobs={r.carriedJobs} split={r.split} /></div>
                     <div className="lb-points">{r.points.toFixed(1)}</div>
                   </div>
                 ))}
