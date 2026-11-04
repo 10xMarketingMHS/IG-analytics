@@ -34,6 +34,7 @@ const PERMISSIONS: { key: PermissionKey; label: string; desc: string; scope: "se
   { key: "content_taxonomy", label: "Content taxonomy", scope: "admin", desc: "Pillars, avatars, content types and formats" },
   { key: "access_manage", label: "Manage access", scope: "admin", desc: "Grant or revoke permissions for other people", warn: true },
   { key: "assign_tasks", label: "Assign tasks", scope: "admin", desc: "Assign tasks to other editors, not only themselves" },
+  { key: "review_tasks", label: "Review tasks", scope: "admin", desc: "Every task of the types you pick comes to them for review, whoever did it" },
   { key: "hold_tasks", label: "Hold any task", scope: "admin", desc: "Pause or resume anyone's task, not only their own" },
   { key: "edit_goals", label: "Edit goals", scope: "admin", desc: "Set any editor's goals and capacity" },
   { key: "discipline", label: "Discipline", scope: "admin", desc: "Give discipline ratings for the whole team" },
@@ -82,8 +83,10 @@ export function AccessSection() {
   const [assignFmts, setAssignFmts] = useState<string[]>([]);
   const [assignAnyone, setAssignAnyone] = useState(true);
   const [assignWho, setAssignWho] = useState<string[]>([]);
+  // Review tasks: the content types whose tasks come to them for review
+  const [reviewFmts, setReviewFmts] = useState<string[]>([]);
   // What's saved, to tell when there's something to save.
-  type Snap = { checked: Record<string, boolean>; assignAll: boolean; assignFmts: string[]; assignAnyone: boolean; assignWho: string[] };
+  type Snap = { checked: Record<string, boolean>; assignAll: boolean; assignFmts: string[]; assignAnyone: boolean; assignWho: string[]; reviewFmts: string[] };
   const [saved, setSaved] = useState<Snap | null>(null);
   const { editors } = useEditors();
   const { contentFormats } = useContentFormats();
@@ -103,15 +106,16 @@ export function AccessSection() {
   useEffect(() => {
     if (!userId) { setChecked({}); setSaved(null); return; }
     setLoading(true);
-    api<{ permissions: PermissionKey[]; assignScope?: AssignScope }>(`/access/grants?userId=${userId}`)
+    api<{ permissions: PermissionKey[]; assignScope?: AssignScope; reviewScope?: { formats: string[] } | null }>(`/access/grants?userId=${userId}`)
       .then((d) => {
         const c = Object.fromEntries(PERMISSIONS.map((p) => [p.key, d.permissions.includes(p.key)]));
         const af = d.assignScope?.formats ?? [];
         const aAll = af.length === 0;
         const aw = d.assignScope?.editors ?? [];
         const aAny = aw.length === 0;
-        setChecked(c); setAssignAll(aAll); setAssignFmts(af); setAssignAnyone(aAny); setAssignWho(aw);
-        setSaved({ checked: c, assignAll: aAll, assignFmts: af, assignAnyone: aAny, assignWho: aw });
+        const rf = d.reviewScope?.formats ?? [];
+        setChecked(c); setAssignAll(aAll); setAssignFmts(af); setAssignAnyone(aAny); setAssignWho(aw); setReviewFmts(rf);
+        setSaved({ checked: c, assignAll: aAll, assignFmts: af, assignAnyone: aAny, assignWho: aw, reviewFmts: rf });
       })
       .catch((e) => toast.error(e instanceof ApiError ? e.message : "Couldn't load their access."))
       .finally(() => setLoading(false));
@@ -123,8 +127,9 @@ export function AccessSection() {
       const permissions = Object.fromEntries(PERMISSIONS.map((p) => [p.key, !!checked[p.key]]));
       const assignScope: AssignScope = assignAll && assignAnyone ? null
         : { ...(assignAll ? {} : { formats: assignFmts }), ...(assignAnyone ? {} : { editors: assignWho }) };
-      await api("/access/grants", { method: "PUT", body: JSON.stringify({ userId, permissions, assignScope }) });
-      setSaved({ checked, assignAll, assignFmts, assignAnyone, assignWho });
+      const reviewScope = checked.review_tasks ? { formats: reviewFmts } : null;
+      await api("/access/grants", { method: "PUT", body: JSON.stringify({ userId, permissions, assignScope, reviewScope }) });
+      setSaved({ checked, assignAll, assignFmts, assignAnyone, assignWho, reviewFmts });
       toast.success("Access saved.");
     } catch (e) {
       toast.error(e instanceof ApiError ? e.message : "Couldn't save access.");
@@ -142,10 +147,12 @@ export function AccessSection() {
   // Who they could assign to — everyone active except themselves.
   const reviewable = useMemo(() => (editors ?? []).filter((e) => e.active && e.id !== person?.editor_id), [editors, person?.editor_id]);
   const extra = Object.values(saved?.checked ?? {}).filter(Boolean).length;
-  const dirty = !!saved && !sameJson(saved, { checked, assignAll, assignFmts, assignAnyone, assignWho });
-  // A content-type limit needs at least one type picked, a people limit one person.
+  const dirty = !!saved && !sameJson(saved, { checked, assignAll, assignFmts, assignAnyone, assignWho, reviewFmts });
+  // A content-type limit needs at least one type picked, a people limit one
+  // person, and Review tasks the types they review.
   const missingType = !!checked.assign_tasks && !assignAll && assignFmts.length === 0;
   const missingPerson = !!checked.assign_tasks && !assignAnyone && assignWho.length === 0;
+  const missingReview = !!checked.review_tasks && reviewFmts.length === 0;
 
   return (
     <>
@@ -223,6 +230,16 @@ export function AccessSection() {
                   )}
                 </div>
               )}
+              {p.key === "review_tasks" && checked.review_tasks && (
+                <div className="st-scope">
+                  <div className="st-scopeline">Which tasks they review</div>
+                  <FormatPicker formats={formats} picked={reviewFmts} onChange={setReviewFmts} label="Content types they review" />
+                  <span className="st-note">
+                    Every task of these types comes to them when it's sent for review, whoever did it and whoever gave it (a main type takes its sub-types with it).
+                    Their own go to the usual reviewer, and after 24 hours waiting a Manager can review it too.
+                  </span>
+                </div>
+              )}
             </div>
           ))}
         </section>
@@ -231,8 +248,8 @@ export function AccessSection() {
       {userId && !loading && (
         <section className="st-card">
           <div className="st-foot" style={{ borderTop: 0 }}>
-            <span className="st-note">{missingType ? "Pick at least one content type, or choose All." : missingPerson ? "Pick at least one person, or choose Anyone." : "Permissions add to the person's role — they never take anything away."}</span>
-            <button type="button" className="st-btn grad" disabled={!dirty || saving || missingType || missingPerson} onClick={save}>{SI.check}{saving ? "Saving…" : dirty ? "Save access" : "Saved"}</button>
+            <span className="st-note">{missingType ? "Pick at least one content type, or choose All." : missingPerson ? "Pick at least one person, or choose Anyone." : missingReview ? "Pick the task types they review." : "Permissions add to the person's role — they never take anything away."}</span>
+            <button type="button" className="st-btn grad" disabled={!dirty || saving || missingType || missingPerson || missingReview} onClick={save}>{SI.check}{saving ? "Saving…" : dirty ? "Save access" : "Saved"}</button>
           </div>
         </section>
       )}

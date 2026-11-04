@@ -26,6 +26,7 @@ export type PermissionKey =
   | "assign_tasks"
   | "resolve_tasks"
   | "hold_tasks"
+  | "review_tasks"
   | "edit_goals"
   | "discipline";
 

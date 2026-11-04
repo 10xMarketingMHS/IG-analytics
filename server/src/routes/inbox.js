@@ -71,7 +71,7 @@ inboxRouter.get("/inbox", async (req, res, next) => {
         )
         : none,
       pool.query(
-        `select t.id, t.title, t.status, t.editor_id, t.assigned_by, t.review_started_at, ${REF} as ref, e.name as "editorName", e.image_url as "imageUrl"
+        `select t.id, t.title, t.status, t.editor_id, t.assigned_by, t.content_format_id, t.review_started_at, ${REF} as ref, e.name as "editorName", e.image_url as "imageUrl"
            from task t left join editor e on e.id = t.editor_id
           where t.org_id = $1 and t.status = 'review'`,
         [req.orgId],

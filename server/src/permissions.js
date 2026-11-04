@@ -26,6 +26,7 @@ export const PERMISSION_KEYS = [
   "assign_tasks",        // admin cap: assign tasks to other editors
   "resolve_tasks",       // admin cap: approve / send back tasks in review
   "hold_tasks",          // admin cap: hold or resume anyone's task
+  "review_tasks",        // admin cap: review every task of the types picked (scope.formats), whoever did it (../review-route.js)
   "edit_goals",          // admin cap: set editors' goals & capacity
   "discipline",          // admin cap: award discipline ratings
 ];

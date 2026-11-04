@@ -858,7 +858,9 @@ tasksRouter.patch("/tasks/:id", requireEditor, requireActiveEod, async (req, res
         const route = routeReview(prior, await reviewContext(req.orgId));
         if (!route.reviewers.includes(req.user.sub)) {
           return res.status(403).json({
-            error: route.kind === "assigner" ? `Only ${route.label}, who assigned this task, can review it.`
+            error: route.kind === "type" && route.copyAt ? `${route.label} reviews this type of task. A Manager can too once it has waited 24 hours.`
+              : route.kind === "type" ? `Only ${route.label} can review this task: ${route.label} reviews this type of task.`
+              : route.kind === "assigner" ? `Only ${route.label}, who assigned this task, can review it.`
               : route.kind === "leads" && route.copyAt ? "A Team Lead reviews this task. A Manager can too once it has waited 24 hours."
               : route.kind === "leads" ? "Only a Team Lead or a Manager can review this task."
               : "Only a Manager can review this task.",

@@ -32,8 +32,12 @@ accessRouter.get("/access/grants", manageAccess, async (req, res, next) => {
   const userId = req.query.userId;
   if (!userId) return res.status(400).json({ error: "userId is required." });
   try {
-    const [assignScope, permissions] = await Promise.all([assignLimits(req.orgId, userId), activeGrants(req.orgId, userId)]);
-    res.json({ permissions: permissions.filter((k) => !RETIRED.has(k)), assignScope });
+    const [assignScope, permissions, review] = await Promise.all([
+      assignLimits(req.orgId, userId), activeGrants(req.orgId, userId),
+      pool.query("select scope from user_permission_grant where org_id = $1 and user_id = $2 and permission_key = 'review_tasks' and revoked_at is null limit 1", [req.orgId, userId]),
+    ]);
+    const reviewFormats = review.rows[0]?.scope?.formats;
+    res.json({ permissions: permissions.filter((k) => !RETIRED.has(k)), assignScope, reviewScope: Array.isArray(reviewFormats) && reviewFormats.length ? { formats: reviewFormats } : null });
   } catch (err) {
     next(err);
   }
@@ -44,13 +48,14 @@ accessRouter.get("/access/grants", manageAccess, async (req, res, next) => {
 // each task says can_review itself), and any limit on their Assign tasks.
 accessRouter.get("/access/review-scope/me", async (req, res, next) => {
   try {
-    const [assignScope, assigner, me] = await Promise.all([
+    const [assignScope, assigner, typeReviewer, me] = await Promise.all([
       assignLimits(req.orgId, req.user.sub),
       hasActiveGrant(req.orgId, req.user.sub, "assign_tasks"),
+      hasActiveGrant(req.orgId, req.user.sub, "review_tasks"),
       pool.query("select e.designation from app_user u left join editor e on e.id = u.editor_id where u.id = $1", [req.user.sub]),
     ]);
     const admin = req.role === "admin";
-    const reviewer = admin || assigner || rankOf(me.rows[0]?.designation, admin) <= 2;
+    const reviewer = admin || assigner || typeReviewer || rankOf(me.rows[0]?.designation, admin) <= 2;
     res.json({ reviewer, assignScope });
   } catch (err) {
     next(err);
@@ -69,6 +74,8 @@ const SaveSchema = z.object({
   permissions: z.record(z.string(), z.boolean()),
   // Narrows assign_tasks to some content types and/or people: null/omitted = any.
   assignScope: AssignScopeSchema.nullable().optional(),
+  // The content types review_tasks covers: at least one (../review-route.js).
+  reviewScope: z.object({ formats: z.array(z.string().uuid()).min(1) }).nullable().optional(),
 });
 
 // PUT /access/grants — apply a user's desired permission state. New permissions
@@ -77,7 +84,8 @@ const SaveSchema = z.object({
 accessRouter.put("/access/grants", manageAccess, async (req, res, next) => {
   const parsed = SaveSchema.safeParse(req.body);
   if (!parsed.success) return res.status(400).json({ error: "Invalid grant payload." });
-  const { userId, permissions, assignScope } = parsed.data;
+  const { userId, permissions, assignScope, reviewScope } = parsed.data;
+  if (permissions.review_tasks === true && !reviewScope?.formats?.length) return res.status(400).json({ error: "Pick the task types they review." });
   // never your own: someone given Access management could otherwise give
   // themselves every other grant
   if (userId === req.user.sub) return res.status(403).json({ error: "You can't change your own access. The Super Admin does." });
@@ -113,7 +121,13 @@ accessRouter.put("/access/grants", manageAccess, async (req, res, next) => {
         [req.orgId, userId, "assign_tasks", assignScope ? JSON.stringify(assignScope) : null],
       );
     }
-    res.json({ ok: true, permissions: (await activeGrants(req.orgId, userId)).filter((k) => !RETIRED.has(k)), assignScope: assignScope ?? null });
+    if (permissions.review_tasks === true) {
+      await pool.query(
+        "update user_permission_grant set scope=$4 where org_id=$1 and user_id=$2 and permission_key=$3 and revoked_at is null",
+        [req.orgId, userId, "review_tasks", JSON.stringify({ formats: reviewScope.formats })],
+      );
+    }
+    res.json({ ok: true, permissions: (await activeGrants(req.orgId, userId)).filter((k) => !RETIRED.has(k)), assignScope: assignScope ?? null, reviewScope: permissions.review_tasks === true ? reviewScope : null });
   } catch (err) {
     next(err);
   }
