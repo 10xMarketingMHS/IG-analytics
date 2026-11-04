@@ -2451,8 +2451,11 @@ export function TaskPanel({ mode, task, canWrite, editors, channels, onClose, on
   const dayLocked = useDayLocked();
   const { refresh: refreshDay, start: startDay, busy: dayBusy } = useEodState();
   useEffect(() => { if (creating) refreshDay(); }, [creating, refreshDay]);
+  // A kind of work with types needs one (its time and its reviewer); Service can be
+  // Something else instead. The server holds the same line.
+  const needsType = creating && !!category && category !== "admin" && typeChoices.length > 0 && !draft.content_format_id && !otherPick;
   const canCreate = Boolean(title.trim() && category && !adminNeedsRoster && (category === "admin" || (adByTeam ? draft.ad_team_id : draft.channel_id)) && (category !== "project" || draft.content_format_id)
-    && (!limitTypes || category === "admin" || !!draft.content_format_id)) && !(creating && dayLocked) && !elseNeedsBrief;
+    && (!limitTypes || category === "admin" || !!draft.content_format_id)) && !(creating && dayLocked) && !elseNeedsBrief && !needsType;
   async function create() {
     if (!canCreate || busy) return;
     setBusy(true);
@@ -2768,6 +2771,7 @@ export function TaskPanel({ mode, task, canWrite, editors, channels, onClose, on
       : category === "project" && contentTypeChoices.length === 0 ? "No project types yet. Add one under Settings › Tasks & time first."
       : category === "project" && !draft.content_format_id ? "Pick a project type."
       : limitTypes && !draft.content_format_id ? `Pick a type. You can give others only ${limitNames} tasks.`
+      : needsType ? `Pick its type. The type sets its time and who reviews it${category === "service" ? ", or pick Something else" : ""}.`
       : nextRef ? `Ready — ${nextRef} will be assigned when you create it.` : "Ready to create.";
     return (
       <div className={"task-panel-scrim center tp2-scrim" + (leaving ? " leaving" : "")} onClick={close}>

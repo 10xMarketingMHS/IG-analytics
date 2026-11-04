@@ -426,6 +426,12 @@ tasksRouter.post("/tasks", requireEditor, requireActiveEod, async (req, res, nex
     }
     const headingWhy = isAdminTask ? null : await taskTypeError(req.orgId, d.contentFormatId);
     if (headingWhy) return res.status(400).json({ error: headingWhy });
+    // A kind of work with types (Settings › Tasks & time) needs one: it gives the
+    // task its time and its reviewer. Service's "Something else" has none.
+    if (!isAdminTask && taskType !== "service" && !d.contentFormatId) {
+      const has = await pool.query("select 1 from task_content_format where org_id = $1 and category = $2 and active limit 1", [req.orgId, taskType]);
+      if (has.rowCount) return res.status(400).json({ error: "Pick its type. The type sets its time and who reviews it." });
+    }
     const callerEid = await callerEditorId(req);
     if (isAdminTask && !callerEid) {
       return res.status(400).json({ error: "Add yourself to the team first (Settings → Team → Edit on your row) — a General task is assigned to you." });
