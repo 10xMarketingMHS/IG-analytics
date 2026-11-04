@@ -1,6 +1,7 @@
 import { useMemo, useState } from "react";
 import { toast } from "sonner";
 import { api, ApiError } from "@/lib/api";
+import { useAdTeams } from "@/lib/ad-teams";
 import type { ContentFormatDef, Editor } from "@/lib/types";
 import "./finished-work.css";
 
@@ -40,6 +41,10 @@ export function FinishedWorkDialog({ editors, formats, brands, myEditorId, onClo
   const [editorId, setEditorId] = useState("");
   const [typeId, setTypeId] = useState("");
   const [brandId, setBrandId] = useState(brands[0]?.id ?? "");
+  // Ad work belongs to its Ads team, not a brand (as on New task), once there are teams
+  const { adTeams } = useAdTeams();
+  const teams = (adTeams ?? []).filter((t) => t.active);
+  const [teamId, setTeamId] = useState("");
   const [count, setCount] = useState("1");
   const [date, setDate] = useState(today);
   // null: the type's own time (theirs, else the team's), as the server takes it
@@ -54,11 +59,13 @@ export function FinishedWorkDialog({ editors, formats, brands, myEditorId, onClo
   const person = people.find((p) => p.id === editorId) ?? null;
   const n = Math.floor(Number(count));
   const offGoal = type?.counts_in_goal === false;
+  const byTeam = type?.category === "ad" && teams.length > 0;
+  const team = teams.find((t) => t.id === teamId) ?? null;
 
   async function add() {
     if (!person) return setErr("Pick who did it.");
     if (!type) return setErr("Pick its type.");
-    if (!brandId) return setErr("Pick its brand.");
+    if (byTeam ? !team : !brandId) return setErr(byTeam ? "Pick its Ads team." : "Pick its brand.");
     if (!(n >= 1 && n <= 100)) return setErr("How many: 1 to 100.");
     if (!date || date > today || date < `${today.slice(0, 8)}01`) return setErr("Pick a day this month, today or earlier.");
     const h = hours;
@@ -66,7 +73,7 @@ export function FinishedWorkDialog({ editors, formats, brands, myEditorId, onClo
     try {
       const r = await api<{ added: number }>("/tasks/finished", {
         method: "POST",
-        body: JSON.stringify({ editorId: person.id, contentFormatId: type.id, channelId: brandId, count: n, date, hoursEach: h, title: title.trim() || undefined, deliveryLink: link.trim() || null, note: note.trim() || undefined }),
+        body: JSON.stringify({ editorId: person.id, contentFormatId: type.id, ...(byTeam ? { adTeamId: team!.id, channelId: null } : { channelId: brandId }), count: n, date, hoursEach: h, title: title.trim() || undefined, deliveryLink: link.trim() || null, note: note.trim() || undefined }),
       });
       toast.success(`Added ${r.added} finished ${type.name}${r.added > 1 ? " jobs" : ""} for ${person.name}, done ${dayLabel(date)}.`);
       onAdded();
@@ -120,12 +127,22 @@ export function FinishedWorkDialog({ editors, formats, brands, myEditorId, onClo
               <label className="f">Day it was done <span className="req">*</span></label>
               <input className="t" type="date" min={`${today.slice(0, 8)}01`} max={today} value={date} onChange={(e) => { setDate(e.target.value); setErr(null); }} />
             </div>
-            <div className="field">
-              <label className="f">Brand <span className="req">*</span></label>
-              <select className="t" value={brandId} onChange={(e) => { setBrandId(e.target.value); setErr(null); }}>
-                {brands.map((b) => <option key={b.id} value={b.id}>{b.name}</option>)}
-              </select>
-            </div>
+            {byTeam ? (
+              <div className="field">
+                <label className="f">Ads team <span className="req">*</span></label>
+                <select className="t" value={teamId} onChange={(e) => { setTeamId(e.target.value); setErr(null); }}>
+                  <option value="">Pick a team…</option>
+                  {teams.map((t) => <option key={t.id} value={t.id}>{t.name}{t.leadName ? ` · ${t.leadName}` : ""}</option>)}
+                </select>
+              </div>
+            ) : (
+              <div className="field">
+                <label className="f">Brand <span className="req">*</span></label>
+                <select className="t" value={brandId} onChange={(e) => { setBrandId(e.target.value); setErr(null); }}>
+                  {brands.map((b) => <option key={b.id} value={b.id}>{b.name}</option>)}
+                </select>
+              </div>
+            )}
             <div className="field">
               <label className="f">
                 Hours each <span style={{ fontWeight: 500, color: "var(--faint)" }}>· {offGoal ? "what it counts" : "optional"}</span>
@@ -164,7 +181,12 @@ export function FinishedWorkDialog({ editors, formats, brands, myEditorId, onClo
           </div>
           {person && type && n >= 1 && (
             <p style={{ margin: 0, fontSize: 13, lineHeight: 1.6 }}>
-              Adds <b>{n} {type.name}{n > 1 ? " jobs" : ""}</b> for <b>{person.name}</b>, done <b>{dayLabel(date)}</b>.{" "}
+              Adds <b>{n} {type.name}{n > 1 ? " jobs" : ""}</b> for <b>{person.name}</b>
+              {(() => {
+                const where = byTeam ? (team ? `${team.name} team` : null) : brands.find((b) => b.id === brandId)?.name ?? null;
+                return where ? ` (${where})` : "";
+              })()}
+              , done <b>{dayLabel(date)}</b>.{" "}
               {offGoal ? "Not a goal type, so it counts by its hours, filling any goal they're short on." : "Counts toward their goal like approved work."}
             </p>
           )}

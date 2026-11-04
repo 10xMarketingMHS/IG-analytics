@@ -573,11 +573,14 @@ tasksRouter.post("/tasks", requireEditor, requireActiveEod, async (req, res, nex
 // approved work: goal jobs toward goals, other work by its hours
 // (../goal-score.js). Never for yourself nor anyone above you, and only this
 // month (earlier months are closed). Each job is its own task, numbered as usual.
-//   POST /tasks/finished { editorId, contentFormatId, channelId, count, date, hoursEach?, title?, deliveryLink?, note? }
+// Ad work belongs to its Ads team (numbered within it), as on New task; other
+// work to its brand.
+//   POST /tasks/finished { editorId, contentFormatId, channelId | adTeamId, count, date, hoursEach?, title?, deliveryLink?, note? }
 const FinishedSchema = z.object({
   editorId: z.string().uuid("Pick who did it."),
   contentFormatId: z.string().uuid("Pick its type."),
-  channelId: z.string().uuid("Pick its brand."),
+  channelId: z.string().uuid("Pick its brand.").nullable().optional(),
+  adTeamId: z.string().uuid("Pick its Ads team.").nullable().optional(),
   count: z.number().int().min(1, "At least 1 job.").max(100, "At most 100 at a time."),
   date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "Pick the day it was done."),
   hoursEach: z.number().min(0.25, "At least 15 minutes each.").max(200).nullable().optional(),
@@ -601,24 +604,32 @@ tasksRouter.post("/tasks/finished", requireEditor, async (req, res, next) => {
     const [{ rows: [ed] }, { rows: [cf] }, { rows: [ch] }] = await Promise.all([
       pool.query("select id, name from editor where id = $1 and org_id = $2 and active", [d.editorId, req.orgId]),
       pool.query("select id, name, category, points from task_content_format where id = $1 and org_id = $2 and active", [d.contentFormatId, req.orgId]),
-      pool.query("select id from workspace where id = $1 and org_id = $2", [d.channelId, req.orgId]),
+      d.channelId ? pool.query("select id from workspace where id = $1 and org_id = $2", [d.channelId, req.orgId]) : { rows: [] },
     ]);
     if (!ed) return res.status(404).json({ error: "That person isn't on the team." });
     if (!cf) return res.status(400).json({ error: "Pick its type." });
-    if (!ch) return res.status(400).json({ error: "Pick its brand." });
     const headingWhy = await taskTypeError(req.orgId, cf.id);
     if (headingWhy) return res.status(400).json({ error: headingWhy });
     const taskType = cf.category ?? "service";
+    // an Ad's Ads team (with none, its brand); everything else its brand
+    let adTeamId = null;
+    if (taskType === "ad" && d.adTeamId) {
+      const ok = (await adTeamsReady()) && (await pool.query("select 1 from ad_team where id = $1 and org_id = $2 and active", [d.adTeamId, req.orgId])).rowCount;
+      if (!ok) return res.status(400).json({ error: "Pick its Ads team." });
+      adTeamId = d.adTeamId;
+    }
+    if (!adTeamId && !ch) return res.status(400).json({ error: taskType === "ad" ? "Pick its Ads team." : "Pick its brand." });
+    const channelId = adTeamId ? null : d.channelId;
     // the time each took: as given, else the type's time for them (other work counts by it)
     const hours = d.hoursEach ?? (await resolveBudgetHours(req.orgId, d.editorId, cf.id));
     const frozen = await hasColumn("task", "points_at_done");
     const ids = [];
     for (let i = 1; i <= d.count; i++) {
       const tid = await nextTaskRef(req.orgId, "tid");
-      const sid = taskType === "social" ? await nextBrandTaskRef(d.channelId, "sid") : null;
-      const adId = taskType === "ad" ? await nextFreeAid(null, d.channelId) : null;
-      const svid = taskType === "service" ? await nextBrandTaskRef(d.channelId, "svid") : null;
-      const pid = taskType === "project" ? await nextBrandTaskRef(d.channelId, "pid") : null;
+      const sid = taskType === "social" ? await nextBrandTaskRef(channelId, "sid") : null;
+      const adId = taskType === "ad" ? await nextFreeAid(adTeamId, channelId) : null;
+      const svid = taskType === "service" ? await nextBrandTaskRef(channelId, "svid") : null;
+      const pid = taskType === "project" ? await nextBrandTaskRef(channelId, "pid") : null;
       const title = `${d.title || cf.name}${d.count > 1 ? ` ${i}` : ""}`;
       // done at 6 PM that day (India time), or now if that's still to come
       const { rows } = await pool.query(
@@ -630,14 +641,15 @@ tasksRouter.post("/tasks/finished", requireEditor, async (req, res, next) => {
                 $9::float, coalesce($9::float, 0) * 3600, true, least(now(), ($6::date + time '18:00') at time zone 'Asia/Kolkata'),
                 $10, $11, $12, $13, $14, $15::jsonb, $16, $17, $17, (select task_seq from s)${frozen ? ", $18" : ""}
          returning id`,
-        [req.orgId, d.editorId, d.channelId, title, d.note ?? "", d.date, taskType, cf.id,
+        [req.orgId, d.editorId, channelId, title, d.note ?? "", d.date, taskType, cf.id,
           hours, tid, sid, adId, svid, pid, JSON.stringify({ addedAfterwards: true }), d.deliveryLink || null, req.user.sub,
           ...(frozen ? [cf.points] : [])],
       );
+      if (adTeamId) await pool.query("update task set ad_team_id = $2 where id = $1", [rows[0].id, adTeamId]);
       ids.push(rows[0].id);
     }
     await logActivity({
-      orgId: req.orgId, actorId: req.user.sub, verb: "finished_work_added", entityType: "editor", entityId: ed.id, channelId: d.channelId,
+      orgId: req.orgId, actorId: req.user.sub, verb: "finished_work_added", entityType: "editor", entityId: ed.id, channelId,
       summary: `Added ${d.count} finished ${cf.name}${d.count > 1 ? " jobs" : ""} for ${ed.name}, done ${d.date}`,
       meta: { taskIds: ids, contentFormatId: cf.id, date: d.date, hoursEach: hours ?? null, notifyEditorIds: [ed.id] },
     });
