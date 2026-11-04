@@ -427,6 +427,9 @@ function TypeRow({
     if (next !== (format.metrics_description ?? null)) onMetrics(next);
   }
   const blurOnEnter = (e: React.KeyboardEvent<HTMLInputElement>) => { if (e.key === "Enter") (e.target as HTMLInputElement).blur(); };
+  // the goal note under the name (shortened to fit; its full text on hover)
+  const goalNote = !format.counts_in_goal ? "Not tracked in goals"
+    : format.goal_people ? `In ${format.goal_people} ${format.goal_people === 1 ? "person's" : "people's"} goals` : "Tracked in goals";
 
   return (
     <div className={"st-tt" + (sub ? " sub" : "")}>
@@ -451,10 +454,7 @@ function TypeRow({
               </select>
             ) : null}
             {format.counts_in_goal !== undefined && !totals && (
-              {(() => {
-                const note = !format.counts_in_goal ? "Not tracked in goals" : format.goal_people ? `In ${format.goal_people} ${format.goal_people === 1 ? "person's" : "people's"} goals` : "Tracked in goals";
-                return <small className={"st-tt-goal" + (format.counts_in_goal ? "" : " off")} title={note}>{note}</small>;
-              })()}
+              <small className={"st-tt-goal" + (format.counts_in_goal ? "" : " off")} title={goalNote}>{goalNote}</small>
             )}
             {isProject && (
               <input className="st-metrics" value={metrics} placeholder="What this project delivers (a note, not scored)…" aria-label={`What ${format.name} delivers`}
