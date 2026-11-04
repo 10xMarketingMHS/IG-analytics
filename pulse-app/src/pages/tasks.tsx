@@ -32,6 +32,7 @@ import { RndUseBlock } from "@/components/rnd-use-block";
 import { placeOf, useAdTeams } from "@/lib/ad-teams";
 import { clockTime, clockTimeShort, dateTime } from "@/lib/time-format";
 import { PositionMark } from "@/components/position-mark";
+import { FinishedWorkDialog } from "@/pages/finished-work";
 
 function relTime(iso: string) {
   const mins = Math.round((Date.now() - new Date(iso).getTime()) / 60000);
@@ -795,6 +796,8 @@ export function TasksPage() {
   }
 
   const [sendBackPrompt, setSendBackPrompt] = useState<{ task: Task } | null>(null);
+  // Add finished work (Admins and the Super Admin): past work added as done
+  const [finishedOpen, setFinishedOpen] = useState(false);
   const [duePrompt, setDuePrompt] = useState<Task | null>(null);
   const [dueValue, setDueValue] = useState("");
   const [dueBusy, setDueBusy] = useState(false);
@@ -1009,6 +1012,12 @@ export function TasksPage() {
           {moreActive > 0 && <span className="tb-fold-n">{moreActive}</span>}
           <span className="tb-fold-chev">{TB_ICON.chevron}</span>
         </button>
+        {(isAdmin || isSuper) && (
+          <button type="button" className="tb-new ghost" onClick={() => setFinishedOpen(true)} title="Add work already done this month that isn't on the board">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M20 6 9 17l-5-5" /></svg>
+            Add finished work
+          </button>
+        )}
         {canWrite && (
           <button className="tb-new" onClick={() => startNewTask()}>
             {TB_ICON.plus} New task
@@ -1505,6 +1514,10 @@ export function TasksPage() {
             </div>
           </div>
         </div>
+      )}
+      {finishedOpen && (
+        <FinishedWorkDialog editors={editors ?? []} formats={contentFormats ?? []} brands={workspaces ?? []} myEditorId={user?.editorId ?? null}
+          onClose={() => setFinishedOpen(false)} onAdded={() => refetch()} />
       )}
       {sendBackPrompt && (
         <div className="modal-bg show" onClick={() => setSendBackPrompt(null)}>

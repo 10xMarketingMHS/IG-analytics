@@ -567,6 +567,86 @@ tasksRouter.post("/tasks", requireEditor, requireActiveEod, async (req, res, nex
   }
 });
 
+// Finished work added afterwards (Task Board › Add finished work): work someone
+// did before they were on Echo, or that never reached the board. An Admin or
+// the Super Admin adds it as done, on the day it was done, and it counts like
+// approved work: goal jobs toward goals, other work by its hours
+// (../goal-score.js). Never for yourself nor anyone above you, and only this
+// month (earlier months are closed). Each job is its own task, numbered as usual.
+//   POST /tasks/finished { editorId, contentFormatId, channelId, count, date, hoursEach?, title?, deliveryLink?, note? }
+const FinishedSchema = z.object({
+  editorId: z.string().uuid("Pick who did it."),
+  contentFormatId: z.string().uuid("Pick its type."),
+  channelId: z.string().uuid("Pick its brand."),
+  count: z.number().int().min(1, "At least 1 job.").max(100, "At most 100 at a time."),
+  date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "Pick the day it was done."),
+  hoursEach: z.number().min(0.25, "At least 15 minutes each.").max(200).nullable().optional(),
+  title: z.string().trim().max(200).optional(),
+  deliveryLink: z.union([z.string().url("Paste the full link, starting with https://"), z.literal(""), z.null()]).optional(),
+  note: z.string().trim().max(500).optional(),
+});
+tasksRouter.post("/tasks/finished", requireEditor, async (req, res, next) => {
+  const parsed = FinishedSchema.safeParse(req.body ?? {});
+  if (!parsed.success) return res.status(400).json({ error: parsed.error.issues[0]?.message ?? "That couldn't be read." });
+  const d = parsed.data;
+  try {
+    const access = await callerAccess(req);
+    if (!(access.super || req.role === "admin")) return res.status(403).json({ error: "Only an Admin or the Super Admin can add finished work." });
+    if (d.editorId === (await callerEditorId(req))) return res.status(403).json({ error: "You can't add finished work for yourself. Another admin can." });
+    const above = await aboveYouError(req, d.editorId);
+    if (above) return res.status(403).json({ error: "You can't add work for someone above you." });
+    const today = new Date(Date.now() + 330 * 60_000).toISOString().slice(0, 10);
+    if (d.date > today) return res.status(400).json({ error: "That day hasn't happened yet." });
+    if (d.date < `${today.slice(0, 8)}01`) return res.status(400).json({ error: "Only this month's work can be added. Earlier months are closed." });
+    const [{ rows: [ed] }, { rows: [cf] }, { rows: [ch] }] = await Promise.all([
+      pool.query("select id, name from editor where id = $1 and org_id = $2 and active", [d.editorId, req.orgId]),
+      pool.query("select id, name, category, points from task_content_format where id = $1 and org_id = $2 and active", [d.contentFormatId, req.orgId]),
+      pool.query("select id from workspace where id = $1 and org_id = $2", [d.channelId, req.orgId]),
+    ]);
+    if (!ed) return res.status(404).json({ error: "That person isn't on the team." });
+    if (!cf) return res.status(400).json({ error: "Pick its type." });
+    if (!ch) return res.status(400).json({ error: "Pick its brand." });
+    const headingWhy = await taskTypeError(req.orgId, cf.id);
+    if (headingWhy) return res.status(400).json({ error: headingWhy });
+    const taskType = cf.category ?? "service";
+    // the time each took: as given, else the type's time for them (other work counts by it)
+    const hours = d.hoursEach ?? (await resolveBudgetHours(req.orgId, d.editorId, cf.id));
+    const frozen = await hasColumn("task", "points_at_done");
+    const ids = [];
+    for (let i = 1; i <= d.count; i++) {
+      const tid = await nextTaskRef(req.orgId, "tid");
+      const sid = taskType === "social" ? await nextBrandTaskRef(d.channelId, "sid") : null;
+      const adId = taskType === "ad" ? await nextFreeAid(null, d.channelId) : null;
+      const svid = taskType === "service" ? await nextBrandTaskRef(d.channelId, "svid") : null;
+      const pid = taskType === "project" ? await nextBrandTaskRef(d.channelId, "pid") : null;
+      const title = `${d.title || cf.name}${d.count > 1 ? ` ${i}` : ""}`;
+      // done at 6 PM that day (India time), or now if that's still to come
+      const { rows } = await pool.query(
+        `with s as (update org set task_seq = task_seq + 1 where id = $1 returning task_seq)
+         insert into task (org_id, editor_id, channel_id, title, description, status, priority, due_date, recurrence, task_type, content_format_id,
+                           budget_hours, budget_used_seconds, accepted, completed_at, tid, sid, ad_id, svid, pid, meta, delivery_link,
+                           created_by, assigned_by, serial${frozen ? ", points_at_done" : ""})
+         select $1, $2, $3, $4, $5, 'done', 'medium', $6::date, 'none', $7, $8,
+                $9::float, coalesce($9::float, 0) * 3600, true, least(now(), ($6::date + time '18:00') at time zone 'Asia/Kolkata'),
+                $10, $11, $12, $13, $14, $15::jsonb, $16, $17, $17, (select task_seq from s)${frozen ? ", $18" : ""}
+         returning id`,
+        [req.orgId, d.editorId, d.channelId, title, d.note ?? "", d.date, taskType, cf.id,
+          hours, tid, sid, adId, svid, pid, JSON.stringify({ addedAfterwards: true }), d.deliveryLink || null, req.user.sub,
+          ...(frozen ? [cf.points] : [])],
+      );
+      ids.push(rows[0].id);
+    }
+    await logActivity({
+      orgId: req.orgId, actorId: req.user.sub, verb: "finished_work_added", entityType: "editor", entityId: ed.id, channelId: d.channelId,
+      summary: `Added ${d.count} finished ${cf.name}${d.count > 1 ? " jobs" : ""} for ${ed.name}, done ${d.date}`,
+      meta: { taskIds: ids, contentFormatId: cf.id, date: d.date, hoursEach: hours ?? null, notifyEditorIds: [ed.id] },
+    });
+    res.status(201).json({ ok: true, added: ids.length, taskIds: ids, hoursEach: hours ?? null });
+  } catch (err) {
+    next(err);
+  }
+});
+
 tasksRouter.patch("/tasks/:id", requireEditor, requireActiveEod, async (req, res, next) => {
   const parsed = TaskSchema.partial().safeParse(req.body);
   if (!parsed.success) {
