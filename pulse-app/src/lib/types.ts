@@ -363,6 +363,10 @@ export type Activity = {
   created_at: string;
   actor_name: string | null;
   channel_name: string | null;
+  // a task's notice: its category, and its type when it has one
+  task_type?: string | null;
+  type_name?: string | null;
+  type_icon?: string | null;
 };
 
 export type Subtask = { id: string; title: string; done: boolean; sort_order: number };

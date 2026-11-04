@@ -6,7 +6,7 @@ import { useTasks } from "@/lib/use-tasks";
 import { useEditors } from "@/lib/use-editors";
 import { useWorkspaces } from "@/lib/workspaces-context";
 import { TaskPanel } from "@/pages/tasks";
-import { VERB_META, relTime } from "@/lib/activity-meta";
+import { VERB_META, relTime, workKindOf } from "@/lib/activity-meta";
 import type { Activity } from "@/lib/types";
 
 // Human day bucket for grouping headers.
@@ -101,6 +101,7 @@ export function ActivityPage() {
                         </div>
                         {note && <div className="act-note">“{note}”</div>}
                         <div className="act-meta">
+                          {workKindOf(a) && <span className="act-chip">{workKindOf(a)}</span>}
                           {a.channel_name && <span className="act-chip">{a.channel_name}</span>}
                           <span className="act-time">{relTime(a.created_at)}</span>
                           {task && <span className="act-open">Open ›</span>}

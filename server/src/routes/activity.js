@@ -83,11 +83,15 @@ activityRouter.get("/activity", async (req, res, next) => {
       `select a.id, a.verb, a.entity_type, a.entity_id, a.channel_id, a.actor_id,
               a.summary, a.meta, a.created_at,
               coalesce(ue.name, u.name, u.email) as actor_name,
-              w.name as channel_name
+              w.name as channel_name,
+              -- a task's notice says what kind of work it is: its type, or its category
+              tk.task_type, tf.name as type_name, tf.icon as type_icon
          from activity a
          left join app_user u on u.id = a.actor_id
          left join editor ue on ue.id = u.editor_id
          left join workspace w on w.id = a.channel_id
+         left join task tk on a.entity_type = 'task' and tk.id = a.entity_id
+         left join task_content_format tf on tf.id = tk.content_format_id
         where ${where}
         order by a.created_at desc
         limit $${params.length}`,

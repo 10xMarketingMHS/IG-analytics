@@ -1,5 +1,13 @@
 // Shared by the Activity page and the bell's box.
-import type { ActivityVerb } from "@/lib/types";
+import type { Activity, ActivityVerb } from "@/lib/types";
+
+// What kind of work a task's notice is about: its type ("🖼️ Ad Image"), or
+// its category when it has no type
+const CATEGORY_WORD: Record<string, string> = { social: "Social", ad: "Ads", service: "Service", project: "Project", admin: "General" };
+export function workKindOf(a: Activity): string | null {
+  if (a.type_name) return `${a.type_icon ? `${a.type_icon} ` : ""}${a.type_name}`;
+  return a.task_type ? CATEGORY_WORD[a.task_type] ?? null : null;
+}
 
 // Icon + tone per event kind, so the feed reads at a glance.
 export const VERB_META: Record<ActivityVerb, { icon: string; cls: string }> = {

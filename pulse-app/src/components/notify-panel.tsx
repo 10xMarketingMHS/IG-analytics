@@ -1,5 +1,5 @@
 import { useEffect, useRef } from "react";
-import { VERB_META, relTime } from "@/lib/activity-meta";
+import { VERB_META, relTime, workKindOf } from "@/lib/activity-meta";
 import type { Activity } from "@/lib/types";
 
 // The bell's box (like Facebook's): the latest notices, newest first, the
@@ -42,12 +42,13 @@ export function NotifyPanel({ items, seenBefore, onClose, onSeeAll, onOpenTask, 
             const m = VERB_META[a.verb] ?? { icon: "🔔", cls: "" };
             const unread = !seenBefore || a.created_at > seenBefore;
             const task = a.entity_type === "task" && a.entity_id ? a.entity_id : null;
+            const kind = workKindOf(a);
             const body = (
               <>
                 <span className={"nt-icon act-icon " + m.cls}>{m.icon}</span>
                 <span className="nt-main">
                   <span className="nt-text">{a.actor_name && <b>{a.actor_name} </b>}{a.summary}</span>
-                  <span className="nt-time">{relTime(a.created_at)}{a.channel_name ? ` · ${a.channel_name}` : ""}</span>
+                  <span className="nt-time">{kind && <span className="nt-kind">{kind}</span>}{relTime(a.created_at)}{a.channel_name ? ` · ${a.channel_name}` : ""}</span>
                 </span>
                 {unread && <span className="nt-dot" aria-label="New" />}
               </>
