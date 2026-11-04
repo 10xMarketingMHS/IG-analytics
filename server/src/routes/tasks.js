@@ -179,7 +179,7 @@ const SELECT = `
          (to_jsonb(t)->>'upload_from')::timestamptz as upload_from, /*ad_count*/0 as ad_count,
          (to_jsonb(t)->>'ad_team_id')::uuid as ad_team_id, /*ad_team_name*/null::text as ad_team_name,
          e.name as editor_name, e.image_url as editor_image,
-         coalesce(hu.name, hu.email) as held_by_name,
+         coalesce(hue.name, hu.name, hu.email) as held_by_name,
          -- The assignee's break, so the client can offset the countdown by
          -- however long they've been (or are currently) on break — a break
          -- pauses every one of their running timers at once, computed here
@@ -198,7 +198,8 @@ const SELECT = `
     left join post p on p.id = t.post_id
     left join platform pl on pl.id = p.platform_id
     left join task_content_format cf on cf.id = t.content_format_id
-    left join app_user hu on hu.id = t.held_by`;
+    left join app_user hu on hu.id = t.held_by
+    left join editor hue on hue.id = hu.editor_id`;
 
 // SELECT, with how many posts were made from each task's links (once the database has them).
 export async function taskSelect() {
@@ -1504,8 +1505,8 @@ tasksRouter.get("/tasks/:id/history", async (req, res, next) => {
   try {
     if (!(await mayOpenTask(req, req.params.id))) return res.status(403).json({ error: "You can't open this task." });
     const { rows } = await pool.query(
-      `select a.id, a.verb, a.summary, a.created_at, a.actor_id, coalesce(u.name, u.email) as actor_name
-         from activity a left join app_user u on u.id = a.actor_id
+      `select a.id, a.verb, a.summary, a.created_at, a.actor_id, coalesce(ue.name, u.name, u.email) as actor_name
+         from activity a left join app_user u on u.id = a.actor_id left join editor ue on ue.id = u.editor_id
         where a.org_id = $1 and a.entity_type = 'task' and a.entity_id = $2
         order by a.created_at, a.id`,
       [req.orgId, req.params.id],
@@ -1628,9 +1629,10 @@ tasksRouter.get("/tasks/:id/reviews", async (req, res, next) => {
     if (!(await mayOpenTask(req, req.params.id))) return res.status(404).json({ error: "Task not found" });
     const { rows } = await pool.query(
       `select l.id, l.revision, l.action, l.note, l.created_at,
-              coalesce(u.name, u.email) as actor_name
+              coalesce(ue.name, u.name, u.email) as actor_name
          from task_review_log l
          left join app_user u on u.id = l.actor_id
+         left join editor ue on ue.id = u.editor_id
         where l.task_id = $1
         order by l.created_at desc`,
       [req.params.id],
@@ -1724,9 +1726,10 @@ tasksRouter.get("/tasks/:id/comments", async (req, res, next) => {
     if (!(await mayOpenTask(req, req.params.id))) return res.status(404).json({ error: "Task not found" });
     const { rows } = await pool.query(
       `select c.id, c.body, c.created_at, c.author_id,
-              coalesce(u.name, u.email) as author_name
+              coalesce(ue.name, u.name, u.email) as author_name
          from task_comment c
          left join app_user u on u.id = c.author_id
+         left join editor ue on ue.id = u.editor_id
         where c.task_id = $1
         order by c.created_at asc`,
       [req.params.id],

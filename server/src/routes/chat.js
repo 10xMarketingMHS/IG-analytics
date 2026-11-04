@@ -41,7 +41,8 @@ async function orgPeople(orgId) {
   if (hit && hit.exp > Date.now()) return hit;
   const { rows } = await pool.query(
     `select distinct on (u.id) u.id,
-            coalesce(nullif(trim(u.name), ''), e.name, split_part(u.email, '@', 1)) as name,
+            -- the Roster's name first, as everywhere else; then the login's
+            coalesce(nullif(trim(e.name), ''), nullif(trim(u.name), ''), split_part(u.email, '@', 1)) as name,
             coalesce(u.image_url, e.image_url) as image_url, u.color,
             coalesce(e.designation, '') as designation
        from app_user u

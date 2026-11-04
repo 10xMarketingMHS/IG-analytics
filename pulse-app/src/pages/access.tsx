@@ -136,7 +136,9 @@ export function AccessSection() {
   const person = users?.find((u) => u.id === userId) ?? null;
   const editorOf = (u: UserRow | null) => (u?.editor_id ? (editors ?? []).find((e) => e.id === u.editor_id) ?? null : null);
   const ed = editorOf(person);
-  const nameOf = (u: UserRow) => u.name || ed?.name || u.email.split("@")[0];
+  // the Roster's name first (Rahul Ravi, not the login's own Rahul), as everywhere else
+  const nameOf = (u: UserRow) => editorOf(u)?.name || u.name || u.email.split("@")[0];
+  const pickList = [...(users ?? [])].sort((a, b) => nameOf(a).localeCompare(nameOf(b)));
   // Who they could assign to — everyone active except themselves.
   const reviewable = useMemo(() => (editors ?? []).filter((e) => e.active && e.id !== person?.editor_id), [editors, person?.editor_id]);
   const extra = Object.values(saved?.checked ?? {}).filter(Boolean).length;
@@ -158,7 +160,7 @@ export function AccessSection() {
               ? <img className="st-ava" src={ed.image_url} alt="" />
               : <span className="st-ava" style={{ background: gradFor(person ? nameOf(person) : "?") }}>{person ? initials(nameOf(person)) : "?"}</span>}
             <select className="st-in" value={userId} onChange={(e) => setUserId(e.target.value)} aria-label="Person">
-              {users.map((u) => <option key={u.id} value={u.id}>{u.name || u.email} · {ROLE_LABEL[u.role]}</option>)}
+              {pickList.map((u) => <option key={u.id} value={u.id}>{nameOf(u)} · {editorOf(u)?.designation || ROLE_LABEL[u.role]}</option>)}
             </select>
             {person && <span className="st-chip">{ROLE_LABEL[person.role]}</span>}
             <span className="st-note">{extra ? `${extra} extra permission${extra === 1 ? "" : "s"} on top of ${person ? ROLE_LABEL[person.role] : "their role"}` : "No extra permissions"}</span>
