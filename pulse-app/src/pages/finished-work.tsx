@@ -2,6 +2,7 @@ import { useMemo, useState } from "react";
 import { toast } from "sonner";
 import { api, ApiError } from "@/lib/api";
 import type { ContentFormatDef, Editor } from "@/lib/types";
+import "./finished-work.css";
 
 // Task Board › Add finished work (Admins and the Super Admin): work someone did
 // before they were on Echo, or that never reached the board, added as done on
@@ -10,6 +11,15 @@ import type { ContentFormatDef, Editor } from "@/lib/types";
 const CAT_LABEL: Record<string, string> = { social: "Social", ad: "Ads", service: "Service", project: "Project" };
 const istToday = () => new Date(Date.now() + 330 * 60_000).toISOString().slice(0, 10);
 const dayLabel = (ymd: string) => new Date(`${ymd}T12:00:00Z`).toLocaleDateString("en-IN", { weekday: "short", day: "numeric", month: "short" });
+// hours as Settings shows them: 30m, 3h, 1h 30m
+const fmtHours = (h: number) => {
+  const total = Math.round(h * 60), hh = Math.floor(total / 60), mm = total % 60;
+  return (hh ? `${hh}h` : "") + (mm ? `${hh ? " " : ""}${mm}m` : "") || "0h";
+};
+// the stepper's step: 15 minutes up to 2h, 30 up to 8h, then an hour, so a
+// long job isn't dozens of clicks away
+const stepUp = (h: number) => (h < 2 ? 0.25 : h < 8 ? 0.5 : 1);
+const stepDown = (h: number) => (h <= 2 ? 0.25 : h <= 8 ? 0.5 : 1);
 
 export function FinishedWorkDialog({ editors, formats, brands, myEditorId, onClose, onAdded }: {
   editors: Editor[];
@@ -32,7 +42,8 @@ export function FinishedWorkDialog({ editors, formats, brands, myEditorId, onClo
   const [brandId, setBrandId] = useState(brands[0]?.id ?? "");
   const [count, setCount] = useState("1");
   const [date, setDate] = useState(today);
-  const [hours, setHours] = useState("");
+  // null: the type's own time (theirs, else the team's), as the server takes it
+  const [hours, setHours] = useState<number | null>(null);
   const [title, setTitle] = useState("");
   const [link, setLink] = useState("");
   const [note, setNote] = useState("");
@@ -50,8 +61,7 @@ export function FinishedWorkDialog({ editors, formats, brands, myEditorId, onClo
     if (!brandId) return setErr("Pick its brand.");
     if (!(n >= 1 && n <= 100)) return setErr("How many: 1 to 100.");
     if (!date || date > today || date < `${today.slice(0, 8)}01`) return setErr("Pick a day this month, today or earlier.");
-    const h = hours.trim() ? Number(hours) : null;
-    if (h != null && !(h >= 0.25 && h <= 200)) return setErr("Hours each: at least 0.25.");
+    const h = hours;
     setBusy(true); setErr(null);
     try {
       const r = await api<{ added: number }>("/tasks/finished", {
@@ -90,7 +100,7 @@ export function FinishedWorkDialog({ editors, formats, brands, myEditorId, onClo
             </div>
             <div className="field">
               <label className="f">Type of work <span className="req">*</span></label>
-              <select className="t" value={typeId} onChange={(e) => { setTypeId(e.target.value); setErr(null); }}>
+              <select className="t" value={typeId} onChange={(e) => { setTypeId(e.target.value); setHours(null); setErr(null); }}>
                 <option value="">Pick a type…</option>
                 {Object.entries(CAT_LABEL).map(([cat, label]) => {
                   const list = types.filter((t) => t.category === cat);
@@ -117,9 +127,25 @@ export function FinishedWorkDialog({ editors, formats, brands, myEditorId, onClo
               </select>
             </div>
             <div className="field">
-              <label className="f">Hours each <span style={{ fontWeight: 500, color: "var(--faint)" }}>· {offGoal ? "what it counts" : "optional"}</span></label>
-              <input className="t" type="number" min={0.25} step={0.25} value={hours} placeholder={type?.hours ? `${type.hours} (the type's time)` : "The type's time"}
-                onChange={(e) => { setHours(e.target.value); setErr(null); }} />
+              <label className="f">
+                Hours each <span style={{ fontWeight: 500, color: "var(--faint)" }}>· {offGoal ? "what it counts" : "optional"}</span>
+                {hours != null && <button type="button" className="fw-reset" onClick={() => setHours(null)}>Use the type's time</button>}
+              </label>
+              {(() => {
+                const base = type?.hours ?? null;
+                const shown = hours ?? base;
+                return (
+                  <span className="fw-step">
+                    <button type="button" aria-label="Less time each" disabled={shown != null && shown <= 0.25}
+                      onClick={() => { const h = shown ?? 0.5; setHours(Math.max(0.25, h - stepDown(h))); setErr(null); }}>−</button>
+                    <b className={hours == null ? "def" : ""} aria-live="polite">
+                      {hours != null ? fmtHours(hours) : base != null ? `${fmtHours(base)} · the type's time` : "The type's time"}
+                    </b>
+                    <button type="button" aria-label="More time each" disabled={shown != null && shown >= 200}
+                      onClick={() => { const h = shown ?? 0; setHours(Math.min(200, h + stepUp(h))); setErr(null); }}>+</button>
+                  </span>
+                );
+              })()}
             </div>
           </div>
           <div className="field">
