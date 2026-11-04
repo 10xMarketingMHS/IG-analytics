@@ -2388,14 +2388,9 @@ export function TaskPanel({ mode, task, canWrite, editors, channels, onClose, on
       .catch(() => { if (live) setGoalInfo(null); });
     return () => { live = false; };
   }, [creating, draft.editor_id]);
-  // For yourself, with a goal this month: only the goal types in it (see the type
-  // chips). A type picked before the goal came in, and not in it, is let go.
-  const ownGoalOnly = creating && !!draft.editor_id && draft.editor_id === user?.editorId && !!goalInfo && goalInfo.goalPoints > 0;
-  useEffect(() => {
-    if (!ownGoalOnly || !draft.content_format_id) return;
-    const f = (contentFormats ?? []).find((x) => x.id === draft.content_format_id);
-    if (f && f.counts_in_goal !== false && !goalInfo!.types.some((g) => g.contentFormatId === f.id || g.contentFormatId === f.parent_id)) setDraft((d) => ({ ...d, content_format_id: null }));
-  }, [ownGoalOnly, goalInfo, draft.content_format_id, contentFormats]);
+  // For yourself, with a goal this month: the goal types in it come first (see the
+  // type chips); the rest still count, for your team or as Other work.
+  const ownGoalFirst = creating && !!draft.editor_id && draft.editor_id === user?.editorId && !!goalInfo && goalInfo.goalPoints > 0;
   useEffect(() => {
     if (!creating || !draft.editor_id || !(draft.content_format_id || otherPick) || category === "admin") { setPreview(null); return; }
     let live = true;
@@ -2754,7 +2749,7 @@ export function TaskPanel({ mode, task, canWrite, editors, channels, onClose, on
       line = givenToOther
         ? `Not in the team's goals this month. Once it's done, the time it took${shouldTake ? ` (up to ${tenths(shouldTake)}h)` : ""} fills the goals they're short on, so they stay on track.`
         : shouldTake
-          ? `Not in the team's goals this month. Once your lead approves it, the time it took (up to ${tenths(shouldTake)}h) fills the goals you're short on.`
+          ? `Not in the team's goals this month. Once it's approved, the time it took (up to ${tenths(shouldTake)}h) fills the goals you're short on.`
           : `Not in the team's goals this month, and ${selectedFormat!.name} has no time set, so it won't add to your goal. An admin can give it a time in Settings › Tasks & time.`;
       after = fill > 0 ? ((pv.reached + fill * (pv.pointsPerShortHour ?? 0)) / pv.goalPoints) * 100 : null;
     } else { tag = "none"; big = "No points"; line = "With no type it has no time, so it won't add to the goal. Pick a type and its time counts once it's approved."; }
@@ -2808,13 +2803,13 @@ export function TaskPanel({ mode, task, canWrite, editors, channels, onClose, on
                 </div>
                 {category && !adminTask && (() => {
                   // tracked in goals, or not (Settings › Tasks & time › Goal); Service also offers "Something else".
-                  // Each goal type says what this person's goal still needs: "3 to go", "Goal met". For yourself only
-                  // the goal types in your goal show; given to someone, one outside their goal is Other work.
+                  // Each goal type says what this person's goal still needs: "3 to go", "Goal met". For yourself the
+                  // types in your goal come first; one outside it (yours or theirs) still counts, for the team or as Other work.
                   const goalOf = new Map((goalInfo?.types ?? []).map((g) => [g.contentFormatId, g]));
                   const goalNote = (f: ContentFormatDef): { cls: string; text: string } | null => {
                     if (!goalInfo || !(goalInfo.goalPoints > 0) || f.counts_in_goal === false) return null;
                     const g = goalOf.get(f.id);
-                    if (!g) return { cls: "none", text: forMe ? "No goal this month" : "Not in their goal · Other work" };
+                    if (!g) return { cls: "none", text: forMe ? "Not in your goal" : "Not in their goal · Other work" };
                     if (g.need > 0) return { cls: "need", text: `${g.need} to go${g.open ? ` · ${g.open} on the board` : ""}` };
                     return { cls: "met", text: g.done >= g.goal ? "Goal met" : "Rest on the board" };
                   };
@@ -2863,8 +2858,11 @@ export function TaskPanel({ mode, task, canWrite, editors, channels, onClose, on
                   // what the goal still needs most comes first (a main type: its sub-types'); the rest keep their order
                   const ask = (f: ContentFormatDef) => { const g = goalOf.get(f.id); return g && g.need > 0 ? g.need * g.points : 0; };
                   const askAll = (f: ContentFormatDef) => (contentFormats ?? []).filter((x) => x.parent_id === f.id).reduce((n, s) => n + ask(s), ask(f));
-                  // for yourself: the goal types in your goal, and the sub-types of one that's a main type now
-                  const inGoal = typeChoices.filter((f) => f.counts_in_goal !== false && (!ownGoalOnly || goalOf.has(f.id) || (!!f.parent_id && goalOf.has(f.parent_id)))).sort((a, b) => askAll(b) - askAll(a)),
+                  // for yourself: the goal types in your goal first, a main type and its sub-types kept together
+                  const mineFam = new Set((contentFormats ?? []).filter((x) => goalOf.has(x.id)).map((x) => x.parent_id ?? x.id));
+                  const goalTypes = typeChoices.filter((f) => f.counts_in_goal !== false).sort((a, b) => askAll(b) - askAll(a));
+                  const inGoal = goalTypes.filter((f) => !ownGoalFirst || mineFam.has(f.parent_id ?? f.id)),
+                    notMine = ownGoalFirst ? goalTypes.filter((f) => !mineFam.has(f.parent_id ?? f.id)) : [],
                     offGoal = typeChoices.filter((f) => f.counts_in_goal === false);
                   const elsePick = category === "service" && (
                     <button type="button" className={"tp2-type off" + (otherPick ? " on" : "")} aria-pressed={otherPick}
@@ -2875,24 +2873,29 @@ export function TaskPanel({ mode, task, canWrite, editors, channels, onClose, on
                   if (typeChoices.length === 0 && !elsePick) {
                     return <span className="tp2-faint">No {isProject ? "project" : CATEGORY_LABEL[category].toLowerCase()} types yet — add them under Settings › Tasks & time.</span>;
                   }
-                  if (!inGoal.length && !offGoal.length && !elsePick) {
-                    return <span className="tp2-faint">Your goal this month has no {isProject ? "project" : CATEGORY_LABEL[category]} work. Ask your lead if you need to make one.</span>;
-                  }
-                  if (!offGoal.length && !elsePick) {
+                  if (!notMine.length && !offGoal.length && !elsePick) {
                     return <div className="tp2-typegroup">{chips(inGoal, isProject ? "Project type" : "Content type")}</div>;
                   }
                   return (
                     <div className="tp2-typegroups">
                       {inGoal.length > 0 && (
                         <div className="tp2-typegroup">
-                          <span className="tp2-typehead goal">Counts in goals</span>
-                          {chips(inGoal, "Types that count in goals")}
+                          <span className="tp2-typehead goal">{ownGoalFirst ? "In your goal" : "Counts in goals"}</span>
+                          {chips(inGoal, ownGoalFirst ? "Types in your goal" : "Types that count in goals")}
                         </div>
                       )}
-                      <div className="tp2-typegroup">
-                        <span className="tp2-typehead off">Off-goal · help for another team, its time fills missed goals</span>
-                        {chips(offGoal, "Off-goal types", elsePick)}
-                      </div>
+                      {notMine.length > 0 && (
+                        <div className="tp2-typegroup">
+                          <span className="tp2-typehead goal">Not in your goal · counts for your team, or as Other work</span>
+                          {chips(notMine, "Types not in your goal")}
+                        </div>
+                      )}
+                      {(offGoal.length > 0 || elsePick) && (
+                        <div className="tp2-typegroup">
+                          <span className="tp2-typehead off">Off-goal · help for another team, its time fills missed goals</span>
+                          {chips(offGoal, "Off-goal types", elsePick)}
+                        </div>
+                      )}
                     </div>
                   );
                 })()}
