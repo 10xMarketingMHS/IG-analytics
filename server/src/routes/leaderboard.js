@@ -17,8 +17,9 @@ import { scoreMonthAll } from "../goal-score.js";
 // count as late. Admin tasks never score.
 //
 // The rank is the share of the person's own goal reached, by the one goal rule
-// (../goal-score.js): jobs per content type, each type up to 150% of its goal
-// (cut for approved leave), plus covered work on top, weighed by the goal's
+// (../goal-score.js): jobs per content type, each type up to its goal (cut for
+// approved leave), time from team goal credit and Other work filling missed
+// goals, plus covered work on top, weighed by the goal's
 // points, so changing a type's points, or late work, never moves it. Points
 // break ties. No goal set: listed after.
 export const leaderboardRouter = Router();
@@ -77,6 +78,7 @@ leaderboardRouter.get("/leaderboard/house", requirePage("leaderboard"), async (r
         goalPoints: Math.round((s?.goalPoints ?? 0) * 10) / 10,
         goalPct: s?.pct == null ? null : Math.round(s.pct * 10) / 10,
         coveredJobs: s?.coveredJobs ?? 0, leaveDays: s?.leaveDays ?? 0, otherHours: s?.otherHours ?? 0,
+        creditHours: s?.creditHours ?? 0, carriedJobs: (s?.carried ?? []).reduce((n, c) => n + c.jobs, 0),
         byType,
       };
     });

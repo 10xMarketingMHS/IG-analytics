@@ -2356,7 +2356,9 @@ export function TaskPanel({ mode, task, canWrite, editors, channels, onClose, on
   useEffect(() => { setOtherPick(false); }, [category]);
   const [preview, setPreview] = useState<{
     goalPoints: number; reached: number; pct: number | null; monthHours: number; timeFactor: number; otherHours: number; leaveDays: number;
+    stillShortHours?: number; pointsPerShortHour?: number; creditHours?: number;
     inGoal: boolean; typeName: string | null; points: number | null; typeGoal: { goal: number; done: number } | null;
+    teamType?: boolean; teamLeft?: number | null;
   } | null>(null);
   const [previewBusy, setPreviewBusy] = useState(false);
   // Their goal, type by type (GET /goals/preview's goalTypes), for the type chips: "3 to go"
@@ -2659,8 +2661,8 @@ export function TaskPanel({ mode, task, canWrite, editors, channels, onClose, on
     </Row>
   );
   // A task given to someone: which team asked for it, and how long it should
-  // take. When it isn't in their goals, that time comes off their goal once
-  // it's done (server/src/goal-score.js), so only whoever gives it sets these.
+  // take. When it isn't in the team's goals, that time fills the goals they're
+  // short on once it's done (server/src/goal-score.js), so only whoever gives it sets these.
   const givenToOther = creating ? !!draft.editor_id && draft.editor_id !== user?.editorId : !!task?.assigned_by;
   const otherRows = givenToOther && !(adminTask || adminEdit) && (
     <>
@@ -2682,7 +2684,7 @@ export function TaskPanel({ mode, task, canWrite, editors, channels, onClose, on
               const v = shouldTake === "" ? null : Number(shouldTake);
               if (v !== (task?.budget_hours ?? null) && (v == null || (v >= 0.25 && v <= 200))) patch({ budgetHours: v });
             }} />
-          <small>hours · if it isn't in their goals, this time comes off their goal</small>
+          <small>hours · if it isn't in the team's goals, this time fills the goals they're short on</small>
         </span>
       </Row>
     </>
@@ -2697,8 +2699,10 @@ export function TaskPanel({ mode, task, canWrite, editors, channels, onClose, on
 
   if (creating) {
     // What the person this is for gets out of it (GET /goals/preview): goal
-    // points for a type in their goals, or — given to them, outside their
-    // goals — the time it takes off their goal (server/src/goal-score.js rule 6).
+    // points for a type in their goal; past their goal, or a team type not on
+    // their card, team goal credit while the team still needs it (else it's
+    // carried); given to them outside the team's goals, Other work. That time
+    // fills the goals they're short on (server/src/goal-score.js rules 3, 5, 6).
     const forMe = !!cur.editor_id && cur.editor_id === user?.editorId;
     const forName = forMe ? "your" : `${editors.find((e) => e.id === cur.editor_id)?.name ?? "their"}'s`;
     const shouldTake = draft.budget_hours ?? selectedFormat?.hours ?? null;
@@ -2711,19 +2715,30 @@ export function TaskPanel({ mode, task, canWrite, editors, channels, onClose, on
     else if (!cur.content_format_id && !otherPick) line = `Pick its type to see what it adds to ${forName} month.`;
     else if (previewBusy && !pv) line = "Working it out…";
     else if (!pv || !(pv.goalPoints > 0)) { tag = "none"; big = "No goal yet"; line = `${forMe ? "You have" : `${forName.replace(/'s$/, "")} has`} no goals set this month, so it won't add points yet.`; }
-    else if (pv.inGoal) {
+    else if (pv.inGoal && (!pv.typeGoal || pv.typeGoal.done < pv.typeGoal.goal)) {
       tag = "goal"; big = `+${tenths(pv.points ?? 0)} pts`;
       line = `Counts toward ${forName} ${pv.typeName} goal${pv.typeGoal ? `: ${tenths(pv.typeGoal.done)} of ${tenths(pv.typeGoal.goal)} done so far` : ""}.`;
       after = ((pv.reached + (pv.points ?? 0)) / pv.goalPoints) * 100;
+    } else if (pv.teamType) {
+      const why = pv.inGoal ? `Past ${forName} own ${pv.typeName} goal` : `${pv.typeName} isn't in ${forName} goals`;
+      if ((pv.teamLeft ?? 0) > 0) {
+        tag = "goal"; big = shouldTake ? `${tenths(shouldTake)}h team goal` : "Team goal credit";
+        const fill = Math.min(shouldTake ?? 0, pv.stillShortHours ?? 0);
+        line = `${why}, but the team still needs ${pv.teamLeft} more. Its time fills any goal ${forMe ? "you're" : "they're"} short on${(pv.stillShortHours ?? 0) > 0 ? "" : ", and every goal is met already"}.`;
+        after = fill > 0 ? ((pv.reached + fill * (pv.pointsPerShortHour ?? 0)) / pv.goalPoints) * 100 : null;
+      } else {
+        tag = "none"; big = "Carried to next month";
+        line = `${why}, and the team's ${pv.typeName} goal is met this month, so it's carried to next month and doesn't add to the score now.`;
+      }
     } else if (givenToOther) {
-      tag = "other"; big = shouldTake ? `−${tenths(shouldTake)}h off the goal` : "Set how long it should take";
-      line = `Not in ${forName} goals this month. Once it's done, the time it took${shouldTake ? ` (up to ${tenths(shouldTake)}h)` : ""} comes off their goal, so they stay on track.`;
-      const left = pv.timeFactor - (shouldTake ?? 0) / Math.max(1, pv.monthHours);
-      after = left > 0 && pv.timeFactor > 0 ? (pv.reached / (pv.goalPoints * (left / pv.timeFactor))) * 100 : null;
+      tag = "other"; big = shouldTake ? `${tenths(shouldTake)}h toward the goal` : "Set how long it should take";
+      const fill = Math.min(shouldTake ?? 0, pv.stillShortHours ?? 0);
+      line = `Not in the team's goals this month. Once it's done, the time it took${shouldTake ? ` (up to ${tenths(shouldTake)}h)` : ""} fills the goals they're short on, so they stay on track.`;
+      after = fill > 0 ? ((pv.reached + fill * (pv.pointsPerShortHour ?? 0)) / pv.goalPoints) * 100 : null;
     } else if (selectedFormat && selectedFormat.counts_in_goal !== false) {
       tag = "none"; big = "No points";
-      line = `${selectedFormat.name} counts in goals, but your goal this month has no ${selectedFormat.name} jobs, so it won't add points. Your lead can add some on Set goals.`;
-    } else { tag = "none"; big = "No points"; line = "Not in your goals this month, so it won't add points. (Work someone gives you does take time off your goal.)"; }
+      line = `${selectedFormat.name} counts in goals, but nobody's goal this month has ${selectedFormat.name} jobs, so it won't add points. Your lead can add some on Set goals.`;
+    } else { tag = "none"; big = "No points"; line = "Not in your goals this month, so it won't add points. (Work someone gives you does count: its time fills the goals you're short on.)"; }
     const now = pv && pv.goalPoints > 0 ? (pv.reached / pv.goalPoints) * 100 : null;
     // General is for a Manager, Asst. Manager or Team Lead (by their position; the server holds the same line)
     const meRow = editors.find((e) => e.id === user?.editorId) ?? null;
@@ -2856,7 +2871,7 @@ export function TaskPanel({ mode, task, canWrite, editors, channels, onClose, on
                         </div>
                       )}
                       <div className="tp2-typegroup">
-                        <span className="tp2-typehead off">Off-goal · help for another team, takes its time off the goal</span>
+                        <span className="tp2-typehead off">Off-goal · help for another team, its time fills missed goals</span>
                         {chips(offGoal, "Off-goal types", elsePick)}
                       </div>
                     </div>

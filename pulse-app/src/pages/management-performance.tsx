@@ -149,10 +149,12 @@ type DetailResp = BoardRow & {
   taskBreakdown: {
     contentFormatId: string; name: string; icon: string | null; category: string | null; metricTier: "key" | "critical" | null;
     points: number; goal: number; achieved: number;
-    // the goal after approved leave, the jobs that count (up to 150%), jobs taken over from someone
+    // the goal after approved leave, the jobs that count (up to the goal, time-filled
+    // ones included), jobs taken over from someone
     goalAdjusted?: number; counted?: number; covered?: number;
   }[];
   leaveDays?: number; workingDays?: number; coveredJobs?: number; coveredPoints?: number; otherHours?: number;
+  creditHours?: number; carried?: { contentFormatId: string; name: string | null; jobs: number }[]; stillShortHours?: number;
   history: { month: string; totalGoalPoints: number; totalPoints: number; performancePct: number | null; level: Level | null }[];
   eodSessions: { date: string; startedAt: string; endedAt: string | null; spanHours: number | null }[];
 };
@@ -223,10 +225,13 @@ function PerformanceDetailInline({ editorId, month }: { editorId: string; month:
           {d.level ? <>Band applied: <b>{LEVEL_META[d.level].label}</b> — Overall Performance {bandText}.</> : "No band."}
           {!d.reviewed && <span className="st dim"> · * discipline not yet fully reviewed</span>}
         </div>
-        {((d.leaveDays ?? 0) > 0 || (d.coveredJobs ?? 0) > 0 || (d.otherHours ?? 0) > 0) && (
+        {((d.leaveDays ?? 0) > 0 || (d.coveredJobs ?? 0) > 0 || (d.otherHours ?? 0) > 0 || (d.creditHours ?? 0) > 0 || (d.carried ?? []).length > 0) && (
           <div className="hint" style={{ margin: "4px 0 0" }}>
             {(d.leaveDays ?? 0) > 0 && <>Approved leave: <b>{d.leaveDays} day{d.leaveDays === 1 ? "" : "s"}</b> of {d.workingDays} working days, so each goal is cut by {Math.round(((d.leaveDays ?? 0) / Math.max(1, d.workingDays ?? 1)) * 100)}%. </>}
-            {(d.otherHours ?? 0) > 0 && <>Other work (tasks given outside the goals): <b>{d.otherHours}h</b>, taken off the goal too. </>}
+            {(d.creditHours ?? 0) > 0 && <>Team goal credit (beyond their goal, while the team still needed it): <b>{d.creditHours}h</b>. </>}
+            {(d.otherHours ?? 0) > 0 && <>Other work (tasks given outside the team's goals): <b>{d.otherHours}h</b>. </>}
+            {((d.creditHours ?? 0) > 0 || (d.otherHours ?? 0) > 0) && <>That time fills the goals they missed{(d.stillShortHours ?? 0) > 0 ? <>, still <b>{d.stillShortHours}h</b> short</> : ", all covered"}. </>}
+            {(d.carried ?? []).length > 0 && <>Carried to next month, as the team didn't need it: <b>{d.carried!.map((c) => `${c.name ?? "A type"} +${c.jobs}`).join(" · ")}</b>. </>}
             {(d.coveredJobs ?? 0) > 0 && <>Covered for others: <b>{d.coveredJobs} job{d.coveredJobs === 1 ? "" : "s"}</b> ({pts(d.coveredPoints ?? 0)} pts), counted on top of the goal.</>}
           </div>
         )}
@@ -269,7 +274,7 @@ function PerformanceDetailInline({ editorId, month }: { editorId: string; month:
                   <td className="num" title={b.goalAdjusted != null && b.goalAdjusted !== b.goal ? `Set at ${b.goal}, cut for approved leave` : undefined}>{b.goalAdjusted ?? b.goal}</td>
                   <td className="num"><b>{b.achieved}</b></td>
                   <td className="num">{b.covered ? b.covered : "—"}</td>
-                  <td className="num" title="Up to 150% per type; covered jobs count on top">{(b.goalAdjusted ?? b.goal) > 0 ? `${Math.round(((b.counted ?? b.achieved) / (b.goalAdjusted ?? b.goal)) * 100)}%` : "—"}</td>
+                  <td className="num" title="Up to the goal per type, time-filled jobs included; covered jobs count on top">{(b.goalAdjusted ?? b.goal) > 0 ? `${Math.round(((b.counted ?? b.achieved) / (b.goalAdjusted ?? b.goal)) * 100)}%` : "—"}</td>
                 </tr>
               ))}
             </tbody>

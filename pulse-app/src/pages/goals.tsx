@@ -114,29 +114,60 @@ export function GoalsPage() {
 }
 
 type Person = { editor: Editor; rows: PerfRow[]; lines: GoalLine[]; target: number; done: number; x: number; missed: number };
-// The month's time away from the goal (server/src/goal-score.js): approved leave,
-// and Other work — tasks given to them outside their goals, at the time they took.
+// The month's time away from the goal (server/src/goal-score.js): approved
+// leave shrinks it; team goal credit (work beyond their goal that the team still
+// needed) and Other work (tasks given to them outside the team's goals, at the
+// time they took) fill the goals they missed; work the team didn't need is
+// carried to next month.
 type OtherTask = { taskId: string | null; title: string | null; typeName: string | null; requestedBy: string | null; hours: number; completedAt: string | null };
-type TimeOff = { leaveDays?: number; otherHours?: number; otherWork?: OtherTask[]; monthHours?: number };
+type TypeJobs = { contentFormatId: string; name: string | null; jobs: number; hours?: number };
+type TimeOff = {
+  leaveDays?: number; otherHours?: number; otherWork?: OtherTask[]; monthHours?: number;
+  creditHours?: number; credit?: TypeJobs[]; carried?: TypeJobs[];
+  shortHours?: number; filledHours?: number; stillShortHours?: number;
+};
 
-// Time away from the goal this month: leave and Other work, how much it took
-// off the goal, and the Other tasks themselves (who asked, how long each took).
+// Time away from the goal this month: leave, then the hours check (how short
+// the goals were, what team goal credit and Other work filled), the credited
+// and carried jobs, and the Other tasks themselves (who asked, how long each took).
 function TimeAway({ off, rows }: { off?: TimeOff; rows: PerfRow[] }) {
-  const other = off?.otherWork ?? [];
-  if (!off || (!(off.otherHours ?? 0) && !(off.leaveDays ?? 0))) return null;
+  const other = off?.otherWork ?? [], credit = off?.credit ?? [], carried = off?.carried ?? [];
+  const fill = (off?.creditHours ?? 0) + (off?.otherHours ?? 0);
+  if (!off || (!fill && !(off.leaveDays ?? 0) && !carried.length)) return null;
   const set = rows.find((r) => r.goalJC > 0);
   const left = set && set.goalAdjusted != null ? set.goalAdjusted / set.goalJC : null;
   const hrs = (h: number) => `${Math.round(h * 10) / 10}h`;
   const parts = [
+    (off.creditHours ?? 0) > 0 && `${hrs(off.creditHours!)} of team goal credit`,
     (off.otherHours ?? 0) > 0 && `${hrs(off.otherHours!)} of Other work`,
-    (off.leaveDays ?? 0) > 0 && `${off.leaveDays} day${off.leaveDays === 1 ? "" : "s"} of leave`,
   ].filter(Boolean).join(" and ");
+  const short = off.shortHours ?? 0, still = off.stillShortHours ?? 0;
   return (
     <div className="gl-away">
-      <span className="gl-awayline">
-        <b>Time away from the goal: {parts}</b>
-        {left != null && <span>The goal counts {Math.round(left * 100)}% of what was set{off.monthHours ? ` (out of ${hrs(off.monthHours)} this month)` : ""}, so it's still fair.</span>}
-      </span>
+      {(off.leaveDays ?? 0) > 0 && (
+        <span className="gl-awayline">
+          <b>Approved leave: {off.leaveDays} day{off.leaveDays === 1 ? "" : "s"}</b>
+          {left != null && <span>The goal counts {Math.round(left * 100)}% of what was set, so it's still fair.</span>}
+        </span>
+      )}
+      {fill > 0 && (
+        <span className="gl-awayline">
+          <b>Time that fills the missed goals: {parts}</b>
+          <span>{short > 0
+            ? <>Hours check: {hrs(short)} short − {hrs(off.filledHours ?? 0)} filled = {hrs(still)} still short{still <= 0 ? " · all covered" : ""}.</>
+            : "Every goal is met, so this time isn't needed."}</span>
+        </span>
+      )}
+      {credit.length > 0 && (
+        <span className="gl-awayline">
+          <span>Team goal credit, beyond their own goal while the team still needed it: {credit.map((c) => `${c.name ?? "A type"} +${c.jobs} (${hrs(c.hours ?? 0)})`).join(" · ")}</span>
+        </span>
+      )}
+      {carried.length > 0 && (
+        <span className="gl-awayline">
+          <span>Carried to next month, as the team didn't need it: {carried.map((c) => `${c.name ?? "A type"} +${c.jobs}`).join(" · ")}</span>
+        </span>
+      )}
       {other.length > 0 && (
         <div className="gl-awaylist">
           {other.map((t, n) => (
@@ -180,7 +211,11 @@ function TeamGoals({ month, isCurrent, focusId, selfOnly }: { month: string; isC
       .then((d) => {
         if (!live) return;
         setPerf(Object.fromEntries(active.map((e) => [e.id, d.people[e.id]?.rows ?? []])));
-        setTimeOff(Object.fromEntries(Object.entries(d.people).map(([id, p]) => [id, { leaveDays: p.leaveDays, otherHours: p.otherHours, otherWork: p.otherWork, monthHours: p.monthHours }])));
+        setTimeOff(Object.fromEntries(Object.entries(d.people).map(([id, p]) => [id, {
+          leaveDays: p.leaveDays, otherHours: p.otherHours, otherWork: p.otherWork, monthHours: p.monthHours,
+          creditHours: p.creditHours, credit: p.credit, carried: p.carried,
+          shortHours: p.shortHours, filledHours: p.filledHours, stillShortHours: p.stillShortHours,
+        }])));
       })
       .catch(() => { if (live) setPerf(Object.fromEntries(active.map((e) => [e.id, [] as PerfRow[]]))); });
     return () => { live = false; };

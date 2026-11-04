@@ -393,13 +393,18 @@ goalsRouter.get("/goals/performance-all", goalView, async (req, res, next) => {
         achievement: goalJC > 0 ? (actualJC / goalJC) * 100 : null,
         goalAdjusted: t ? Math.round(t.goal * 10) / 10 : goalJC,
         covered: scored?.coveredByType?.[g.content_format_id] ?? 0,
+        // jobs the time made up for (../goal-score.js rule 6)
+        filled: t ? Math.round(t.filled * 10) / 10 : 0,
       });
     }
-    // the time off each goal: approved leave, and Other work (../goal-score.js rule 6)
+    // approved leave (../goal-score.js rule 4), and the time that fills the
+    // goals: team goal credit and Other work (rules 3, 5, 6), with what was carried
     for (const [id, p] of Object.entries(people)) {
       const s = scores.get(id);
       if (!s) continue;
       p.leaveDays = s.leaveDays; p.otherHours = s.otherHours; p.otherWork = s.otherWork;
+      p.creditHours = s.creditHours; p.credit = s.credit; p.carried = s.carried;
+      p.shortHours = s.shortHours; p.filledHours = s.filledHours; p.stillShortHours = s.stillShortHours;
       p.monthHours = Math.round(s.workingDays * s.hoursPerDay * 10) / 10;
     }
     res.json({ month, people });
@@ -411,8 +416,9 @@ goalsRouter.get("/goals/performance-all", goalView, async (req, res, next) => {
 // How a task would score for its person this month (the New task sheet's How
 // it scores panel): their goal and what's counted so far, whether its type is
 // in their goals, and the month's hours, so the app can show what it adds —
-// goal points for a goal type, or the time it takes off the goal when it's
-// Other work (../goal-score.js rule 6). Your own, or someone you may give work to.
+// goal points for a goal type, or the time that fills missed goals when it's
+// team goal credit or Other work (../goal-score.js rules 3, 5, 6). Your own,
+// or someone you may give work to.
 // Also each type in their goal and what it still needs (the sheet's type
 // chips: "3 to go"): jobs left after what's done and what's already on their
 // board, the most points still to win first.
@@ -466,9 +472,13 @@ goalsRouter.get("/goals/preview", async (req, res, next) => {
       preview: s ? {
         goalPoints: Math.round(s.goalPoints * 10) / 10, reached: Math.round(s.reached * 10) / 10, pct: s.pct,
         monthHours: Math.round(s.workingDays * s.hoursPerDay * 10) / 10, timeFactor: s.timeFactor, otherHours: s.otherHours, leaveDays: s.leaveDays,
+        // the time still to fill, and what an hour of it is worth (../goal-score.js rule 6)
+        stillShortHours: s.stillShortHours, pointsPerShortHour: s.pointsPerShortHour, creditHours: s.creditHours,
         inGoal: !!t, typeName: fmt.rows[0]?.name ?? null,
         points: t ? t.points : fmt.rows[0]?.points ?? null,
-        typeGoal: t ? { goal: Math.round(t.goal * 10) / 10, done: t.done } : null,
+        typeGoal: t ? { goal: Math.round(t.goal * 10) / 10, done: t.self + t.assigned } : null,
+        // a type in the team's goals: how many more the team needs (rule 3)
+        teamType: !!(cf && s.team?.[cf]), teamLeft: cf ? s.team?.[cf]?.left ?? null : null,
         goalTypes: goalNeeds,
       } : null,
     });
@@ -680,9 +690,11 @@ goalsRouter.get("/goals/performance", goalView, async (req, res, next) => {
         goalHours, actualHours,
         balance: goalHours - actualHours,
         achievement: goalJC > 0 ? (actualJC / goalJC) * 100 : null,
-        // the goal after approved leave, and jobs taken over from someone
+        // the goal after approved leave, jobs taken over from someone, and the
+        // jobs the time made up for (../goal-score.js rule 6)
         goalAdjusted: t ? Math.round(t.goal * 10) / 10 : goalJC,
         covered: scored?.coveredByType?.[g.content_format_id] ?? 0,
+        filled: t ? Math.round(t.filled * 10) / 10 : 0,
       };
     });
     // No Discipline stars here: these are the Manager's, and a Team Lead or an
@@ -692,6 +704,8 @@ goalsRouter.get("/goals/performance", goalView, async (req, res, next) => {
       month, rows,
       leaveDays: scored?.leaveDays ?? 0, workingDays: scored?.workingDays ?? 0,
       coveredJobs: scored?.coveredJobs ?? 0, coveredPoints: scored?.coveredPoints ?? 0,
+      otherHours: scored?.otherHours ?? 0, creditHours: scored?.creditHours ?? 0, carried: scored?.carried ?? [],
+      stillShortHours: scored?.stillShortHours ?? 0,
       scorePct: scored?.pct == null ? null : Math.round(scored.pct * 10) / 10,
     });
   } catch (err) {
@@ -852,7 +866,8 @@ goalsRouter.get("/goals/discipline", disciplineRater, async (req, res, next) => 
     const month = monthStart(monthIn);
     if (!month) return res.status(400).json({ error: "That month couldn't be read." });
     // Each person's month, scored by the one rule (goal-score.js): goals cut for
-    // approved leave, each type up to 150%, covered work on top; their ratings;
+    // approved leave, each type up to its goal, time filling missed goals,
+    // covered work on top; their ratings;
     // and the attendance points lost this month (late, absent), which come off
     // discipline. All read together.
     const { role, editorId: me } = req.rater;

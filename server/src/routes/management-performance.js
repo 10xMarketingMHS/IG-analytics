@@ -65,7 +65,8 @@ function classify(pct, thr) {
 }
 
 // The Overall Score from a scored month (goal-score.js scoreMonth: goals cut
-// for approved leave, each type up to 150%, covered work on top): Earned is 80%
+// for approved leave, each type up to its goal, time filling missed goals,
+// covered work on top): Earned is 80%
 // of what was reached, Discipline up to 20% of the goal points. Can pass 100%.
 // The app's goalBreakdown() (goal-points.ts) takes the same counted numbers.
 // Returns null when there are no goal points (no goals — no score to band).
@@ -502,8 +503,11 @@ async function computeDetail(orgId, editorId, monthFirst, isCurrent) {
       isCurrent,
       thresholds: thr,
       ...current,
-      // approved leave (goals cut for scoring) and covered work (counted on top)
+      // approved leave (goals cut for scoring), covered work (counted on top), and
+      // the time that fills missed goals: Other work and team goal credit, with what was carried
       leaveDays: scored?.leaveDays ?? 0, otherHours: scored?.otherHours ?? 0,
+      creditHours: scored?.creditHours ?? 0, credit: scored?.credit ?? [], carried: scored?.carried ?? [],
+      stillShortHours: scored?.stillShortHours ?? 0,
       workingDays: scored?.workingDays ?? 0,
       coveredJobs: scored?.coveredJobs ?? 0,
       coveredPoints: Math.round((scored?.coveredPoints ?? 0) * 100) / 100,

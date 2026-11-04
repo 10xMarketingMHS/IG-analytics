@@ -34,10 +34,11 @@ export type ByRole = Partial<Record<RaterRole, Ratings | null>>;
 
 // What a month's work counts for is worked out on the server, by one rule for
 // every screen (server/src/goal-score.js): goals cut for approved leave, each
-// content type up to 150% of its goal (only assigned work goes beyond it), and
-// covered work (taken over from someone) on top. Each row brings its goal after
-// leave (goalJC) and the jobs that count (countedJC); covered work comes as
-// points. This only splits that into the Overall Score:
+// content type up to its goal, the time from team goal credit and Other work
+// filling the goals that were missed, and covered work (taken over from
+// someone) on top. Each row brings its goal after leave (goalJC) and the jobs
+// that count, filled ones included (countedJC); covered work comes as points.
+// This only splits that into the Overall Score:
 //   Earned Points     = 80% × (Σ countedJC × points + covered points), at most
 //                       150% of Total Goal Points
 //                       — never lateness-penalised (that lives in Task Points).
@@ -49,7 +50,7 @@ export type ByRole = Partial<Record<RaterRole, Ratings | null>>;
 //                       and covered work).
 // Returns null when Total Goal Points is 0 (no goals) — nothing to split.
 // Mirrors computeScore() in server/src/routes/management-performance.js.
-export const TYPE_CAP = 1.5;
+export const TYPE_CAP = 1;
 // the month as a whole, covered work included (server/src/goal-score.js TOTAL_CAP)
 export const TOTAL_CAP = 1.5;
 export type BreakdownRow = { goalJC: number; actualJC: number; points: number; countedJC?: number };
