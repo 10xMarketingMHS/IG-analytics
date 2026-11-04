@@ -134,7 +134,10 @@ html[data-theme="dark"] .tb,html[data-theme="dark"] .tp2{
 .tb .task-card.is-over{border-color:color-mix(in srgb,var(--tb-bad) 55%,var(--tb-line));box-shadow:0 0 0 3px color-mix(in srgb,var(--tb-bad) 10%,transparent),var(--tb-sh1)}
 .tb .task-card.selected{border-color:var(--tb-ac);box-shadow:0 0 0 3px var(--tb-acGlow),var(--tb-sh1)}
 .tb .task-card:not(:has(.task-actions)){padding-bottom:14px}
-.tb .task-top{margin:0;gap:6px;min-height:20px;min-width:0}
+/* a busy top row (number, Rev, On hold, flags) wraps rather than pushing the
+   priority and the bin out of the card */
+.tb .task-top{margin:0;gap:6px;row-gap:4px;min-height:20px;min-width:0;flex-wrap:wrap}
+.tb-right{position:relative;margin-left:auto;display:inline-flex;align-items:center;flex:none;min-height:26px}
 .tb-ref{font:500 11.5px 'Geist Mono',ui-monospace,monospace;color:var(--tb-text3);white-space:nowrap}
 .tb-rev{padding:1px 7px;border-radius:6px;background:var(--tb-warnSoft);color:var(--tb-warn);font-size:11px;font-weight:800;white-space:nowrap}
 .tb .task-flags{margin-left:0;font-size:11px}
@@ -144,14 +147,21 @@ html[data-theme="dark"] .tb,html[data-theme="dark"] .tp2{
 .tb-pri.low{color:var(--tb-text3)}
 .tb .task-hold-badge{display:inline-flex;align-items:center;gap:3px;margin:0;padding:1px 7px 1px 5px;border:0;border-radius:6px;background:var(--tb-sunk);color:var(--tb-text2);
   font-size:11px;font-weight:700;letter-spacing:0;white-space:nowrap}
-/* Delete: a small bin in a rounded square, shown on hover (always on touch
-   screens), red when pointed at. */
-.tb .task-x{flex:none;width:26px;height:26px;display:grid;place-items:center;padding:0;margin-left:2px;border:1px solid transparent;border-radius:8px;
-  background:transparent;color:var(--tb-text3,#85858f);opacity:0;cursor:pointer;transition:opacity .12s,background .12s,color .12s,border-color .12s}
-.tb .task-card:hover .task-x,.tb .task-x:focus-visible{opacity:1}
+/* Delete: a small bin in a rounded square, red when pointed at. On hover it
+   takes the priority's place at the right edge (like a mail list's actions
+   over its date), so nothing moves and it never leaves the card; on touch
+   screens it's always there, after the priority. */
+.tb-pri{transition:opacity .12s}
+.tb .task-x{position:absolute;right:0;top:50%;transform:translateY(-50%);width:26px;height:26px;display:grid;place-items:center;padding:0;border:1px solid transparent;border-radius:8px;
+  background:var(--tb-panel);color:var(--tb-text3,#85858f);opacity:0;pointer-events:none;cursor:pointer;transition:opacity .12s,background .12s,color .12s,border-color .12s}
+.tb .task-card:hover .task-x,.tb .task-x:focus-visible{opacity:1;pointer-events:auto}
+.tb .task-card:hover .tb-right:has(.task-x) .tb-pri,.tb .tb-right:has(.task-x:focus-visible) .tb-pri{opacity:0}
 .tb .task-x:hover{background:oklch(0.96 0.03 25);border-color:oklch(0.9 0.06 25);color:oklch(0.55 0.2 25)}
 html[data-theme="dark"] .tb .task-x:hover{background:oklch(0.28 0.06 25);border-color:oklch(0.36 0.08 25);color:oklch(0.75 0.15 25)}
-@media (hover:none){.tb .task-x{opacity:1}}
+@media (hover:none){
+  .tb .task-x{position:static;transform:none;margin-left:4px;opacity:1;pointer-events:auto}
+  .tb .task-card:hover .tb-right:has(.task-x) .tb-pri{opacity:1}
+}
 .tb .task-title{margin:0;font-size:13.5px;font-weight:700;line-height:1.4;text-wrap:pretty}
 .tb-chips-row{display:flex;gap:6px;flex-wrap:wrap}
 .tb-tag{display:inline-flex;align-items:center;gap:5px;height:24px;padding:0 9px;border:1px solid var(--tb-line);border-radius:8px;font-size:11.5px;font-weight:600;color:var(--tb-text2);

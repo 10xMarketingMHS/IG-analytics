@@ -1240,21 +1240,23 @@ export function TasksPage() {
                           {t.recurrence !== "none" && <span title={`Repeats ${t.recurrence}`}>🔁</span>}
                           {t.self_created && <span title="Created by the assignee for themselves">🙋</span>}
                         </span>
-                        <span className="tb-grow" />
-                        <span className={"tb-pri " + t.priority} title={`${PRI_LABEL[t.priority]} priority`}><span className="tb-pri-dot" />{PRI_LABEL[t.priority]}</span>
-                        {canDeleteTask(t) && (
-                          <button
-                            type="button"
-                            className="task-x"
-                            title="Delete task"
-                            aria-label={`Delete ${t.title}`}
-                            onClick={(e) => { e.stopPropagation(); del(t); }}
-                          >
-                            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-                              <path d="M4 7h16M10 11v6M14 11v6M6 7l1 12a2 2 0 0 0 2 2h6a2 2 0 0 0 2-2l1-12M9 7V4h6v3" />
-                            </svg>
-                          </button>
-                        )}
+                        {/* priority and delete stay together at the right, inside the card */}
+                        <span className="tb-right">
+                          <span className={"tb-pri " + t.priority} title={`${PRI_LABEL[t.priority]} priority`}><span className="tb-pri-dot" />{PRI_LABEL[t.priority]}</span>
+                          {canDeleteTask(t) && (
+                            <button
+                              type="button"
+                              className="task-x"
+                              title="Delete task"
+                              aria-label={`Delete ${t.title}`}
+                              onClick={(e) => { e.stopPropagation(); del(t); }}
+                            >
+                              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                                <path d="M4 7h16M10 11v6M14 11v6M6 7l1 12a2 2 0 0 0 2 2h6a2 2 0 0 0 2-2l1-12M9 7V4h6v3" />
+                              </svg>
+                            </button>
+                          )}
+                        </span>
                       </div>
                       <div className="task-title">{t.title}</div>
                       <div className="tb-chips-row">
