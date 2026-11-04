@@ -17,6 +17,7 @@ import { TaskPanel } from "@/pages/tasks";
 import type { Task } from "@/lib/types";
 import "./chat.css";
 import { clockTime, dateTime } from "@/lib/time-format";
+import { PositionMark } from "@/components/position-mark";
 
 // Team Chat — Slack-style: conversations on the left, the open one in the
 // middle, a thread on the right. The open conversation and thread live in the
@@ -1385,7 +1386,7 @@ function ConvList({ activeId, onOpen, onNewChannel, onBrowse, onNewDm, onDmWith,
             {newPeople.map((p) => (
               <button key={p.id} type="button" className="cl-row" onClick={() => onDmWith(p.id)}>
                 <PersonAvatar person={p} size={20} online={online.has(p.id)} />
-                <span className="cl-name">{p.name}</span>
+                <span className="cl-name">{p.name}<PositionMark designation={p.designation} /></span>
                 <span className="cl-hint">Message</span>
               </button>
             ))}
@@ -1425,7 +1426,7 @@ function PeoplePicker({ people, selected, onToggle, exclude, max }: {
             <label key={p.id} className={"chat-picker-row" + (on ? " on" : "") + (full ? " full" : "")}>
               <input type="checkbox" checked={on} disabled={full} onChange={() => onToggle(p.id)} />
               <PersonAvatar person={p} size={28} online={online.has(p.id)} />
-              <span><b>{p.name}</b>{p.designation && <span className="chat-faint"> · {p.designation}</span>}</span>
+              <span><b>{p.name}<PositionMark designation={p.designation} /></b>{p.designation && <span className="chat-faint"> · {p.designation}</span>}</span>
             </label>
           );
         })}
@@ -1761,7 +1762,7 @@ function InfoModal({ channel, onClose, onLeft }: { channel: ChatChannel; onClose
           {members.map((p) => (
             <div key={p.id} className="chat-member">
               <PersonAvatar person={p} size={30} online={online.has(p.id)} />
-              <span><b>{p.name}</b>{p.id === me && <span className="chat-faint"> (you)</span>}{p.designation && <span className="chat-faint"> · {p.designation}</span>}</span>
+              <span><b>{p.name}<PositionMark designation={p.designation} /></b>{p.id === me && <span className="chat-faint"> (you)</span>}{p.designation && <span className="chat-faint"> · {p.designation}</span>}</span>
               {canRemove && p.id !== me && (
                 removing === p.id ? (
                   <span className="chat-member-acts">

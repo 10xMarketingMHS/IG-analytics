@@ -31,6 +31,7 @@ import { AdUploadBlock } from "@/components/ad-upload-block";
 import { RndUseBlock } from "@/components/rnd-use-block";
 import { placeOf, useAdTeams } from "@/lib/ad-teams";
 import { clockTime, clockTimeShort, dateTime } from "@/lib/time-format";
+import { PositionMark } from "@/components/position-mark";
 
 function relTime(iso: string) {
   const mins = Math.round((Date.now() - new Date(iso).getTime()) / 60000);
@@ -3500,6 +3501,7 @@ function bucketTasksByDay(tasks: Task[]) {
 // Search / sort / team filter already apply upstream, so each group keeps the
 // chosen sort; clicking a row opens the detail panel.
 function TaskList({ tasks, onOpen, nowMs }: { tasks: Task[]; onOpen: (t: Task) => void; nowMs: number }) {
+  const { editors } = useEditors();
   const [shut, setShut] = useState<Partial<Record<TaskStatus, boolean>>>({});
   const groups = COLUMNS.map((c) => ({ ...c, rows: tasks.filter((t) => t.status === c.key) })).filter((g) => g.rows.length > 0);
   return (
@@ -3532,7 +3534,7 @@ function TaskList({ tasks, onOpen, nowMs }: { tasks: Task[]; onOpen: (t: Task) =
                       )}
                       {t.platforms?.length > 0 && <span className="task-plats">{t.platforms.map((p) => PLATFORM_META[p]?.icon ?? "").join(" ")}</span>}
                     </span>
-                    <span className="tb-lwho">{t.editor_name ? <><Ava name={t.editor_name} image={t.editor_image} size={22} />{t.editor_name}</> : <span className="tb-dim">Unassigned</span>}</span>
+                    <span className="tb-lwho">{t.editor_name ? <><Ava name={t.editor_name} image={t.editor_image} size={22} />{t.editor_name}<PositionMark designation={editors?.find((e) => e.id === t.editor_id)?.designation} /></> : <span className="tb-dim">Unassigned</span>}</span>
                     <span className="tb-lbrand">{placeOf(t) ? <><span className="tb-dot" style={{ background: brandDot(placeOf(t)!) }} />{placeOf(t)}</> : <span className="tb-dim">—</span>}</span>
                     <span className={"tb-pri " + t.priority}><span className="tb-pri-dot" />{PRI_LABEL[t.priority]}</span>
                     <span className={"tb-ldue" + (overdue ? " over" : t.due_date === today() ? " today" : "")}>

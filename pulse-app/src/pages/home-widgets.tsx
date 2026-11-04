@@ -16,6 +16,7 @@ import { attendanceAction, type AttToday, type TeamPerson } from "@/lib/use-atte
 import { Bar, ReviewList, UpNext, monthName, taskRef, type MyDayData, type useMyGoal, type useStartFlow } from "@/pages/my-day-layouts";
 import type { Editor, Post, Task } from "@/lib/types";
 import "./home-widgets.css";
+import { PositionMark } from "@/components/position-mark";
 
 // Home by role (Pulse Redesign v7): the greeting row (with "Preview as" for
 // admins and Customize), then — passed in — the Start of day section, then the
@@ -463,7 +464,7 @@ function TeamNowW({ c }: { c: HomeCtx }) {
         {shown.map((r) => (
           <div key={r.p.editorId} className="hw-person">
             <span className="hw-person-ava"><Face editor={r.ed} name={r.p.name} size={30} /><i className={"hw-sdot " + r.kind} /></span>
-            <span className="hw-person-txt"><b>{r.p.name}</b><span>{r.line}</span></span>
+            <span className="hw-person-txt"><b>{r.p.name}<PositionMark designation={r.ed?.designation} /></b><span>{r.line}</span></span>
           </div>
         ))}
       </div>
@@ -482,7 +483,7 @@ function GoalPaceW({ c, many }: { c: HomeCtx; many: boolean }) {
       <div className="hw-bars">
         {rows.slice(0, many ? 8 : 5).map((r) => (
           <div key={r.e.id} className="hw-barrow">
-            <span>{r.e.name}</span>
+            <span>{r.e.name}<PositionMark designation={r.e.designation} /></span>
             <span className="hw-track"><i className={pctTone(r.pct)} style={{ width: `${Math.min(100, r.pct)}%` }} /></span>
             <b className="mono">{r.pct}%</b>
           </div>
@@ -513,7 +514,7 @@ function CapacityW({ c }: { c: HomeCtx }) {
       <div className="hw-bars">
         {rows.map((r) => (
           <div key={r.e.id} className="hw-barrow">
-            <span>{r.e.name}</span>
+            <span>{r.e.name}<PositionMark designation={r.e.designation} /></span>
             <span className="hw-track"><i className={tone(r.pct)} style={{ width: `${Math.min(100, r.pct)}%` }} /></span>
             <b className="mono">{r.pct}%</b>
           </div>
@@ -721,7 +722,7 @@ function AttendW({ c }: { c: HomeCtx }) {
           return (
             <div key={p.editorId} className="hw-att-row">
               <Face editor={ed} name={p.name} size={30} />
-              <span className="hw-li-txt"><b>{p.name}</b><span>{meta(p)}{r?.lateNote ? ` · “${r.lateNote}”` : ""}</span></span>
+              <span className="hw-li-txt"><b>{p.name}<PositionMark designation={ed?.designation} /></b><span>{meta(p)}{r?.lateNote ? ` · “${r.lateNote}”` : ""}</span></span>
               <span className={"hw-pill " + pill.t}>{pill.l}</span>
               <span className="hw-att-acts">
                 {/* requests (permissions, corrections) are answered in the Inbox */}

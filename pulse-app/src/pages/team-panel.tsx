@@ -376,7 +376,7 @@ export function TeamPanel({ tasks, editors, onOpenTask, focusId }: {
               <section className="mt-card mt-profile">
                 <div className="mt-phead">
                   <Face editor={selected.editor} big />
-                  <span className="mt-who"><b>{selected.editor.name}</b><span>{selected.editor.designation || "Team member"} · {selected.scored ? `#${selectedIndex + 1} ${rangeWord}` : "exempt from task scoring"}</span></span>
+                  <span className="mt-who"><b>{selected.editor.name}<PositionMark designation={selected.editor.designation} /></b><span>{selected.editor.designation || "Team member"} · {selected.scored ? `#${selectedIndex + 1} ${rangeWord}` : "exempt from task scoring"}</span></span>
                 </div>
                 {live && live.text && <div className={"mt-livebox " + live.tone}><i />{live.text}</div>}
                 <div className="mt-kpis">

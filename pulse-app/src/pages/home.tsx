@@ -26,6 +26,7 @@ import type { Editor, Post, Task } from "@/lib/types";
 import { MyReportsModal } from "@/components/my-reports";
 import { InboxCard } from "@/pages/inbox";
 import { clockTime } from "@/lib/time-format";
+import { PositionMark } from "@/components/position-mark";
 
 // DF Foods runs a 6-day week (Mon–Sat) — used to spread the monthly Goal Points
 // target across the month for the (provisional) Daily Goal pace. Change this one
@@ -474,7 +475,7 @@ export function HomePage() {
       <div className={"mh-pod-card r" + rank} title={`${entry.editor.name}: ${Math.round(entry.row.points)} points this month`}>
         <span className="mh-pod-ava"><Avatar editor={entry.editor} />{withRank && <span className="mh-pod-rank">{rank}</span>}</span>
         <div className="mh-pod-meta">
-          <span className="mh-pod-name">{entry.editor.name}</span>
+          <span className="mh-pod-name">{entry.editor.name}<PositionMark designation={entry.editor.designation} /></span>
           <span className="mh-pod-pts">{Math.round(entry.row.points).toLocaleString()} pts</span>
         </div>
       </div>

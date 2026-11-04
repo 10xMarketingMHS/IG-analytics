@@ -8,6 +8,7 @@ import { countsInTaskScore } from "@/lib/task-points";
 import type { AppUser, Editor } from "@/lib/types";
 import { DESIGNATIONS, ROLE_KEY_LABEL, TeamMemberModal, positionRank, roleKeyOf, type RoleKey, type TeamRow } from "@/pages/teams";
 import { dateTime } from "@/lib/time-format";
+import { PositionMark } from "@/components/position-mark";
 
 // Team › Roster (Pulse Redesign v5): everyone on the team in one table — their
 // position, employee code, whether they count in the task score, login, role
@@ -175,7 +176,7 @@ export function TeamRoster() {
                       ? <img className="mt-rava" src={ed.image_url} alt="" />
                       : <span className="mt-rava" style={{ background: gradFor(u?.email ?? name) }}>{initials(name)}</span>}
                     <span>
-                      <b>{name}{u?.isSelf && <em className="mt-you">YOU</em>}</b>
+                      <b>{name}<PositionMark designation={pos} />{u?.isSelf && <em className="mt-you">YOU</em>}</b>
                       {!ed && <small>Not on the team list</small>}
                     </span>
                   </span>

@@ -348,7 +348,7 @@ export function LeadGoals() {
                   return (
                     <div key={m.editorId} className="lg-member">
                       {m.imageUrl ? <img className="gl-ava sm" src={m.imageUrl} alt="" /> : <span className="gl-ava sm" style={{ background: gradFor(m.name) }}>{initials(m.name)}</span>}
-                      <span className="lg-mname"><b>{m.name}</b><small>{h.target ? `${n0(h.done)} of ${n0(h.target)} jobs · ${h.missed ? `${h.missed} to discuss` : "all met"}` : "No goals this review"}</small></span>
+                      <span className="lg-mname"><b>{m.name}<PositionMark designation={m.designation} /></b><small>{h.target ? `${n0(h.done)} of ${n0(h.target)} jobs · ${h.missed ? `${h.missed} to discuss` : "all met"}` : "No goals this review"}</small></span>
                       <span className="lg-bar"><i className={cls} style={{ width: `${Math.min(100, (h.pct ?? 0) * 100)}%` }} /></span>
                       <b className={"lg-pct " + cls}>{h.pct != null ? `${Math.round(h.pct * 100)}%` : "—"}</b>
                     </div>

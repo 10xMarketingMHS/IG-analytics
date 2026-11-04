@@ -16,6 +16,7 @@ import { scheduleStage, type SchedStage } from "@/lib/schedule";
 import { adStage, type AdStage } from "@/lib/ad-upload";
 import { placeOf } from "@/lib/ad-teams";
 import "./pipeline.css";
+import { PositionMark } from "@/components/position-mark";
 
 // Social & Ads Pipeline (Pulse Redesign v7): every reel, carousel and ad in
 // production, scoped to Social + Ad work only — the Task Board covers
@@ -325,7 +326,7 @@ export function MetricsPage() {
                       <span><b>{placeOf(t) ?? "—"}</b><em>{plat.l}</em></span>
                     </span>
                     <span className="pp-ed">
-                      {ed ? <><Ava editor={ed} /><b>{ed.name}</b></> : <><span className="pp-faint">Unclaimed</span>{claimBtn(t)}</>}
+                      {ed ? <><Ava editor={ed} /><b>{ed.name}<PositionMark designation={ed.designation} /></b></> : <><span className="pp-faint">Unclaimed</span>{claimBtn(t)}</>}
                     </span>
                     <span className="pp-stagecell">
                       <span className="pp-pill" style={{ ["--c" as string]: s.color }}>{s.label}</span>

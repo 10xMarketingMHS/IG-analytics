@@ -641,7 +641,7 @@ function FeaturedSocial({ champion, period }: { champion?: Row; period: Period }
       <Rings />
       <div className="fx-cap">🏆 Top Editor · {period === "month" ? "This month" : "All time"}</div>
       <FeaturedFrame editor={editor} medal="🥇" />
-      <div className="fx-name">{editor.name}</div>
+      <div className="fx-name">{editor.name}<PositionMark designation={editor.designation} /></div>
       <div className="fx-role">{editor.designation || "Editor"}</div>
       <div className="fx-stats">
         <div className="fx-stat"><b>{champion.points.toLocaleString()}</b><span>Points</span></div>
@@ -662,7 +662,7 @@ function FeaturedHouse({ champion }: { champion?: HouseRow }) {
       <Rings />
       <div className="fx-cap">🏆 Top Performer · Work</div>
       <FeaturedFrame editor={editor} medal="🥇" />
-      <div className="fx-name">{editor.name}</div>
+      <div className="fx-name">{editor.name}<PositionMark designation={editor.designation} /></div>
       <div className="fx-role">{editor.designation || "Editor"}</div>
       <div className="fx-stats">
         {champion.goalPct != null && <div className="fx-stat"><b>{Math.round(champion.goalPct)}%</b><span>Of goal</span></div>}

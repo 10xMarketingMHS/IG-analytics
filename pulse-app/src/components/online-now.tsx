@@ -4,6 +4,7 @@ import { toast } from "sonner";
 import { api, ApiError } from "@/lib/api";
 import { avatarColor, initials, useChat, type ChatPerson } from "@/lib/chat";
 import "./online-now.css";
+import { PositionMark } from "@/components/position-mark";
 
 // Who's on Echo right now, on the top bar: four faces in a tight stack that,
 // on hover (or on a first tap, on a phone), spreads out into everyone side by
@@ -98,7 +99,7 @@ export function OnlineNow() {
               : <span className="on-in" style={{ background: p.color || avatarColor(p.name) }}>{initials(p.name)}</span>}
             <span className="on-dot" />
             <span className="on-tip" role="tooltip">
-              <b>{p.name}</b>
+              <b>{p.name}<PositionMark designation={p.designation} /></b>
               <span>{busy === p.id ? "Opening the chat…" : (p.designation ? `${p.designation} · ` : "") + "Message"}</span>
             </span>
           </button>
