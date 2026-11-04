@@ -9,9 +9,19 @@ import { ymd } from "@/lib/task-points";
 // from the same tasks — done, of that type, approved in those days.
 
 export type Period = "h1" | "h2" | "m";
-// goalAdjusted: the goal after approved leave (what the score counts against)
-export type PerfRow = { contentFormatId: string; name: string; goalJC: number; goalAdjusted?: number; actualJC: number; points: number };
-export type GoalLine = { id: string; name: string; month: number; target: number; done: number };
+// goalAdjusted: the goal after approved leave (what the score counts against);
+// the month's time filling missed jobs (team goal credit and Other work,
+// server/src/goal-score.js rule 6): filled (jobs), creditHours, counted (the
+// jobs that count with it), and ownHours (the hours of the jobs done toward it)
+export type PerfRow = {
+  contentFormatId: string; name: string; goalJC: number; goalAdjusted?: number; actualJC: number; points: number;
+  filled?: number; creditHours?: number; counted?: number; ownHours?: number;
+};
+export type GoalLine = {
+  id: string; name: string; month: number; target: number; done: number;
+  // full month only (null in a review period)
+  adj: { counted: number; creditHours: number; ownHours: number } | null;
+};
 
 function lastDay(month: string) {
   const [y, m] = month.split("-").map(Number);
@@ -59,7 +69,9 @@ export function goalLines(rows: PerfRow[], per: Period, halfCounts?: Map<string,
       const first = tenths(goal / 2);
       const target = per === "h1" ? first : per === "h2" ? tenths(goal - first) : tenths(goal);
       const done = per === "m" ? r.actualJC : halfCounts?.get(r.contentFormatId) ?? 0;
-      return { id: r.contentFormatId, name: r.name, month: tenths(goal), target, done };
+      // time fills the month as a whole, so only the full month carries it
+      const adj = per === "m" ? { counted: r.counted ?? Math.min(done, goal), creditHours: r.creditHours ?? 0, ownHours: r.ownHours ?? 0 } : null;
+      return { id: r.contentFormatId, name: r.name, month: tenths(goal), target, done, adj };
     })
     .filter((l) => l.target > 0);
 }

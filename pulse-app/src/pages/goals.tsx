@@ -124,7 +124,7 @@ type TypeJobs = { contentFormatId: string; name: string | null; jobs: number; ho
 type TimeOff = {
   leaveDays?: number; otherHours?: number; otherWork?: OtherTask[]; monthHours?: number;
   creditHours?: number; credit?: TypeJobs[]; carried?: TypeJobs[];
-  shortHours?: number; filledHours?: number; stillShortHours?: number;
+  shortHours?: number; filledHours?: number; stillShortHours?: number; scorePct?: number | null;
 };
 
 // Time away from the goal this month: leave, then the hours check (how short
@@ -214,7 +214,7 @@ function TeamGoals({ month, isCurrent, focusId, selfOnly }: { month: string; isC
         setTimeOff(Object.fromEntries(Object.entries(d.people).map(([id, p]) => [id, {
           leaveDays: p.leaveDays, otherHours: p.otherHours, otherWork: p.otherWork, monthHours: p.monthHours,
           creditHours: p.creditHours, credit: p.credit, carried: p.carried,
-          shortHours: p.shortHours, filledHours: p.filledHours, stillShortHours: p.stillShortHours,
+          shortHours: p.shortHours, filledHours: p.filledHours, stillShortHours: p.stillShortHours, scorePct: p.scorePct,
         }])));
       })
       .catch(() => { if (live) setPerf(Object.fromEntries(active.map((e) => [e.id, [] as PerfRow[]]))); });
@@ -347,6 +347,11 @@ function TeamGoals({ month, isCurrent, focusId, selfOnly }: { month: string; isC
               {sel && (() => {
                 const b = bandOf(sel.x);
                 const lines = [...sel.lines].sort((a, z) => a.done / a.target - z.done / z.target);
+                // the full month with time filling its goals (server/src/goal-score.js rule 6):
+                // the tactical meeting's goal card → adjusted goal card, goal by goal
+                const off = timeOff[sel.editor.id];
+                const adjusted = per === "m" && ((off?.creditHours ?? 0) + (off?.otherHours ?? 0)) > 0;
+                const adjPct = off?.scorePct ?? null;
                 return (
                   <section className="gl-card gl-detail">
                     <div className="gl-dhead">
@@ -354,8 +359,16 @@ function TeamGoals({ month, isCurrent, focusId, selfOnly }: { month: string; isC
                       <span className="gl-dwho"><b>{sel.editor.name}</b><span>{sel.editor.designation || "Team member"} · {label}</span></span>
                       <span className="gl-grow" />
                       {isAdmin && <button type="button" className="gl-btn sm" onClick={() => navigate("/my-team", { state: { editorId: sel.editor.id } })}>{IC.group}View in Team</button>}
-                      <span className="gl-dpct"><b className={b.tone}>{pctText(sel.x)}</b><em>{sel.done} of {sel.target} jobs done</em></span>
-                      <span className={"gl-tag " + b.tone}>{b.label}</span>
+                      <span className="gl-dpct"><b className={b.tone}>{pctText(sel.x)}</b><em>{adjusted ? "Goal card · " : ""}{sel.done} of {sel.target} jobs done</em></span>
+                      {adjusted && adjPct != null && (
+                        <>
+                          <span className="gl-darrow" aria-hidden>→</span>
+                          <span className="gl-dpct adj" title="With team goal credit and Other work filling the missed goals, as the Leaderboard counts it">
+                            <b className={bandOf(adjPct / 100).tone}>{Math.round(adjPct)}%</b><em>Adjusted goal card</em>
+                          </span>
+                        </>
+                      )}
+                      <span className={"gl-tag " + (adjusted && adjPct != null ? bandOf(adjPct / 100) : b).tone}>{(adjusted && adjPct != null ? bandOf(adjPct / 100) : b).label}</span>
                     </div>
                     <div className="gl-monthgoal">
                       <span>{monthName(month, "short")} goal</span>
@@ -363,6 +376,27 @@ function TeamGoals({ month, isCurrent, focusId, selfOnly }: { month: string; isC
                     </div>
                     <TimeAway off={timeOff[sel.editor.id]} rows={sel.rows} />
                     <div className="gl-tablewrap">
+                      {adjusted ? (
+                        <div className="gl-table adj">
+                          <div className="gl-th"><span>Goal</span><span className="num">Target</span><span className="num">Done</span><span className="num">Hours</span><span className="num">+ Credit</span><span className="num">Adj. count</span><span>Adjusted</span><span>Status</span></div>
+                          {lines.map((l) => {
+                            const a = l.adj ?? { counted: Math.min(l.done, l.target), creditHours: 0, ownHours: 0 };
+                            const adj = Math.min(l.target, a.counted);
+                            const x = l.target ? adj / l.target : 1, ok = l.done >= l.target;
+                            const tone = x >= 1 - 1e-9 ? "good" : x >= 0.5 ? "warn" : "bad";
+                            return (
+                              <div key={l.id} className="gl-tr">
+                                <b>{l.name}</b><span className="num">{l.target}</span><b className="num">{l.done}</b>
+                                <span className="num gl-hrs">{a.ownHours > 0 ? `${a.ownHours} h` : "—"}</span>
+                                <span className={"num " + (a.creditHours > 0 ? "gl-credit" : "gl-muted")}>{a.creditHours > 0 ? `+${a.creditHours} h` : "—"}</span>
+                                <b className="num">{tenths(adj)}</b>
+                                <span className="gl-prog"><span className="gl-track sm"><span className={"gl-fill " + tone} style={{ width: `${Math.min(100, x * 100)}%` }} /></span><b className={tone}>{pctText(x)}</b></span>
+                                <span><span className={"gl-tag " + (ok ? "good" : "bad")}>{ok ? "Achieved" : "Not achieved"}</span></span>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      ) : (
                       <div className="gl-table">
                         <div className="gl-th"><span>Goal</span><span className="num">Month</span><span className="num">Target</span><span className="num">Done</span><span className="num">Pending</span><span>Progress</span><span>Status</span></div>
                         {lines.map((l) => {
@@ -378,6 +412,7 @@ function TeamGoals({ month, isCurrent, focusId, selfOnly }: { month: string; isC
                           );
                         })}
                       </div>
+                      )}
                     </div>
                   </section>
                 );

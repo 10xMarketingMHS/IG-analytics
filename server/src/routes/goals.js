@@ -393,8 +393,12 @@ goalsRouter.get("/goals/performance-all", goalView, async (req, res, next) => {
         achievement: goalJC > 0 ? (actualJC / goalJC) * 100 : null,
         goalAdjusted: t ? Math.round(t.goal * 10) / 10 : goalJC,
         covered: scored?.coveredByType?.[g.content_format_id] ?? 0,
-        // jobs the time made up for (../goal-score.js rule 6)
-        filled: t ? Math.round(t.filled * 10) / 10 : 0,
+        // the time made up for missed jobs (../goal-score.js rule 6): the jobs, their
+        // hours, and the count with them; and the hours of the jobs done toward the goal
+        filled: t ? Math.round(t.filled * 1000) / 1000 : 0,
+        creditHours: t ? Math.round(t.filled * t.jobHours * 10) / 10 : 0,
+        counted: t ? Math.round(t.counted * 1000) / 1000 : 0,
+        ownHours: t ? Math.round(t.own * t.jobHours * 10) / 10 : 0,
       });
     }
     // approved leave (../goal-score.js rule 4), and the time that fills the
@@ -405,6 +409,8 @@ goalsRouter.get("/goals/performance-all", goalView, async (req, res, next) => {
       p.leaveDays = s.leaveDays; p.otherHours = s.otherHours; p.otherWork = s.otherWork;
       p.creditHours = s.creditHours; p.credit = s.credit; p.carried = s.carried;
       p.shortHours = s.shortHours; p.filledHours = s.filledHours; p.stillShortHours = s.stillShortHours;
+      // the month's score with all that counted (the adjusted goal card), as the Leaderboard has it
+      p.scorePct = s.pct == null ? null : Math.round(s.pct * 10) / 10;
       p.monthHours = Math.round(s.workingDays * s.hoursPerDay * 10) / 10;
     }
     res.json({ month, people });

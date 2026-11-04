@@ -194,6 +194,9 @@ em.bad{color:var(--gl-bad)}
 .gl-dpct{display:flex;flex-direction:column;align-items:flex-end;line-height:1.15}
 .gl-dpct b{font-size:26px;font-weight:800;letter-spacing:-.03em}
 .gl-dpct em{font-size:11.5px;color:var(--gl-text3)}
+/* Goal card → adjusted goal card (the full month with time filling missed goals) */
+.gl-darrow{font-size:18px;color:var(--gl-text3)}
+.gl-dpct.adj em{color:var(--gl-acText);font-weight:700}
 .gl-monthgoal{display:flex;align-items:center;gap:6px;flex-wrap:wrap;padding:10px 18px;border-bottom:1px solid var(--gl-line2);background:var(--gl-sunk)}
 .gl-monthgoal>span:first-child{margin-right:4px;font-size:11px;font-weight:800;letter-spacing:.06em;text-transform:uppercase;color:var(--gl-text3)}
 .gl-mchip{display:inline-flex;align-items:center;gap:4px;height:22px;padding:0 8px;border:1px solid var(--gl-line2);border-radius:6px;background:var(--gl-panel);font-size:11.5px;font-weight:600;white-space:nowrap}
@@ -207,6 +210,11 @@ em.bad{color:var(--gl-bad)}
 .gl-prog{display:flex;align-items:center;gap:8px}
 .gl-prog .gl-track{flex:1}
 .gl-prog b{width:40px;text-align:right;font-size:11.5px}
+/* the adjusted table: hours done, the time credited to each missed goal, and the count with it */
+.gl-table.adj{min-width:720px}
+.gl-table.adj .gl-th,.gl-table.adj .gl-tr{grid-template-columns:1.4fr .55fr .55fr .65fr .75fr .75fr 1.4fr 1fr}
+.gl-hrs{color:var(--gl-rev)}
+.gl-credit{color:var(--gl-warn);font-weight:700}
 .gl-types{overflow:hidden}
 .gl-table.types{min-width:640px}
 .gl-table.types .gl-th,.gl-table.types .gl-tr{grid-template-columns:1.4fr 2.2fr .8fr .8fr 1.6fr;gap:12px;padding:10px 18px}
