@@ -22,10 +22,12 @@ import { openingFor, readSettings } from "./attendance.js";
 //  4. Approved leave (a lead's Leave or Half day in Attendance) shrinks the
 //     goal for scoring by days off ÷ working days; the goal as set stays. An
 //     unexcused absence doesn't shrink it (its penalty comes off discipline).
-//  5. Other work: a task someone else gave you, of a type that isn't in the
-//     team's goals this month (another team's packaging, a one-off edit, a
-//     camp…), is worth the time it took: what its timer ran, never more than
-//     the time it was given ("Should take"); a task with none is worth nothing.
+//  5. Other work: a task of a type that isn't in the team's goals this month
+//     (another team's videos, packaging, a camp…), given to you or added by
+//     you — it counts once it's done, which for your own means your lead
+//     approved it in Review — is worth the time it took: what its timer ran,
+//     never more than the time it was given ("Should take", or the type's
+//     time); a task with none is worth nothing.
 //  6. The time from rules 3 and 5 fills the goals you missed, by the hours
 //     they were short (the jobs missing × each job's time), never past the
 //     goal. A type with no time per job can't be filled by time.
@@ -91,7 +93,7 @@ export function scoreMonth({ goals, jobs, leaveDays = 0, workingDays = 0, hoursP
   const timeOf = (f) => Math.max(0, Number(jobHours[f]) || 0);
   // rule 5: Other work, at the time it took
   // (a timer that ran only a few minutes — under 6 — isn't worth listing or counting)
-  const otherWork = jobs.filter((j) => j.source === "assigned" && !(j.contentFormatId && inTeam.has(j.contentFormatId)) && j.hours >= 0.1);
+  const otherWork = jobs.filter((j) => j.source !== "covered" && !(j.contentFormatId && inTeam.has(j.contentFormatId)) && j.hours >= 0.1);
   const otherHours = otherWork.reduce((n, j) => n + j.hours, 0);
   // rule 3: team goal credit, at each job's time
   const credited = Object.entries(credit).filter(([, c]) => c.credited > 0)
@@ -153,6 +155,8 @@ export function scoreMonth({ goals, jobs, leaveDays = 0, workingDays = 0, hoursP
     otherWork: otherWork.map((j) => ({
       taskId: j.taskId ?? null, title: j.title ?? null, typeName: j.typeName ?? null,
       requestedBy: j.requestedBy ?? null, hours: tenth(j.hours), completedAt: j.completedAt ?? null,
+      // added by the person themselves (and approved), not given
+      selfMade: j.source === "self",
     })),
     creditHours: tenth(creditHours), credit: credited, carried,
     // the hours check: short on the goals, filled by time, still short

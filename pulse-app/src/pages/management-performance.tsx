@@ -229,7 +229,7 @@ function PerformanceDetailInline({ editorId, month }: { editorId: string; month:
           <div className="hint" style={{ margin: "4px 0 0" }}>
             {(d.leaveDays ?? 0) > 0 && <>Approved leave: <b>{d.leaveDays} day{d.leaveDays === 1 ? "" : "s"}</b> of {d.workingDays} working days, so each goal is cut by {Math.round(((d.leaveDays ?? 0) / Math.max(1, d.workingDays ?? 1)) * 100)}%. </>}
             {(d.creditHours ?? 0) > 0 && <>Team goal credit (beyond their goal, while the team still needed it): <b>{d.creditHours}h</b>. </>}
-            {(d.otherHours ?? 0) > 0 && <>Other work (tasks given outside the team's goals): <b>{d.otherHours}h</b>. </>}
+            {(d.otherHours ?? 0) > 0 && <>Other work (tasks outside the team's goals, given or their own once approved): <b>{d.otherHours}h</b>. </>}
             {((d.creditHours ?? 0) > 0 || (d.otherHours ?? 0) > 0) && <>That time fills the goals they missed{(d.stillShortHours ?? 0) > 0 ? <>, still <b>{d.stillShortHours}h</b> short</> : ", all covered"}. </>}
             {(d.carried ?? []).length > 0 && <>Carried to next month, as the team didn't need it: <b>{d.carried!.map((c) => `${c.name ?? "A type"} +${c.jobs}`).join(" · ")}</b>. </>}
             {(d.coveredJobs ?? 0) > 0 && <>Covered for others: <b>{d.coveredJobs} job{d.coveredJobs === 1 ? "" : "s"}</b> ({pts(d.coveredPoints ?? 0)} pts), counted on top of the goal.</>}

@@ -2701,8 +2701,9 @@ export function TaskPanel({ mode, task, canWrite, editors, channels, onClose, on
     // What the person this is for gets out of it (GET /goals/preview): goal
     // points for a type in their goal; past their goal, or a team type not on
     // their card, team goal credit while the team still needs it (else it's
-    // carried); given to them outside the team's goals, Other work. That time
-    // fills the goals they're short on (server/src/goal-score.js rules 3, 5, 6).
+    // carried); outside the team's goals, given or their own once approved,
+    // Other work. That time fills the goals they're short on
+    // (server/src/goal-score.js rules 3, 5, 6).
     const forMe = !!cur.editor_id && cur.editor_id === user?.editorId;
     const forName = forMe ? "your" : `${editors.find((e) => e.id === cur.editor_id)?.name ?? "their"}'s`;
     const shouldTake = draft.budget_hours ?? selectedFormat?.hours ?? null;
@@ -2730,15 +2731,17 @@ export function TaskPanel({ mode, task, canWrite, editors, channels, onClose, on
         tag = "none"; big = "Carried to next month";
         line = `${why}, and the team's ${pv.typeName} goal is met this month, so it's carried to next month and doesn't add to the score now.`;
       }
-    } else if (givenToOther) {
-      tag = "other"; big = shouldTake ? `${tenths(shouldTake)}h toward the goal` : "Set how long it should take";
+    } else if (givenToOther || selectedFormat) {
+      // Other work, given or your own: its time, once it's done (approved), fills missed goals
+      tag = "other"; big = shouldTake ? `${tenths(shouldTake)}h toward the goal` : givenToOther ? "Set how long it should take" : "No time set";
       const fill = Math.min(shouldTake ?? 0, pv.stillShortHours ?? 0);
-      line = `Not in the team's goals this month. Once it's done, the time it took${shouldTake ? ` (up to ${tenths(shouldTake)}h)` : ""} fills the goals they're short on, so they stay on track.`;
+      line = givenToOther
+        ? `Not in the team's goals this month. Once it's done, the time it took${shouldTake ? ` (up to ${tenths(shouldTake)}h)` : ""} fills the goals they're short on, so they stay on track.`
+        : shouldTake
+          ? `Not in the team's goals this month. Once your lead approves it, the time it took (up to ${tenths(shouldTake)}h) fills the goals you're short on.`
+          : `Not in the team's goals this month, and ${selectedFormat!.name} has no time set, so it won't add to your goal. An admin can give it a time in Settings › Tasks & time.`;
       after = fill > 0 ? ((pv.reached + fill * (pv.pointsPerShortHour ?? 0)) / pv.goalPoints) * 100 : null;
-    } else if (selectedFormat && selectedFormat.counts_in_goal !== false) {
-      tag = "none"; big = "No points";
-      line = `${selectedFormat.name} counts in goals, but nobody's goal this month has ${selectedFormat.name} jobs, so it won't add points. Your lead can add some on Set goals.`;
-    } else { tag = "none"; big = "No points"; line = "Not in your goals this month, so it won't add points. (Work someone gives you does count: its time fills the goals you're short on.)"; }
+    } else { tag = "none"; big = "No points"; line = "With no type it has no time, so it won't add to the goal. Pick a type and its time counts once it's approved."; }
     const now = pv && pv.goalPoints > 0 ? (pv.reached / pv.goalPoints) * 100 : null;
     // General is for a Manager, Asst. Manager or Team Lead (by their position; the server holds the same line)
     const meRow = editors.find((e) => e.id === user?.editorId) ?? null;

@@ -116,10 +116,10 @@ export function GoalsPage() {
 type Person = { editor: Editor; rows: PerfRow[]; lines: GoalLine[]; target: number; done: number; x: number; missed: number };
 // The month's time away from the goal (server/src/goal-score.js): approved
 // leave shrinks it; team goal credit (work beyond their goal that the team still
-// needed) and Other work (tasks given to them outside the team's goals, at the
-// time they took) fill the goals they missed; work the team didn't need is
-// carried to next month.
-type OtherTask = { taskId: string | null; title: string | null; typeName: string | null; requestedBy: string | null; hours: number; completedAt: string | null };
+// needed) and Other work (tasks outside the team's goals, given to them or their
+// own once approved, at the time they took) fill the goals they missed; work the
+// team didn't need is carried to next month.
+type OtherTask = { taskId: string | null; title: string | null; typeName: string | null; requestedBy: string | null; hours: number; completedAt: string | null; selfMade?: boolean };
 type TypeJobs = { contentFormatId: string; name: string | null; jobs: number; hours?: number };
 type TimeOff = {
   leaveDays?: number; otherHours?: number; otherWork?: OtherTask[]; monthHours?: number;
@@ -173,7 +173,7 @@ function TimeAway({ off, rows }: { off?: TimeOff; rows: PerfRow[] }) {
           {other.map((t, n) => (
             <span key={t.taskId ?? n} className="gl-awayrow">
               <b><i className="gl-dot co" />{t.title ?? "A task"}</b>
-              <span>{[t.typeName, t.requestedBy ? `asked by ${t.requestedBy}` : null, t.completedAt ? new Date(t.completedAt).toLocaleDateString("en-IN", { day: "numeric", month: "short" }) : null].filter(Boolean).join(" · ")}</span>
+              <span>{[t.typeName, t.requestedBy ? `asked by ${t.requestedBy}` : null, t.selfMade ? "added by them, approved" : null, t.completedAt ? new Date(t.completedAt).toLocaleDateString("en-IN", { day: "numeric", month: "short" }) : null].filter(Boolean).join(" · ")}</span>
               <em>{hrs(t.hours)}</em>
             </span>
           ))}
