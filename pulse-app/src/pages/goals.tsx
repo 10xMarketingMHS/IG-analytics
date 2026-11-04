@@ -128,19 +128,19 @@ type TimeOff = {
 };
 
 // Time away from the goal this month: leave, then the hours check (how short
-// the goals were, what team goal credit and Other work filled), the credited
-// and carried jobs, and the Other tasks themselves (who asked, how long each took).
+// the goals were, what team goal credit and company tasks — Other work —
+// filled), the credited and carried jobs, and the company tasks themselves (who
+// asked, how long each took). Colours as the tactical meeting's: own goal work
+// green, team goal blue, company task purple.
 function TimeAway({ off, rows }: { off?: TimeOff; rows: PerfRow[] }) {
   const other = off?.otherWork ?? [], credit = off?.credit ?? [], carried = off?.carried ?? [];
-  const fill = (off?.creditHours ?? 0) + (off?.otherHours ?? 0);
+  const team = off?.creditHours ?? 0, co = off?.otherHours ?? 0, fill = team + co;
   if (!off || (!fill && !(off.leaveDays ?? 0) && !carried.length)) return null;
   const set = rows.find((r) => r.goalJC > 0);
   const left = set && set.goalAdjusted != null ? set.goalAdjusted / set.goalJC : null;
   const hrs = (h: number) => `${Math.round(h * 10) / 10}h`;
-  const parts = [
-    (off.creditHours ?? 0) > 0 && `${hrs(off.creditHours!)} of team goal credit`,
-    (off.otherHours ?? 0) > 0 && `${hrs(off.otherHours!)} of Other work`,
-  ].filter(Boolean).join(" and ");
+  const Team = () => <span className="gl-c team"><i className="gl-dot team" />{hrs(team)} team goal</span>;
+  const Co = () => <span className="gl-c co"><i className="gl-dot co" />{hrs(co)} company tasks</span>;
   const short = off.shortHours ?? 0, still = off.stillShortHours ?? 0;
   return (
     <div className="gl-away">
@@ -152,15 +152,15 @@ function TimeAway({ off, rows }: { off?: TimeOff; rows: PerfRow[] }) {
       )}
       {fill > 0 && (
         <span className="gl-awayline">
-          <b>Time that fills the missed goals: {parts}</b>
+          <b>Time that fills the missed goals: {team > 0 && <Team />}{team > 0 && co > 0 && " and "}{co > 0 && <Co />}</b>
           <span>{short > 0
-            ? <>Hours check: {hrs(short)} short − {hrs(off.filledHours ?? 0)} filled = {hrs(still)} still short{still <= 0 ? " · all covered" : ""}.</>
+            ? <>Hours check: {hrs(short)} short{team > 0 && <> − <Team /></>}{co > 0 && <> − <Co /></>} = {hrs(still)} still short{still <= 0 ? " · all covered" : ""}.</>
             : "Every goal is met, so this time isn't needed."}</span>
         </span>
       )}
       {credit.length > 0 && (
         <span className="gl-awayline">
-          <span>Team goal credit, beyond their own goal while the team still needed it: {credit.map((c) => `${c.name ?? "A type"} +${c.jobs} (${hrs(c.hours ?? 0)})`).join(" · ")}</span>
+          <span><i className="gl-dot team" />Team goal, beyond their own goal while the team still needed it: {credit.map((c) => `${c.name ?? "A type"} +${c.jobs} (${hrs(c.hours ?? 0)})`).join(" · ")}</span>
         </span>
       )}
       {carried.length > 0 && (
@@ -172,7 +172,7 @@ function TimeAway({ off, rows }: { off?: TimeOff; rows: PerfRow[] }) {
         <div className="gl-awaylist">
           {other.map((t, n) => (
             <span key={t.taskId ?? n} className="gl-awayrow">
-              <b>{t.title ?? "A task"}</b>
+              <b><i className="gl-dot co" />{t.title ?? "A task"}</b>
               <span>{[t.typeName, t.requestedBy ? `asked by ${t.requestedBy}` : null, t.completedAt ? new Date(t.completedAt).toLocaleDateString("en-IN", { day: "numeric", month: "short" }) : null].filter(Boolean).join(" · ")}</span>
               <em>{hrs(t.hours)}</em>
             </span>
@@ -350,8 +350,11 @@ function TeamGoals({ month, isCurrent, focusId, selfOnly }: { month: string; isC
                 // the full month with time filling its goals (server/src/goal-score.js rule 6):
                 // the tactical meeting's goal card → adjusted goal card, goal by goal
                 const off = timeOff[sel.editor.id];
-                const adjusted = per === "m" && ((off?.creditHours ?? 0) + (off?.otherHours ?? 0)) > 0;
+                const fillTime = (off?.creditHours ?? 0) + (off?.otherHours ?? 0);
+                const adjusted = per === "m" && fillTime > 0;
                 const adjPct = off?.scorePct ?? null;
+                // the time fills every missed goal evenly, so each goal's credit splits the same way
+                const teamShare = fillTime > 0 ? (off?.creditHours ?? 0) / fillTime : 0;
                 return (
                   <section className="gl-card gl-detail">
                     <div className="gl-dhead">
@@ -377,25 +380,45 @@ function TeamGoals({ month, isCurrent, focusId, selfOnly }: { month: string; isC
                     <TimeAway off={timeOff[sel.editor.id]} rows={sel.rows} />
                     <div className="gl-tablewrap">
                       {adjusted ? (
+                        <>
+                        <div className="gl-legend" aria-label="Colours">
+                          <span><i className="gl-dot own" />Own goal work</span>
+                          <span><i className="gl-dot team" />Team goal</span>
+                          <span><i className="gl-dot co" />Company task</span>
+                        </div>
                         <div className="gl-table adj">
                           <div className="gl-th"><span>Goal</span><span className="num">Target</span><span className="num">Done</span><span className="num">Hours</span><span className="num">+ Credit</span><span className="num">Adj. count</span><span>Adjusted</span><span>Status</span></div>
                           {lines.map((l) => {
                             const a = l.adj ?? { counted: Math.min(l.done, l.target), creditHours: 0, ownHours: 0 };
-                            const adj = Math.min(l.target, a.counted);
+                            const adj = Math.min(l.target, a.counted), own = Math.min(l.done, l.target, adj);
                             const x = l.target ? adj / l.target : 1, ok = l.done >= l.target;
                             const tone = x >= 1 - 1e-9 ? "good" : x >= 0.5 ? "warn" : "bad";
+                            // the bar: own work, then the team goal's share of the credit, then the company tasks'
+                            const teamJobs = (adj - own) * teamShare, coJobs = adj - own - teamJobs;
+                            const w = (n: number) => (l.target ? Math.max(0, Math.min(100, (n / l.target) * 100)) : 0);
+                            const teamH = tenths(a.creditHours * teamShare), coH = tenths(a.creditHours - teamH);
                             return (
                               <div key={l.id} className="gl-tr">
-                                <b>{l.name}</b><span className="num">{l.target}</span><b className="num">{l.done}</b>
+                                <b><i className="gl-dot own" />{l.name}</b><span className="num">{l.target}</span><b className="num">{l.done}</b>
                                 <span className="num gl-hrs">{a.ownHours > 0 ? `${a.ownHours} h` : "—"}</span>
-                                <span className={"num " + (a.creditHours > 0 ? "gl-credit" : "gl-muted")}>{a.creditHours > 0 ? `+${a.creditHours} h` : "—"}</span>
+                                <span className={"num " + (a.creditHours > 0 ? "gl-credit" : "gl-muted")} title={a.creditHours > 0 ? [teamH > 0 && `${teamH} h team goal`, coH > 0 && `${coH} h company tasks`].filter(Boolean).join(" + ") : undefined}>
+                                  {a.creditHours > 0 ? <>{teamH > 0 && <i className="gl-dot team" />}{coH > 0 && <i className="gl-dot co" />}+{a.creditHours} h</> : "—"}
+                                </span>
                                 <b className="num">{tenths(adj)}</b>
-                                <span className="gl-prog"><span className="gl-track sm"><span className={"gl-fill " + tone} style={{ width: `${Math.min(100, x * 100)}%` }} /></span><b className={tone}>{pctText(x)}</b></span>
+                                <span className="gl-prog">
+                                  <span className="gl-track sm stack" title={`${tenths(own)} own${teamJobs > 0.05 ? ` · ${tenths(teamJobs)} from the team goal` : ""}${coJobs > 0.05 ? ` · ${tenths(coJobs)} from company tasks` : ""}`}>
+                                    <span className="gl-fill own" style={{ width: `${w(own)}%` }} />
+                                    <span className="gl-fill team" style={{ left: `${w(own)}%`, width: `${w(teamJobs)}%` }} />
+                                    <span className="gl-fill co" style={{ left: `${w(own + teamJobs)}%`, width: `${w(coJobs)}%` }} />
+                                  </span>
+                                  <b className={tone}>{pctText(x)}</b>
+                                </span>
                                 <span><span className={"gl-tag " + (ok ? "good" : "bad")}>{ok ? "Achieved" : "Not achieved"}</span></span>
                               </div>
                             );
                           })}
                         </div>
+                        </>
                       ) : (
                       <div className="gl-table">
                         <div className="gl-th"><span>Goal</span><span className="num">Month</span><span className="num">Target</span><span className="num">Done</span><span className="num">Pending</span><span>Progress</span><span>Status</span></div>
@@ -404,7 +427,7 @@ function TeamGoals({ month, isCurrent, focusId, selfOnly }: { month: string; isC
                           const tone = ok ? "good" : x >= 0.5 ? "warn" : "bad";
                           return (
                             <div key={l.id} className="gl-tr">
-                              <b>{l.name}</b><span className="num gl-muted">{l.month}</span><span className="num">{l.target}</span><b className="num">{l.done}</b>
+                              <b><i className="gl-dot own" />{l.name}</b><span className="num gl-muted">{l.month}</span><span className="num">{l.target}</span><b className="num">{l.done}</b>
                               <span className={"num " + (ok ? "gl-muted" : "bad")}>{tenths(Math.max(0, l.target - l.done))}</span>
                               <span className="gl-prog"><span className="gl-track sm"><span className={"gl-fill " + tone} style={{ width: `${Math.min(100, x * 100)}%` }} /></span><b className={tone}>{pctText(x)}</b></span>
                               <span><span className={"gl-tag " + (ok ? "good" : "bad")}>{ok ? "Achieved" : "Not achieved"}</span></span>
