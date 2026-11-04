@@ -1,5 +1,6 @@
 import { useEffect, useLayoutEffect, useMemo, useState } from "react";
 import { Loader } from "@/components/loader";
+import { PositionMark } from "@/components/position-mark";
 import { Link } from "react-router-dom";
 import { useEditors } from "@/lib/use-editors";
 import { useWorkspaces } from "@/lib/workspaces-context";
@@ -459,7 +460,7 @@ export function LeaderboardPage() {
                     </div>
                     <div className="lb-player">
                       <Avatar editor={r.editor} />
-                      <div className="who"><b>{r.editor.name}</b><small>{r.editor.designation || "Editor"}</small></div>
+                      <div className="who"><b>{r.editor.name}<PositionMark designation={r.editor.designation} /></b><small>{r.editor.designation || "Editor"}</small></div>
                     </div>
                     <div className="lb-cell lb-hidesm"><div className="lb-rc"><span>🎬 <b>{r.reels}</b></span><span>🖼️ <b>{r.carousels}</b></span></div></div>
                     <div className="lb-cell num lb-hidesm">{r.views.toLocaleString()}</div>
@@ -471,7 +472,7 @@ export function LeaderboardPage() {
                     <div className="lb-rankcell"><span className="lb-rnum">—</span></div>
                     <div className="lb-player">
                       <Avatar editor={r.editor} />
-                      <div className="who"><b>{r.editor.name}</b><small>{r.editor.designation || "Editor"}</small></div>
+                      <div className="who"><b>{r.editor.name}<PositionMark designation={r.editor.designation} /></b><small>{r.editor.designation || "Editor"}</small></div>
                     </div>
                     <div className="lb-cell lb-hidesm" style={{ gridColumn: "3 / span 3" }}>
                       No published posts {period === "month" ? "this month" : "yet"}
@@ -562,7 +563,7 @@ export function LeaderboardPage() {
                     </div>
                     <div className="lb-player">
                       <Avatar editor={r.editor} />
-                      <div className="who"><b>{r.editor.name}</b><small>{r.editor.designation || "Editor"}</small></div>
+                      <div className="who"><b>{r.editor.name}<PositionMark designation={r.editor.designation} /></b><small>{r.editor.designation || "Editor"}</small></div>
                     </div>
                     <div className="lb-cell num lb-hidesm">{r.completed}</div>
                     <div className="lb-cell lb-hidesm"><GoalCell goal={r.goal} pct={r.goalPct} byType={r.byType} coveredJobs={r.coveredJobs} leaveDays={r.leaveDays} otherHours={r.otherHours} creditHours={r.creditHours} carriedJobs={r.carriedJobs} /></div>
@@ -574,7 +575,7 @@ export function LeaderboardPage() {
                     <div className="lb-rankcell"><span className="lb-rnum">—</span></div>
                     <div className="lb-player">
                       <Avatar editor={r.editor} />
-                      <div className="who"><b>{r.editor.name}</b><small>{r.editor.designation || "Editor"}</small></div>
+                      <div className="who"><b>{r.editor.name}<PositionMark designation={r.editor.designation} /></b><small>{r.editor.designation || "Editor"}</small></div>
                     </div>
                     <div className="lb-cell lb-hidesm" style={{ gridColumn: "3 / span 3" }}>No tasks completed this month</div>
                   </div>

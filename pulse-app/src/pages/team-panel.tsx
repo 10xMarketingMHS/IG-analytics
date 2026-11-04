@@ -6,6 +6,7 @@ import { ymd, lateDays, taskPoints, isScorableTask, countsInTaskScore } from "@/
 import { gradFor } from "@/lib/editor-visuals";
 import { DAILY_BREAK_CAP_SEC } from "@/lib/task-timing";
 import type { Editor, Task } from "@/lib/types";
+import { PositionMark } from "@/components/position-mark";
 import "./my-team.css";
 import { clockTime } from "@/lib/time-format";
 import { webLink } from "@/lib/csv";
@@ -362,7 +363,7 @@ export function TeamPanel({ tasks, editors, onOpenTask, focusId }: {
                   <span className="mt-ptop"><Face editor={r.editor} /><span className="mt-grow" />{r.scored
                     ? <b className={"mt-rank" + (i === 0 && r.points > 0 ? " first" : "")}>#{i + 1}</b>
                     : <b className="mt-rank off" title="Exempt from task scoring — a Super Admin can change this on Team › Roster">Exempt</b>}</span>
-                  <span className="mt-who"><b>{r.editor.name}</b><span>{r.editor.designation || "Team member"}</span></span>
+                  <span className="mt-who"><b>{r.editor.name}<PositionMark designation={r.editor.designation} /></b><span>{r.editor.designation || "Team member"}</span></span>
                   <span className="mt-pts"><b>{fmtPts(r.points)}</b><span>pts · {r.done} done{r.late > 0 && <em> · {r.late} late</em>}</span></span>
                   <span className={"mt-live " + lv.tone}><i />{lv.text || `${r.open} open`}</span>
                 </button>

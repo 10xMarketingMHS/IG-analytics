@@ -48,6 +48,7 @@ import "./sidebar.css";
 import "./mobile.css";
 import "./sheet.css";
 import type { Activity } from "@/lib/types";
+import { PositionMark } from "@/components/position-mark";
 
 // The sidebar's groups, as in the redesign. Items still come from NAV_ITEMS
 // with their own access rules; Settings lives on the gear by your name and
@@ -647,7 +648,7 @@ function AppShellInner() {
               </div>
             </div>
             <div style={{ flex: 1, minWidth: 0, textAlign: "left" }}>
-              <div className="nm">{user?.name || user?.email || "Account"}</div>
+              <div className="nm">{user?.name || user?.email || "Account"}<PositionMark designation={myDesignation} size={13} /></div>
               {subtitle && <div className="rl">{subtitle}</div>}
             </div>
           </button>

@@ -8,6 +8,7 @@ import { ymd } from "@/lib/task-points";
 import { breakOffsetMs, DAILY_BREAK_CAP_SEC } from "@/lib/task-timing";
 import { achievement, currentPeriod, doneByType, goalLines, monthName, pctText, periodBounds, periodLabel, type PerfRow } from "@/lib/goal-periods";
 import type { Editor, Task } from "@/lib/types";
+import { PositionMark } from "@/components/position-mark";
 import { exportReport, rankTeam } from "@/pages/team-panel";
 import { clockTime } from "@/lib/time-format";
 import { whileVisible } from "@/lib/visible-poll";
@@ -175,7 +176,7 @@ export function TeamToday({ tasks, editors, onOpenTask, focusId }: {
                   <button key={p.editor.id} type="button" className={"mt-lcard" + (on ? " on" : "")} onClick={() => setSelId(p.editor.id)} aria-pressed={on}>
                     <span className="mt-lhead">
                       <Face editor={p.editor} tone={p.tone} />
-                      <span className="mt-who"><b>{p.editor.name}</b><span>{p.editor.designation || "Team member"}</span></span>
+                      <span className="mt-who"><b>{p.editor.name}<PositionMark designation={p.editor.designation} /></b><span>{p.editor.designation || "Team member"}</span></span>
                       <span className={"mt-pill " + p.tone}>{TONE_LABEL[p.tone]}</span>
                     </span>
                     <span className="mt-now"><b>{p.now}</b><span>{p.sub}</span></span>
@@ -191,7 +192,7 @@ export function TeamToday({ tasks, editors, onOpenTask, focusId }: {
               <section className="mt-card mt-profile">
                 <div className="mt-phead">
                   <Face editor={sel.editor} big />
-                  <span className="mt-who"><b>{sel.editor.name}</b><span>{sel.editor.designation || "Team member"}</span></span>
+                  <span className="mt-who"><b>{sel.editor.name}<PositionMark designation={sel.editor.designation} size={15} /></b><span>{sel.editor.designation || "Team member"}</span></span>
                 </div>
                 <div className={"mt-livebox " + sel.tone}><i /><b>{TONE_LABEL[sel.tone]}</b><span>{sel.tone === "work" || sel.tone === "break" ? sel.now : sel.sub}</span></div>
                 <div className="mt-kpis">

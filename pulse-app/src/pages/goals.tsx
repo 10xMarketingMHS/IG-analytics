@@ -16,6 +16,7 @@ import {
   type GoalLine, type PerfRow, type Period,
 } from "@/lib/goal-periods";
 import type { Editor } from "@/lib/types";
+import { PositionMark } from "@/components/position-mark";
 import { OrgGoals } from "@/pages/goals-org";
 import { SetGoals } from "@/pages/goals-set";
 import { BrandGoals } from "@/pages/goals-brand";
@@ -331,7 +332,7 @@ function TeamGoals({ month, isCurrent, focusId, selfOnly }: { month: string; isC
                     <button key={p.editor.id} type="button" className={"gl-person" + (on ? " on" : "")} onClick={() => setSelId(p.editor.id)} aria-pressed={on}>
                       <Face editor={p.editor} size="sm" />
                       <span className="gl-pmain">
-                        <span><b>{p.editor.name}</b><em>{p.missed ? `${p.missed} to discuss` : "all met"}</em></span>
+                        <span><b>{p.editor.name}<PositionMark designation={p.editor.designation} /></b><em>{p.missed ? `${p.missed} to discuss` : "all met"}</em></span>
                         <span className="gl-track sm"><span className={"gl-fill " + b.tone} style={{ width: `${Math.min(100, p.x * 100)}%` }} /></span>
                       </span>
                       <span className="gl-ppct"><b className={b.tone}>{pctText(p.x)}</b><em>{p.done} / {p.target}</em></span>
@@ -359,7 +360,7 @@ function TeamGoals({ month, isCurrent, focusId, selfOnly }: { month: string; isC
                   <section className="gl-card gl-detail">
                     <div className="gl-dhead">
                       <Face editor={sel.editor} size="lg" />
-                      <span className="gl-dwho"><b>{sel.editor.name}</b><span>{sel.editor.designation || "Team member"} · {label}</span></span>
+                      <span className="gl-dwho"><b>{sel.editor.name}<PositionMark designation={sel.editor.designation} size={15} /></b><span>{sel.editor.designation || "Team member"} · {label}</span></span>
                       <span className="gl-grow" />
                       {isAdmin && <button type="button" className="gl-btn sm" onClick={() => navigate("/my-team", { state: { editorId: sel.editor.id } })}>{IC.group}View in Team</button>}
                       <span className="gl-dpct"><b className={b.tone}>{pctText(sel.x)}</b><em>{adjusted ? "Goal card · " : ""}{sel.done} of {sel.target} jobs done</em></span>

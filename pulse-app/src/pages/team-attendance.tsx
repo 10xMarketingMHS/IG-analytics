@@ -7,6 +7,7 @@ import { clockTime } from "@/lib/time-format";
 import { attendanceAction, type AttSettings, type ShownStatus } from "@/lib/use-attendance";
 import { useOrg } from "@/lib/use-org";
 import type { Editor } from "@/lib/types";
+import { PositionMark } from "@/components/position-mark";
 import "./team-attendance.css";
 
 // Team › Attendance (Pulse Redesign v7): one row per person, one square per
@@ -113,7 +114,7 @@ function TeamMonth({ editors }: { editors: Editor[] | null }) {
                   <div key={r.editorId} className="ta-row" role="row">
                     <span className="ta-who">
                       <span className="ta-ava"><Avatar editor={ed ?? ({ id: r.editorId, name: r.name, designation: r.designation ?? "", image_url: r.imageUrl, active: true } as Editor)} /></span>
-                      <b>{r.name}</b>
+                      <b>{r.name}<PositionMark designation={r.designation} /></b>
                     </span>
                     {r.cells.map((c, i) => {
                       const d = data.days[i];

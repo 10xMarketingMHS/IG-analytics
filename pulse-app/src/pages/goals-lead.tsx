@@ -2,6 +2,7 @@ import { Fragment, useEffect, useMemo, useState, type ReactNode } from "react";
 import { toast } from "sonner";
 import { api, ApiError } from "@/lib/api";
 import { gradFor } from "@/lib/editor-visuals";
+import { PositionMark } from "@/components/position-mark";
 import { monthName, tenths } from "@/lib/goal-periods";
 
 // Goals › Lead goals (server/src/routes/lead-goals.js): each Team Lead's key
@@ -205,7 +206,7 @@ export function LeadGoals() {
                 <button key={l.id} type="button" className={"gs-person" + (on ? " on" : "")} aria-pressed={on} onClick={() => setSelId(l.id)}>
                   {l.imageUrl ? <img className="gl-ava sm" src={l.imageUrl} alt="" /> : <span className="gl-ava sm" style={{ background: gradFor(l.name) }}>{initials(l.name)}</span>}
                   <span>
-                    <b>{l.name}</b>
+                    <b>{l.name}<PositionMark designation={l.designation} /></b>
                     <small>{dirtyLeads.includes(l.id) ? "Unsaved · " : ""}{lr.length ? `${lr.length} key result${lr.length === 1 ? "" : "s"}` : "No key results yet"}</small>
                   </span>
                   {lr.length > 0 && <em className={"gs-u " + (ls.every((s) => s.cls === "good") ? "good" : "warn")}>{ls.filter((s) => s.cls === "good").length}/{lr.length}</em>}
@@ -220,7 +221,7 @@ export function LeadGoals() {
             <div className="gs-phead">
               {sel.imageUrl ? <img className="gl-ava md" src={sel.imageUrl} alt="" /> : <span className="gl-ava md" style={{ background: gradFor(sel.name) }}>{initials(sel.name)}</span>}
               <span>
-                <b>{sel.name}</b>
+                <b>{sel.name}<PositionMark designation={sel.designation} size={15} /></b>
                 <small>{sel.designation || "Team Lead"} · {monthName(month)} key results · not part of the task score</small>
               </span>
             </div>

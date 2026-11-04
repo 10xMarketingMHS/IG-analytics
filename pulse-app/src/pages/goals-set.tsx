@@ -13,6 +13,7 @@ import { monthName } from "@/lib/goal-periods";
 import { fmtHours } from "@/pages/settings-ui";
 import { giveWords } from "@/pages/goals-brand";
 import type { Editor } from "@/lib/types";
+import { PositionMark } from "@/components/position-mark";
 
 // Goals › Set goals (Pulse Redesign v5) — for admins and the edit_goals grant:
 // each editor's monthly goals, one job count per task type, checked against the
@@ -245,7 +246,7 @@ export function SetGoals() {
                 <button key={p.id} type="button" className={"gs-person" + (on ? " on" : "")} aria-pressed={on} onClick={() => setSelId(p.id)}>
                   <Face editor={p} size="sm" />
                   <span>
-                    <b>{p.name}</b>
+                    <b>{p.name}<PositionMark designation={p.designation} /></b>
                     <small>{unsaved.includes(p.id) ? "Unsaved · " : ""}{!countsInTaskScore(p) ? "Exempt · clear their goals · " : ""}{fmtHours(pc.plan)} of {fmtHours(pc.capH)}</small>
                   </span>
                   <em className={"gs-u " + pb.cls}>{Math.floor(pc.util * 100)}%</em>
@@ -263,7 +264,7 @@ export function SetGoals() {
             <div className="gs-phead">
               <Face editor={sel} />
               <span>
-                <b>{sel.name}</b>
+                <b>{sel.name}<PositionMark designation={sel.designation} size={15} /></b>
                 <small>{sel.designation || "Team member"} · {monthName(month)} capacity</small>
               </span>
               <Link to="/settings" className="gs-cal">{IC.cal}Work calendar</Link>
