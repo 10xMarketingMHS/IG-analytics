@@ -329,7 +329,7 @@ function SchedulingCard() {
     try {
       await api("/org", { method: "PATCH", body: JSON.stringify({ scheduling: { perPostJob: next } }) });
       await refetch();
-      toast.success(next ? "Each post scheduled counts as a Schedule job now." : "Only Schedule tasks count now. Scheduled posts stay listed on Scheduling.");
+      toast.success(next ? "Each Social task scheduled counts as a Schedule job now." : "Only Schedule tasks count now. Scheduled work stays listed on Scheduling.");
     } catch (e) {
       toast.error(e instanceof ApiError ? e.message : "Couldn't save that.");
     } finally {
@@ -341,10 +341,10 @@ function SchedulingCard() {
       <div className="st-cardhead"><b>Scheduling</b><span>What counts toward a scheduler's Schedule goal.</span></div>
       <div className="st-row">
         <span className="st-label">
-          <b>Each post scheduled counts as a Schedule job</b>
-          <small>Off: only their Schedule tasks count, such as a daily 2-hour social-desk task. Scheduled posts stay listed on Scheduling either way.</small>
+          <b>Each Social task scheduled counts as a Schedule job</b>
+          <small>Any Social type with Next step on (Reels, Story, Carousel, Post…), once its links are in. Off: only their Schedule tasks count, such as a daily 2-hour social-desk task. Scheduled work stays listed on Scheduling either way.</small>
         </span>
-        <Toggle on={on} onChange={set} disabled={busy || !org} label="Each post scheduled counts as a Schedule job" />
+        <Toggle on={on} onChange={set} disabled={busy || !org} label="Each Social task scheduled counts as a Schedule job" />
       </div>
     </section>
   );
