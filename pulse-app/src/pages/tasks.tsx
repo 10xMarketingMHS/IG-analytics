@@ -98,6 +98,13 @@ const CONTENT_LABEL = (v: string | null) => CONTENT_TYPES.find((c) => c.value ==
 // category first, then only its content types are offered.
 type TaskCategory = "social" | "ad" | "service" | "project" | "admin";
 const CATEGORY_LABEL: Record<TaskCategory, string> = { social: "Social", ad: "Ads", service: "Service", project: "Project", admin: "General" };
+// Off-goal work (a type that doesn't count in goals, or Service's Something else)
+// needs no review: whoever did it closes it, like a General task. The server holds the same.
+function isOffGoalWork(t: Task, formats: ContentFormatDef[] | null | undefined) {
+  if (t.task_type === "admin") return false;
+  if (!t.content_format_id) return t.task_type === "service";
+  return (formats ?? []).find((f) => f.id === t.content_format_id)?.counts_in_goal === false;
+}
 // A task's category, inferred from its task_type (null for legacy general/short
 // tasks that predate the Social/Ads split). "service" is a full peer of
 // Social/Ads; "admin" is the General task: a Manager's, Asst. Manager's or Team
@@ -469,6 +476,7 @@ export function TasksPage() {
   // approved R&D work (AI Job) not yet made a Reel, an Ad or both (components/rnd-use-block.tsx)
   const isRnd = (t: Task) => t.task_type === "service" && !!(contentFormats ?? []).find((f) => f.id === t.content_format_id)?.to_scheduling;
   const rndWaiting = (t: Task) => isRnd(t) && t.status === "done" && !t.meta?.use;
+  const isOffGoal = (t: Task) => isOffGoalWork(t, contentFormats);
   // Review is a checkpoint, not just another column: the assignee moves a
   // task through todo -> in_progress -> review on their own; only an admin
   // can resolve a review — approve it into done, or send it back to
@@ -482,6 +490,11 @@ export function TasksPage() {
     // In progress (the server does the same)
     if (isGeneral(t) && t.status === "done") return isAdmin && target === "in_progress";
     if (isGeneral(t)) {
+      if (target === "review") return false;
+      if (target === "done") return isOwner(t) && t.accepted && !t.on_hold;
+    }
+    // Off-goal work skips Review too: whoever did it closes it
+    if (isOffGoal(t) && t.status === "in_progress") {
       if (target === "review") return false;
       if (target === "done") return isOwner(t) && t.accepted && !t.on_hold;
     }
@@ -739,7 +752,9 @@ export function TasksPage() {
             ? "Start it first: a task goes to In progress before Review."
           : isGeneral(t) && status === "review"
             ? "A General task needs no review. Move it to Completed when it is done."
-          : status === "done" && !isGeneral(t)
+          : isOffGoal(t) && status === "review"
+            ? "Off-goal work needs no review. Move it to Completed when it is done."
+          : status === "done" && !isGeneral(t) && !isOffGoal(t)
             ? "Move it to Review first."
             : isOwner(t) && !t.accepted
               ? "Accept this task first, then you can move it."
@@ -769,7 +784,7 @@ export function TasksPage() {
       await refetch();
       toast.success(
         t.status === "done" ? `Reopened “${t.title}”.`
-          : status === "done" && isGeneral(t) ? `Completed “${t.title}”.`
+          : status === "done" && (isGeneral(t) || (isOffGoal(t) && t.status === "in_progress")) ? `Completed “${t.title}”.`
           : status === "done" && isRnd(t) ? `Approved “${t.title}”. Open it to decide what it becomes: a Reel, an Ad or both.`
           : status === "done" ? `Approved “${t.title}”.`
           : t.status === "review" ? `Sent “${t.title}” back for rework.`
@@ -1175,8 +1190,8 @@ export function TasksPage() {
                   const actions = (() => {
                     const prevKey = isGeneral(t) && t.status === "done" ? "in_progress" : COLUMNS[ci - 1]?.key;
                     const canPrev = ci > 0 && !!prevKey && canTransition(t, prevKey);
-                    // a General task in progress goes straight to Completed (no review)
-                    const closesItself = isGeneral(t) && t.status === "in_progress";
+                    // a General task or off-goal work in progress goes straight to Completed (no review)
+                    const closesItself = (isGeneral(t) || isOffGoal(t)) && t.status === "in_progress";
                     const nextKey = closesItself ? "done" : COLUMNS[ci + 1]?.key;
                     const canNext = !!nextKey && canTransition(t, nextKey);
                     // An admin, or the task's own assignee, can park (Hold)
@@ -2493,9 +2508,11 @@ export function TaskPanel({ mode, task, canWrite, editors, channels, onClose, on
     // In progress → Review (a General task: → Completed, no review). Never back to
     // To Do once started, never on without starting (the server holds the same).
     const general = task.task_type === "admin";
+    // off-goal work closes itself too (no review)
+    const closes = general || isOffGoalWork(task, contentFormats);
     // (no due date, no start: the Due Date row says so)
     const next = task.status === "todo" ? c.key === "in_progress" && (general || !!task.due_date)
-      : task.status === "in_progress" ? c.key === (general ? "done" : "review")
+      : task.status === "in_progress" ? c.key === (closes ? "done" : "review")
       : false;
     return next && !!user?.editorId && task.editor_id === user.editorId && task.accepted;
   });
@@ -2511,6 +2528,7 @@ export function TaskPanel({ mode, task, canWrite, editors, channels, onClose, on
       ? "To approve, set Status to Completed. Sending back for rework needs a note — use the Send back / ← button."
       : task.review_by ? `⏳ Waiting for ${task.review_by} to review it.` : "⏳ Waiting on review.")
     : task.status === "in_progress" && task.task_type === "admin" ? "A General task needs no review: set Status to Completed when it's done."
+    : task.status === "in_progress" && isOffGoalWork(task, contentFormats) ? "Off-goal work needs no review: whoever did it sets Status to Completed when it's done."
     : task.status === "in_progress" ? "Use Hold on the board to park it — a started task can't go back to To Do."
     : "";
   const meEditor = editors.find((ed) => ed.id === user?.editorId);
@@ -2752,7 +2770,7 @@ export function TaskPanel({ mode, task, canWrite, editors, channels, onClose, on
       line = givenToOther
         ? `Not in the team's goals this month. Once it's done, the time it took${shouldTake ? ` (up to ${tenths(shouldTake)}h)` : ""} fills the goals they're short on, so they stay on track.`
         : shouldTake
-          ? `Not in the team's goals this month. Once it's approved, the time it took (up to ${tenths(shouldTake)}h) fills the goals you're short on.`
+          ? `Not in the team's goals this month. Once it's ${selectedFormat?.counts_in_goal === false ? "done (you close it yourself, no review)" : "approved"}, the time it took (up to ${tenths(shouldTake)}h) fills the goals you're short on.`
           : `Not in the team's goals this month, and ${selectedFormat!.name} has no time set, so it won't add to your goal. An admin can give it a time in Settings › Tasks & time.`;
       after = fill > 0 ? ((pv.reached + fill * (pv.pointsPerShortHour ?? 0)) / pv.goalPoints) * 100 : null;
     } else { tag = "none"; big = "No points"; line = "With no type it has no time, so it won't add to the goal. Pick a type and its time counts once it's approved."; }
@@ -2896,7 +2914,7 @@ export function TaskPanel({ mode, task, canWrite, editors, channels, onClose, on
                       )}
                       {(offGoal.length > 0 || elsePick) && (
                         <div className="tp2-typegroup">
-                          <span className="tp2-typehead off">Off-goal · help for another team, its time fills missed goals</span>
+                          <span className="tp2-typehead off">Off-goal · help for another team: no review, whoever does it closes it; its time fills missed goals</span>
                           {chips(offGoal, "Off-goal types", elsePick)}
                         </div>
                       )}
