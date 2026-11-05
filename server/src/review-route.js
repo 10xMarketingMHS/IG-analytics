@@ -4,17 +4,17 @@ import { logActivity } from "./activity.js";
 
 // Who reviews a task waiting in Review:
 //  - a type with its own reviewers (Settings › Access › Review tasks: Rahul
-//    for Carousels): them, whoever did it and whoever gave it — after 24 hours
-//    still waiting, a copy to the Managers too; a sub-type goes with its main
-//    type (Video Carousel with Carousel). Never the owner: with only the owner
-//    there, the rules below;
+//    for Carousels): them, whoever did it and whoever gave it, their own work
+//    of that type included — after 24 hours still waiting, a copy to the
+//    Managers too; a sub-type goes with its main type (Video Carousel with Carousel);
 //  - one someone else assigned: whoever assigned it, and only them;
 //  - one its owner made for themselves: a Manager's or Asst. Manager's needs no
 //    review (it closes when they send it); a Team Lead's goes to the Managers
 //    (Asst. Managers count as Managers); anyone else's to the Team Leads, and
 //    after 24 hours still waiting, a copy to the Managers too. Whoever of them
 //    reviews first closes it. Nobody at a level → the next one up.
-// Never the owner. The Admin role and Super Admin don't change any of this.
+// Never the owner, except a type's own reviewer above. The Admin role and Super
+// Admin don't change any of this.
 export const REVIEW_COPY_HOURS = 24;
 const COPY_MS = REVIEW_COPY_HOURS * 3600_000;
 
@@ -73,10 +73,11 @@ export function routeReview(task, ctx, now = Date.now()) {
   if (!managers.length) managers = others.filter((p) => p.isAdmin).map((p) => p.userId);
   const since = task.review_started_at ? new Date(task.review_started_at).getTime() : now;
   const copied = now - since >= COPY_MS;
-  // the type's own reviewers (its main type's, for a sub-type)
+  // the type's own reviewers (its main type's, for a sub-type): every task of
+  // the type, their own included
   const f = task.content_format_id ?? null;
   const ids = new Set([...(f ? typeReviewers.get(f) ?? [] : []), ...(f && parentOf.get(f) ? typeReviewers.get(parentOf.get(f)) ?? [] : [])]);
-  const typeFolk = others.filter((p) => ids.has(p.userId));
+  const typeFolk = people.filter((p) => ids.has(p.userId));
   if (typeFolk.length) {
     const names = typeFolk.map((p) => p.name);
     const label = names.length === 1 ? names[0] : `${names.slice(0, -1).join(", ")} or ${names.at(-1)}`;

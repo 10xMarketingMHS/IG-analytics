@@ -967,12 +967,14 @@ tasksRouter.patch("/tasks/:id", requireEditor, requireActiveEod, async (req, res
       if (prior.status === "review") {
         // Resolving a review (approve into done, or send back for rework)
         // follows one rule for everyone, admins included (../review-route.js):
-        // whoever assigned it; for a task its owner made, a Team Lead, or a
-        // Manager (a Team Lead's task, or after 24 hours). Never the owner.
-        if (prior.editor_id && prior.editor_id === (await callerEditorId(req))) {
+        // a type's own reviewer; else whoever assigned it; for a task its owner
+        // made, a Team Lead, or a Manager (a Team Lead's task, or after 24 hours).
+        // Never the owner, unless they're its type's reviewer (Settings › Access).
+        const route = routeReview(prior, await reviewContext(req.orgId));
+        const typeReviewer = route.kind === "type" && route.reviewers.includes(req.user.sub);
+        if (!typeReviewer && prior.editor_id && prior.editor_id === (await callerEditorId(req))) {
           return res.status(403).json({ error: "You can't review a task that's assigned to you." });
         }
-        const route = routeReview(prior, await reviewContext(req.orgId));
         if (!route.reviewers.includes(req.user.sub)) {
           return res.status(403).json({
             error: route.kind === "type" && route.copyAt ? `${route.label} reviews this type of task. A Manager can too once it has waited 24 hours.`

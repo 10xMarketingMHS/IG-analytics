@@ -163,7 +163,8 @@ inboxRouter.get("/inbox", async (req, res, next) => {
       ...handovers.items
         .filter((h) => h.mine === "to" || (h.mine === "reached" && h.canMove && h.level > 0))
         .map((h) => ({ kind: "handover", key: `handover:${h.id}`, at: h.escalatedAt ?? h.createdAt, handover: h })),
-      ...reviewed.filter((t) => t.can_review && t.editor_id !== me)
+      // to review: yours too when you're its type's reviewer (can_review says so)
+      ...reviewed.filter((t) => t.can_review)
         .map((t) => ({ kind: "review", key: `review:${t.id}`, at: t.review_started_at, taskId: t.id, title: t.title, ref: t.ref, name: t.editorName, imageUrl: t.imageUrl })),
       ...toAccept.rows.map((t) => ({ kind: "accept", key: `accept:${t.id}`, at: t.at, taskId: t.id, title: t.title, ref: t.ref, due: t.due, name: t.fromName })),
       ...resets.rows.map((r) => ({ kind: "reset", key: `reset:${r.userId}`, at: r.at, userId: r.userId, name: r.name })),
@@ -184,7 +185,7 @@ inboxRouter.get("/inbox", async (req, res, next) => {
       ...myPerms.rows.map((p) => ({ kind: "permission", key: `permission:${p.id}`, ...p })),
       ...handovers.items.filter((h) => h.mine === "from")
         .map((h) => ({ kind: "handover", key: `handover:${h.id}`, at: h.createdAt, handover: h })),
-      ...reviewed.filter((t) => me && t.editor_id === me)
+      ...reviewed.filter((t) => me && t.editor_id === me && !t.can_review)
         .map((t) => ({ kind: "review", key: `review:${t.id}`, at: t.review_started_at, taskId: t.id, title: t.title, ref: t.ref, reviewBy: t.review_by ?? null })),
     ];
     const newest = (a, b) => new Date(b.at ?? 0).getTime() - new Date(a.at ?? 0).getTime();

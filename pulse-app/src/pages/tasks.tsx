@@ -464,7 +464,8 @@ export function TasksPage() {
   // server says so on each task (can_review); never anyone's own task.
   const canHoldAny = isAdmin || hasPermission("hold_tasks");    // hold/resume anyone's task
   const canAssign = isAdmin || hasPermission("assign_tasks");   // set work up for other people
-  const canResolveTask = (t: Task) => t.status === "review" && !!t.can_review && !isOwner(t);
+  // the server says who may (can_review): never your own task, unless you're its type's reviewer
+  const canResolveTask = (t: Task) => t.status === "review" && !!t.can_review;
   // Deleting erases the work and its points: a completed task is the Super
   // Admin's call; anything else an admin's or assigner's — or yours, if you
   // created it for yourself. The server enforces the same rule.
@@ -2223,7 +2224,8 @@ export function TaskPanel({ mode, task, canWrite, editors, channels: yourBrands,
   // Delivery Link is writable by the task's assignee or an admin (mirrors the
   // server check); everyone else who can open the panel sees it read-only.
   const isOwnerTask = !!user?.editorId && task?.editor_id === user.editorId;
-  const canResolve = !!task && task.status === "review" && !!task.can_review && !isOwnerTask;
+  // the server's can_review: your own only when you're its type's reviewer
+  const canResolve = !!task && task.status === "review" && !!task.can_review;
   // A reviewer approves or sends back from the foot of the window, where reading it ends
   // (sending back takes a note: what needs fixing).
   const [backOpen, setBackOpen] = useState(false);
