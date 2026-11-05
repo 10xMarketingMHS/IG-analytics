@@ -93,6 +93,50 @@ export async function listIgAccounts(userToken) {
   return out;
 }
 
+// Why a token finds no Instagram account to connect: what kind of token it is,
+// the Facebook Pages it sees (and the Instagram linked to each, if any), and
+// which of SCOPES it lacks. Each read is best-effort; the token is never logged.
+export async function explainNoIg(token) {
+  const out = { type: null, pages: null, missing: [] };
+  try {
+    const me = await graphGet("me", { fields: "id,name", metadata: "1", access_token: token });
+    out.type = me.metadata?.type ?? null;
+  } catch { /* unknown */ }
+  try {
+    const json = await graphGet("me/accounts", { fields: "name,instagram_business_account{username}", access_token: token, limit: "100" });
+    out.pages = (json.data ?? []).map((p) => ({ name: p.name, ig: p.instagram_business_account?.username ?? null }));
+  } catch { /* unknown */ }
+  if (out.type !== "page") {
+    try {
+      const json = await graphGet("me/permissions", { access_token: token });
+      const granted = new Set((json.data ?? []).filter((p) => p.status === "granted").map((p) => p.permission));
+      if (granted.size) out.missing = SCOPES.filter((s) => !granted.has(s));
+    } catch { /* unknown */ }
+  }
+  return out;
+}
+
+// What to tell whoever pasted the token, in plain words (explainNoIg's answer;
+// handle is the channel's Instagram handle).
+export function noIgMessage(info, handle) {
+  const at = handle ? `@${String(handle).replace(/^@/, "")}` : "this brand's Instagram";
+  if (info.type === "page") {
+    return "This is a Page token. Use a System User token instead (Business Settings › Users › System users › Generate token), with the brand's Page and Instagram assigned to that System User.";
+  }
+  const parts = [];
+  if (info.pages && !info.pages.length) {
+    parts.push("This token can't see any Facebook Page. In Business Settings, assign the brand's Page and its Instagram account to the token's System User, then generate the token again.");
+  } else if (info.pages?.length) {
+    const names = info.pages.map((p) => p.name).join(", ");
+    const one = info.pages.length === 1;
+    parts.push(`This token sees ${one ? "one Page" : "these Pages"}: ${names}. ${one ? "It has no" : "None of them has an"} Instagram professional account linked. Link ${at} to its Facebook Page (in Instagram: Professional account, then connect it to the Page), then try again.`);
+  } else {
+    parts.push("This token can't see any Instagram Business account. Check its assigned assets & permissions.");
+  }
+  if (info.missing.length) parts.push(`It's also missing these permissions: ${info.missing.join(", ")}.`);
+  return parts.join(" ");
+}
+
 // Current follower count for an IG business account (node field, like the FB
 // Page followers helper — not an insights metric, so unaffected by the Insights
 // deprecations). Best-effort: returns null on any error.

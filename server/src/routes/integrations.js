@@ -367,7 +367,8 @@ integrationsRouter.post("/integrations/instagram/connect-system", requirePermiss
       return res.status(502).json({ error: `Meta token error: ${err.message}` });
     }
     if (!accounts.length) {
-      return res.status(400).json({ error: "The system token can't see any Instagram Business accounts. Check the token's assigned assets & permissions." });
+      // say what the token does see, so it's clear what to fix in Meta
+      return res.status(400).json({ error: `The server's system token: ${ig.noIgMessage(await ig.explainNoIg(ig.systemToken()), acct.handle)}` });
     }
 
     // Match by handle, else use the only one available.
@@ -430,7 +431,8 @@ integrationsRouter.post("/integrations/instagram/connect-token", requirePermissi
       return res.status(502).json({ error: `Meta token error: ${err.message}` });
     }
     if (!accounts.length) {
-      return res.status(400).json({ error: "This token can't see any Instagram Business accounts. Check its assigned assets & permissions." });
+      // say what the token does see, so it's clear what to fix in Meta
+      return res.status(400).json({ error: ig.noIgMessage(await ig.explainNoIg(parsed.data.token), acct.handle) });
     }
 
     const handle = (acct.handle || "").replace(/^@/, "").toLowerCase();
