@@ -102,7 +102,8 @@ select.st-in{cursor:pointer}
 .st-step.sm>b{min-width:0;flex:1}
 .st-step.acc>b{color:var(--st-acText)}
 .st-tog{flex:none;position:relative;width:36px;height:20px;border:0;border-radius:999px;background:var(--st-line);cursor:pointer;padding:0;transition:background .15s}
-html[data-theme="dark"] .st-tog{background:rgba(255,255,255,.16)}
+/* dark: an off switch's track; an on one keeps the accent (a plain dark .st-tog would outrank .st-tog.on) */
+html[data-theme="dark"] .st-tog:not(.on){background:rgba(255,255,255,.16)}
 .st-tog::after{content:"";position:absolute;top:2px;left:2px;width:16px;height:16px;border-radius:50%;background:#fff;box-shadow:0 1px 2px rgba(0,0,0,.25);transition:left .15s}
 .st-tog.on{background:var(--st-ac)}
 .st-tog.on::after{left:18px}
