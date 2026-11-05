@@ -694,6 +694,59 @@ integrationsRouter.post("/integrations/facebook/connect-token", requirePermissio
 // Facebook sync — Option 2: only likes (reactions total) / comments / shares +
 // Page followers. Views & reach are intentionally NOT written (Meta's impression
 // metrics are deprecated and the media-view replacements aren't comparable to IG).
+// Matched by each post's Link. Returns { outcome, counts }.
+async function syncFacebook(conn, auto) {
+  let counts = { total: 0, matched: 0, updated: 0 };
+  const outcome = await runConnectionSync(conn, { auto }, async () => {
+    // Resolve the Page token INSIDE the guard so the SYSTEM-token listPages call
+    // is lock-protected and its failures get classified / backed off (rather
+    // than running unguarded on every poll and 500-ing past the backoff logic).
+    let pageToken;
+    if (conn.access_token_enc === "SYSTEM") {
+      const page = (await fb.listPages(ig.systemToken())).find((p) => p.pageId === conn.external_id);
+      if (!page) { const e = new Error("The system token can no longer see this Page."); e.code = 190; throw e; }
+      pageToken = page.pageToken;
+    } else {
+      pageToken = decryptToken(conn.access_token_enc);
+    }
+
+    const posts = (await pool.query(
+      `select id, permalink from post
+        where workspace_id = $1 and platform_id = $2 and deleted_at is null
+          and permalink is not null and is_collab_mirror = false`,
+      [conn.workspace_id, conn.platform_id],
+    )).rows;
+
+    const map = await fb.listPostsByPermalink(conn.external_id, pageToken);
+
+    // Match posts to fetched Page posts, then pull all their engagement counts
+    // in batched Graph calls (<=50 posts per HTTP request) instead of one each.
+    const pairs = [];
+    for (const post of posts) {
+      const m = map.get(fb.normalizePermalink(post.permalink));
+      if (m) pairs.push({ postId: post.id, externalId: m.id });
+    }
+    const { metrics, usage } = await fb.getPostMetricsBatch(pairs.map((p) => p.externalId), pageToken);
+
+    // One bulk write for all matched posts; a post whose read was refused keeps what it had.
+    // (Facebook gives no views, reach or saves — those stay as they are.)
+    await writeSyncedMetrics(pairs.map(({ postId, externalId }) => {
+      const met = metrics.get(externalId);
+      return { id: postId, externalId, likes: met?.likes ?? null, comments: met?.comments ?? null, shares: met?.shares ?? null };
+    }));
+
+    const followers = await fb.getPageFollowers(conn.external_id, pageToken);
+    if (followers != null) {
+      await pool.query("update platform_connection set follower_count = $2 where id = $1", [conn.id, followers]);
+    }
+    captureFollowerSnapshots(conn.id).catch(() => {}); // record today's count into the timeline
+
+    counts = { total: posts.length, matched: pairs.length, updated: pairs.length };
+    return { statusText: `Synced ${counts.updated}/${counts.total} post${counts.total === 1 ? "" : "s"}`, usage };
+  });
+  return { outcome, counts };
+}
+
 integrationsRouter.post("/integrations/facebook/sync", requireEditor, async (req, res, next) => {
   const parsed = SyncSchema.safeParse(req.body);
   if (!parsed.success) return res.status(400).json({ error: "accountId is required" });
@@ -711,54 +764,7 @@ integrationsRouter.post("/integrations/facebook/sync", requireEditor, async (req
       return res.status(400).json({ error: "This connection uses the system token, but META_SYSTEM_TOKEN isn't set." });
     }
 
-    let counts = { total: 0, matched: 0, updated: 0 };
-    const outcome = await runConnectionSync(conn, { auto: parsed.data.auto === true }, async () => {
-      // Resolve the Page token INSIDE the guard so the SYSTEM-token listPages call
-      // is lock-protected and its failures get classified / backed off (rather
-      // than running unguarded on every poll and 500-ing past the backoff logic).
-      let pageToken;
-      if (conn.access_token_enc === "SYSTEM") {
-        const page = (await fb.listPages(ig.systemToken())).find((p) => p.pageId === conn.external_id);
-        if (!page) { const e = new Error("The system token can no longer see this Page."); e.code = 190; throw e; }
-        pageToken = page.pageToken;
-      } else {
-        pageToken = decryptToken(conn.access_token_enc);
-      }
-
-      const posts = (await pool.query(
-        `select id, permalink from post
-          where workspace_id = $1 and platform_id = $2 and deleted_at is null
-            and permalink is not null and is_collab_mirror = false`,
-        [conn.workspace_id, conn.platform_id],
-      )).rows;
-
-      const map = await fb.listPostsByPermalink(conn.external_id, pageToken);
-
-      // Match posts to fetched Page posts, then pull all their engagement counts
-      // in batched Graph calls (<=50 posts per HTTP request) instead of one each.
-      const pairs = [];
-      for (const post of posts) {
-        const m = map.get(fb.normalizePermalink(post.permalink));
-        if (m) pairs.push({ postId: post.id, externalId: m.id });
-      }
-      const { metrics, usage } = await fb.getPostMetricsBatch(pairs.map((p) => p.externalId), pageToken);
-
-      // One bulk write for all matched posts; a post whose read was refused keeps what it had.
-      // (Facebook gives no views, reach or saves — those stay as they are.)
-      await writeSyncedMetrics(pairs.map(({ postId, externalId }) => {
-        const met = metrics.get(externalId);
-        return { id: postId, externalId, likes: met?.likes ?? null, comments: met?.comments ?? null, shares: met?.shares ?? null };
-      }));
-
-      const followers = await fb.getPageFollowers(conn.external_id, pageToken);
-      if (followers != null) {
-        await pool.query("update platform_connection set follower_count = $2 where id = $1", [conn.id, followers]);
-      }
-      captureFollowerSnapshots(conn.id).catch(() => {}); // record today's count into the timeline
-
-      counts = { total: posts.length, matched: pairs.length, updated: pairs.length };
-      return { statusText: `Synced ${counts.updated}/${counts.total} post${counts.total === 1 ? "" : "s"}`, usage };
-    });
+    const { outcome, counts } = await syncFacebook(conn, parsed.data.auto === true);
 
     if (outcome.skipped) return res.json({ ok: true, skipped: outcome.skipped });
     if (outcome.error) {
@@ -862,6 +868,66 @@ export async function writeSyncedMetrics(rows, db = pool) {
 }
 
 // Step 3: pull fresh metrics for the connected account's posts (match by Link).
+// Instagram: refresh the numbers on this channel's posts that have a Link, and
+// its follower count. Returns { outcome, counts }. From a click, an admin's
+// open tab or the server's own timer (serverAutoSync, at the end).
+async function syncInstagram(conn, auto) {
+  let counts = { total: 0, matched: 0, updated: 0 };
+  const outcome = await runConnectionSync(conn, { auto }, async () => {
+    // 'SYSTEM' means "use the server's system token" (stored in env, not the DB).
+    const token = conn.access_token_enc === "SYSTEM" ? ig.systemToken() : decryptToken(conn.access_token_enc);
+    // Every post on this channel × platform that has a Link to match against.
+    // Collab mirrors are skipped here — the collab media lives on the OWNER's
+    // account, so it wouldn't match; its metrics are copied from the owner below.
+    const posts = (await pool.query(
+      `select id, permalink, collab_group_id from post
+        where workspace_id = $1 and platform_id = $2 and deleted_at is null
+          and permalink is not null and is_collab_mirror = false`,
+      [conn.workspace_id, conn.platform_id],
+    )).rows;
+
+    const mediaMap = await ig.listMediaByPermalink(conn.external_id, token);
+
+    // Match posts to fetched media, then pull all their insights in batched
+    // Graph calls (<=50 media per HTTP request) instead of one call per post.
+    const pairs = [];
+    for (const post of posts) {
+      const media = mediaMap.get(ig.normalizePermalink(post.permalink));
+      if (media) pairs.push({ post, media });
+    }
+    const { metrics, usage } = await ig.getMediaMetricsBatch(pairs.map((p) => p.media), token);
+
+    // Write all matched posts in ONE statement; a number Meta didn't give keeps what was there.
+    if (pairs.length) {
+      await writeSyncedMetrics(pairs.map(({ post, media }) => ({ id: post.id, externalId: media.id, ...(metrics.get(media.id) || {}) })));
+      // Collab mirrors live on the collaborating channel's account — copy each
+      // collab post's numbers onto its mirror row(s) (uncommon, so left per-post).
+      for (const { post, media } of pairs) {
+        if (!post.collab_group_id) continue;
+        const m = metrics.get(media.id) || {};
+        await pool.query(
+          `update post set views = coalesce($2, views), reach = coalesce($3, reach), likes = coalesce($4, likes),
+                  comments = coalesce($5, comments), shares = coalesce($6, shares), saves = coalesce($7, saves),
+                  last_synced_at=now(), metrics_updated_at=now()
+            where collab_group_id=$1 and is_collab_mirror = true and deleted_at is null`,
+          [post.collab_group_id, m.views ?? null, m.reach ?? null, m.likes ?? null, m.comments ?? null, m.shares ?? null, m.saves ?? null],
+        );
+      }
+    }
+
+    // Refresh the account's follower count (node field, not an insight).
+    const followers = await ig.getIgFollowers(conn.external_id, token);
+    if (followers != null) {
+      await pool.query("update platform_connection set follower_count = $2 where id = $1", [conn.id, followers]);
+    }
+    captureFollowerSnapshots(conn.id).catch(() => {}); // record today's count into the timeline
+
+    counts = { total: posts.length, matched: pairs.length, updated: pairs.length };
+    return { statusText: `Synced ${counts.updated}/${counts.total} post${counts.total === 1 ? "" : "s"}`, usage };
+  });
+  return { outcome, counts };
+}
+
 integrationsRouter.post("/integrations/instagram/sync", requireEditor, async (req, res, next) => {
   const parsed = SyncSchema.safeParse(req.body);
   if (!parsed.success) return res.status(400).json({ error: "accountId is required" });
@@ -874,68 +940,11 @@ integrationsRouter.post("/integrations/instagram/sync", requireEditor, async (re
     )).rows[0];
     if (!conn) return res.status(404).json({ error: "This account isn't connected to Instagram yet." });
 
-    // 'SYSTEM' means "use the server's system token" (stored in env, not the DB).
-    let token;
-    if (conn.access_token_enc === "SYSTEM") {
-      if (!ig.systemTokenConfigured()) {
-        return res.status(400).json({ error: "This connection uses the system token, but META_SYSTEM_TOKEN isn't set." });
-      }
-      token = ig.systemToken();
-    } else {
-      token = decryptToken(conn.access_token_enc);
+    if (conn.access_token_enc === "SYSTEM" && !ig.systemTokenConfigured()) {
+      return res.status(400).json({ error: "This connection uses the system token, but META_SYSTEM_TOKEN isn't set." });
     }
 
-    let counts = { total: 0, matched: 0, updated: 0 };
-    const outcome = await runConnectionSync(conn, { auto: parsed.data.auto === true }, async () => {
-      // Every post on this channel × platform that has a Link to match against.
-      // Collab mirrors are skipped here — the collab media lives on the OWNER's
-      // account, so it wouldn't match; its metrics are copied from the owner below.
-      const posts = (await pool.query(
-        `select id, permalink, collab_group_id from post
-          where workspace_id = $1 and platform_id = $2 and deleted_at is null
-            and permalink is not null and is_collab_mirror = false`,
-        [conn.workspace_id, conn.platform_id],
-      )).rows;
-
-      const mediaMap = await ig.listMediaByPermalink(conn.external_id, token);
-
-      // Match posts to fetched media, then pull all their insights in batched
-      // Graph calls (<=50 media per HTTP request) instead of one call per post.
-      const pairs = [];
-      for (const post of posts) {
-        const media = mediaMap.get(ig.normalizePermalink(post.permalink));
-        if (media) pairs.push({ post, media });
-      }
-      const { metrics, usage } = await ig.getMediaMetricsBatch(pairs.map((p) => p.media), token);
-
-      // Write all matched posts in ONE statement; a number Meta didn't give keeps what was there.
-      if (pairs.length) {
-        await writeSyncedMetrics(pairs.map(({ post, media }) => ({ id: post.id, externalId: media.id, ...(metrics.get(media.id) || {}) })));
-        // Collab mirrors live on the collaborating channel's account — copy each
-        // collab post's numbers onto its mirror row(s) (uncommon, so left per-post).
-        for (const { post, media } of pairs) {
-          if (!post.collab_group_id) continue;
-          const m = metrics.get(media.id) || {};
-          await pool.query(
-            `update post set views = coalesce($2, views), reach = coalesce($3, reach), likes = coalesce($4, likes),
-                    comments = coalesce($5, comments), shares = coalesce($6, shares), saves = coalesce($7, saves),
-                    last_synced_at=now(), metrics_updated_at=now()
-              where collab_group_id=$1 and is_collab_mirror = true and deleted_at is null`,
-            [post.collab_group_id, m.views ?? null, m.reach ?? null, m.likes ?? null, m.comments ?? null, m.shares ?? null, m.saves ?? null],
-          );
-        }
-      }
-
-      // Refresh the account's follower count (node field, not an insight).
-      const followers = await ig.getIgFollowers(conn.external_id, token);
-      if (followers != null) {
-        await pool.query("update platform_connection set follower_count = $2 where id = $1", [conn.id, followers]);
-      }
-      captureFollowerSnapshots(conn.id).catch(() => {}); // record today's count into the timeline
-
-      counts = { total: posts.length, matched: pairs.length, updated: pairs.length };
-      return { statusText: `Synced ${counts.updated}/${counts.total} post${counts.total === 1 ? "" : "s"}`, usage };
-    });
+    const { outcome, counts } = await syncInstagram(conn, parsed.data.auto === true);
 
     if (outcome.skipped) return res.json({ ok: true, skipped: outcome.skipped });
     if (outcome.error) {
@@ -956,7 +965,61 @@ integrationsRouter.post("/integrations/instagram/sync", requireEditor, async (re
 // YouTube Tier 1 sync: refresh public view/like/comment counts on this channel's
 // YouTube posts by matching the video id in each post's Link, plus the channel's
 // subscriber count. No connection/token — just the org-wide API key. Same
-// refresh-only, on-demand pattern as the Instagram sync above.
+// refresh-only pattern as the Instagram sync above. Returns { outcome, counts }.
+async function syncYoutube(conn, ytKey, auto) {
+  let counts = { total: 0, matched: 0, updated: 0 };
+  // YouTube errors are always transient for backoff purposes: there's no
+  // per-connection token to expire, so "needs reconnect" doesn't apply — a bad
+  // key or exhausted daily quota is an org-level, self-resolving condition.
+  const outcome = await runConnectionSync(conn, { auto, classify: () => "transient" }, async () => {
+    const posts = (await pool.query(
+      `select id, permalink from post
+        where workspace_id = $1 and platform_id = $2 and deleted_at is null
+          and permalink is not null and is_collab_mirror = false`,
+      [conn.workspace_id, conn.platform_id],
+    )).rows;
+
+    // video id -> [post ids that link to it]
+    const idToPosts = new Map();
+    for (const p of posts) {
+      const vid = yt.extractVideoId(p.permalink);
+      if (!vid) continue;
+      if (!idToPosts.has(vid)) idToPosts.set(vid, []);
+      idToPosts.get(vid).push(p.id);
+    }
+    const stats = await yt.fetchVideoStats([...idToPosts.keys()], ytKey); // already batched
+
+    // Bulk-update all matched posts in one statement. Tier 1 exposes
+    // views/likes/comments only — leave reach/shares/saves untouched.
+    const ids = [], views = [], likes = [], comments = [];
+    let matched = 0;
+    for (const [vid, postIds] of idToPosts) {
+      const s = stats.get(vid);
+      if (!s) continue;
+      for (const pid of postIds) {
+        ids.push(pid); views.push(s.views); likes.push(s.likes); comments.push(s.comments);
+        matched += 1;
+      }
+    }
+    // views, likes and comments (reach, shares and saves stay as they are), and the day's history
+    await writeSyncedMetrics(ids.map((id, i) => ({ id, views: views[i], likes: likes[i], comments: comments[i] })));
+
+    // Refresh subscriber count (best-effort — works even if no videos matched).
+    let subscribers = null;
+    try {
+      const ch = await yt.fetchChannelStats([conn.external_id], ytKey);
+      subscribers = ch.get(conn.external_id)?.subscribers ?? null;
+    } catch { /* subscriber count is optional */ }
+    if (subscribers != null) {
+      await pool.query("update platform_connection set follower_count = $2 where id = $1", [conn.id, subscribers]);
+    }
+
+    counts = { total: posts.length, matched, updated: matched };
+    return { statusText: `Synced ${matched}/${posts.length} video${posts.length === 1 ? "" : "s"}` };
+  });
+  return { outcome, counts };
+}
+
 integrationsRouter.post("/integrations/youtube/sync", requireEditor, async (req, res, next) => {
   const parsed = SyncSchema.safeParse(req.body);
   if (!parsed.success) return res.status(400).json({ error: "accountId is required" });
@@ -971,56 +1034,7 @@ integrationsRouter.post("/integrations/youtube/sync", requireEditor, async (req,
     )).rows[0];
     if (!conn) return res.status(404).json({ error: "This channel isn't connected to YouTube yet." });
 
-    let counts = { total: 0, matched: 0, updated: 0 };
-    // YouTube errors are always transient for backoff purposes: there's no
-    // per-connection token to expire, so "needs reconnect" doesn't apply — a bad
-    // key or exhausted daily quota is an org-level, self-resolving condition.
-    const outcome = await runConnectionSync(conn, { auto: parsed.data.auto === true, classify: () => "transient" }, async () => {
-      const posts = (await pool.query(
-        `select id, permalink from post
-          where workspace_id = $1 and platform_id = $2 and deleted_at is null
-            and permalink is not null and is_collab_mirror = false`,
-        [conn.workspace_id, conn.platform_id],
-      )).rows;
-
-      // video id -> [post ids that link to it]
-      const idToPosts = new Map();
-      for (const p of posts) {
-        const vid = yt.extractVideoId(p.permalink);
-        if (!vid) continue;
-        if (!idToPosts.has(vid)) idToPosts.set(vid, []);
-        idToPosts.get(vid).push(p.id);
-      }
-      const stats = await yt.fetchVideoStats([...idToPosts.keys()], ytKey); // already batched
-
-      // Bulk-update all matched posts in one statement. Tier 1 exposes
-      // views/likes/comments only — leave reach/shares/saves untouched.
-      const ids = [], views = [], likes = [], comments = [];
-      let matched = 0;
-      for (const [vid, postIds] of idToPosts) {
-        const s = stats.get(vid);
-        if (!s) continue;
-        for (const pid of postIds) {
-          ids.push(pid); views.push(s.views); likes.push(s.likes); comments.push(s.comments);
-          matched += 1;
-        }
-      }
-      // views, likes and comments (reach, shares and saves stay as they are), and the day's history
-      await writeSyncedMetrics(ids.map((id, i) => ({ id, views: views[i], likes: likes[i], comments: comments[i] })));
-
-      // Refresh subscriber count (best-effort — works even if no videos matched).
-      let subscribers = null;
-      try {
-        const ch = await yt.fetchChannelStats([conn.external_id], ytKey);
-        subscribers = ch.get(conn.external_id)?.subscribers ?? null;
-      } catch { /* subscriber count is optional */ }
-      if (subscribers != null) {
-        await pool.query("update platform_connection set follower_count = $2 where id = $1", [conn.id, subscribers]);
-      }
-
-      counts = { total: posts.length, matched, updated: matched };
-      return { statusText: `Synced ${matched}/${posts.length} video${posts.length === 1 ? "" : "s"}` };
-    });
+    const { outcome, counts } = await syncYoutube(conn, ytKey, parsed.data.auto === true);
 
     if (outcome.skipped) return res.json({ ok: true, skipped: outcome.skipped });
     if (outcome.error) return res.status(502).json({ error: `YouTube API error: ${outcome.error.message}`, errorType: outcome.errorType });
@@ -1047,3 +1061,49 @@ integrationsRouter.delete("/integrations/connections/:id", requirePermission("ch
     next(err);
   }
 });
+
+// ===== The server's own auto-sync =====
+// Numbers stay fresh whoever has Echo open: every few minutes the server syncs
+// each connection that's due (auto-sync on for its org, nothing in the last
+// ~80% of the interval, not waiting on a reconnect), one at a time. An admin's
+// open tab still polls too; runConnectionSync's lock, freshness check and
+// backoff keep it to one real sync per connection per interval. It runs while
+// the server is awake. SERVER_AUTO_SYNC=off turns it off.
+const SYNC_TICK_MS = Number(process.env.SERVER_SYNC_EVERY_MS) || 5 * 60_000;
+let serverSyncing = false;
+export async function serverAutoSync() {
+  if (serverSyncing) return;
+  serverSyncing = true;
+  try {
+    const { rows } = await pool.query(
+      `select c.id, c.org_id, c.provider, c.external_id, c.access_token_enc, a.workspace_id, a.platform_id
+         from platform_connection c join account a on a.id = c.account_id join org o on o.id = c.org_id
+        where o.auto_sync_enabled and c.last_error_type is distinct from 'permanent'
+          and (c.last_synced_at is null
+               or c.last_synced_at < now() - make_interval(secs => coalesce(o.auto_sync_interval_minutes, 30) * 48))
+        order by c.last_synced_at nulls first`,
+    );
+    for (const conn of rows) {
+      try {
+        if (conn.provider === "youtube") {
+          const key = await getYoutubeKey(conn.org_id);
+          if (key) await syncYoutube(conn, key, true);
+        } else if (conn.access_token_enc === "SYSTEM" && !ig.systemTokenConfigured()) {
+          continue; // nothing to sync with on this server
+        } else if (conn.provider === "instagram") {
+          await syncInstagram(conn, true);
+        } else if (conn.provider === "facebook") {
+          await syncFacebook(conn, true);
+        }
+      } catch { /* its health is recorded on the connection; the next one carries on */ }
+    }
+  } catch (err) {
+    console.error("server auto-sync:", err.message);
+  } finally {
+    serverSyncing = false;
+  }
+}
+if (process.env.SERVER_AUTO_SYNC !== "off") {
+  setTimeout(() => serverAutoSync(), Math.min(60_000, SYNC_TICK_MS)).unref();
+  setInterval(() => serverAutoSync(), SYNC_TICK_MS).unref();
+}
