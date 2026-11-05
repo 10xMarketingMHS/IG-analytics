@@ -1045,9 +1045,9 @@ export function TasksPage() {
           <span className="tb-fold-chev">{TB_ICON.chevron}</span>
         </button>
         {(isAdmin || isSuper) && (
-          <button type="button" className="tb-new ghost" onClick={() => setFinishedOpen(true)} title="Add work already done this month that isn't on the board">
+          <button type="button" className="tb-new ghost" onClick={() => setFinishedOpen(true)} title="Add finished work: work already done this month that isn't on the board" aria-label="Add finished work">
             <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M20 6 9 17l-5-5" /></svg>
-            Add finished work
+            <span className="tb-new-l">Add finished work</span>
           </button>
         )}
         {canWrite && (

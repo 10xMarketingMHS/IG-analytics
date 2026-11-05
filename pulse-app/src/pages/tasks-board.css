@@ -678,6 +678,9 @@ html[data-theme="dark"] .task-panel-scrim.tp2-scrim{background:rgba(0,0,0,.55)}
 .tp2-subhead{font-size:11.5px;font-weight:700;color:var(--tb-text2)}
 /* Add finished work (Admins and the Super Admin): a quieter button beside New task */
 .tb-new.ghost{background:var(--tb-panel);color:var(--tb-text);border:1px solid var(--tb-line);box-shadow:none}
+/* an admin's toolbar has Add finished work too: short of room, it's its icon
+   alone (its name on hover), so New task stays on the first row */
+@media (max-width:1760px){.tb-new.ghost{padding:0 11px}.tb-new.ghost .tb-new-l{display:none}}
 .tb-new.ghost:hover{filter:none;border-color:var(--tb-ac);color:var(--tb-ac)}
 /* New task: the other brands Social work is also posted on (one task, scored once) */
 .tp2-also{display:flex;flex-wrap:wrap;align-items:center;gap:6px;margin-top:8px}
