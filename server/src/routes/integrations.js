@@ -344,7 +344,7 @@ integrationsRouter.get("/integrations/instagram/callback", async (req, res, next
 // One-click connect using the server's System User token — no OAuth. Discovers
 // the Instagram account the token can see and links it to the Echo account.
 // Stores the sentinel 'SYSTEM' instead of a token (the token lives in env).
-const ConnectSchema = z.object({ accountId: z.string().uuid() });
+const ConnectSchema = z.object({ accountId: z.string().uuid(), igId: z.string().min(1).optional() });
 integrationsRouter.post("/integrations/instagram/connect-system", requirePermission("channels"), async (req, res, next) => {
   const parsed = ConnectSchema.safeParse(req.body);
   if (!parsed.success) return res.status(400).json({ error: "accountId is required" });
@@ -371,15 +371,9 @@ integrationsRouter.post("/integrations/instagram/connect-system", requirePermiss
       return res.status(400).json({ error: `The server's system token: ${ig.noIgMessage(await ig.explainNoIg(ig.systemToken()), acct.handle)}` });
     }
 
-    // Match by handle, else use the only one available.
-    const handle = (acct.handle || "").replace(/^@/, "").toLowerCase();
-    const chosen = accounts.find((a) => a.igUsername?.toLowerCase() === handle)
-      || (accounts.length === 1 ? accounts[0] : null);
-    if (!chosen) {
-      return res.status(409).json({
-        error: `The token sees ${accounts.length} IG accounts (${accounts.map((a) => "@" + a.igUsername).join(", ")}). Set this channel's handle to match one, then retry.`,
-      });
-    }
+    const { chosen, error: pickError } = ig.pickIgAccount(accounts, acct.handle, parsed.data.igId);
+    if (pickError) return res.status(400).json({ error: pickError });
+    if (!chosen) return res.status(409).json(ig.pickIgReply(accounts));
 
     await pool.query(
       `insert into platform_connection
@@ -393,6 +387,8 @@ integrationsRouter.post("/integrations/instagram/connect-system", requirePermiss
     );
     // Shared Meta: the linked Facebook Page came back with this IG account — if
     // this channel also has Facebook on, connect it too (independent row).
+    // the channel shows the account's real handle from now on
+    await pool.query("update account set handle = $2 where id = $1", [acct.id, "@" + chosen.igUsername]);
     const fbPage = await autoSaveFacebook(req.orgId, acct.workspace_id, chosen, req.user.sub);
     await logActivity({
       orgId: req.orgId, actorId: req.user.sub, verb: "channel_added",
@@ -408,7 +404,7 @@ integrationsRouter.post("/integrations/instagram/connect-system", requirePermiss
 // Per-account token: the admin pastes a token for THIS specific account (e.g. a
 // second brand under a different system user). Validated, then stored ENCRYPTED
 // in the DB — so every account can carry its own token, no shared env var.
-const ConnectTokenSchema = z.object({ accountId: z.string().uuid(), token: z.string().min(20) });
+const ConnectTokenSchema = z.object({ accountId: z.string().uuid(), token: z.string().min(20), igId: z.string().min(1).optional() });
 integrationsRouter.post("/integrations/instagram/connect-token", requirePermission("channels"), async (req, res, next) => {
   const parsed = ConnectTokenSchema.safeParse(req.body);
   if (!parsed.success) return res.status(400).json({ error: "accountId and a token are required" });
@@ -435,14 +431,9 @@ integrationsRouter.post("/integrations/instagram/connect-token", requirePermissi
       return res.status(400).json({ error: ig.noIgMessage(await ig.explainNoIg(parsed.data.token), acct.handle) });
     }
 
-    const handle = (acct.handle || "").replace(/^@/, "").toLowerCase();
-    const chosen = accounts.find((a) => a.igUsername?.toLowerCase() === handle)
-      || (accounts.length === 1 ? accounts[0] : null);
-    if (!chosen) {
-      return res.status(409).json({
-        error: `This token sees ${accounts.length} IG accounts (${accounts.map((a) => "@" + a.igUsername).join(", ")}). Set this channel's handle to match one, then retry.`,
-      });
-    }
+    const { chosen, error: pickError } = ig.pickIgAccount(accounts, acct.handle, parsed.data.igId);
+    if (pickError) return res.status(400).json({ error: pickError });
+    if (!chosen) return res.status(409).json(ig.pickIgReply(accounts));
 
     await pool.query(
       `insert into platform_connection
@@ -454,6 +445,8 @@ integrationsRouter.post("/integrations/instagram/connect-token", requirePermissi
          scope = excluded.scope, connected_by = excluded.connected_by, connected_at = now()`,
       [req.orgId, acct.id, chosen.igId, "@" + chosen.igUsername, encryptToken(parsed.data.token), ig.SCOPES.join(","), req.user.sub],
     );
+    // the channel shows the account's real handle from now on
+    await pool.query("update account set handle = $2 where id = $1", [acct.id, "@" + chosen.igUsername]);
     const fbPage = await autoSaveFacebook(req.orgId, acct.workspace_id, chosen, req.user.sub);
     await logActivity({
       orgId: req.orgId, actorId: req.user.sub, verb: "channel_added",

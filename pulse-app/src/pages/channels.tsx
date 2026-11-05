@@ -76,6 +76,11 @@ export function ChannelsSection() {
   type FbPage = { pageId: string; pageName: string; followers: number | null };
   const [fbPages, setFbPages] = useState<FbPage[] | null>(null);
   const [fbPageId, setFbPageId] = useState("");
+  // Instagram: a token that sees several accounts, none matching this channel's
+  // handle, has the server list them; the user picks one (igPick) and connects again.
+  type IgChoice = { igId: string; igUsername: string; pageName: string };
+  const [igChoices, setIgChoices] = useState<{ source: "system" | "token"; accounts: IgChoice[] } | null>(null);
+  const [igPick, setIgPick] = useState("");
   const [loadingPages, setLoadingPages] = useState(false);
   // Which token the loaded Pages came from — "system" (server token) or "token"
   // (a pasted per-brand token). Keeps the two connect paths from showing each
@@ -216,7 +221,7 @@ export function ChannelsSection() {
     }
   }
 
-  function closeConnect() { setConnectFor(null); setTokenInput(""); setYtChannelInput(""); setYtKeyInput(""); setReplaceKey(false); setFbPages(null); setFbPageId(""); setFbPagesSource(null); }
+  function closeConnect() { setConnectFor(null); setTokenInput(""); setYtChannelInput(""); setYtKeyInput(""); setReplaceKey(false); setFbPages(null); setFbPageId(""); setFbPagesSource(null); setIgChoices(null); setIgPick(""); }
 
   // Save the org-wide auto-sync kill switch / interval (admin only). DB-backed so
   // it takes effect without a deploy.
@@ -292,7 +297,15 @@ export function ChannelsSection() {
       closeConnect();
       refetchConns();
     } catch (e) {
-      toast.error(e instanceof Error ? e.message : "Couldn't connect.");
+      // several Instagram accounts, none matching the handle: show them to pick from
+      const list = e instanceof ApiError && e.body?.code === "pick_instagram" ? (e.body.accounts as IgChoice[] | undefined) : undefined;
+      if (list?.length) {
+        setIgChoices({ source: path.endsWith("connect-system") ? "system" : "token", accounts: list });
+        setIgPick(list[0].igId);
+        toast.message(`Pick the Instagram account for ${connectFor.account.channel_name}, then connect.`);
+      } else {
+        toast.error(e instanceof Error ? e.message : "Couldn't connect.");
+      }
     } finally {
       setConnecting(null);
     }
@@ -629,6 +642,21 @@ export function ChannelsSection() {
         const aid = connectFor.account.id;
         // Facebook Page picker — only shown for Facebook. Lets the user choose
         // exactly which Page attaches, so the channel shows its own Page's data.
+        // the Instagram accounts the token sees, to pick this channel's (after a first try)
+        const igPicker = (source: "system" | "token") => prov === "instagram" && igChoices?.source === source ? (
+          <div style={{ margin: "10px 0" }}>
+            <label className="f">Which Instagram account?</label>
+            <select className="t" value={igPick} onChange={(e) => setIgPick(e.target.value)}>
+              {igChoices.accounts.map((a) => (
+                <option key={a.igId} value={a.igId}>@{a.igUsername}{a.pageName ? ` · ${a.pageName}` : ""}</option>
+              ))}
+            </select>
+            <div className="hint" style={{ display: "block", marginTop: 6 }}>
+              Pick the one that belongs to <b>{connectFor.account.channel_name}</b>. The channel then shows its real handle.
+            </div>
+          </div>
+        ) : null;
+        const igPickFor = (source: "system" | "token") => (prov === "instagram" && igChoices?.source === source && igPick ? { igId: igPick } : {});
         const fbPicker = prov === "facebook" ? (
           loadingPages ? (
             <div className="hint" style={{ display: "block", margin: "8px 0" }}>Loading Facebook Pages…</div>
@@ -663,8 +691,9 @@ export function ChannelsSection() {
               {st?.systemToken && (
                 <>
                   {fbPagesSource === "system" && fbPicker}
+                  {igPicker("system")}
                   <button className="btn btn-primary int-block" disabled={connecting === aid || fbSystemNeedsPage}
-                    onClick={() => connectVia(`/integrations/${prov}/connect-system`, { accountId: aid, ...(fbPagesSource === "system" && fbPageId ? { pageId: fbPageId } : {}) })}>
+                    onClick={() => connectVia(`/integrations/${prov}/connect-system`, { accountId: aid, ...(fbPagesSource === "system" && fbPageId ? { pageId: fbPageId } : {}), ...igPickFor("system") })}>
                     {connecting === aid ? "Connecting…" : prov === "facebook" ? "⚡ Connect selected Page (system token)" : "⚡ Use server system token (one click)"}
                   </button>
                 </>
@@ -677,7 +706,7 @@ export function ChannelsSection() {
                     className="t" rows={4}
                     placeholder="Paste the System User / access token…"
                     value={tokenInput}
-                    onChange={(e) => setTokenInput(e.target.value)}
+                    onChange={(e) => { setTokenInput(e.target.value); if (igChoices?.source === "token") setIgChoices(null); }}
                     style={{ resize: "vertical", wordBreak: "break-all" }}
                   />
                   <div className="hint" style={{ display: "block", marginTop: 6 }}>
@@ -693,9 +722,10 @@ export function ChannelsSection() {
                       {fbPagesSource === "token" && fbPicker}
                     </>
                   )}
+                  {igPicker("token")}
                   <button className="btn btn-primary int-block" style={{ marginTop: 12 }}
                     disabled={connecting === aid || tokenInput.trim().length < 20 || fbTokenNeedsPage}
-                    onClick={() => connectVia(`/integrations/${prov}/connect-token`, { accountId: aid, token: tokenInput.trim(), ...(fbPagesSource === "token" && fbPageId ? { pageId: fbPageId } : {}) })}>
+                    onClick={() => connectVia(`/integrations/${prov}/connect-token`, { accountId: aid, token: tokenInput.trim(), ...(fbPagesSource === "token" && fbPageId ? { pageId: fbPageId } : {}), ...igPickFor("token") })}>
                     {connecting === aid ? "Connecting…" : "Connect with this token"}
                   </button>
                 </>

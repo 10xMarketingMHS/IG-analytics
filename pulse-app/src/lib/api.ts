@@ -34,9 +34,12 @@ export const noAnswer = (err: unknown) => err instanceof ApiError && (err.status
 
 export class ApiError extends Error {
   status: number;
-  constructor(message: string, status: number) {
+  // the server's whole answer, for the few replies that carry more than the message (a code, a list to pick from)
+  body?: Record<string, unknown>;
+  constructor(message: string, status: number, body?: Record<string, unknown>) {
     super(message);
     this.status = status;
+    this.body = body;
   }
 }
 
@@ -78,7 +81,7 @@ export async function api<T>(
     if (res.status === 401 && !path.startsWith("/auth/")) {
       window.dispatchEvent(new CustomEvent(SIGNED_OUT, { detail: message }));
     }
-    throw new ApiError(message, res.status);
+    throw new ApiError(message, res.status, body);
   }
 
   return body as T;

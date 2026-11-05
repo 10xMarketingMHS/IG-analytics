@@ -93,6 +93,26 @@ export async function listIgAccounts(userToken) {
   return out;
 }
 
+// Which of the Instagram accounts a token sees is this channel's: the one picked
+// (igId), else the one whose username matches the channel's handle (case,
+// spaces and dots aside, so "@MHS Diabetes" is mhsdiabetes), else the only one.
+// { chosen } (null when it can't tell), or { error } for a pick it can't see.
+const squashHandle = (s) => String(s || "").toLowerCase().replace(/[^a-z0-9]/g, "");
+export function pickIgAccount(accounts, handle, igId) {
+  if (igId) {
+    const chosen = accounts.find((a) => String(a.igId) === String(igId));
+    return chosen ? { chosen } : { error: "That Instagram account isn't one this token can see." };
+  }
+  const h = squashHandle(handle);
+  return { chosen: (h && accounts.find((a) => squashHandle(a.igUsername) === h)) || (accounts.length === 1 ? accounts[0] : null) };
+}
+// Several accounts and none matches: the connect window lists them to pick from.
+export const pickIgReply = (accounts) => ({
+  error: `This token sees ${accounts.length} Instagram accounts. Pick the one for this channel.`,
+  code: "pick_instagram",
+  accounts: accounts.map((a) => ({ igId: a.igId, igUsername: a.igUsername, pageName: a.pageName })),
+});
+
 // Why a token finds no Instagram account to connect: what kind of token it is,
 // the Facebook Pages it sees (and the Instagram linked to each, if any), and
 // which of SCOPES it lacks. Each read is best-effort; the token is never logged.
