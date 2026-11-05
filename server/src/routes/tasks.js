@@ -83,6 +83,10 @@ const TaskSchema = z.object({
   // Ads: the team it's made for (Settings › Tasks & time › Ads teams), which
   // numbers it (AID per team) instead of a brand.
   adTeamId: z.string().uuid().nullable().optional(),
+  // Social work posted on more brands than its own (kept in meta.alsoBrands):
+  // one task, reviewed and scored once; each other brand gets a posting copy
+  // when it's approved (makePostingCopies below).
+  alsoBrands: z.array(z.string().uuid()).max(10).optional(),
   // Per-task "delivery link required to submit for review". null = follow the
   // content type's default. Only an admin / assign_tasks grantee may set it.
   reviewLinkRequired: z.boolean().nullable().optional(),
@@ -257,6 +261,72 @@ async function aboveYouError(req, editorId) {
   if (editorId === (await callerEditorId(req))) return null;
   const [viewer, ranks] = await Promise.all([taskViewer(req), editorRanks(req.orgId)]);
   return seesEditor(viewer, ranks, editorId) ? null : "You can't give work to someone above you.";
+}
+
+// The other brands a Social task is also posted on: each a brand of this org,
+// once, never its own. { list } or { error }.
+async function cleanAlsoBrands(orgId, list, ownChannelId, taskType) {
+  const ids = [...new Set(list ?? [])].filter((b) => b !== ownChannelId);
+  if (!ids.length) return { list: [] };
+  if (taskType !== "social") return { error: "Only Social work can be posted on more than one brand." };
+  const { rows } = await pool.query("select id from workspace where org_id = $1 and id = any($2::uuid[])", [orgId, ids]);
+  if (rows.length !== ids.length) return { error: "One of those brands wasn't found." };
+  return { list: ids };
+}
+
+// Social work posted on more brands than its own (meta.alsoBrands): once it's
+// approved and in Scheduling, each other brand gets a posting copy, a completed
+// task on that brand, numbered there, that goes through Scheduling like any
+// other (its date, its post, its links). The work is the original's: a copy
+// scores nothing for the editor (goal scoring, the Leaderboard, Performance and
+// the day's summary skip meta.postsFor), while its brand's goals count it,
+// since it's posted there. The ids made.
+async function makePostingCopies(orgId, taskId, actorId) {
+  const { rows: [t] } = await pool.query(
+    `select id, title, editor_id, channel_id, content_format_id, due_date::text as due_date, priority, created_by, assigned_by, meta,
+            coalesce(sid, tid) as ref
+       from task where id = $1 and org_id = $2`,
+    [taskId, orgId],
+  );
+  const brands = Array.isArray(t?.meta?.alsoBrands) ? t.meta.alsoBrands.filter((b) => b && b !== t.channel_id) : [];
+  if (!brands.length) return [];
+  const { rows: have } = await pool.query("select channel_id from task where org_id = $1 and meta->>'postsFor' = $2", [orgId, taskId]);
+  const already = new Set(have.map((r) => r.channel_id));
+  const { rows: names } = await pool.query("select id, name from workspace where org_id = $1 and id = any($2::uuid[])", [orgId, brands]);
+  const nameOf = new Map(names.map((w) => [w.id, w.name]));
+  const frozen = await hasColumn("task", "points_at_done");
+  const made = [];
+  for (const b of brands) {
+    if (already.has(b) || !nameOf.has(b)) continue;
+    const [tid, sid] = await Promise.all([nextTaskRef(orgId, "tid"), nextBrandTaskRef(b, "sid")]);
+    const { rows } = await pool.query(
+      `with s as (update org set task_seq = task_seq + 1 where id = $1 returning task_seq)
+       insert into task (org_id, editor_id, channel_id, title, description, status, priority, due_date, task_type, content_format_id,
+                         accepted, completed_at, schedule_from, tid, sid, created_by, assigned_by, meta, serial${frozen ? ", points_at_done" : ""})
+       select $1, $2, $3, $4, $5, 'done', $6, $7::date, 'social', $8, true, now(), now(), $9, $10, $11, $12, $13::jsonb,
+              (select task_seq from s)${frozen ? ", 0" : ""}
+       returning id`,
+      [orgId, t.editor_id, b, t.title,
+        `Posting copy of ${t.ref} for ${nameOf.get(b)}. The work, its review and its points are on ${t.ref}.`,
+        t.priority ?? "medium", t.due_date, t.content_format_id, tid, sid, t.created_by, t.assigned_by,
+        JSON.stringify({ postsFor: t.id, postsForRef: t.ref })],
+    );
+    made.push(rows[0].id);
+    await logActivity({
+      orgId, actorId, verb: "created", entityType: "task", entityId: rows[0].id, channelId: b,
+      summary: `Made ${sid} to post ${t.ref} “${t.title}” on ${nameOf.get(b)} too`,
+    });
+  }
+  return made;
+}
+// Reopened before its posts went in: its posting copies with no post yet go
+// (they're made again when it's approved again); one with a post stays.
+async function dropPostingCopies(orgId, taskId) {
+  await pool.query(
+    `delete from task t where t.org_id = $1 and t.meta->>'postsFor' = $2
+        and not exists (select 1 from post p where p.from_task_id = t.id)`,
+    [orgId, taskId],
+  );
 }
 
 // Off-goal work: its type doesn't count in goals (Settings › Tasks & time ›
@@ -483,6 +553,8 @@ tasksRouter.post("/tasks", requireEditor, requireActiveEod, async (req, res, nex
     if ((taskType === "social" || taskType === "service" || taskType === "project") && !channelId) {
       return res.status(400).json({ error: "Pick a Brand — Social, Service and Project tasks are numbered per brand." });
     }
+    const also = await cleanAlsoBrands(req.orgId, d.alsoBrands, channelId, taskType);
+    if (also.error) return res.status(400).json({ error: also.error });
     // A due date is today or later (past work is Add finished work's, below).
     if (d.dueDate && d.dueDate < todayYmdIst()) return res.status(400).json({ error: PAST_DUE });
     // Project: has a Start Date (defaults to today) and a Due Date bounded by the
@@ -556,7 +628,7 @@ tasksRouter.post("/tasks", requireEditor, requireActiveEod, async (req, res, nex
         sid,
         adId,
         svid,
-        JSON.stringify({ ...(d.meta ?? {}), ...(d.requestedBy ? { requestedBy: d.requestedBy } : {}) }),
+        JSON.stringify({ ...(d.meta ?? {}), ...(d.requestedBy ? { requestedBy: d.requestedBy } : {}), ...(also.list.length ? { alsoBrands: also.list } : {}) }),
         d.contentType ?? null,
         d.platforms ?? [],
         JSON.stringify(d.attachments ?? []),
@@ -728,6 +800,16 @@ tasksRouter.patch("/tasks/:id", requireEditor, requireActiveEod, async (req, res
     if (d.dueDate && d.dueDate !== prior.due_date && d.dueDate < todayYmdIst()) {
       return res.status(400).json({ error: PAST_DUE });
     }
+    // the other brands it's posted on (its own brand never among them)
+    let alsoNext;
+    if (d.alsoBrands !== undefined) {
+      const r = await cleanAlsoBrands(req.orgId, d.alsoBrands, d.channelId !== undefined ? d.channelId : prior.channel_id, d.taskType ?? prior.task_type);
+      if (r.error) return res.status(400).json({ error: r.error });
+      alsoNext = r.list;
+    } else if (d.channelId && (prior.meta?.alsoBrands ?? []).includes(d.channelId)) {
+      alsoNext = prior.meta.alsoBrands.filter((b) => b !== d.channelId);
+    }
+    const alsoChanged = alsoNext !== undefined && JSON.stringify([...alsoNext].sort()) !== JSON.stringify([...(prior.meta?.alsoBrands ?? [])].sort());
 
     // a task already on a main type keeps it, but none moves onto one (../type-tree.js)
     if (d.contentFormatId && d.contentFormatId !== prior.content_format_id) {
@@ -776,6 +858,7 @@ tasksRouter.patch("/tasks/:id", requireEditor, requireActiveEod, async (req, res
         || (d.budgetHours !== undefined && !same(d.budgetHours == null ? null : Number(d.budgetHours), prior.budget_hours == null ? null : Number(prior.budget_hours)))
         || (d.description !== undefined && (d.description ?? "") !== (prior.description ?? ""))
         || (d.channelId !== undefined && !same(d.channelId, prior.channel_id))
+        || alsoChanged
         || (d.priority !== undefined && d.priority !== prior.priority)
         || (d.dueDate !== undefined && !fillingDue && !same(d.dueDate || null, prior.due_date))
         || (d.startDate !== undefined && !same(d.startDate || null, prior.start_date))
@@ -1201,12 +1284,16 @@ tasksRouter.patch("/tasks/:id", requireEditor, requireActiveEod, async (req, res
       push("review_link_required", d.reviewLinkRequired);
     }
     // Requested by lives in meta but is its own field: a meta edit keeps it
-    if (d.meta !== undefined || d.requestedBy !== undefined) {
+    if (d.meta !== undefined || d.requestedBy !== undefined || alsoNext !== undefined) {
       const next = { ...(d.meta !== undefined ? d.meta : prior.meta ?? {}) };
       const asked = d.requestedBy !== undefined ? d.requestedBy || null : prior.meta?.requestedBy ?? null;
       if (asked) next.requestedBy = asked; else delete next.requestedBy;
-      // what R&D work became, and what a follow-up was made from (POST /tasks/:id/use), stay
-      for (const k of ["use", "fromTask"]) { if (prior.meta?.[k] !== undefined) next[k] = prior.meta[k]; else delete next[k]; }
+      // what R&D work became, what a follow-up was made from (POST /tasks/:id/use),
+      // and a posting copy's original stay; so do the other brands, unless changed here
+      for (const k of ["use", "fromTask", "postsFor", "postsForRef", "alsoBrands"]) {
+        if (prior.meta?.[k] !== undefined) next[k] = prior.meta[k]; else delete next[k];
+      }
+      if (alsoNext !== undefined) { if (alsoNext.length) next.alsoBrands = alsoNext; else delete next.alsoBrands; }
       push("meta", JSON.stringify(next));
     }
 
@@ -1318,7 +1405,16 @@ tasksRouter.patch("/tasks/:id", requireEditor, requireActiveEod, async (req, res
     // Approved social work goes into the schedulers' shared list (../scheduling.js);
     // reopened before any link went in, it comes back out.
     const toScheduling = prior.status !== "done" && finalStatus === "done" ? await enterScheduling(req.params.id) : false;
-    if (prior.status === "done" && finalStatus !== "done") await leaveScheduling(req.params.id);
+    // posted on other brands too: each gets its posting copy (an admin adding a
+    // brand to approved work in Scheduling gets that brand's copy then)
+    if (toScheduling || (alsoChanged && prior.status === "done" && finalStatus === "done")) {
+      const inFlow = toScheduling || !!(await pool.query("select 1 from task where id = $1 and (to_jsonb(task)->>'schedule_from') is not null", [req.params.id])).rowCount;
+      if (inFlow) await makePostingCopies(req.orgId, req.params.id, req.user.sub);
+    }
+    if (prior.status === "done" && finalStatus !== "done") {
+      await leaveScheduling(req.params.id);
+      await dropPostingCopies(req.orgId, req.params.id);
+    }
     // ...and approved Ad work into Ad uploads (../ad-uploads.js), the same way
     if (prior.status !== "done" && finalStatus === "done") await enterUploads(req.params.id);
     if (prior.status === "done" && finalStatus !== "done") await leaveUploads(req.params.id);
@@ -1623,13 +1719,16 @@ tasksRouter.delete("/tasks/:id", requireEditor, async (req, res, next) => {
     let posts = 0;
     try {
       await db.query("begin");
+      // its posting copies on other brands go with it
+      const copies = (await db.query("select id from task where org_id = $1 and meta->>'postsFor' = $2", [req.orgId, req.params.id])).rows.map((r) => r.id);
       if (withPosts) {
         posts = (await db.query(
           `delete from post p using workspace w
-            where w.id = p.workspace_id and w.org_id = $2 and (p.from_task_id = $1 or p.id = $3)`,
-          [req.params.id, req.orgId, t.post_id],
+            where w.id = p.workspace_id and w.org_id = $2 and (p.from_task_id = $1 or p.id = $3 or p.from_task_id = any($4::uuid[]))`,
+          [req.params.id, req.orgId, t.post_id, copies],
         )).rowCount;
       }
+      if (copies.length) await db.query("delete from task where id = any($1::uuid[])", [copies]);
       const { rowCount } = await db.query("delete from task where id = $1 and org_id = $2", [req.params.id, req.orgId]);
       if (!rowCount) { await db.query("rollback"); return res.status(404).json({ error: "Task not found" }); }
       await db.query("commit");

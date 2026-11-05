@@ -59,6 +59,7 @@ leaderboardRouter.get("/leaderboard/house", requirePage("leaderboard"), async (r
                 coalesce((to_jsonb(t)->>'points_at_done')::numeric, cf.points) as base
            from task t left join task_content_format cf on cf.id = t.content_format_id
           where t.org_id = $1 and t.status = 'done' and t.task_type <> 'admin' and t.editor_id is not null
+            and coalesce(t.meta->>'postsFor', '') = '' -- a posting copy is its original's work
             and t.completed_at >= ($2::date)::timestamp at time zone 'Asia/Kolkata'
             and t.completed_at < ($2::date + interval '1 month')::timestamp at time zone 'Asia/Kolkata'`,
         [req.orgId, first],

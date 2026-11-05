@@ -443,7 +443,7 @@ async function computeDetail(orgId, editorId, monthFirst, isCurrent) {
               group by content_format_id
           ), a as (
             select content_format_id id, count(*)::int n
-              from task where org_id = $1 and editor_id = $2 and status = 'done'
+              from task where org_id = $1 and editor_id = $2 and status = 'done' and coalesce(meta->>'postsFor', '') = ''
                 and content_format_id is not null
                 and completed_at >= ($3::date)::timestamp at time zone 'Asia/Kolkata' and completed_at < ($3::date + interval '1 month')::timestamp at time zone 'Asia/Kolkata'
               group by content_format_id

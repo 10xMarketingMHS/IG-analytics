@@ -348,7 +348,7 @@ export function MetricsPage() {
                     onClick={() => setOpenId(t.id)} onKeyDown={(e) => { if (e.key === "Enter") setOpenId(t.id); }}>
                     <span className="pp-cell-title">
                       <b>{t.title}</b>
-                      <span><em className="pp-type">{bucket === "ad" ? "AD" : "SOCIAL"}</em>{t.content_format_name ?? ""}</span>
+                      <span><em className="pp-type">{bucket === "ad" ? "AD" : "SOCIAL"}</em>{t.content_format_name ?? ""}{t.meta?.postsFor ? ` · copy of ${t.meta.postsForRef ?? "another task"}` : ""}</span>
                     </span>
                     <span>{ref ? <span className="pp-ref">{ref}</span> : <span className="pp-faint">—</span>}</span>
                     <span className="pp-chan">

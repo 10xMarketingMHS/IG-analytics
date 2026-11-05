@@ -117,6 +117,7 @@ async function teamReviews(orgId, month) {
               count(*) filter (where extract(day from completed_at at time zone 'Asia/Kolkata') > 15)::int as h2
          from task
         where org_id = $1 and status = 'done' and content_format_id is not null and editor_id is not null
+          and coalesce(meta->>'postsFor', '') = '' -- a posting copy is its original's work
           and completed_at >= ($2::date)::timestamp at time zone 'Asia/Kolkata'
           and completed_at < ($2::date + interval '1 month')::timestamp at time zone 'Asia/Kolkata'
         group by editor_id, content_format_id`,

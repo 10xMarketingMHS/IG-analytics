@@ -99,6 +99,7 @@ const CONTENT_LABEL = (v: string | null) => CONTENT_TYPES.find((c) => c.value ==
 // category first, then only its content types are offered.
 type TaskCategory = "social" | "ad" | "service" | "project" | "admin";
 const CATEGORY_LABEL: Record<TaskCategory, string> = { social: "Social", ad: "Ads", service: "Service", project: "Project", admin: "General" };
+const ALSO_ON_HINT = "One task: reviewed and scored once. After approval each brand gets its own posting step in Scheduling.";
 // Off-goal work (a type that doesn't count in goals, or Service's Something else)
 // needs no review: whoever did it closes it, like a General task. The server holds the same.
 function isOffGoalWork(t: Task, formats: ContentFormatDef[] | null | undefined) {
@@ -1264,6 +1265,8 @@ export function TasksPage() {
                           {t.post_id && <span title="Auto-created from a post">📄</span>}
                           {t.recurrence !== "none" && <span title={`Repeats ${t.recurrence}`}>🔁</span>}
                           {t.self_created && <span title="Created by the assignee for themselves">🙋</span>}
+                          {t.meta?.postsFor && <span title={`Posting copy of ${t.meta.postsForRef ?? "another task"}: its work and points are there`}>⧉</span>}
+                          {(t.meta?.alsoBrands?.length ?? 0) > 0 && <span title={`Also posted on ${t.meta!.alsoBrands!.length} more brand${t.meta!.alsoBrands!.length === 1 ? "" : "s"}`}>+{t.meta!.alsoBrands!.length}</span>}
                         </span>
                         {/* priority and delete stay together at the right, inside the card */}
                         <span className="tb-right">
@@ -2367,6 +2370,10 @@ export function TaskPanel({ mode, task, canWrite, editors, channels: yourBrands,
     : !!task?.link_required;
   const projectDuration = isProject ? (selectedFormat?.duration_days ?? null) : null;
   const projectPoints = isProject ? (selectedFormat?.points ?? null) : null;
+  // Social work that goes to Scheduling can be posted on more brands than its own:
+  // one task, scored once; each other brand gets its posting step after approval.
+  const multiBrand = activeCategory === "social" && !adByTeam && !!selectedFormat?.to_scheduling && channels.length > 1;
+  const [alsoBrands, setAlsoBrands] = useState<string[]>([]);
   // a due date is today or later (a project's, not before its start either)
   const dueMin = isProject && cur.start_date && cur.start_date > today() ? cur.start_date : today();
   const pastDue = creating && !!draft.due_date && draft.due_date < today();
@@ -2490,6 +2497,7 @@ export function TaskPanel({ mode, task, canWrite, editors, channels: yourBrands,
         ...(adByTeam ? { adTeamId: draft.ad_team_id } : {}),
         startDate: category === "project" ? draft.start_date : undefined,
         priority: draft.priority, contentFormatId: draft.content_format_id,
+        ...(multiBrand && alsoBrands.some((b) => b !== draft.channel_id) ? { alsoBrands: alsoBrands.filter((b) => b !== draft.channel_id) } : {}),
         ...(canAssign && linkOverride != null ? { reviewLinkRequired: linkOverride } : {}),
         // given to someone: which team asked, and how long it should take
         ...(draft.editor_id && draft.editor_id !== user?.editorId ? {
@@ -2627,13 +2635,40 @@ export function TaskPanel({ mode, task, canWrite, editors, channels: yourBrands,
       )}
     </Row>
   );
+  const alsoOn = (task?.meta?.alsoBrands ?? []).filter((b) => b !== cur.channel_id);
+  const nameOfBrand = (id: string) => channels.find((c) => c.id === id)?.name ?? "a brand";
   const brandRow = (
-    <Row label="Brand" icon={ic(TB_ICON.tag)}>
-      <select className="t tp2-narrow" disabled={briefRo} value={cur.channel_id ?? ""} onChange={(e) => set("channel_id", "channelId", e.target.value || null)}>
-        <option value="">—</option>
-        {channels.map((c) => (<option key={c.id} value={c.id}>{c.name}</option>))}
-      </select>
-    </Row>
+    <>
+      <Row label="Brand" icon={ic(TB_ICON.tag)}>
+        <select className="t tp2-narrow" disabled={briefRo} value={cur.channel_id ?? ""} onChange={(e) => set("channel_id", "channelId", e.target.value || null)}>
+          <option value="">—</option>
+          {channels.map((c) => (<option key={c.id} value={c.id}>{c.name}</option>))}
+        </select>
+        {task?.meta?.postsFor && (
+          <span className="hint" style={{ display: "block", marginTop: 4 }}>
+            Posting copy of {task.meta.postsForRef ?? "another task"}: the work, its review and its points are there.
+          </span>
+        )}
+      </Row>
+      {!creating && task && !task.meta?.postsFor && (multiBrand || alsoOn.length > 0) && (
+        <Row label="Also post on" icon={ic(TB_ICON.tag)}>
+          {briefRo || task.status === "done" ? (
+            <span className="tp2-faint">{alsoOn.length ? alsoOn.map(nameOfBrand).join(", ") : "No other brand"}</span>
+          ) : (
+            <div className="tp2-inline">
+              {channels.filter((c) => c.id !== cur.channel_id).map((c) => {
+                const on = alsoOn.includes(c.id);
+                return (
+                  <button key={c.id} type="button" className={"tp2-pill" + (on ? " on" : "")} aria-pressed={on}
+                    onClick={() => patch({ alsoBrands: on ? alsoOn.filter((b) => b !== c.id) : [...alsoOn, c.id] })}>{c.name}</button>
+                );
+              })}
+            </div>
+          )}
+          {alsoOn.length > 0 && <span className="hint" style={{ display: "block", marginTop: 4 }}>{ALSO_ON_HINT}</span>}
+        </Row>
+      )}
+    </>
   );
   // Ads: the team it's made for instead of a brand (an older Ad task keeps showing its brand too)
   const teamRow = (
@@ -2978,6 +3013,19 @@ export function TaskPanel({ mode, task, canWrite, editors, channels: yourBrands,
                           <option value="">Pick a brand</option>
                           {channels.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
                         </select>
+                      )}
+                      {multiBrand && draft.channel_id && (
+                        <span className="tp2-also">
+                          <small>Also post on</small>
+                          {channels.filter((c) => c.id !== draft.channel_id).map((c) => {
+                            const on = alsoBrands.includes(c.id);
+                            return (
+                              <button key={c.id} type="button" className={"tp2-pill" + (on ? " on" : "")} aria-pressed={on}
+                                onClick={() => setAlsoBrands((xs) => (on ? xs.filter((x) => x !== c.id) : [...xs, c.id]))}>{c.name}</button>
+                            );
+                          })}
+                          {alsoBrands.some((b) => b !== draft.channel_id) && <small className="tp2-faint">{ALSO_ON_HINT}</small>}
+                        </span>
                       )}
                     </label>
                   )}

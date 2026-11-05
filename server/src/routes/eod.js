@@ -115,6 +115,7 @@ export async function summaryFor(orgId, editorId, date) {
        from task t
        left join task_content_format cf on cf.id = t.content_format_id
       where t.editor_id = $1 and t.org_id = $2 and t.status = 'done' and t.completed_at is not null
+        and coalesce(t.meta->>'postsFor', '') = '' -- a posting copy is its original's work
         and exists (
           select 1 from eod_session s
            where s.editor_id = $1 and s.date = $3
@@ -127,7 +128,7 @@ export async function summaryFor(orgId, editorId, date) {
   const completedCount = groups.reduce((a, g) => a + g.n, 0);
   const { rows: due } = await pool.query(
     `select count(*)::int as n, (count(*) filter (where t.status = 'done'))::int as done
-       from task t where t.editor_id = $1 and t.org_id = $2 and t.due_date = $3`,
+       from task t where t.editor_id = $1 and t.org_id = $2 and t.due_date = $3 and coalesce(t.meta->>'postsFor', '') = ''`,
     [editorId, orgId, date],
   );
   // First start → last end hides any gap between sessions, so also report the
@@ -168,7 +169,7 @@ export async function summaryFor(orgId, editorId, date) {
     const notDone = kept.filter((t) => byId.get(t.id).status !== "done").map((t) => byId.get(t.id).title);
     const { rows: extra } = await pool.query(
       `select title from task
-        where editor_id = $1 and org_id = $2 and not (id = any($3::uuid[]))
+        where editor_id = $1 and org_id = $2 and not (id = any($3::uuid[])) and coalesce(meta->>'postsFor', '') = ''
           and ((created_at > $4 and created_at::date = $5::date)
                or (status = 'done' and completed_at > $4 and completed_at::date = $5::date))
         order by created_at`,

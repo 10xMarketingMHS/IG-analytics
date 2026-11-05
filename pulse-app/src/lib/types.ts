@@ -138,6 +138,11 @@ export type TaskMeta = {
   use?: { decision: "reel" | "ad" | "both" | "none"; at: string; by: string; byName: string | null; tasks: { id: string; ref: string | null; kind: string }[] };
   // a Reel or Ad made from R&D work: which task it was made from
   fromTask?: { id: string; ref: string | null; title: string };
+  // Social work also posted on these other brands (one task, scored once)
+  alsoBrands?: string[];
+  // a posting copy for another brand: the task whose work it is
+  postsFor?: string;
+  postsForRef?: string;
   platform?: string;
   caption?: string;
   assetLinks?: string;

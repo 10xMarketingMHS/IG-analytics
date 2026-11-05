@@ -200,6 +200,7 @@ export async function scoreMonthAll(orgId, monthFirst, editorId = null) {
                 t.budget_hours)::float as hours
          from task t left join task_content_format cf on cf.id = t.content_format_id
         where t.org_id = $1 and t.status = 'done' and t.task_type <> 'admin' and t.editor_id is not null
+          and coalesce(t.meta->>'postsFor', '') = '' -- a posting copy is its original's work
           and ${IST_MONTH("t.completed_at")}`,
       [orgId, monthFirst],
     ),
