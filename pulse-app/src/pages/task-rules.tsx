@@ -170,6 +170,7 @@ export function TaskRulesSection() {
     goal: subs.filter((s) => s.counts_in_goal).length,
     link: subs.filter((s) => s.review_link_required).length,
     sched: subs.filter((s) => s.to_scheduling).length,
+    self: subs.filter((s) => s.self_close).length,
   });
   function setParent(f: ContentFormatDef, parent_id: string | null) {
     const to = formats.find((x) => x.id === parent_id);
@@ -195,6 +196,7 @@ export function TaskRulesSection() {
           <span className="st-c-goal">Goal</span>
           <span className="st-c-link">Link</span>
           <span className="st-c-sched">Next step</span>
+          <span className="st-c-self">Self close</span>
           <span className="st-c-metric">Metric</span>
           <span className="st-c-pts">Points</span>
           <span className="st-c-time">Time</span>
@@ -248,6 +250,8 @@ export function TaskRulesSection() {
                       ? `Approved ${f.name} work now goes to ${list}.${n ? ` ${tasks} from this month added to the list.` : ""}`
                       : `${f.name} no longer goes to ${list}.${n ? ` ${tasks} still waiting left the list.` : ""}`;
                   })}
+                  onSelfClose={(self_close) => patchFormat(f.id, { self_close }, "Could not update Self close.",
+                    self_close ? `${f.name} work closes without review now: whoever did it completes it.` : `${f.name} work goes to Review again.`)}
                   onHours={(hours) => setRule(f.id, null, hours)}
                   onClearHours={() => { const r = globalFor(f); if (r) removeRule(r.id); }}
                   onDuration={(duration_days) => patchFormat(f.id, { duration_days }, "Could not save the duration.", "Duration saved.")}
@@ -279,7 +283,7 @@ export function TaskRulesSection() {
         Social task of this type goes to Scheduling, for its post date and links (untick it for thumbnails and other work that isn't posted on its own); an approved
         Ads task goes to Ad uploads, for the ad numbers it became; an approved Service task of the type is R&D (AI Job): a Manager or Team Lead decides
         whether it becomes a Reel, an Ad, both, or isn't used, and the Reel and Ad are made from it as new tasks. Points — on or
-        before the due date earns them in full, 1 day late half, 2 days none, 3 or more costs them back. Removing a type doesn't touch tasks already using it.
+        before the due date earns them in full, 1 day late half, 2 days none, 3 or more costs them back. Self close — whoever did the work moves it to Completed themselves, with no review (Schedule work, say). Removing a type doesn't touch tasks already using it.
       </span>
 
       <AdTeamsCard />
@@ -359,7 +363,7 @@ function IconPicker({ value, onPick }: { value: string; onPick: (icon: string) =
 }
 
 // A main type's sub-types added up: points, time (or days), and how many have each switch on.
-type SubTotals = { n: number; points: number; hours: number; days: number; goal: number; link: number; sched: number };
+type SubTotals = { n: number; points: number; hours: number; days: number; goal: number; link: number; sched: number; self: number };
 // How many of its sub-types have a switch on, in place of the switch.
 const SubCount = ({ n, of, what }: { n: number; of: number; what: string }) => (
   <span className="st-total plain" title={`Sub-types ${what}: ${n} of ${of}. Set it on each of them.`}>{n} / {of}</span>
@@ -371,7 +375,7 @@ const SubCount = ({ n, of, what }: { n: number; of: number; what: string }) => (
 // name, icon and category, and the rest shows what's on its sub-types.
 function TypeRow({
   format, sub = false, subCount = 0, totals = null, open = false, onFold, mains, onParent,
-  rule, canPoints, onCategory, onIcon, onRename, onPoints, onMetric, onGoal, onLink, onSched, onHours, onClearHours, onDuration, onMetrics, onRemove,
+  rule, canPoints, onCategory, onIcon, onRename, onPoints, onMetric, onGoal, onLink, onSched, onSelfClose, onHours, onClearHours, onDuration, onMetrics, onRemove,
 }: {
   format: ContentFormatDef;
   // a sub-type (indented under its main type); a main type's sub-types, shown or folded
@@ -393,6 +397,7 @@ function TypeRow({
   onGoal: (on: boolean) => void;
   onLink: (required: boolean) => void;
   onSched: (on: boolean) => void;
+  onSelfClose: (on: boolean) => void;
   onHours: (hours: number) => void;
   onClearHours: () => void;
   onDuration: (days: number | null) => void;
@@ -484,6 +489,13 @@ function TypeRow({
                 : `Approved ${format.name} work goes to ${format.category === "ad" ? "Ad uploads" : "Scheduling"}`} />}</>
         ) : <span className="st-note" style={{ justifyContent: "center" }}
           title={format.category === "social" || format.category === "ad" || format.category === "service" ? "Needs the scheduling database update" : "Only Social, Ads and Service work goes on after approval"}>—</span>}
+      </span>
+      <span className="st-c-self">
+        <span className="st-mlabel">Self close</span>
+        {totals ? <SubCount n={totals.self} of={totals.n} what="that close without review" />
+          : format.self_close !== undefined
+          ? <Toggle on={format.self_close} onChange={onSelfClose} label={`${format.name} work closes without review`} />
+          : <span className="st-note" title="Needs the database update 20261116120000_type_self_close">—</span>}
       </span>
       <span className="st-c-metric">
         {!isProject && <span className="st-mlabel">Metric</span>}

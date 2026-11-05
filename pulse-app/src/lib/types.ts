@@ -169,6 +169,8 @@ export type ContentFormatDef = {
   hours?: number | null;
   // tracked in goals (Settings › Tasks & time › Goal); false: off-goal work. Absent before the database has it.
   counts_in_goal?: boolean;
+  // its work closes without review: whoever did it completes it (Settings › Tasks & time › Self close). Absent before the database has it.
+  self_close?: boolean;
   // how many people have a goal for it this month
   goal_people?: number;
   // the main type it sits under (Carousel for Video Carousel), or null: on its own

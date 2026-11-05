@@ -329,18 +329,20 @@ async function dropPostingCopies(orgId, taskId) {
   );
 }
 
-// Off-goal work: its type doesn't count in goals (Settings › Tasks & time ›
-// Goal), or it's Service's Something else (no type). Whoever did it closes it,
-// with no review (PATCH below). A General task has its own rule.
-async function isOffGoalWork(orgId, task, contentFormatId) {
+// Work that closes without review: its type's Self close is on (Settings ›
+// Tasks & time), or it's Service's Something else (no type). Whoever did it
+// closes it (PATCH below). Before Self close's database update, a type that
+// doesn't count in goals did. A General task has its own rule.
+async function closesWithoutReview(orgId, task, contentFormatId) {
   if (task.task_type === "admin") return false;
   const cf = contentFormatId !== undefined ? contentFormatId : task.content_format_id;
   if (!cf) return task.task_type === "service";
   const { rows } = await pool.query(
-    "select coalesce((to_jsonb(f)->>'counts_in_goal')::boolean, true) as in_goal from task_content_format f where id = $1 and org_id = $2",
+    `select coalesce((to_jsonb(f)->>'self_close')::boolean, not coalesce((to_jsonb(f)->>'counts_in_goal')::boolean, true)) as self
+       from task_content_format f where id = $1 and org_id = $2`,
     [cf, orgId],
   );
-  return rows.length > 0 && !rows[0].in_goal;
+  return rows.length > 0 && rows[0].self;
 }
 
 // An Assign tasks grant limited to some content types or some people
@@ -948,7 +950,7 @@ tasksRouter.patch("/tasks/:id", requireEditor, requireActiveEod, async (req, res
     let reviewLogAction = null;
     let reviewNote = null;
     let selfClosed = false;
-    let offGoal = false;
+    let selfClose = false;
     let holdAction = null;
     let budgetStartSet = false;
     if (d.status !== undefined && d.status !== prior.status) {
@@ -960,10 +962,10 @@ tasksRouter.patch("/tasks/:id", requireEditor, requireActiveEod, async (req, res
         reviewLogAction = "approved";
         reviewNote = "No review needed: a General task, closed by its owner.";
       }
-      // Off-goal work needs no review either: whoever did it closes it. Completed
-      // goes the Review way first (its link, its clock), then closes below.
-      offGoal = await isOffGoalWork(req.orgId, prior, d.contentFormatId);
-      if (offGoal && prior.status === "in_progress" && d.status === "done") d.status = "review";
+      // Work whose type closes without review (Self close): whoever did it closes
+      // it. Completed goes the Review way first (its link, its clock), then closes below.
+      selfClose = await closesWithoutReview(req.orgId, prior, d.contentFormatId);
+      if (selfClose && prior.status === "in_progress" && d.status === "done") d.status = "review";
       if (prior.status === "review") {
         // Resolving a review (approve into done, or send back for rework)
         // follows one rule for everyone, admins included (../review-route.js):
@@ -1086,7 +1088,7 @@ tasksRouter.patch("/tasks/:id", requireEditor, requireActiveEod, async (req, res
           required = cfRows[0]?.review_link_required ?? false;
         }
         if (required && !link) {
-          return res.status(400).json({ error: offGoal ? "Add your delivery link before completing it." : "Add your delivery link before submitting for review." });
+          return res.status(400).json({ error: selfClose ? "Add your delivery link before completing it." : "Add your delivery link before submitting for review." });
         }
       }
       // Entering review pauses the clock — bank whatever's elapsed so far
@@ -1109,10 +1111,10 @@ tasksRouter.patch("/tasks/:id", requireEditor, requireActiveEod, async (req, res
         push("budget_used_seconds", 0);
         budgetStartSet = true;
       }
-      // A Manager's or Asst. Manager's own task, and off-goal work, need no
+      // A Manager's or Asst. Manager's own task, and a Self close type's, need no
       // review: sending it for review completes it (../review-route.js).
       if (d.status === "review" && prior.status !== "review") {
-        const why = offGoal ? "off-goal work, closed by whoever did it"
+        const why = selfClose ? "its type closes without review, by whoever did it"
           : routeReview(prior, await reviewContext(req.orgId)).kind === "none" ? "a Manager's own task" : null;
         if (why) {
           d.status = "done";

@@ -367,6 +367,9 @@ html[data-theme="dark"] .st-box{border-color:rgba(255,255,255,.22)}
 .st-tt-goal{font-size:11px;font-weight:600;color:var(--st-text3)}
 .st-tt-goal.off{color:var(--st-text3);font-style:italic}
 @media (max-width:720px){.st-c-goal{width:auto}}
+/* Tasks & time › Self close: its work closes without review */
+.st-c-self{flex:none;width:70px;display:flex;justify-content:center;text-align:center}
+@media (max-width:720px){.st-c-self{width:auto}}
 
 /* Tasks & time: sub-types under their main type */
 .st-tt.sub{padding-left:46px;background:var(--st-sunk)}

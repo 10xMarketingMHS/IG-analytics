@@ -44,6 +44,9 @@ const Schema = z.object({
   // Is it tracked in goals? Off: not offered in Set goals, never goal work; given
   // to someone, it's Other work (../goal-score.js rule 6). 20261110120000_type_counts_in_goal
   counts_in_goal: z.boolean().optional(),
+  // Does its work close without review? On: whoever did it moves it to
+  // Completed themselves (routes/tasks.js). 20261116120000_type_self_close
+  self_close: z.boolean().optional(),
   // The main type it sits under (Carousel for Video Carousel), or null: on its
   // own. Same category, one level only. 20261114120000_type_parent
   parent_id: z.string().uuid().nullable().optional(),
@@ -54,7 +57,9 @@ const SELECT = "id, name, icon, sort_order, active, points, category, metric_tie
 const schedCol = () => hasColumn("task_content_format", "to_scheduling");
 const goalCol = () => hasColumn("task_content_format", "counts_in_goal");
 const parentCol = () => hasColumn("task_content_format", "parent_id");
-const select = async () => SELECT + ((await schedCol()) ? ", to_scheduling" : "") + ((await goalCol()) ? ", counts_in_goal" : "") + ((await parentCol()) ? ", parent_id" : "");
+const selfCol = () => hasColumn("task_content_format", "self_close");
+const select = async () => SELECT + ((await schedCol()) ? ", to_scheduling" : "") + ((await goalCol()) ? ", counts_in_goal" : "") + ((await parentCol()) ? ", parent_id" : "")
+  + ((await selfCol()) ? ", self_close" : "");
 const NEEDS_PARENT = "Sub-types need a database update first — ask whoever runs the database to apply 20261114120000_type_parent.";
 
 // Can this type go under that main type? Null when it can, else what to say.
@@ -178,6 +183,10 @@ contentFormatsRouter.patch("/content-formats/:id", requirePermission("task_setti
     if (!(await goalCol())) return res.status(409).json({ error: "The Goal switch needs a database update first — ask whoever runs the database to apply 20261110120000_type_counts_in_goal." });
     vals.push(parsed.data.counts_in_goal); sets.push(`counts_in_goal = $${vals.length}`);
   }
+  if (parsed.data.self_close !== undefined) {
+    if (!(await selfCol())) return res.status(409).json({ error: "Self close needs a database update first — ask whoever runs the database to apply 20261116120000_type_self_close." });
+    vals.push(parsed.data.self_close); sets.push(`self_close = $${vals.length}`);
+  }
   const parentIn = parsed.data.parent_id;
   if (parentIn !== undefined) {
     if (!(await parentCol())) return res.status(409).json({ error: NEEDS_PARENT });
@@ -194,7 +203,7 @@ contentFormatsRouter.patch("/content-formats/:id", requirePermission("task_setti
   vals.push(req.params.id, req.orgId);
   try {
     // a main type with sub-types keeps only its name, icon and category (../type-tree.js)
-    if (["points", "metric_tier", "duration_days", "review_link_required", "counts_in_goal", "to_scheduling"].some((k) => parsed.data[k] !== undefined)) {
+    if (["points", "metric_tier", "duration_days", "review_link_required", "counts_in_goal", "to_scheduling", "self_close"].some((k) => parsed.data[k] !== undefined)) {
       const heading = (await headingTypes(req.orgId, [req.params.id])).get(req.params.id);
       if (heading) return res.status(400).json({ error: headingFieldError(heading) });
     }
