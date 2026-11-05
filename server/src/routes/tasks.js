@@ -16,6 +16,7 @@ import { enterScheduling, leaveScheduling, schedulerIds, schedulingReady } from 
 import { adTeamsReady, enterUploads, leaveUploads, nextTeamAid, uploadsReady } from "../ad-uploads.js";
 import { parentTypeOf, taskTypeError } from "../type-tree.js";
 import { isSuperHere } from "../super-admin.js";
+import { isHoliday, normalizeCalendar } from "../work-calendar.js";
 
 export const tasksRouter = Router();
 
@@ -1669,9 +1670,20 @@ async function spawnNextOccurrence(taskId, recurrence) {
       [taskId],
     )).rows[0];
     if (!t) return;
-    const days = recurrence === "weekly" ? 7 : 1;
-    // Advance from the current due date if set, else from today.
-    const nextDue = `(coalesce($7::date, (now() at time zone 'Asia/Kolkata')::date) + interval '${days} day')::date`;
+    // Weekly: a week on from its due date (else from today). Daily: the next
+    // working day of the work calendar (no Sunday, no Saturday when Saturdays
+    // are off, no holiday), and never a day already gone, so a daily task
+    // finished late comes back for today.
+    let nextDay;
+    if (recurrence === "weekly") nextDay = addDaysYmd(t.due_date ?? todayYmdIst(), 7);
+    else {
+      const cal = normalizeCalendar((await pool.query("select (to_jsonb(org)->'settings'->'calendar') as c from org where id = $1", [t.org_id])).rows[0]?.c);
+      const working = (ymd) => { const wd = new Date(`${ymd}T12:00:00Z`).getUTCDay(); return wd !== 0 && !(wd === 6 && cal.satOff) && !isHoliday(cal, ymd); };
+      nextDay = t.due_date ? addDaysYmd(t.due_date, 1) : todayYmdIst();
+      if (nextDay < todayYmdIst()) nextDay = todayYmdIst();
+      for (let i = 0; i < 14 && !working(nextDay); i++) nextDay = addDaysYmd(nextDay, 1);
+    }
+    const nextDue = "$7::date";
     // Fresh occurrence gets its own budget snapshot, resolved against
     // whatever rules apply right now (not copied from the completed one) —
     // and its own TID, being a distinct row (a recurring Social/Ad task also
@@ -1684,7 +1696,7 @@ async function spawnNextOccurrence(taskId, recurrence) {
     const { rows } = await pool.query(
       `insert into task (org_id, editor_id, channel_id, title, description, priority, due_date, recurrence, status, task_type, content_format_id, budget_hours, budget_started_at, tid, sid, ad_id, svid, review_link_required, accepted, created_by, assigned_by)
        values ($1,$2,$3,$4,$5,$6, ${nextDue}, $8, 'todo', $9, $10, $11, null, $12, $13, $14, $15, $16, false, $17, $18) returning id`,
-      [t.org_id, t.editor_id, t.channel_id, t.title, t.description, t.priority, t.due_date, recurrence, t.task_type, t.content_format_id, budgetHours, tid, sid, adId, svid, t.review_link_required, t.created_by, t.assigned_by],
+      [t.org_id, t.editor_id, t.channel_id, t.title, t.description, t.priority, nextDay, recurrence, t.task_type, t.content_format_id, budgetHours, tid, sid, adId, svid, t.review_link_required, t.created_by, t.assigned_by],
     );
     const newId = rows[0].id;
     if (t.ad_team_id) await pool.query("update task set ad_team_id = $2 where id = $1", [newId, t.ad_team_id]);

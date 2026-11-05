@@ -44,6 +44,10 @@ const PatchSchema = z.object({
   weekStart: z.enum(["mon", "sun"]).optional(),
   calendar: CalendarSchema.optional(),
   attendance: AttendanceSchema.optional(),
+  // Scheduling (Settings › Tasks & time): does each post a scheduler links
+  // count as a Schedule job of theirs? Off (the default): only their Schedule
+  // tasks count, such as the daily social-desk task.
+  scheduling: z.object({ perPostJob: z.boolean() }).optional(),
 });
 
 async function readOrg(orgId) {
@@ -58,6 +62,7 @@ async function readOrg(orgId) {
     calendar: normalizeCalendar(s.calendar),
     calendarSaved: !!s.calendar,
     attendance: normalizeAttendance(s.attendance),
+    scheduling: { perPostJob: s.scheduling?.perPostJob === true },
     canSaveSettings: withSettings,
   };
 }
@@ -84,10 +89,14 @@ orgRouter.patch("/org", async (req, res, next) => {
     const a = await callerAccess(req);
     const general = d.name !== undefined || d.weekStart !== undefined || d.calendar !== undefined;
     if (a.pages && !a.super) {
-      if ((general && !a.pages.setGeneral.change) || (d.attendance !== undefined && !a.pages.setAttendance.change)) {
+      if ((general && !a.pages.setGeneral.change) || (d.attendance !== undefined && !a.pages.setAttendance.change)
+          || (d.scheduling !== undefined && !a.pages.setTasks.change)) {
         return res.status(403).json({ error: "Your position doesn't have this. Ask an admin (Settings › Page access)." });
       }
     } else if (!a.super) {
+      if (d.scheduling !== undefined && req.role !== "admin") {
+        return res.status(403).json({ error: "Only an admin can change how scheduling counts." });
+      }
       if (req.role !== "admin" && !(await hasActiveGrant(req.orgId, req.user.sub, "edit_goals"))) {
         return res.status(403).json({ error: "You don't have access to this." });
       }
@@ -132,13 +141,14 @@ orgRouter.patch("/org", async (req, res, next) => {
       }
     }
     if (d.name !== undefined) await pool.query("update org set name = $2 where id = $1", [req.orgId, d.name]);
-    if (d.weekStart !== undefined || d.calendar !== undefined || d.attendance !== undefined) {
+    if (d.weekStart !== undefined || d.calendar !== undefined || d.attendance !== undefined || d.scheduling !== undefined) {
       if (!(await hasColumn("org", "settings"))) {
         return res.status(409).json({ error: "These settings need a database update first — ask whoever runs the database to apply 20261023120000_org_settings_notify_prefs." });
       }
       const patch = {};
       if (d.weekStart !== undefined) patch.weekStart = d.weekStart;
       if (d.calendar !== undefined) patch.calendar = nextCal;
+      if (d.scheduling !== undefined) patch.scheduling = d.scheduling;
       await pool.query("update org set settings = coalesce(settings, '{}'::jsonb) || $2::jsonb where id = $1", [req.orgId, JSON.stringify(patch)]);
       // Attendance merges, so the date attendance started (since) is kept.
       if (d.attendance !== undefined) {

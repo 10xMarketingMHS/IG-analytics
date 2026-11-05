@@ -17,8 +17,9 @@ import {
 // with a Schedule goal this month — share one list; whoever sets a task's post
 // date takes it (it leaves the others' list). They post it and paste each
 // platform's link: each becomes a post with the task's brand, title, date and
-// editor, on the same SID, and the scheduling counts as one Schedule job of
-// theirs (a completed Schedule task, made once). The leads — Managers, Asst.
+// editor, on the same SID; when the team counts it per post (Settings › Tasks &
+// time › Scheduling), the scheduling is also one Schedule job of theirs (a
+// completed Schedule task, made once). The leads — Managers, Asst.
 // Managers and Team Leads by position (Team › Roster), and the Super Admin —
 // see everyone's, may do any of it, and hand a task to another scheduler.
 // Nobody else sees Scheduling, admins included.
@@ -227,6 +228,12 @@ const LinksSchema = z.object({
   avatarId: z.string({ required_error: "Pick an avatar." }).uuid({ message: "Pick an avatar." }),
 });
 
+// Does each linked post count as a Schedule job (org settings.scheduling.perPostJob)? Off by default.
+async function perPostJobs(orgId) {
+  const { rows } = await pool.query("select (to_jsonb(org)->'settings'->'scheduling'->>'perPostJob') = 'true' as on from org where id = $1", [orgId]);
+  return !!rows[0]?.on;
+}
+
 // The scheduling, as one Schedule job of the scheduler's: a completed task of
 // the org's Schedule type, made once per scheduled task, when its links go in —
 // so it counts in their goal, points and the Leaderboard like any other job.
@@ -331,7 +338,9 @@ schedulingRouter.post("/tasks/:id/links", requireEditor, requireActiveEod, async
       t = await taskRow(req.orgId, req.params.id);
     }
     await insertLinkPosts(req, t, d, checked.postType, t.post_on ?? new Date(Date.now() + 330 * 60_000).toISOString().slice(0, 10));
-    await creditSchedule(req.orgId, t, t.scheduler_id, req.user.sub);
+    // each post a Schedule job of theirs, only when the team counts it that way
+    // (Settings › Tasks & time › Scheduling; off: their daily Schedule task counts)
+    if (await perPostJobs(req.orgId)) await creditSchedule(req.orgId, t, t.scheduler_id, req.user.sub);
     const names = d.links.map((l) => checked.brandPlat.get(l.platformId)?.name).filter(Boolean);
     await logActivity({
       orgId: req.orgId, actorId: req.user.sub, verb: "schedule_linked", entityType: "task", entityId: t.id, channelId: t.channel_id,

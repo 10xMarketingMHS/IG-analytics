@@ -3,7 +3,7 @@ import { toast } from "sonner";
 import { api, ApiError } from "@/lib/api";
 import { useWorkspaces } from "@/lib/workspaces-context";
 import { useContentFormats } from "@/lib/use-content-formats";
-import { useIsSuper } from "@/lib/use-org";
+import { useIsSuper, useOrg } from "@/lib/use-org";
 import type { ContentFormatDef, TaskTimeRule } from "@/lib/types";
 import { LookOnly, SI, Stepper, Toggle, fmtHours } from "@/pages/settings-ui";
 import { AdTeamsCard } from "@/pages/ad-teams-card";
@@ -288,6 +288,8 @@ export function TaskRulesSection() {
 
       <AdTeamsCard />
 
+      <SchedulingCard />
+
       <section className="st-card">
         <div className="st-cardhead"><b>Breaks</b></div>
         <div className="st-row">
@@ -307,10 +309,44 @@ export function TaskRulesSection() {
         </div>
         <RuleRow l="Create a task when an editor is assigned to a post" d="Title, channel and due date carry over and stay in sync" />
         <RuleRow l="Assignee accepts before work starts" d="A task someone else gives you waits as “Pending accept” until you take it" />
-        <RuleRow l="Finished work goes to review first" d="An admin approves it before it counts as completed" />
+        <RuleRow l="Finished work goes to review first" d="Its reviewer approves it before it counts as completed, unless its type is Self close" />
         <RuleRow l="Flag tasks that pass their time budget" d="The timer turns red once a task runs past its time" />
       </section>
     </LookOnly>
+  );
+}
+
+// Scheduling: does each post a scheduler links count as a Schedule job of
+// theirs (server/src/routes/scheduling.js)? Off, the default: only their
+// Schedule tasks count, such as a daily social-desk task; the posts stay
+// listed on Scheduling either way.
+function SchedulingCard() {
+  const { org, refetch } = useOrg();
+  const on = !!org?.scheduling?.perPostJob;
+  const [busy, setBusy] = useState(false);
+  async function set(next: boolean) {
+    setBusy(true);
+    try {
+      await api("/org", { method: "PATCH", body: JSON.stringify({ scheduling: { perPostJob: next } }) });
+      await refetch();
+      toast.success(next ? "Each post scheduled counts as a Schedule job now." : "Only Schedule tasks count now. Scheduled posts stay listed on Scheduling.");
+    } catch (e) {
+      toast.error(e instanceof ApiError ? e.message : "Couldn't save that.");
+    } finally {
+      setBusy(false);
+    }
+  }
+  return (
+    <section className="st-card">
+      <div className="st-cardhead"><b>Scheduling</b><span>What counts toward a scheduler's Schedule goal.</span></div>
+      <div className="st-row">
+        <span className="st-label">
+          <b>Each post scheduled counts as a Schedule job</b>
+          <small>Off: only their Schedule tasks count, such as a daily 2-hour social-desk task. Scheduled posts stay listed on Scheduling either way.</small>
+        </span>
+        <Toggle on={on} onChange={set} disabled={busy || !org} label="Each post scheduled counts as a Schedule job" />
+      </div>
+    </section>
   );
 }
 

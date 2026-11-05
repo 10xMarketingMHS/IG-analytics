@@ -13,6 +13,8 @@ export type Org = {
   canSaveSettings: boolean;
   // Settings › Attendance (missing before the server has it).
   attendance?: AttSettings;
+  // Settings › Tasks & time › Scheduling: each post scheduled a Schedule job, or not (off by default)
+  scheduling?: { perPostJob: boolean };
   // Whether you may change what only the Super Admin changes: the work
   // calendar, task points, attendance penalties, the scoring bands and Access.
   superAdmin?: boolean;
