@@ -69,6 +69,8 @@ export type TaskSchedule = {
   // the links' deadline, and whether it passed with none in
   linksDueAt?: string | null; linksLate?: boolean;
   canSchedule?: boolean; canChangeScheduler?: boolean;
+  // finished Social work outside Scheduling: may the caller add its post from its link (POST /tasks/:id/post)
+  canAddPost?: boolean;
   platforms?: { platformId: string; key: string; name: string }[];
   posts?: { id: string; platformId: string; platformKey: string | null; platformName: string | null; permalink: string | null; date: string; views: number; saves: number; metricsUpdatedAt: string | null }[];
   defaults?: { pillarId: string; contentTypeId: string; formatId: string; avatarId: string } | null;

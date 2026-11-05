@@ -23,6 +23,12 @@ const tileOf = (key: string | null, name: string | null) => {
 };
 const errText = (e: unknown, fallback: string) => (e instanceof ApiError ? e.message : fallback);
 
+// The platform a pasted link is on, by its address (the delivery link, to start the form from).
+const platformKeyOf = (url: string | null | undefined) => {
+  const u = String(url ?? "").toLowerCase();
+  return /instagram\.com/.test(u) ? "instagram" : /facebook\.com|fb\.watch/.test(u) ? "facebook" : /youtube\.com|youtu\.be/.test(u) ? "youtube" : null;
+};
+
 export function ScheduleBlock({ task, onChanged }: { task: Task; editors?: Editor[]; onChanged: () => void }) {
   const { data, refetch } = useResource<TaskSchedule>(`/tasks/${task.id}/schedule`);
   const s = data?.ready && data.inFlow ? data : null;
@@ -31,6 +37,36 @@ export function ScheduleBlock({ task, onChanged }: { task: Task; editors?: Edito
   useEffect(() => { setDate(s?.postOn ?? ""); setTime(s?.postTime ?? ""); }, [s?.postOn, s?.postTime]);
   const [busy, setBusy] = useState(false);
   const now = useNow();
+  // finished work that never went through Scheduling: add its post from its link
+  if (!s && data?.ready && (data.canAddPost || (data.posts?.length ?? 0) > 0)) {
+    const open = (data.platforms ?? []).filter((p) => !(data.posts ?? []).some((x) => x.platformId === p.platformId));
+    const guess = platformKeyOf(task.delivery_link);
+    const prefill = Object.fromEntries(open.filter((p) => p.key === guess).map((p) => [p.platformId, task.delivery_link ?? ""]));
+    return (
+      <section className="sch" aria-label="Its post">
+        <div className="sch-head"><b>Its post</b>{(data.posts?.length ?? 0) > 0 && <span className="sch-pill live">{STAGE_WORDS.live}</span>}</div>
+        <p className="sch-say">
+          {(data.posts?.length ?? 0) > 0
+            ? `On Posts, so its numbers sync into Analytics and ${task.editor_name ?? "the editor"}'s performance.`
+            : "Finished outside Scheduling. Paste its post's link to add it on Posts, so its numbers sync into Analytics and the editor's performance."}
+        </p>
+        <div className="sch-links">
+          {(data.posts ?? []).map((p) => (
+            <div className="sch-post" key={p.id}>
+              {tileOf(p.platformKey, p.platformName)}
+              <span>{p.platformName}</span>
+              {p.permalink && <a href={p.permalink} target="_blank" rel="noopener noreferrer">Open the post ↗</a>}
+              <span className="sch-num">{p.metricsUpdatedAt ? `${p.views.toLocaleString("en-IN")} views · ${p.saves.toLocaleString("en-IN")} saves` : "Numbers come with the next sync"}</span>
+            </div>
+          ))}
+          {data.canAddPost && open.length > 0 && (
+            <LinkForm task={task} open={open} defaults={data.defaults ?? null} endpoint={`/tasks/${task.id}/post`} prefill={prefill}
+              onDone={async () => { await refetch(); onChanged(); }} />
+          )}
+        </div>
+      </section>
+    );
+  }
   if (!s) return null;
 
   const stage = s.stage ?? "to_schedule";
@@ -128,14 +164,18 @@ export function ScheduleBlock({ task, onChanged }: { task: Task; editors?: Edito
 }
 
 // A link box per platform still to post on, then the post's details (once a link is in) and Add.
-function LinkForm({ task, open, defaults, onDone }: {
+function LinkForm({ task, open, defaults, onDone, endpoint, prefill }: {
   task: Task;
   open: NonNullable<TaskSchedule["platforms"]>;
   defaults: TaskSchedule["defaults"];
   onDone: () => Promise<void>;
+  // where the links go: Scheduling's (the default), or a finished task's post (/tasks/:id/post)
+  endpoint?: string;
+  // links to start from (the task's delivery link, on its platform)
+  prefill?: Record<string, string>;
 }) {
   const { data: tax } = useResource<Taxonomy>(`/taxonomy?channel=${task.channel_id}`);
-  const [links, setLinks] = useState<Record<string, string>>({});
+  const [links, setLinks] = useState<Record<string, string>>(prefill ?? {});
   const [d, setD] = useState(defaults ?? { pillarId: "", contentTypeId: "", formatId: "", avatarId: "" });
   const [busy, setBusy] = useState(false);
   const pasted = open.filter((p) => (links[p.platformId] ?? "").trim());
@@ -145,7 +185,7 @@ function LinkForm({ task, open, defaults, onDone }: {
   async function add() {
     setBusy(true);
     try {
-      await api(`/tasks/${task.id}/links`, {
+      await api(endpoint ?? `/tasks/${task.id}/links`, {
         method: "POST",
         body: JSON.stringify({ links: pasted.map((p) => ({ platformId: p.platformId, url: links[p.platformId].trim() })), ...d }),
       });

@@ -3168,7 +3168,8 @@ export function TaskPanel({ mode, task, canWrite, editors, channels: yourBrands,
           {/* Hand over your own task, answer one offered to you, or move one on */}
           <HandoverBlock task={t} onChanged={onChanged} />
           {/* approved social work: its scheduler sets the date and pastes the links */}
-          {t.schedule_from && <ScheduleBlock task={t} editors={editors} onChanged={onChanged} />}
+          {/* in Scheduling; or finished Social work outside it, whose post can be added from its link */}
+          {(t.schedule_from || (t.status === "done" && t.task_type === "social" && !t.post_id)) && <ScheduleBlock task={t} editors={editors} onChanged={onChanged} />}
           {/* approved Ad work: the Managers and Team Leads record the ads it became */}
           {t.upload_from && <AdUploadBlock task={t} onChanged={onChanged} />}
           {/* approved R&D work (AI Job): what it becomes, a Reel, an Ad, both or not used */}

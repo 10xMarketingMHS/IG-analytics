@@ -27,6 +27,7 @@ import {
 //   GET   /tasks/:id/schedule    where one task stands, what can be done
 //   PATCH /tasks/:id/schedule    { postOn, postTime, schedulerId }
 //   POST  /tasks/:id/links       { links: [{ platformId, url }], pillarId, contentTypeId, formatId, avatarId }
+//   POST  /tasks/:id/post        the same, for finished work that never went through Scheduling
 export const schedulingRouter = Router();
 
 const REF = "coalesce(t.sid, t.tid)";
@@ -50,7 +51,8 @@ async function who(req) {
 async function taskRow(orgId, taskId) {
   const { rows } = await pool.query(
     `select t.id, t.title, t.status, t.task_type, t.post_id, t.channel_id, t.editor_id, t.scheduler_id, t.schedule_from,
-            t.post_on::text as post_on, to_char(t.post_time, 'HH24:MI') as post_time, ${REF} as ref, se.name as scheduler_name
+            t.post_on::text as post_on, to_char(t.post_time, 'HH24:MI') as post_time, ${REF} as ref, se.name as scheduler_name,
+            (t.completed_at at time zone 'Asia/Kolkata')::date::text as done_on
        from task t left join editor se on se.id = t.scheduler_id
       where t.id = $1 and t.org_id = $2`,
     [taskId, orgId],
@@ -62,6 +64,11 @@ async function mayOpen(req, t, w) {
   return (!!t.schedule_from && (w.sees || w.scheduler || (!!w.me && w.me === t.scheduler_id))) || (await mayOpenTask(req, t.id));
 }
 const canAct = (t, w) => !!t.schedule_from && t.status === "done" && (w.lead || (!!w.me && w.me === t.scheduler_id) || (!t.scheduler_id && w.scheduler));
+// Finished Social work that never went through Scheduling (added as finished
+// work, or a type that doesn't go there): a lead or an admin adds its post
+// from its link afterwards (POST /tasks/:id/post), so its numbers sync.
+const canAddPost = (req, t, w) => !t.schedule_from && t.status === "done" && t.task_type === "social" && !t.post_id && !!t.channel_id
+  && (w.lead || req.role === "admin");
 
 // Where a task stands in scheduling and what the caller may do there.
 async function scheduleView(req, t, w) {
@@ -84,8 +91,9 @@ async function scheduleView(req, t, w) {
       ? (await pool.query("select id, name from editor where id = any($1::uuid[]) order by name", [ids])).rows : [])) : [],
   ]);
   const canSchedule = canAct(t, w);
+  const addPost = canAddPost(req, t, w);
   // the details the last post took, to start the link form from: yours on this brand first, else its latest
-  const defaults = canSchedule && t.channel_id ? (await pool.query(
+  const defaults = (canSchedule || addPost) && t.channel_id ? (await pool.query(
     `select pillar_id as "pillarId", content_type_id as "contentTypeId", format_id as "formatId", avatar_id as "avatarId"
        from post where workspace_id = $1 and deleted_at is null and not is_collab_mirror
       order by (created_by = $2) desc, created_at desc limit 1`,
@@ -101,7 +109,7 @@ async function scheduleView(req, t, w) {
     // the links' deadline, and whether it has passed with none in
     linksDueAt: t.post_on ? linksDueAt(t.post_on) : null,
     linksLate: !!t.post_on && !posts.rows.length && Date.now() > Date.parse(linksDueAt(t.post_on)),
-    canSchedule, canChangeScheduler: !!t.schedule_from && t.status === "done" && w.lead,
+    canSchedule, canChangeScheduler: !!t.schedule_from && t.status === "done" && w.lead, canAddPost: addPost,
     schedulers, platforms: platforms.rows, posts: posts.rows, defaults,
   };
 }
@@ -243,6 +251,64 @@ async function creditSchedule(orgId, t, schedulerId, userId) {
   return rows[0]?.id ?? null;
 }
 
+// The links to add as a task's posts: one per platform, each a platform its
+// brand posts on and not one it has a post for already, the post's details from
+// the brand's own lists, and no link that's on a post already (any brand).
+// { brandPlat, postType } or { status, error }.
+async function checkLinks(req, t, w, d) {
+  const view = await scheduleView(req, t, w);
+  const brandPlat = new Map(view.platforms.map((p) => [p.platformId, p]));
+  const seen = new Set();
+  for (const l of d.links) {
+    const p = brandPlat.get(l.platformId);
+    if (!p) return { status: 400, error: "That platform isn't one this brand posts on." };
+    if (seen.has(l.platformId)) return { status: 400, error: `Only one ${p.name} link, please.` };
+    seen.add(l.platformId);
+    if (view.posts.some((x) => x.platformId === l.platformId)) return { status: 409, error: `This task already has its ${p.name} link.` };
+  }
+  // the post's details, from this brand's own lists (a content type sits under its pillar)
+  const { rows: [tx] } = await pool.query(
+    `select (select 1 from pillar where id = $1 and workspace_id = $5) as pillar,
+            (select 1 from content_type where id = $2 and workspace_id = $5 and pillar_id = $1) as ctype,
+            (select post_type::text from format where id = $3 and workspace_id = $5) as post_type,
+            (select 1 from avatar where id = $4 and workspace_id = $5) as avatar`,
+    [d.pillarId, d.contentTypeId, d.formatId, d.avatarId, t.channel_id],
+  );
+  if (!tx.pillar || !tx.ctype || !tx.post_type || !tx.avatar) {
+    return { status: 400, error: "Pick the post's pillar, content type, format and avatar from this brand's lists." };
+  }
+  const { rows: dup } = await pool.query(
+    `select p.title from post p join workspace w on w.id = p.workspace_id
+      where w.org_id = $1 and p.deleted_at is null and p.permalink is not null
+        and regexp_replace(regexp_replace(lower(trim(p.permalink)), '[?#].*$', ''), '/+$', '') = any($2::text[]) limit 1`,
+    [req.orgId, d.links.map((l) => sameLink(l.url))],
+  );
+  if (dup.length) return { status: 409, error: `That link is already on the post “${dup[0].title}”.` };
+  return { brandPlat, postType: tx.post_type };
+}
+// Each link becomes a post with the task's brand, title, date and editor, on the same SID.
+async function insertLinkPosts(req, t, d, postType, date) {
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+    for (const l of d.links) {
+      await client.query(
+        `insert into post (workspace_id, date, title, pillar_id, content_type_id, format_id, avatar_id, editor_id, post_type,
+                           status, published_at, permalink, created_by, platform_id, edit_stage, source, from_task_id)
+         values ($1, $2, $3, $4, $5, $6, $7, $8, $9, 'published', now(), $10, $11, $12, 'completed', 'manual', $13)`,
+        [t.channel_id, date, t.title, d.pillarId, d.contentTypeId, d.formatId, d.avatarId, t.editor_id, postType,
+          l.url.trim(), req.user.sub, l.platformId, t.id],
+      );
+    }
+    await client.query("COMMIT");
+  } catch (err) {
+    await client.query("ROLLBACK");
+    throw err;
+  } finally {
+    client.release();
+  }
+}
+
 schedulingRouter.post("/tasks/:id/links", requireEditor, requireActiveEod, async (req, res, next) => {
   const parsed = LinksSchema.safeParse(req.body ?? {});
   if (!parsed.success) return res.status(400).json({ error: parsed.error.issues[0]?.message ?? "That couldn't be read." });
@@ -256,67 +322,55 @@ schedulingRouter.post("/tasks/:id/links", requireEditor, requireActiveEod, async
     if (!canAct(t, w)) {
       return res.status(403).json({ error: t.scheduler_id ? `${t.scheduler_name ?? "Another scheduler"} has taken this one.` : "Scheduling is for the people with a Schedule goal this month." });
     }
-    // one link per platform, each a platform this brand posts on, and not one it has already
-    const view = await scheduleView(req, t, w);
-    const brandPlat = new Map(view.platforms.map((p) => [p.platformId, p]));
-    const seen = new Set();
-    for (const l of d.links) {
-      const p = brandPlat.get(l.platformId);
-      if (!p) return res.status(400).json({ error: "That platform isn't one this brand posts on." });
-      if (seen.has(l.platformId)) return res.status(400).json({ error: `Only one ${p.name} link, please.` });
-      seen.add(l.platformId);
-      if (view.posts.some((x) => x.platformId === l.platformId)) return res.status(409).json({ error: `This task already has its ${p.name} link.` });
-    }
-    // the post's details, from this brand's own lists (a content type sits under its pillar)
-    const { rows: [tx] } = await pool.query(
-      `select (select 1 from pillar where id = $1 and workspace_id = $5) as pillar,
-              (select 1 from content_type where id = $2 and workspace_id = $5 and pillar_id = $1) as ctype,
-              (select post_type::text from format where id = $3 and workspace_id = $5) as post_type,
-              (select 1 from avatar where id = $4 and workspace_id = $5) as avatar`,
-      [d.pillarId, d.contentTypeId, d.formatId, d.avatarId, t.channel_id],
-    );
-    if (!tx.pillar || !tx.ctype || !tx.post_type || !tx.avatar) {
-      return res.status(400).json({ error: "Pick the post's pillar, content type, format and avatar from this brand's lists." });
-    }
-    // a link already on a post (any brand of this team)
-    const { rows: dup } = await pool.query(
-      `select p.title from post p join workspace w on w.id = p.workspace_id
-        where w.org_id = $1 and p.deleted_at is null and p.permalink is not null
-          and regexp_replace(regexp_replace(lower(trim(p.permalink)), '[?#].*$', ''), '/+$', '') = any($2::text[]) limit 1`,
-      [req.orgId, d.links.map((l) => sameLink(l.url))],
-    );
-    if (dup.length) return res.status(409).json({ error: `That link is already on the post “${dup[0].title}”.` });
+    const checked = await checkLinks(req, t, w, d);
+    if (checked.error) return res.status(checked.status).json({ error: checked.error });
 
     // linking it takes it, when it wasn't taken yet
     if (!t.scheduler_id && w.me) {
       await pool.query("update task set scheduler_id = $2 where id = $1 and scheduler_id is null", [t.id, w.me]);
       t = await taskRow(req.orgId, req.params.id);
     }
-    const date = t.post_on ?? new Date(Date.now() + 330 * 60_000).toISOString().slice(0, 10);
-    const client = await pool.connect();
-    try {
-      await client.query("BEGIN");
-      for (const l of d.links) {
-        await client.query(
-          `insert into post (workspace_id, date, title, pillar_id, content_type_id, format_id, avatar_id, editor_id, post_type,
-                             status, published_at, permalink, created_by, platform_id, edit_stage, source, from_task_id)
-           values ($1, $2, $3, $4, $5, $6, $7, $8, $9, 'published', now(), $10, $11, $12, 'completed', 'manual', $13)`,
-          [t.channel_id, date, t.title, d.pillarId, d.contentTypeId, d.formatId, d.avatarId, t.editor_id, tx.post_type,
-            l.url.trim(), req.user.sub, l.platformId, t.id],
-        );
-      }
-      await client.query("COMMIT");
-    } catch (err) {
-      await client.query("ROLLBACK");
-      throw err;
-    } finally {
-      client.release();
-    }
+    await insertLinkPosts(req, t, d, checked.postType, t.post_on ?? new Date(Date.now() + 330 * 60_000).toISOString().slice(0, 10));
     await creditSchedule(req.orgId, t, t.scheduler_id, req.user.sub);
-    const names = d.links.map((l) => brandPlat.get(l.platformId)?.name).filter(Boolean);
+    const names = d.links.map((l) => checked.brandPlat.get(l.platformId)?.name).filter(Boolean);
     await logActivity({
       orgId: req.orgId, actorId: req.user.sub, verb: "schedule_linked", entityType: "task", entityId: t.id, channelId: t.channel_id,
       summary: `Posted ${t.ref} “${t.title}” on ${names.join(" and ")}`,
+      meta: { platforms: names, notifyEditorIds: [t.editor_id].filter(Boolean) },
+    });
+    res.status(201).json(await scheduleView(req, t, w));
+  } catch (err) { next(err); }
+});
+
+// Finished Social work that's already out but never went through Scheduling
+// (Add finished work, say): its link becomes its post, dated the day it was
+// finished, so its numbers sync and count for its editor. No Schedule job is
+// made: nobody scheduled it in Echo. A lead or an admin (canAddPost).
+//   POST /tasks/:id/post   { links: [{ platformId, url }], pillarId, contentTypeId, formatId, avatarId }
+schedulingRouter.post("/tasks/:id/post", requireEditor, async (req, res, next) => {
+  const parsed = LinksSchema.safeParse(req.body ?? {});
+  if (!parsed.success) return res.status(400).json({ error: parsed.error.issues[0]?.message ?? "That couldn't be read." });
+  const d = parsed.data;
+  try {
+    if (!(await schedulingReady())) return res.status(409).json({ error: NEEDS_SCHED_DB });
+    const t = await taskRow(req.orgId, req.params.id);
+    if (!t) return res.status(404).json({ error: "Task not found." });
+    const w = await who(req);
+    if (t.schedule_from) return res.status(409).json({ error: "This task is in Scheduling: add its links there." });
+    if (!canAddPost(req, t, w)) {
+      return res.status(t.status === "done" && t.task_type === "social" ? 403 : 409).json({
+        error: t.status !== "done" || t.task_type !== "social" || t.post_id
+          ? "Only finished Social work that isn't a post yet can have its post added."
+          : "Only a Team Lead, a Manager or an admin can add a finished task's post.",
+      });
+    }
+    const checked = await checkLinks(req, t, w, d);
+    if (checked.error) return res.status(checked.status).json({ error: checked.error });
+    await insertLinkPosts(req, t, d, checked.postType, t.done_on ?? new Date(Date.now() + 330 * 60_000).toISOString().slice(0, 10));
+    const names = d.links.map((l) => checked.brandPlat.get(l.platformId)?.name).filter(Boolean);
+    await logActivity({
+      orgId: req.orgId, actorId: req.user.sub, verb: "schedule_linked", entityType: "task", entityId: t.id, channelId: t.channel_id,
+      summary: `Added the post of ${t.ref} “${t.title}” on ${names.join(" and ")}`,
       meta: { platforms: names, notifyEditorIds: [t.editor_id].filter(Boolean) },
     });
     res.status(201).json(await scheduleView(req, t, w));
