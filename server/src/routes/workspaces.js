@@ -43,6 +43,20 @@ workspacesRouter.get("/workspaces", async (req, res, next) => {
   }
 });
 
+// Every brand of the organisation, for picking a task's brand: any of them can
+// be one, whichever you're on (the switcher above shows only yours). Names only.
+workspacesRouter.get("/brands", resolveWorkspace, async (req, res, next) => {
+  try {
+    const { rows } = await pool.query(
+      "select id, name, logo_url from workspace where org_id = $1 order by created_at asc",
+      [req.orgId],
+    );
+    res.json({ brands: rows });
+  } catch (err) {
+    next(err);
+  }
+});
+
 const NameSchema = z.object({ name: z.string().trim().min(1).max(80) });
 
 // Create a new workspace — the creator becomes its admin.

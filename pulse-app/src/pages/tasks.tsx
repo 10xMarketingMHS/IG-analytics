@@ -13,6 +13,7 @@ import { bankedMs, breakOffsetMs, fmtWait, isDayPaused, isOverBudget, OFFICE_CLO
 import { onTasksChanged } from "@/lib/task-events";
 import { homeRoleOf, peopleVisibleTo } from "@/lib/home-role";
 import { useIsSuper, useOrg } from "@/lib/use-org";
+import { useResource } from "@/lib/use-resource";
 import { tenths } from "@/lib/goal-periods";
 import { askStartDay, useDayLocked, useEodState } from "@/lib/eod-context";
 import { useAuth } from "@/lib/auth-context";
@@ -2182,7 +2183,7 @@ function TimerCard({ t }: { t: Task }) {
 // available inline.
 // Exported so My Day's review queue can open the same panel. `onDelete` is
 // optional — leave it out where deleting isn't offered and the button is hidden.
-export function TaskPanel({ mode, task, canWrite, editors, channels, onClose, onChanged, onCreated, onDelete }: {
+export function TaskPanel({ mode, task, canWrite, editors, channels: yourBrands, onClose, onChanged, onCreated, onDelete }: {
   mode: "create" | "edit";
   task: Task | null;
   canWrite: boolean;
@@ -2194,6 +2195,10 @@ export function TaskPanel({ mode, task, canWrite, editors, channels, onClose, on
   onDelete?: (t: Task) => void;
 }) {
   const creating = mode === "create";
+  // Every brand of the team (GET /brands), not only the ones you're on: any of
+  // them can be a task's brand. Until it comes in, the ones you're on.
+  const { data: brandData } = useResource<{ brands: { id: string; name: string }[] }>("/brands");
+  const channels = brandData?.brands ?? yourBrands;
   const { user } = useAuth();
   const { isAdmin, hasPermission } = useWorkspaces();
   const isSuper = useIsSuper();
