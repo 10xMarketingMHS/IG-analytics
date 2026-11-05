@@ -1800,7 +1800,7 @@ export function TaskModal({
           </div>
           <div className="field">
             <label className="f">Due date</label>
-            <input className="t" type="date" value={dueDate} onChange={(e) => setDueDate(e.target.value)} />
+            <input className="t" type="date" min={today()} value={dueDate} onChange={(e) => setDueDate(e.target.value)} />
           </div>
           <div className="field">
             <label className="f">Priority</label>
@@ -2367,6 +2367,9 @@ export function TaskPanel({ mode, task, canWrite, editors, channels: yourBrands,
     : !!task?.link_required;
   const projectDuration = isProject ? (selectedFormat?.duration_days ?? null) : null;
   const projectPoints = isProject ? (selectedFormat?.points ?? null) : null;
+  // a due date is today or later (a project's, not before its start either)
+  const dueMin = isProject && cur.start_date && cur.start_date > today() ? cur.start_date : today();
+  const pastDue = creating && !!draft.due_date && draft.due_date < today();
   const dueMax = isProject && cur.start_date != null && projectDuration != null
     ? ymd(addDays(new Date(`${cur.start_date}T00:00:00`), projectDuration))
     : undefined;
@@ -2475,7 +2478,7 @@ export function TaskPanel({ mode, task, canWrite, editors, channels: yourBrands,
   // Something else instead. The server holds the same line.
   const needsType = creating && !!category && category !== "admin" && typeChoices.length > 0 && !draft.content_format_id && !otherPick;
   const canCreate = Boolean(title.trim() && category && !adminNeedsRoster && (category === "admin" || (adByTeam ? draft.ad_team_id : draft.channel_id)) && (category !== "project" || draft.content_format_id)
-    && (!limitTypes || category === "admin" || !!draft.content_format_id)) && !(creating && dayLocked) && !elseNeedsBrief && !needsType;
+    && (!limitTypes || category === "admin" || !!draft.content_format_id)) && !(creating && dayLocked) && !elseNeedsBrief && !needsType && !pastDue;
   async function create() {
     if (!canCreate || busy) return;
     setBusy(true);
@@ -2600,11 +2603,13 @@ export function TaskPanel({ mode, task, canWrite, editors, channels: yourBrands,
     <Row label="Due Date" icon={ic(TB_ICON.event)}>
       <div className="tp2-inline">
         <input className="t tp2-date" type="date" disabled={dueRo} value={cur.due_date ?? ""}
-          min={isProject ? (cur.start_date ?? undefined) : canFillDue ? today() : undefined} max={dueMax}
+          min={dueMin} max={dueMax}
           onChange={(e) => {
             const v = e.target.value || null;
-            // part-typed years read as long-past dates: only a real choice saves
-            if (canFillDue && (!v || v < today())) return;
+            // never a past date (the server holds the same); part-typed years read
+            // as long-past dates too, so only a real choice saves
+            if (v && v < today()) return;
+            if (canFillDue && !v) return;
             set("due_date", "dueDate", v);
           }} />
         {(creating || canFillDue) && !isProject && !dueRo && quickDues().map((q) => (
@@ -2794,6 +2799,7 @@ export function TaskPanel({ mode, task, canWrite, editors, channels: yourBrands,
       : category === "project" && contentTypeChoices.length === 0 ? "No project types yet. Add one under Settings › Tasks & time first."
       : category === "project" && !draft.content_format_id ? "Pick a project type."
       : limitTypes && !draft.content_format_id ? `Pick a type. You can give others only ${limitNames} tasks.`
+      : pastDue ? "The due date can't be in the past. Pick today or a later date."
       : needsType ? `Pick its type. The type sets its time and who reviews it${category === "service" ? ", or pick Something else" : ""}.`
       : nextRef ? `Ready — ${nextRef} will be assigned when you create it.` : "Ready to create.";
     return (
@@ -3016,7 +3022,7 @@ export function TaskPanel({ mode, task, canWrite, editors, channels: yourBrands,
                       </div>
                     )}
                     <input className="t tp2-date" type="date" value={cur.due_date ?? ""} aria-label="Due date"
-                      min={isProject ? (cur.start_date ?? undefined) : undefined} max={dueMax}
+                      min={dueMin} max={dueMax}
                       onChange={(e) => setDraft((d) => ({ ...d, due_date: e.target.value || null }))} />
                     {isProject && projectDuration != null && <small className="tp2-faint">Within {projectDuration} day{projectDuration === 1 ? "" : "s"} of the start{dueMax ? ` (by ${dueMax})` : ""}.</small>}
                     {!cur.due_date && !adminTask && <small className="tp2-faint">With no due date, it can't start until one is picked.</small>}

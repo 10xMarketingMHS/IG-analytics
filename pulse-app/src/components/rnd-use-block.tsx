@@ -174,7 +174,7 @@ export function RndUseBlock({ task, formats, people, channels, adTeams, canDecid
                 </select>
               </label>
               <label>Due <small>(optional)</small>
-                <input type="date" value={d.dueDate} onChange={(e) => setD(k, { dueDate: e.target.value })} />
+                <input type="date" min={new Date().toLocaleDateString("en-CA")} value={d.dueDate} onChange={(e) => setD(k, { dueDate: e.target.value })} />
               </label>
             </div>
           </div>

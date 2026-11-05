@@ -39,6 +39,7 @@ const TASK_TYPE = ["content", "short_task", "general", "social", "ad", "admin", 
 function todayYmdIst() {
   return new Date().toLocaleDateString("en-CA", { timeZone: "Asia/Kolkata" });
 }
+const PAST_DUE = "The due date can't be in the past. Pick today or a later date.";
 function addDaysYmd(ymd, n) {
   const d = new Date(`${ymd}T00:00:00Z`);
   d.setUTCDate(d.getUTCDate() + n);
@@ -482,6 +483,8 @@ tasksRouter.post("/tasks", requireEditor, requireActiveEod, async (req, res, nex
     if ((taskType === "social" || taskType === "service" || taskType === "project") && !channelId) {
       return res.status(400).json({ error: "Pick a Brand — Social, Service and Project tasks are numbered per brand." });
     }
+    // A due date is today or later (past work is Add finished work's, below).
+    if (d.dueDate && d.dueDate < todayYmdIst()) return res.status(400).json({ error: PAST_DUE });
     // Project: has a Start Date (defaults to today) and a Due Date bounded by the
     // selected project type's configured duration. Enforced server-side, not just
     // in the date picker.
@@ -720,6 +723,11 @@ tasksRouter.patch("/tasks/:id", requireEditor, requireActiveEod, async (req, res
       [req.params.id, req.orgId],
     )).rows[0];
     if (!prior) return res.status(404).json({ error: "Task not found" });
+    // A new due date is today or later. One already set stays as it is (an
+    // overdue task keeps its date when something else on it changes).
+    if (d.dueDate && d.dueDate !== prior.due_date && d.dueDate < todayYmdIst()) {
+      return res.status(400).json({ error: PAST_DUE });
+    }
 
     // a task already on a main type keeps it, but none moves onto one (../type-tree.js)
     if (d.contentFormatId && d.contentFormatId !== prior.content_format_id) {
