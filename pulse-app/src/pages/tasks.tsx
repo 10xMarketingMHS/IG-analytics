@@ -167,12 +167,14 @@ function weekRange(now: Date) {
 
 // Every board filter except the due window — shared by the board itself and
 // the counts on the due chips, so the two always agree.
-type BoardFilters = { mine: boolean; editorId: string | null; editor: string; type: TaskType | ""; format: string; q: string };
+type BoardFilters = { mine: boolean; review: boolean; editorId: string | null; editor: string; type: TaskType | ""; format: string; q: string };
 // My tasks: your own, and anyone's waiting for your review (a task you
 // assigned comes back to you to review).
 const forMyReview = (t: Task) => t.status === "review" && !!t.can_review;
 function passesFilters(t: Task, f: BoardFilters) {
   if (f.mine && !forMyReview(t) && (!f.editorId || t.editor_id !== f.editorId)) return false;
+  // To review: only what waits for your review
+  if (f.review && !forMyReview(t)) return false;
   if (f.editor && t.editor_id !== f.editor) return false;
   if (f.type && t.task_type !== f.type) return false;
   if (f.format && t.content_format_id !== f.format) return false;
@@ -578,17 +580,18 @@ export function TasksPage() {
   // to the whole team's (since they assign & monitor it). Either can toggle;
   // this is not an access restriction. Persisted per-user once they switch.
   const viewKey = user ? `${VIEW_KEY_PREFIX}${user.id}` : null;
-  const [scope, setScope] = useState<"mine" | "team">(() => {
+  const [scope, setScope] = useState<"mine" | "team" | "review">(() => {
     const stored = viewKey ? window.localStorage.getItem(viewKey) : null;
     if (stored === "mine" || stored === "team") return stored;
     return role === "editor" ? "mine" : "team";
   });
-  function setScopeAndPersist(next: "mine" | "team") {
+  function setScopeAndPersist(next: "mine" | "team" | "review") {
     setScope(next);
-    if (viewKey) window.localStorage.setItem(viewKey, next);
+    // To review is for now: the board opens on My tasks or Team as before
+    if (viewKey && next !== "review") window.localStorage.setItem(viewKey, next);
     // A member filter left over from Team scope makes "My Tasks" look broken
     // (mine AND someone else's editor_id can never both be true) — clear it.
-    if (next === "mine") setFilterEditor("");
+    if (next !== "team") setFilterEditor("");
   }
   // Clicking "Team" while it's already the active scope has nothing else to
   // do, so that click opens the member-filter popover instead — one button
@@ -626,7 +629,7 @@ export function TasksPage() {
   );
   const filtered = useMemo(
     () => {
-      const f: BoardFilters = { mine: scope === "mine", editorId: user?.editorId ?? null, editor: filterEditor, type: filterType, format: filterFormat, q: search.trim().toLowerCase() };
+      const f: BoardFilters = { mine: scope === "mine", review: scope === "review", editorId: user?.editorId ?? null, editor: filterEditor, type: filterType, format: filterFormat, q: search.trim().toLowerCase() };
       const list = effective.filter((t) => passesFilters(t, f) && matchesDueTab(t, dueTab, now));
       // Sort only matters for List view — Board/Calendar group by column/day
       // instead, so this is a no-op there but harmless to always apply.
@@ -653,9 +656,12 @@ export function TasksPage() {
   // due-tab/search don't shrink it, so it reads as a stable at-a-glance
   // total) but does respect My Tasks vs Team — otherwise "My Tasks" shows an
   // empty board next to a misleadingly large org-wide number.
+  // what waits for your review, whoever's it is (the To review button)
+  const toReview = useMemo(() => (tasks ?? []).filter(forMyReview).length, [tasks]);
   const taskCounts = useMemo(() => {
     const all = scope === "mine"
       ? (tasks ?? []).filter((t) => !!user?.editorId && t.editor_id === user.editorId)
+      : scope === "review" ? (tasks ?? []).filter(forMyReview)
       : (tasks ?? []);
     let social = 0, ad = 0, pendingOverdue = 0, open = 0, openSocial = 0, openAd = 0;
     for (const t of all) {
@@ -705,7 +711,7 @@ export function TasksPage() {
   }, [boardShown]);
   // The number on each due chip: open work in that window, under every other filter.
   const dueCounts = useMemo(() => {
-    const f: BoardFilters = { mine: scope === "mine", editorId: user?.editorId ?? null, editor: filterEditor, type: filterType, format: filterFormat, q: search.trim().toLowerCase() };
+    const f: BoardFilters = { mine: scope === "mine", review: scope === "review", editorId: user?.editorId ?? null, editor: filterEditor, type: filterType, format: filterFormat, q: search.trim().toLowerCase() };
     const base = effective.filter((t) => t.status !== "done" && passesFilters(t, f));
     const out: Partial<Record<DueTab, number>> = {};
     for (const d of DUE_TABS) out[d.key] = base.filter((t) => matchesDueTab(t, d.key, now)).length;
@@ -1012,6 +1018,12 @@ export function TasksPage() {
               </div>
             )}
           </div>
+          {(toReview > 0 || scope === "review") && (
+            <button className={"tb-review" + (scope === "review" ? " on" : "")} onClick={() => setScopeAndPersist(scope === "review" ? "mine" : "review")}
+              title="Tasks waiting for your review">
+              {TB_ICON.hourglass} To review<span className="tb-chip-n">{toReview}</span>
+            </button>
+          )}
         </div>
         <div className="tb-chips" role="group" aria-label="Due">
           {DUE_TABS.map((d) => {
@@ -1222,7 +1234,7 @@ export function TasksPage() {
                     if (!canPrev && !canNext && !holdCtrl) {
                       // In review but this isn't an admin's view — nothing
                       // to do here but wait.
-                      return t.status === "review" ? <span className="tb-act mute">{TB_ICON.hourglass} Waiting for review</span> : null;
+                      return t.status === "review" ? <span className="tb-act mute" title="Who can review it now">{TB_ICON.hourglass} Waiting for {t.review_names ?? t.review_by ?? "review"}</span> : null;
                     }
                     // Start is the main action; moving on to review is a link;
                     // approving is green; going back is quiet.
@@ -2546,7 +2558,7 @@ export function TaskPanel({ mode, task, canWrite, editors, channels: yourBrands,
   const rule = creating || !task ? ""
     : task.status === "review" ? (canResolve
       ? "To approve, set Status to Completed. Sending back for rework needs a note — use the Send back / ← button."
-      : task.review_by ? `⏳ Waiting for ${task.review_by} to review it.` : "⏳ Waiting on review.")
+      : task.review_names || task.review_by ? `⏳ Waiting for ${task.review_names ?? task.review_by} to review it.` : "⏳ Waiting on review.")
     : task.status === "in_progress" && task.task_type === "admin" ? "A General task needs no review: set Status to Completed when it's done."
     : task.status === "in_progress" && closesWithoutReview(task, contentFormats) ? "This type needs no review: whoever did it sets Status to Completed when it's done."
     : task.status === "in_progress" ? "Use Hold on the board to park it — a started task can't go back to To Do."

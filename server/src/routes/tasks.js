@@ -465,7 +465,11 @@ tasksRouter.get("/tasks", async (req, res, next) => {
       editorRanks(req.orgId),
     ]);
     const seen = viewer.seesAll ? rows : rows.filter((t) => canSeeTask(viewer, ranks, t));
-    const tasks = await withReview(req, seen);
+    // and what waits for your review though it isn't yours to see otherwise (a
+    // type's reviewer below its owner, say): the board's To review lists it
+    const hidden = viewer.seesAll ? [] : rows.filter((t) => t.status === "review" && !seen.includes(t));
+    if (hidden.length) await withReview(req, hidden);
+    const tasks = await withReview(req, [...seen, ...hidden.filter((t) => t.can_review)]);
     res.json({ tasks: req.query.lite === "1" ? tasks.map(liteTask) : tasks });
   } catch (err) {
     next(err);

@@ -270,6 +270,8 @@ export type Task = {
   // for in words ("Rahul", "a Team Lead") — server/src/review-route.js.
   can_review?: boolean;
   review_by?: string | null;
+  // who exactly may review it now, by name ("vasanth", "Rahul or Kamesh")
+  review_names?: string | null;
   // The assignee's break state — offsets the countdown by however long
   // they've been (or are currently) on break, shared across every task
   // they have running. See use-break.ts.

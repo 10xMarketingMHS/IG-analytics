@@ -78,5 +78,13 @@ export async function mayOpenTask(req, taskId) {
   if (!rows.length) return true;
   if (canSeeTask(viewer, await editorRanks(req.orgId), rows[0])) return true;
   // approved work in scheduling: open to this month's schedulers (./scheduling.js)
-  return rows[0].in_scheduling && (await isScheduler(req.orgId, viewer.editorId));
+  if (rows[0].in_scheduling && (await isScheduler(req.orgId, viewer.editorId))) return true;
+  // waiting in Review for this person (a type's reviewer below its owner, say);
+  // loaded here, not at the top: ./review-route.js reads this file too
+  const { rows: [t] } = await pool.query(
+    "select editor_id, assigned_by, content_format_id, review_started_at, status from task where id = $1 and org_id = $2", [taskId, req.orgId],
+  );
+  if (t?.status !== "review") return false;
+  const { reviewContext, routeReview } = await import("./review-route.js");
+  return routeReview(t, await reviewContext(req.orgId)).reviewers.includes(req.user.sub);
 }

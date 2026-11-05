@@ -105,6 +105,9 @@ export async function withReview(req, tasks) {
     const r = routeReview(t, ctx);
     t.can_review = r.reviewers.includes(req.user.sub);
     t.review_by = r.label;
+    // who exactly may review it now, by name (the card's "Waiting for …")
+    const names = r.reviewers.map((id) => ctx.people.find((p) => p.userId === id)?.name).filter(Boolean);
+    t.review_names = names.length > 3 ? `${names.slice(0, 3).join(", ")} and ${names.length - 3} more` : names.length > 1 ? `${names.slice(0, -1).join(", ")} or ${names.at(-1)}` : names[0] ?? null;
   }
   return tasks;
 }
