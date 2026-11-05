@@ -456,11 +456,11 @@ export function TasksPage() {
   const canHoldAny = isAdmin || hasPermission("hold_tasks");    // hold/resume anyone's task
   const canAssign = isAdmin || hasPermission("assign_tasks");   // set work up for other people
   const canResolveTask = (t: Task) => t.status === "review" && !!t.can_review && !isOwner(t);
-  // Deleting erases the work and its points: a completed task is an admin's
-  // call; anything else an assigner's — or yours, if you created it for yourself.
-  // The server enforces the same rule.
-  const canDeleteTask = (t: Task) =>
-    isAdmin || (canWrite && t.status !== "done" && (canAssign || (isOwner(t) && !!user && t.created_by === user.id)));
+  // Deleting erases the work and its points: a completed task is the Super
+  // Admin's call; anything else an admin's or assigner's — or yours, if you
+  // created it for yourself. The server enforces the same rule.
+  const canDeleteTask = (t: Task) => t.status === "done" ? isSuper
+    : isAdmin || (canWrite && (canAssign || (isOwner(t) && !!user && t.created_by === user.id)));
   // Viewers are read-only (the backend already 403s their writes); hide the
   // status-move controls from them so the affordance matches the permission.
   const canWrite = active?.role !== "viewer";

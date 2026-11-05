@@ -15,6 +15,7 @@ import { coverFrom } from "../goal-score.js";
 import { enterScheduling, leaveScheduling, schedulerIds, schedulingReady } from "../scheduling.js";
 import { adTeamsReady, enterUploads, leaveUploads, nextTeamAid, uploadsReady } from "../ad-uploads.js";
 import { parentTypeOf, taskTypeError } from "../type-tree.js";
+import { isSuperHere } from "../super-admin.js";
 
 export const tasksRouter = Router();
 
@@ -1562,37 +1563,58 @@ async function spawnNextOccurrence(taskId, recurrence) {
   }
 }
 
-// Deleting erases the work, its history and its points. A completed task: an
-// admin only. Anything else: an admin or an assign_tasks grantee — or the person
-// who created the task for themselves. Every deletion is written to the feed.
+// Deleting erases the work, its history and its points. A completed task
+// (approved, scheduled, live or uploaded): the Super Admin only. Anything else:
+// an admin or an assign_tasks grantee — or the person who created the task for
+// themselves. ?posts=1 (the Super Admin, from the Social pipeline) also deletes
+// the posts it made, or the post it was made from. Every deletion is written to
+// the feed.
 tasksRouter.delete("/tasks/:id", requireEditor, async (req, res, next) => {
   try {
     const t = (await pool.query(
-      "select title, tid, status, editor_id, channel_id, created_by, assigned_by from task where id = $1 and org_id = $2",
+      "select title, tid, status, editor_id, channel_id, created_by, assigned_by, post_id from task where id = $1 and org_id = $2",
       [req.params.id, req.orgId],
     )).rows[0];
     if (!t) return res.status(404).json({ error: "Task not found" });
+    const withPosts = req.query.posts === "1";
+    const isSuper = (t.status === "done" || withPosts) && (await isSuperHere(req));
+    if (t.status === "done" && !isSuper) {
+      return res.status(403).json({ error: "This task is completed — only the Super Admin can delete it." });
+    }
+    if (withPosts && !isSuper) return res.status(403).json({ error: "Only the Super Admin can delete a task's posts with it." });
     if (req.role !== "admin") {
-      if (t.status === "done") {
-        return res.status(403).json({ error: "This task is completed — only an admin can delete it." });
-      }
       // Yours, made for yourself; or, with Assign tasks, one you set up.
       const myEid = await callerEditorId(req);
       const ownCreation = t.created_by === req.user.sub && !!myEid && t.editor_id === myEid;
       const setUp = setUpBy(t, req.user.sub) && (await hasActiveGrant(req.orgId, req.user.sub, "assign_tasks"));
       if (!ownCreation && !setUp) return res.status(403).json({ error: "You can delete only tasks you made for yourself or assigned." });
     }
-    const { rowCount } = await pool.query(
-      "delete from task where id = $1 and org_id = $2",
-      [req.params.id, req.orgId],
-    );
-    if (!rowCount) return res.status(404).json({ error: "Task not found" });
+    const db = await pool.connect();
+    let posts = 0;
+    try {
+      await db.query("begin");
+      if (withPosts) {
+        posts = (await db.query(
+          `delete from post p using workspace w
+            where w.id = p.workspace_id and w.org_id = $2 and (p.from_task_id = $1 or p.id = $3)`,
+          [req.params.id, req.orgId, t.post_id],
+        )).rowCount;
+      }
+      const { rowCount } = await db.query("delete from task where id = $1 and org_id = $2", [req.params.id, req.orgId]);
+      if (!rowCount) { await db.query("rollback"); return res.status(404).json({ error: "Task not found" }); }
+      await db.query("commit");
+    } catch (err) {
+      await db.query("rollback").catch(() => {});
+      throw err;
+    } finally {
+      db.release();
+    }
     await logActivity({
       orgId: req.orgId, actorId: req.user.sub, verb: "deleted",
       entityType: "task", entityId: req.params.id, channelId: t.channel_id,
-      summary: `Deleted task “${t.title}”`,
+      summary: `Deleted task “${t.title}”${posts ? ` and its post${posts === 1 ? "" : "s"}` : ""}`,
       // The task row is gone — keep who it belonged to, so they still see this.
-      meta: { tid: t.tid, editorId: t.editor_id },
+      meta: { tid: t.tid, editorId: t.editor_id, ...(posts ? { posts } : {}) },
     });
     res.status(204).end();
   } catch (err) {

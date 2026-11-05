@@ -9,6 +9,8 @@ import { useTasks } from "@/lib/use-tasks";
 import { notifyTasksChanged } from "@/lib/task-events";
 import { useEditors } from "@/lib/use-editors";
 import { useWorkspaces } from "@/lib/workspaces-context";
+import { useIsSuper } from "@/lib/use-org";
+import { Modal } from "@/components/modal";
 import { gradFor, initialsOf } from "@/lib/editor-visuals";
 import { TaskPanel } from "@/pages/tasks";
 import type { Editor, Task } from "@/lib/types";
@@ -111,6 +113,8 @@ function relTime(iso: string | null) {
   return `${Math.round(h / 24)}d ago`;
 }
 const refOf = (t: Task) => (t.task_type === "ad" ? t.ad_id : t.sid) ?? null;
+// a social task that made a post (scheduling's links), or was made from one
+const hasPost = (t: Task) => (t.linked_posts ?? 0) > 0 || !!t.post_id;
 const lastTouch = (t: Task) => t.completed_at ?? t.review_started_at ?? t.budget_started_at ?? t.created_at;
 
 function Ava({ editor, size = 26 }: { editor: Editor | null; size?: number }) {
@@ -143,6 +147,11 @@ export function MetricsPage() {
   const [q, setQ] = useState("");
   const [openId, setOpenId] = useState<string | null>(null);
   const [claiming, setClaiming] = useState<string | null>(null);
+  // Deleting (test work, say): the Super Admin only, whatever its stage
+  const isSuper = useIsSuper();
+  const [toDelete, setToDelete] = useState<Task | null>(null);
+  const [alsoPosts, setAlsoPosts] = useState(true);
+  const [deleting, setDeleting] = useState(false);
   const today = todayStr();
   const edOf = (id: string | null) => (id ? (editors ?? []).find((e) => e.id === id) ?? null : null);
 
@@ -195,6 +204,23 @@ export function MetricsPage() {
       setClaiming(null);
     }
   }
+  async function confirmDelete() {
+    const t = toDelete;
+    if (!t) return;
+    setDeleting(true);
+    try {
+      await api(`/tasks/${t.id}${hasPost(t) && alsoPosts ? "?posts=1" : ""}`, { method: "DELETE" });
+      setToDelete(null);
+      if (openId === t.id) setOpenId(null);
+      await refetch();
+      notifyTasksChanged();
+      toast.success(`${refOf(t) ?? t.tid ?? "The task"} is deleted.`);
+    } catch (e) {
+      toast.error(e instanceof ApiError ? e.message : "Couldn't delete that task.");
+    } finally {
+      setDeleting(false);
+    }
+  }
   const openTask = openId ? (allTasks ?? []).find((t) => t.id === openId) ?? null : null;
 
   if (allTasks === null) return <section className="screen"><Loader label="Loading…" /></section>;
@@ -202,6 +228,10 @@ export function MetricsPage() {
   const typeCount = (k: TypeFilter) => (k === "all" ? pipelineTasks.length : pipelineTasks.filter((t) => pipelineBucket(t) === k).length);
   const claimBtn = (t: Task) => !t.editor_id && canWrite && t.status !== "done" && (
     <button type="button" className="pp-claim" disabled={claiming === t.id} onClick={(e) => { e.stopPropagation(); claim(t); }}>{claiming === t.id ? "…" : "Claim"}</button>
+  );
+  const delBtn = (t: Task) => isSuper && (
+    <button type="button" className="pp-del" title="Delete" aria-label={`Delete ${refOf(t) ?? t.title}`}
+      onClick={(e) => { e.stopPropagation(); setAlsoPosts(true); setToDelete(t); }}><Icon name="delete" size={17} /></button>
   );
 
   return (
@@ -305,7 +335,7 @@ export function MetricsPage() {
         <section className="pp-card pp-table">
           <div className="pp-scroll">
             <div className="pp-grid">
-              <div className="pp-th"><span>Title</span><span>ID</span><span>Channel</span><span>Editor</span><span>Stage</span><span>Due date</span><span className="r">Updated</span></div>
+              <div className={"pp-th" + (isSuper ? " del" : "")}><span>Title</span><span>ID</span><span>Channel</span><span>Editor</span><span>Stage</span><span>Due date</span><span className="r">Updated</span>{isSuper && <span />}</div>
               {rows.map((t) => {
                 const s = STAGES[STAGE_INDEX[stageOf(t)]];
                 const bucket = pipelineBucket(t)!;
@@ -314,7 +344,7 @@ export function MetricsPage() {
                 const due = dueOf(t, today);
                 const ref = refOf(t);
                 return (
-                  <div key={t.id} className="pp-tr" role="button" tabIndex={0} style={{ ["--tc" as string]: TYPE_COLOR[bucket] }}
+                  <div key={t.id} className={"pp-tr" + (isSuper ? " del" : "")} role="button" tabIndex={0} style={{ ["--tc" as string]: TYPE_COLOR[bucket] }}
                     onClick={() => setOpenId(t.id)} onKeyDown={(e) => { if (e.key === "Enter") setOpenId(t.id); }}>
                     <span className="pp-cell-title">
                       <b>{t.title}</b>
@@ -334,6 +364,7 @@ export function MetricsPage() {
                     </span>
                     <span className={"pp-due " + due.tone}><Icon name={due.icon} size={15} />{due.l}</span>
                     <span className="pp-upd">{relTime(lastTouch(t))}</span>
+                    {delBtn(t)}
                   </div>
                 );
               })}
@@ -374,6 +405,7 @@ export function MetricsPage() {
                       <span className="pp-arow-end">
                         {claimBtn(t)}
                         <span className={"pp-duepill " + due.tone}>{due.l}</span>
+                        {delBtn(t)}
                       </span>
                     </div>
                   );
@@ -391,6 +423,22 @@ export function MetricsPage() {
           onChanged={() => { refetch().catch(() => {}); }}
           onCreated={() => {}}
         />
+      )}
+
+      {toDelete && (
+        <Modal title={`Delete ${refOf(toDelete) ?? toDelete.tid ?? "this task"}?`} onClose={() => { if (!deleting) setToDelete(null); }}>
+          <p className="pp-delq">“{toDelete.title}” goes for good, with its history, time and points. This can't be undone.</p>
+          {hasPost(toDelete) && (
+            <label className="pp-delpost">
+              <input type="checkbox" checked={alsoPosts} onChange={(e) => setAlsoPosts(e.target.checked)} />
+              <span>Also delete its post, from Posts and Analytics</span>
+            </label>
+          )}
+          <div className="pp-delbtns">
+            <button type="button" className="btn" onClick={() => setToDelete(null)} disabled={deleting}>Cancel</button>
+            <button type="button" className="btn pp-delgo" onClick={confirmDelete} disabled={deleting}>{deleting ? "Deleting…" : "Delete"}</button>
+          </div>
+        </Modal>
       )}
     </section>
   );

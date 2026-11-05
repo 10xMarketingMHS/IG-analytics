@@ -78,6 +78,17 @@ html[data-theme="dark"] .pp{--pp-text:#ededf0;--pp-text2:#b4b4bc;--pp-text3:#8b8
 .pp-th,.pp-tr{display:grid;grid-template-columns:minmax(260px,1fr) 96px 180px 160px 150px 110px 90px;gap:12px;align-items:center}
 .pp-th{padding:11px 18px 11px 21px;border-bottom:1px solid var(--pp-line2);font-size:11px;font-weight:800;letter-spacing:.06em;text-transform:uppercase;color:var(--pp-text3)}
 .pp-th .r,.pp-upd{text-align:right}
+/* the Super Admin's delete: one more narrow column */
+.pp-th.del,.pp-tr.del{grid-template-columns:minmax(260px,1fr) 96px 180px 160px 150px 110px 90px 30px}
+.pp-del{width:30px;height:30px;display:grid;place-items:center;flex:none;border:0;border-radius:8px;background:transparent;color:var(--pp-text3);cursor:pointer}
+.pp-del:hover,.pp-del:focus-visible{background:color-mix(in srgb,var(--pp-bad) 13%,transparent);color:var(--pp-bad)}
+/* its confirm box (the modal sits outside .pp) */
+.pp-delq{margin:0 0 14px;font-size:14px;line-height:1.5;color:var(--text)}
+.pp-delpost{display:flex;align-items:center;gap:9px;margin:0 0 16px;font-size:13.5px;color:var(--text);cursor:pointer}
+.pp-delpost input{width:16px;height:16px;accent-color:var(--rose)}
+.pp-delbtns{display:flex;justify-content:flex-end;gap:8px}
+.pp-delgo{background:var(--rose);border-color:transparent;color:#fff}
+.pp-delgo:hover:not(:disabled){filter:brightness(.92)}
 .pp-tr{min-height:56px;padding:8px 18px;border-bottom:1px solid var(--pp-line2);border-left:3px solid var(--tc);cursor:pointer;font-size:13px}
 .pp-tr:hover{background:var(--pp-sunk)}
 .pp-tr:last-child{border-bottom:0}
