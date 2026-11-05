@@ -183,6 +183,10 @@ editorsRouter.delete("/editors/:id", requireAdmin, async (req, res, next) => {
     if (!rowCount) return res.status(404).json({ error: "Editor not found" });
     res.status(204).end();
   } catch (err) {
+    // something still points at them that the database won't let go: say what
+    if (err.code === "23503") {
+      return res.status(409).json({ error: `They can't be removed yet: ${String(err.table ?? "another record").replace(/_/g, " ")} still points at them.` });
+    }
     next(err);
   }
 });

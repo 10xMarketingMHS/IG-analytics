@@ -10,6 +10,9 @@ import { DESIGNATIONS, ROLE_KEY_LABEL, TeamMemberModal, positionRank, roleKeyOf,
 import { dateTime } from "@/lib/time-format";
 import { PositionMark } from "@/components/position-mark";
 
+// A team member's login that isn't on this brand (GET /users' elsewhere)
+type AwayLogin = { id: string; email: string; active: boolean; editor_id: string; brands: string[] };
+
 // Team › Roster (Pulse Redesign v5): everyone on the team in one table — their
 // position, employee code, whether they count in the task score, login, role
 // and whether they can sign in — changed right on the row. Role runs Super Admin › Admin › Editor › Viewer › No login;
@@ -40,11 +43,15 @@ export function TeamRoster() {
   const { active } = useWorkspaces();
   const { editors, refetch: refetchEditors } = useEditors();
   const [users, setUsers] = useState<AppUser[] | null>(null);
+  // team members' logins that aren't on this brand (No login here, or another brand only)
+  const [elsewhere, setElsewhere] = useState<AwayLogin[]>([]);
   const [modal, setModal] = useState<{ row: TeamRow; login?: boolean; role?: RoleKey } | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
 
   const loadUsers = useCallback(() => {
-    api<{ users: AppUser[] }>("/users").then(({ users }) => setUsers(users)).catch(() => setUsers([]));
+    api<{ users: AppUser[]; elsewhere?: AwayLogin[] }>("/users")
+      .then(({ users, elsewhere }) => { setUsers(users); setElsewhere(elsewhere ?? []); })
+      .catch(() => { setUsers([]); setElsewhere([]); });
   }, []);
   useEffect(() => { loadUsers(); }, [loadUsers]);
   function refetchAll() { refetchEditors(); loadUsers(); }
@@ -59,6 +66,7 @@ export function TeamRoster() {
     ...users.filter((u) => !u.editor_id).map((u) => ({ editor: null, user: u })),
   ];
   const withLogin = rows.filter((r) => r.user).length;
+  const awayOf = (r: TeamRow) => (!r.user && r.editor ? elsewhere.find((o) => o.editor_id === r.editor!.id) ?? null : null);
   // Until someone is a Super Admin, every admin can manage admins.
   const me = users?.find((u) => u.isSelf) ?? null;
   const amSuper = !(users ?? []).some((u) => u.role === "admin" && u.isSuperAdmin) || !!me?.isSuperAdmin;
@@ -163,7 +171,9 @@ export function TeamRoster() {
               // Admin's to set (the position decides their Home and access).
               const recordLocked = !!u && u.role === "admin" && !amSuper;
               const lockTip = recordLocked ? "Only a Super Admin can change an admin's details" : undefined;
-              const st = !u ? ["No login", "", IC.none] as const
+              const away = awayOf(r);
+              const awayWhere = away ? (away.brands.length ? `on ${away.brands.join(", ")}` : "on no brand") : "";
+              const st = !u ? [away ? "Login not here" : "No login", "", IC.none] as const
                 : !u.active ? ["Deactivated", "bad", IC.off] as const
                 : u.resetRequestedAt ? ["Asked for reset", "warn", IC.key] as const
                 : ["Active", "good", IC.ok] as const;
@@ -208,7 +218,9 @@ export function TeamRoster() {
                       );
                     })() : <span className="mt-muted">—</span>}
                   </span>
-                  <span role="cell" className={"mt-rmail" + (u ? "" : " none")} title={u?.email}>{u ? u.email : "No login access"}</span>
+                  <span role="cell" className={"mt-rmail" + (u ? "" : " none")} title={u?.email ?? (away ? `${away.email}, ${awayWhere}. Give login brings it back here.` : undefined)}>
+                    {u ? u.email : away ? <>{away.email}<small> · {awayWhere}</small></> : "No login access"}
+                  </span>
                   <span role="cell" className="mt-rrole">
                     <select className="mt-rin" value={rk} disabled={(u ? busy === u.id : false) || !!u?.isSelf || locked} aria-label={`${name}'s role`}
                       title={u?.isSelf ? "You can't change your own role" : locked ? "Only a Super Admin can change an admin" : undefined}
@@ -251,7 +263,7 @@ export function TeamRoster() {
       </p>
       {modal && (
         <TeamMemberModal
-          row={modal.row} startWithLogin={modal.login} startRole={modal.role} canManageAdmins={amSuper}
+          row={modal.row} startWithLogin={modal.login} startRole={modal.role} startEmail={awayOf(modal.row)?.email} canManageAdmins={amSuper}
           onClose={() => setModal(null)} onSaved={refetchAll}
           existingEmails={(users ?? []).map((x) => x.email.toLowerCase())}
           onRemoveEditor={removeEditor} onRemoveLogin={removeLogin}

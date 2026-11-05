@@ -46,8 +46,19 @@ usersRouter.get("/users", requirePermission("access_manage"), async (req, res, n
        order by (m.role = 'admin') desc, u.email asc`,
       [req.workspaceId, req.orgId],
     );
+    // Team members' logins that aren't on this brand (set to No login here, or
+    // only on another brand): the Roster names them, so Give login can use them.
+    const { rows: elsewhere } = await pool.query(
+      `select u.id, u.email, u.active, u.editor_id,
+              coalesce((select array_agg(w.name order by w.name) from membership m join workspace w on w.id = m.workspace_id
+                         where m.user_id = u.id and w.org_id = $2), '{}') as brands
+         from app_user u join editor e on e.id = u.editor_id and e.org_id = $2
+        where not exists (select 1 from membership m where m.user_id = u.id and m.workspace_id = $1)`,
+      [req.workspaceId, req.orgId],
+    );
     res.json({
       users: rows.map((u) => ({ ...u, isSelf: u.id === req.user.sub })),
+      elsewhere,
     });
   } catch (err) {
     next(err);
@@ -101,6 +112,7 @@ usersRouter.post("/users", requireAdmin, async (req, res, next) => {
       [email],
     );
     let user = rows[0];
+    const wasThere = !!user;
     // An admin's existing login is added (and linked) only by the Super Admin.
     if (user && (await adminLogin(req.orgId, user.id)) && !(await isSuperUser(req.user.sub, st))) {
       await client.query("ROLLBACK");
@@ -147,12 +159,31 @@ usersRouter.post("/users", requireAdmin, async (req, res, next) => {
         await client.query("ROLLBACK");
         return res.status(409).json({ error: "That login is already linked to another team member. Change it on their row instead." });
       }
+      // One login per team member. An older login of theirs that's on no brand
+      // here any more (its Role set to No login) is let go, so this one takes
+      // its place; one still on a brand (or a Super Admin's) is named, to use instead.
       const { rows: taken } = await client.query(
-        "select 1 from app_user where editor_id = $1 and id != $2", [editorId, user.id],
+        `select u.id, u.email, coalesce((to_jsonb(u)->>'is_super_admin')::boolean, false) as super,
+                coalesce((select array_agg(w.name order by w.name) from membership m join workspace w on w.id = m.workspace_id
+                           where m.user_id = u.id and w.org_id = $3), '{}') as brands
+           from app_user u where u.editor_id = $1 and u.id != $2`,
+        [editorId, user.id, req.orgId],
       );
-      if (taken.length) {
+      const kept = taken.find((t) => t.brands.length || t.super);
+      if (kept) {
         await client.query("ROLLBACK");
-        return res.status(409).json({ error: "That team member already has a login linked." });
+        return res.status(409).json({
+          error: kept.brands.length
+            ? `They already sign in as ${kept.email} (on ${kept.brands.join(", ")}). Give the login with that email, or set it to No login there first.`
+            : `They already sign in as ${kept.email}. Give the login with that email instead.`,
+        });
+      }
+      if (taken.length) await client.query("update app_user set editor_id = null where id = any($1::uuid[])", [taken.map((t) => t.id)]);
+      // Their own login back (set to No login before): the temporary password
+      // typed in is the one they sign in with now, and it's switched on again.
+      if (password && user.editor_id === editorId && wasThere) {
+        await client.query("update app_user set password_hash = $2, active = true where id = $1", [user.id, await bcrypt.hash(password, 10)]);
+        user.active = true;
       }
       await client.query("update app_user set editor_id = $1 where id = $2", [editorId, user.id]);
       user.editor_id = editorId;

@@ -40,12 +40,14 @@ const LOGIN_HINT: Record<Exclude<RoleKey, "none">, string> = {
 // common case. Merged by editor_id so "add a person" is one flow either way.
 export type TeamRow = { editor: Editor | null; user: AppUser | null };
 
-export function TeamMemberModal({ row, onClose, onSaved, existingEmails, startWithLogin, startRole, canManageAdmins = true, onRemoveEditor, onRemoveLogin }: {
+export function TeamMemberModal({ row, onClose, onSaved, existingEmails, startWithLogin, startRole, startEmail, canManageAdmins = true, onRemoveEditor, onRemoveLogin }: {
   row: TeamRow; onClose: () => void; onSaved: () => void; existingEmails: string[];
   // Open with "Give login access" already ticked (the roster's Give login),
   // and the role picked on the row.
   startWithLogin?: boolean;
   startRole?: RoleKey;
+  // their login from before, not on this brand now: Give login brings it back
+  startEmail?: string;
   // Only a Super Admin can make someone an admin or Super Admin.
   canManageAdmins?: boolean;
   onRemoveEditor?: (ed: Editor) => void;
@@ -64,7 +66,7 @@ export function TeamMemberModal({ row, onClose, onSaved, existingEmails, startWi
   const [imageUrl, setImageUrl] = useState<string | null>(editor?.image_url ?? null);
 
   const [giveLogin, setGiveLogin] = useState(Boolean(user) || Boolean(startWithLogin));
-  const [email, setEmail] = useState(user?.email ?? "");
+  const [email, setEmail] = useState(user?.email ?? startEmail ?? "");
   const [password, setPassword] = useState("");
   const [role, setRole] = useState<Exclude<RoleKey, "none">>(() => {
     const k = user ? roleKeyOf(user) : startRole;
