@@ -7,6 +7,8 @@ import { useWorkspaces } from "@/lib/workspaces-context";
 import { useResource } from "@/lib/use-resource";
 import { useAuth } from "@/lib/auth-context";
 import { useIsSuper, useOrg } from "@/lib/use-org";
+import { useEditors } from "@/lib/use-editors";
+import { homeRoleOf } from "@/lib/home-role";
 import { useReviewAccess } from "@/lib/use-review-access";
 import { setWeekStart } from "@/lib/date-range";
 import { notifyOn, type NotifyKey } from "@/lib/notify-prefs";
@@ -51,9 +53,15 @@ export function SettingsPage() {
   const navigate = useNavigate();
   const [params] = useSearchParams();
   const [dirty, setDirty] = useState(false);
+  // The work calendar (everyone's hours and capacity): admins, Managers, Asst.
+  // Managers and Team Leads. An Editor's General is the review cycle and their look.
+  const { user } = useAuth();
+  const { editors } = useEditors();
+  const myPosition = (editors ?? []).find((e) => e.id === user?.editorId)?.designation;
+  const seesCalendar = isSuper || isAdmin || homeRoleOf(myPosition, isAdmin) !== "editor";
 
   const SECTIONS: { k: Section; l: string; d: string; icon: ReactNode; show: boolean }[] = [
-    { k: "general", l: "General", d: "Workspace, work calendar, look", icon: SI.tune, show: true },
+    { k: "general", l: "General", d: seesCalendar ? "Workspace, work calendar, look" : "Review cycle, look", icon: SI.tune, show: true },
     { k: "channels", l: "Channels", d: "Brands and platform accounts", icon: SI.hub, show: pageRule("setChannels", "see", isAdmin) },
     { k: "content", l: "Content", d: "Pillars, types, avatars, formats", icon: SI.category, show: pageRule("setContent", "see", true) },
     { k: "tasks", l: "Tasks & time", d: "Task types, budgets, breaks", icon: SI.timer, show: pageRule("setTasks", "see", isAdmin) },
@@ -110,7 +118,7 @@ export function SettingsPage() {
         </nav>
         <div className="st-main">
           <div className="st-sechead"><h2>{cur.l}</h2><span>{cur.d}</span></div>
-          {cur.k === "general" && <GeneralSection onDirty={setDirty} />}
+          {cur.k === "general" && <GeneralSection onDirty={setDirty} seesCalendar={seesCalendar} />}
           {cur.k === "channels" && <ChannelsSection />}
           {cur.k === "content" && <ContentSection />}
           {cur.k === "tasks" && <TaskRulesSection />}
@@ -133,7 +141,7 @@ const ymOf = (d: Date) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStar
 
 // The workspace (name, time zone, week start) and the work calendar, kept as a
 // draft until Save; then the review cycle and how Echo looks for you.
-function GeneralSection({ onDirty }: { onDirty: (dirty: boolean) => void }) {
+function GeneralSection({ onDirty, seesCalendar }: { onDirty: (dirty: boolean) => void; seesCalendar: boolean }) {
   const { isAdmin, pageRule } = useWorkspaces();
   const { org, refetch } = useOrg();
   const isSuper = !!org?.superAdmin;
@@ -217,7 +225,7 @@ function GeneralSection({ onDirty }: { onDirty: (dirty: boolean) => void }) {
         </section>
       )}
 
-      <section className="st-card">
+      {seesCalendar && <section className="st-card">
         <div className="st-cardhead">
           <b>Work calendar</b>
           <span>Sets each editor's monthly capacity. Goals set on Goals · Set goals must fit inside it.</span>
@@ -315,7 +323,7 @@ function GeneralSection({ onDirty }: { onDirty: (dirty: boolean) => void }) {
             </div>
           </>
         )}
-      </section>
+      </section>}
 
       <section className="st-card">
         <div className="st-cardhead">
