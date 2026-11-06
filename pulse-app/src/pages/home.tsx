@@ -25,6 +25,7 @@ import { useOrg } from "@/lib/use-org";
 import type { Editor, Post, Task } from "@/lib/types";
 import { MyReportsModal } from "@/components/my-reports";
 import { InboxCard } from "@/pages/inbox";
+import { ScheduleCard } from "@/components/schedule-card";
 import { clockTime } from "@/lib/time-format";
 import { PositionMark } from "@/components/position-mark";
 
@@ -612,6 +613,8 @@ export function HomePage() {
 
       {/* What waits on you — requests, hand-overs, reviews — is in the Inbox; this says how much */}
       <InboxCard />
+      {/* a scheduler's day: what goes out today, and what's dated ahead */}
+      <ScheduleCard />
       {/* Everything under the banner: the greeting row, Start of day (team leads
           and editors), and the widgets for this Home role (home-widgets.tsx). */}
       <HomeWidgets
