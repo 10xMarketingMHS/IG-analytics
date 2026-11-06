@@ -9,6 +9,7 @@ import { compactNum } from "@/lib/date-range";
 import { channelTile, initialsOf } from "@/lib/editor-visuals";
 import type { Platform, Account, PlatformConnection, IntegrationStatus } from "@/lib/types";
 import { SI, Toggle } from "@/pages/settings-ui";
+import { autoShort, brandShort } from "@/lib/brand-short";
 
 const BRAND: Record<string, { bg: string; label: string; ab: string }> = {
   instagram: { bg: "linear-gradient(135deg,#f9737d,#c13584,#833ab4)", label: "Instagram", ab: "IG" },
@@ -206,6 +207,19 @@ export function ChannelsSection() {
       refetchConns();
     } catch (e) {
       toast.error(e instanceof ApiError ? e.message : "Could not delete channel.");
+    }
+  }
+
+  // its short name for tight spots (Home's schedule boxes); empty goes back to its initials
+  async function saveShort(id: string, next: string, orig: string) {
+    const shortName = next.trim();
+    if (shortName === orig) return;
+    try {
+      await api(`/workspaces/${id}`, { method: "PATCH", body: JSON.stringify({ shortName: shortName || null }) });
+      await refresh();
+      toast.success(shortName ? `Short name set: ${shortName}.` : "Short name cleared: it uses its initials.");
+    } catch (e) {
+      toast.error(e instanceof ApiError ? e.message : "Could not save the short name.");
     }
   }
 
@@ -563,6 +577,14 @@ export function ChannelsSection() {
                 ) : <b>{w.name}</b>}
                 <small>{posts.all} post{posts.all === 1 ? "" : "s"} · {posts.pub} published</small>
               </span>
+              <label className="st-chshort" title="Its short name, for tight spots like Home's schedule boxes. Empty: its initials.">
+                <span>Short</span>
+                {canManage ? (
+                  <input defaultValue={w.short_name ?? ""} key={`${w.id}:${w.short_name ?? ""}`} placeholder={autoShort(w.name)} maxLength={8} aria-label={`${w.name} short name`}
+                    onBlur={(e) => saveShort(w.id, e.target.value, w.short_name ?? "")}
+                    onKeyDown={(e) => { if (e.key === "Enter") (e.target as HTMLInputElement).blur(); }} />
+                ) : <b>{brandShort(w.name, w.short_name)}</b>}
+              </label>
               {canManage && workspaces.length > 1 && (
                 <button type="button" className="st-btn sm danger" onClick={() => deleteChannel(w.id, w.name)}>{SI.trash}Delete channel</button>
               )}

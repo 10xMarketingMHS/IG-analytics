@@ -17,6 +17,12 @@ html[data-theme="dark"] .scd{--scd-bad:#f87171}
 .scd-h{display:flex;align-items:center;gap:6px;font-size:12px;font-weight:800;color:var(--text)}
 .scd-h small{min-width:18px;height:18px;padding:0 5px;border-radius:999px;display:inline-grid;place-items:center;background:color-mix(in srgb,var(--accent) 14%,transparent);
   color:var(--accent-ink);font:700 10.5px 'Geist Mono',ui-monospace,monospace}
+/* a box's brands, by short name (DF, MHS), to filter it: on the right of its head */
+.scd-brands{margin-left:auto;display:flex;flex-wrap:wrap;justify-content:flex-end;gap:4px}
+.scd-brands button{height:22px;padding:0 8px;border:1px solid color-mix(in srgb,var(--text) 12%,transparent);border-radius:999px;background:transparent;
+  color:var(--muted);font:800 10.5px 'Plus Jakarta Sans',sans-serif;letter-spacing:.03em;cursor:pointer}
+.scd-brands button:hover{border-color:var(--accent);color:var(--accent-ink)}
+.scd-brands button.on{border-color:var(--accent);background:color-mix(in srgb,var(--accent) 14%,transparent);color:var(--accent-ink)}
 .scd-none{margin:0;font-size:12.5px;color:var(--faint)}
 .scd-list{display:flex;flex-direction:column;gap:2px}
 .scd-row{display:flex;align-items:center;gap:10px;width:100%;min-width:0;padding:7px 8px;border:0;border-radius:9px;background:transparent;color:inherit;

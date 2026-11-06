@@ -296,6 +296,13 @@ html[data-theme="dark"] .st-box{border-color:rgba(255,255,255,.22)}
 .st-chname input:focus{border-color:var(--st-ac);background:var(--st-solid)}
 .st-chname b{font-size:14px;font-weight:800}
 .st-chname small{font-size:12px;color:var(--st-text3)}
+/* its short name (DF, MHS): for tight spots like Home's schedule boxes */
+.st-chshort{flex:none;display:flex;align-items:center;gap:6px;font-size:11.5px;font-weight:700;color:var(--st-text3)}
+.st-chshort input{width:72px;height:30px;padding:0 8px;border:1px solid var(--st-line);border-radius:8px;background:var(--st-sunk);color:var(--st-text);
+  font:800 12.5px 'Plus Jakarta Sans',sans-serif;text-align:center;outline:none}
+.st-chshort input::placeholder{color:var(--st-text3);font-weight:700}
+.st-chshort input:focus{border-color:var(--st-ac);background:var(--st-solid)}
+.st-chshort b{min-width:34px;padding:3px 8px;border-radius:7px;background:var(--st-sunk);color:var(--st-text);font-size:12px;font-weight:800;text-align:center}
 .st-plat{flex:1 1 240px;min-width:0;display:flex;align-items:center;gap:11px}
 .st-plat>i{flex:none;width:26px;height:26px;border-radius:7px;display:grid;place-items:center;color:#fff;font-size:10px;font-weight:800;font-style:normal}
 .st-plat>span{min-width:0;display:flex;flex-direction:column;line-height:1.3}

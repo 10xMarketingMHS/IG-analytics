@@ -1,9 +1,10 @@
-import { useState } from "react";
+import { useState, type ReactNode } from "react";
 import { Link } from "react-router-dom";
 import { useResource } from "@/lib/use-resource";
 import { useEditors } from "@/lib/use-editors";
 import { useWorkspaces } from "@/lib/workspaces-context";
 import { clockWords, dayWords, leftTone, leftWords, linksDueAt, scheduleStage, useNow } from "@/lib/schedule";
+import { brandShort } from "@/lib/brand-short";
 import { TaskPanel } from "@/pages/tasks";
 import type { Task } from "@/lib/types";
 import "./schedule-card.css";
@@ -14,9 +15,13 @@ import "./schedule-card.css";
 // goes out today (and any whose links are still due from earlier days);
 // Upcoming: what you've dated ahead. Each opens its task window, the same one
 // Scheduling opens. Data: GET /scheduling (server/src/routes/scheduling.js),
-// kept to what you took. Nothing for anyone without a Schedule goal.
+// kept to what you took. Nothing for anyone without a Schedule goal. A box
+// with work from two or more brands gets their short names (DF, MHS: Settings ›
+// Channels) to filter it by.
 
 type Data = { tasks: Task[]; me: string | null; scheduler: boolean; today?: { editorId: string; total: number }[] };
+type When = "today" | "late" | "ahead" | "todo";
+type Item = { t: Task; when: When };
 const UPCOMING_SHOWN = 6;
 const istToday = () => new Date(Date.now() + 330 * 60_000).toISOString().slice(0, 10);
 const weekday = (ymd: string) => new Date(`${ymd}T12:00:00`).toLocaleDateString("en-IN", { weekday: "short" });
@@ -32,6 +37,9 @@ function ScheduleCardBody() {
   const { editors } = useEditors();
   const { active, workspaces } = useWorkspaces();
   const [openId, setOpenId] = useState<string | null>(null);
+  // each box's brand filter: box → brand id
+  const [pick, setPick] = useState<Record<string, string>>({});
+  const { data: brandData } = useResource<{ brands: { id: string; name: string; short_name?: string | null }[] }>("/brands");
   const now = useNow();
   if (!data?.me) return null;
 
@@ -48,8 +56,10 @@ function ScheduleCardBody() {
   const waiting = toDate.length;
   const doneToday = data.today?.find((p) => p.editorId === data.me)?.total ?? 0;
   const openTask = openId ? data.tasks.find((t) => t.id === openId) ?? null : null;
+  const brandOf = new Map((brandData?.brands ?? []).map((b) => [b.id, b]));
+  const shortOf = (t: Task) => (t.channel_id ? brandShort(brandOf.get(t.channel_id)?.name ?? t.channel_name, brandOf.get(t.channel_id)?.short_name) : null);
 
-  const row = (t: Task, when: "today" | "late" | "ahead" | "todo") => {
+  const row = ({ t, when }: Item) => {
     const stage = scheduleStage(t, day);
     const left = t.post_on ? linksDueAt(t.post_on).getTime() - now : 0;
     return (
@@ -62,7 +72,7 @@ function ScheduleCardBody() {
         </span>
         <span className="scd-what">
           <b>{t.title}</b>
-          <small>{[t.sid, t.channel_name, t.content_format_name].filter(Boolean).join(" · ")}</small>
+          <small title={t.channel_name ?? undefined}>{[t.sid, shortOf(t), t.content_format_name].filter(Boolean).join(" · ")}</small>
         </span>
         {when === "todo" ? <span className="scd-tag due">Set date</span>
           : stage === "live" ? <span className="scd-tag live">Live</span>
@@ -71,6 +81,45 @@ function ScheduleCardBody() {
       </button>
     );
   };
+
+  // a box: its head (with its brands' short names to filter by, when it has two
+  // or more), its first few, and the way to the rest
+  function column(key: string, title: string, all: Item[], empty: string, cls = ""): ReactNode {
+    const counts = new Map<string, number>();
+    for (const { t } of all) if (t.channel_id) counts.set(t.channel_id, (counts.get(t.channel_id) ?? 0) + 1);
+    const brands = [...counts].sort((a, b) => b[1] - a[1]);
+    const on = pick[key] && counts.has(pick[key]) ? pick[key] : "";
+    const items = on ? all.filter(({ t }) => t.channel_id === on) : all;
+    const toggle = (id: string) => setPick((p) => ({ ...p, [key]: p[key] === id ? "" : id }));
+    return (
+      <div className={"scd-col" + (cls ? ` ${cls}` : "")} key={key}>
+        <span className="scd-h">
+          {title}<small>{items.length}</small>
+          {brands.length > 1 && (
+            <span className="scd-brands" role="group" aria-label={`${title}: brand`}>
+              {brands.map(([id, n]) => {
+                const b = brandOf.get(id);
+                const name = b?.name ?? all.find(({ t }) => t.channel_id === id)?.t.channel_name ?? "Brand";
+                return (
+                  <button key={id} type="button" className={on === id ? "on" : ""} aria-pressed={on === id} title={`${name}: ${n}`} onClick={() => toggle(id)}>
+                    {brandShort(name, b?.short_name)}
+                  </button>
+                );
+              })}
+            </span>
+          )}
+        </span>
+        {items.length === 0 ? (
+          <p className="scd-none">{empty}</p>
+        ) : (
+          <div className="scd-list">
+            {items.slice(0, UPCOMING_SHOWN).map(row)}
+            {items.length > UPCOMING_SHOWN && <Link className="scd-more" to="/scheduling">+{items.length - UPCOMING_SHOWN} more in Scheduling</Link>}
+          </div>
+        )}
+      </div>
+    );
+  }
 
   return (
     <section className="scd" aria-label="Your schedule">
@@ -83,34 +132,9 @@ function ScheduleCardBody() {
         <Link className="scd-go" to="/scheduling">Open Scheduling →</Link>
       </div>
       <div className={"scd-cols" + (waiting > 0 ? " three" : "")}>
-        {waiting > 0 && (
-          <div className="scd-col need">
-            <span className="scd-h">Need to schedule<small>{waiting}</small></span>
-            <div className="scd-list">
-              {toDate.slice(0, UPCOMING_SHOWN).map((t) => row(t, "todo"))}
-              {waiting > UPCOMING_SHOWN && <Link className="scd-more" to="/scheduling">+{waiting - UPCOMING_SHOWN} more in Scheduling</Link>}
-            </div>
-          </div>
-        )}
-        <div className="scd-col">
-          <span className="scd-h">Today<small>{todays.length + late.length}</small></span>
-          {todays.length + late.length === 0 ? (
-            <p className="scd-none">Nothing goes out today.</p>
-          ) : (
-            <div className="scd-list">{late.map((t) => row(t, "late"))}{todays.map((t) => row(t, "today"))}</div>
-          )}
-        </div>
-        <div className="scd-col">
-          <span className="scd-h">Upcoming<small>{upcoming.length}</small></span>
-          {upcoming.length === 0 ? (
-            <p className="scd-none">Nothing dated ahead yet.</p>
-          ) : (
-            <div className="scd-list">
-              {upcoming.slice(0, UPCOMING_SHOWN).map((t) => row(t, "ahead"))}
-              {upcoming.length > UPCOMING_SHOWN && <Link className="scd-more" to="/scheduling">+{upcoming.length - UPCOMING_SHOWN} more in Scheduling</Link>}
-            </div>
-          )}
-        </div>
+        {waiting > 0 && column("need", "Need to schedule", toDate.map((t) => ({ t, when: "todo" as const })), "", "need")}
+        {column("today", "Today", [...late.map((t) => ({ t, when: "late" as const })), ...todays.map((t) => ({ t, when: "today" as const }))], "Nothing goes out today.")}
+        {column("upcoming", "Upcoming", upcoming.map((t) => ({ t, when: "ahead" as const })), "Nothing dated ahead yet.")}
       </div>
       {openTask && (
         <TaskPanel

@@ -34,6 +34,8 @@ export type Workspace = {
   id: string;
   name: string;
   logo_url: string | null;
+  // its short name (Settings › Channels); empty: made from its initials (lib/brand-short.ts)
+  short_name?: string | null;
   role?: "admin" | "editor" | "viewer";
   // Active grants the current user holds in this workspace's org.
   permissions?: PermissionKey[];

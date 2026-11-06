@@ -9,6 +9,11 @@ import { resolveWorkspace } from "../resolve-workspace.js";
 
 export const workspacesRouter = Router();
 
+// A brand's short name (DF, MHS: 20261106120000_brand_short_name.sql), once
+// that change is in the database; before it, none, and the app makes one up.
+const shortReady = () => hasColumn("workspace", "short_name");
+const shortCol = async (alias = "w") => ((await shortReady()) ? `${alias}.short_name` : "null::text as short_name");
+
 // Channels visible in the switcher. An org-wide admin (admin of any channel in
 // an org) sees EVERY channel in that org — including ones they aren't a member
 // of, shown as 'admin'. Everyone else sees only channels they're a member of.
@@ -24,7 +29,7 @@ workspacesRouter.get("/workspaces", async (req, res, next) => {
     )).rows.map((r) => r.org_id);
 
     const { rows } = await pool.query(
-      `select w.id, w.name, w.logo_url,
+      `select w.id, w.name, w.logo_url, ${await shortCol()},
               case when w.org_id = any($2::uuid[]) then 'admin'::membership_role else m.role end as role,
               coalesce((
                 select array_agg(g.permission_key)
@@ -48,7 +53,7 @@ workspacesRouter.get("/workspaces", async (req, res, next) => {
 workspacesRouter.get("/brands", resolveWorkspace, async (req, res, next) => {
   try {
     const { rows } = await pool.query(
-      "select id, name, logo_url from workspace where org_id = $1 order by created_at asc",
+      `select w.id, w.name, w.logo_url, ${await shortCol()} from workspace w where w.org_id = $1 order by w.created_at asc`,
       [req.orgId],
     );
     res.json({ brands: rows });
@@ -110,20 +115,33 @@ workspacesRouter.post("/workspaces", resolveWorkspace, requirePermission("channe
   }
 });
 
-// Rename a workspace the user is an admin of.
+// Rename a workspace the user is an admin of, or set its short name (empty:
+// back to the initials the app makes).
+const BrandEditSchema = z.object({
+  name: z.string().trim().min(1, "Workspace name is required.").max(80).optional(),
+  shortName: z.string().trim().max(8, "Keep the short name to 8 characters.").regex(/^[\p{L}\p{N}&+.\- ]*$/u, "Letters and numbers only.").nullable().optional(),
+}).refine((d) => d.name !== undefined || d.shortName !== undefined, "Workspace name is required.");
 workspacesRouter.patch("/workspaces/:id", resolveWorkspace, requirePermission("channels"), async (req, res, next) => {
-  const parsed = NameSchema.safeParse(req.body);
+  const parsed = BrandEditSchema.safeParse(req.body);
   if (!parsed.success) {
-    return res.status(400).json({ error: "Workspace name is required." });
+    return res.status(400).json({ error: parsed.error.issues[0]?.message ?? "Workspace name is required." });
   }
   try {
+    const d = parsed.data;
+    const short = await shortReady();
+    if (d.shortName !== undefined && !short) {
+      return res.status(409).json({ error: "Short names need a database change first: 20261106120000_brand_short_name.sql." });
+    }
+    const sets = ["updated_at = now()"], params = [req.params.id, req.orgId];
+    if (d.name !== undefined) { params.push(d.name); sets.push(`name = $${params.length}`); }
+    if (d.shortName !== undefined) { params.push(d.shortName || null); sets.push(`short_name = $${params.length}`); }
     // Org-admins (enforced by requirePermission) can rename any channel in their
     // org, so gate on the org rather than a personal membership row.
     const { rows } = await pool.query(
-      `update workspace set name = $1, updated_at = now()
-       where id = $2 and org_id = $3
-       returning id, name, logo_url`,
-      [parsed.data.name, req.params.id, req.orgId],
+      `update workspace set ${sets.join(", ")}
+       where id = $1 and org_id = $2
+       returning id, name, logo_url${short ? ", short_name" : ""}`,
+      params,
     );
     if (!rows.length) return res.status(404).json({ error: "Workspace not found" });
     res.json({ workspace: rows[0] });
