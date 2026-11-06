@@ -8,7 +8,9 @@ import { TaskPanel } from "@/pages/tasks";
 import type { Task } from "@/lib/types";
 import "./schedule-card.css";
 
-// Home, for this month's schedulers: your schedule at a glance. Today: what
+// Home, for this month's schedulers: your schedule at a glance. Need to
+// schedule (only while something waits): approved work with no post date yet,
+// the shared list's and any you took. Today: what
 // goes out today (and any whose links are still due from earlier days);
 // Upcoming: what you've dated ahead. Each opens its task window, the same one
 // Scheduling opens. Data: GET /scheduling (server/src/routes/scheduling.js),
@@ -40,17 +42,21 @@ function ScheduleCardBody() {
   const late = mine.filter((t) => t.post_on! < day && scheduleStage(t, day) === "links_due").sort(byTime);
   const todays = mine.filter((t) => t.post_on === day).sort(byTime);
   const upcoming = mine.filter((t) => t.post_on! > day).sort(byTime);
-  const waiting = data.tasks.filter((t) => !t.scheduler_id && scheduleStage(t, day) === "to_schedule").length;
+  // approved and waiting for a post date: the shared list's, and any you took without dating it — oldest first
+  const toDate = data.tasks.filter((t) => (!t.scheduler_id || t.scheduler_id === data.me) && scheduleStage(t, day) === "to_schedule")
+    .sort((a, b) => (a.completed_at ?? "").localeCompare(b.completed_at ?? ""));
+  const waiting = toDate.length;
   const doneToday = data.today?.find((p) => p.editorId === data.me)?.total ?? 0;
   const openTask = openId ? data.tasks.find((t) => t.id === openId) ?? null : null;
 
-  const row = (t: Task, when: "today" | "late" | "ahead") => {
+  const row = (t: Task, when: "today" | "late" | "ahead" | "todo") => {
     const stage = scheduleStage(t, day);
     const left = t.post_on ? linksDueAt(t.post_on).getTime() - now : 0;
     return (
       <button key={t.id} type="button" className="scd-row" onClick={() => setOpenId(t.id)}>
         <span className="scd-when">
-          {when === "ahead" ? <><b>{weekday(t.post_on!)}</b><small>{dayWords(t.post_on!)}</small></>
+          {when === "todo" ? <><b>{t.completed_at ? dayWords(t.completed_at.slice(0, 10)) : "—"}</b><small>approved</small></>
+            : when === "ahead" ? <><b>{weekday(t.post_on!)}</b><small>{dayWords(t.post_on!)}</small></>
             : when === "late" ? <><b>{dayWords(t.post_on!)}</b><small>went out</small></>
             : <><b>{t.post_time ? clockWords(t.post_time) : "Today"}</b><small>{t.post_time ? "today" : "any time"}</small></>}
         </span>
@@ -58,7 +64,8 @@ function ScheduleCardBody() {
           <b>{t.title}</b>
           <small>{[t.sid, t.channel_name, t.content_format_name].filter(Boolean).join(" · ")}</small>
         </span>
-        {stage === "live" ? <span className="scd-tag live">Live</span>
+        {when === "todo" ? <span className="scd-tag due">Set date</span>
+          : stage === "live" ? <span className="scd-tag live">Live</span>
           : when === "ahead" ? <span className="scd-tag">Dated</span>
           : <span className={"scd-tag due " + leftTone(left)}>{when === "late" || left < 0 ? `Add links · ${leftWords(left)}` : "To post"}</span>}
       </button>
@@ -71,15 +78,24 @@ function ScheduleCardBody() {
         <span className="scd-ic" aria-hidden="true">🗓️</span>
         <span className="scd-title">
           <b>Your schedule</b>
-          <small>{doneToday > 0 ? `You scheduled ${doneToday} today` : "Nothing scheduled by you yet today"}{waiting > 0 ? ` · ${waiting} waiting to be scheduled` : ""}</small>
+          <small>{doneToday > 0 ? `You scheduled ${doneToday} today` : "Nothing scheduled by you yet today"}</small>
         </span>
         <Link className="scd-go" to="/scheduling">Open Scheduling →</Link>
       </div>
-      <div className="scd-cols">
+      <div className={"scd-cols" + (waiting > 0 ? " three" : "")}>
+        {waiting > 0 && (
+          <div className="scd-col need">
+            <span className="scd-h">Need to schedule<small>{waiting}</small></span>
+            <div className="scd-list">
+              {toDate.slice(0, UPCOMING_SHOWN).map((t) => row(t, "todo"))}
+              {waiting > UPCOMING_SHOWN && <Link className="scd-more" to="/scheduling">+{waiting - UPCOMING_SHOWN} more in Scheduling</Link>}
+            </div>
+          </div>
+        )}
         <div className="scd-col">
           <span className="scd-h">Today<small>{todays.length + late.length}</small></span>
           {todays.length + late.length === 0 ? (
-            <p className="scd-none">Nothing goes out today.{waiting > 0 ? " Set a post date on one waiting in Scheduling." : ""}</p>
+            <p className="scd-none">Nothing goes out today.</p>
           ) : (
             <div className="scd-list">{late.map((t) => row(t, "late"))}{todays.map((t) => row(t, "today"))}</div>
           )}

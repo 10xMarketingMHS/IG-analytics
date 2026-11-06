@@ -112,6 +112,8 @@ async function scheduleView(req, t, w) {
     linksLate: !!t.post_on && !posts.rows.length && Date.now() > Date.parse(linksDueAt(t.post_on)),
     canSchedule, canChangeScheduler: !!t.schedule_from && t.status === "done" && w.lead, canAddPost: addPost,
     schedulers, platforms: platforms.rows, posts: posts.rows, defaults,
+    // no brand: nowhere to post until it has one (canSchedule picks it, PATCH channelId)
+    hasBrand: !!t.channel_id,
   };
 }
 
@@ -158,6 +160,9 @@ const ScheduleSchema = z.object({
   postOn: z.string().refine(validYmd, "Pick a date.").nullable().optional(),
   postTime: z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/, "Pick a time.").nullable().optional(),
   schedulerId: z.string().uuid().nullable().optional(),
+  // work approved with no brand has nowhere to post: whoever schedules it says
+  // which brand it went out on, once (an admin changes a brand on the task itself)
+  channelId: z.string().uuid().optional(),
 });
 
 schedulingRouter.patch("/tasks/:id/schedule", requireEditor, requireActiveEod, async (req, res, next) => {
@@ -184,6 +189,14 @@ schedulingRouter.patch("/tasks/:id/schedule", requireEditor, requireActiveEod, a
       push("scheduler_id", d.schedulerId ?? null);
       handedTo = d.schedulerId ?? null;
     }
+    let brandSet = null;
+    if (d.channelId !== undefined && d.channelId !== t.channel_id) {
+      if (t.channel_id) return res.status(400).json({ error: "It already has its brand. An admin changes it on the task." });
+      const { rows: [b] } = await pool.query("select id, name from workspace where id = $1 and org_id = $2", [d.channelId, req.orgId]);
+      if (!b) return res.status(400).json({ error: "Pick one of the team's brands." });
+      push("channel_id", b.id);
+      brandSet = b;
+    }
     const postOn = d.postOn !== undefined ? d.postOn : t.post_on;
     if (d.postOn !== undefined) {
       push("post_on", d.postOn);
@@ -205,6 +218,13 @@ schedulingRouter.patch("/tasks/:id/schedule", requireEditor, requireActiveEod, a
           ? `Set ${t.ref} “${t.title}” to post on ${dayWords(fresh.post_on)}${fresh.post_time ? `, ${clockWords(fresh.post_time)}` : ""}`
           : `Put ${t.ref} “${t.title}” back in the scheduling list`,
         meta: { postOn: fresh.post_on },
+      });
+    }
+    if (brandSet) {
+      await logActivity({
+        orgId: req.orgId, actorId: req.user.sub, verb: "schedule_set", entityType: "task", entityId: t.id, channelId: brandSet.id,
+        summary: `Gave ${t.ref} “${t.title}” its brand: ${brandSet.name}`,
+        meta: { brand: brandSet.name },
       });
     }
     if (handedTo) {

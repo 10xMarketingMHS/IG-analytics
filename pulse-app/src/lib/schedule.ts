@@ -74,4 +74,6 @@ export type TaskSchedule = {
   platforms?: { platformId: string; key: string; name: string }[];
   posts?: { id: string; platformId: string; platformKey: string | null; platformName: string | null; permalink: string | null; date: string; views: number; saves: number; metricsUpdatedAt: string | null }[];
   defaults?: { pillarId: string; contentTypeId: string; formatId: string; avatarId: string } | null;
+  // false: the task has no brand, so nowhere to post its links until one is picked
+  hasBrand?: boolean;
 };

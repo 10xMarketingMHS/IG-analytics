@@ -77,6 +77,9 @@ export function ScheduleBlock({ task, onChanged }: { task: Task; editors?: Edito
   const dueBy = s.postOn ? linksDueWords(s.postOn) : "";
   const left = s.postOn ? linksDueAt(s.postOn).getTime() - now : 0;
   const timing = (stage === "scheduled" || stage === "links_due") && !!s.postOn;
+  const open = (s.platforms ?? []).filter((p) => !(s.posts ?? []).some((x) => x.platformId === p.platformId));
+  // dated, nothing posted, and nowhere to paste a link: no brand yet, or a brand with no accounts connected
+  const stuck = s.canSchedule && !!s.postOn && open.length === 0 && (s.posts?.length ?? 0) === 0;
   const say = stage === "to_schedule"
     ? (!s.schedulerId
       ? (s.canSchedule ? "Approved and in the schedulers' list. Set the day it goes out to take it; Echo reminds you on the day." : "Approved. Waiting for a scheduler to take it.")
@@ -85,10 +88,9 @@ export function ScheduleBlock({ task, onChanged }: { task: Task; editors?: Edito
       ? `Goes out on ${when}. ${s.canSchedule ? `Once it's up, paste its links here, by ${dueBy}.` : `Its links are due by ${dueBy}.`}`
       : stage === "links_due"
         ? (s.canSchedule
-          ? (left < 0 ? `Posted on ${when}? Its links were due by ${dueBy}: paste them below now.` : `Posted on ${when}? Paste each platform's link below, by ${dueBy}.`)
+          ? (left < 0 ? `Posted on ${when}? Its links were due by ${dueBy}${stuck ? "." : ": paste them below now."}` : `Posted on ${when}? ${stuck ? "Its" : "Paste each platform's"} links are due by ${dueBy}${stuck ? "." : ", below."}`)
           : `Posted on ${when}; waiting for ${who} to add its links, due by ${dueBy}.`)
         : `Live on ${live}. Its numbers sync into Analytics and ${task.editor_name ?? "the editor"}'s performance.`;
-  const open = (s.platforms ?? []).filter((p) => !(s.posts ?? []).some((x) => x.platformId === p.platformId));
   const dateChanged = date !== (s.postOn ?? "") || time !== (s.postTime ?? "");
 
   async function save(body: object, ok: string) {
@@ -143,6 +145,10 @@ export function ScheduleBlock({ task, onChanged }: { task: Task; editors?: Edito
         </div>
       ) : when ? <div className="sch-date-ro">Posts on <b>{when}</b></div> : null}
 
+      {stuck && (s.hasBrand === false
+        ? <PickBrand taskId={task.id} onDone={async () => { await refetch(); onChanged(); }} />
+        : <p className="sch-stuck">{task.channel_name ?? "Its brand"} has no Instagram, Facebook or YouTube connected, so there's nowhere to paste its links yet. An admin connects them under Channels.</p>)}
+
       {((s.posts?.length ?? 0) > 0 || (s.canSchedule && !!s.postOn && open.length > 0)) && (
         <div className="sch-links">
           {(s.posts ?? []).map((p) => (
@@ -160,6 +166,38 @@ export function ScheduleBlock({ task, onChanged }: { task: Task; editors?: Edito
         </div>
       )}
     </section>
+  );
+}
+
+// Work approved with no brand has nowhere to post: its scheduler says which brand
+// it went out on (PATCH /tasks/:id/schedule channelId), and its links can go in.
+function PickBrand({ taskId, onDone }: { taskId: string; onDone: () => Promise<void> }) {
+  const { data } = useResource<{ brands: { id: string; name: string }[] }>("/brands");
+  const [brand, setBrand] = useState("");
+  const [busy, setBusy] = useState(false);
+  async function save() {
+    setBusy(true);
+    try {
+      await api(`/tasks/${taskId}/schedule`, { method: "PATCH", body: JSON.stringify({ channelId: brand }) });
+      toast.success("Brand set. Paste its links now.");
+      await onDone();
+    } catch (e) {
+      toast.error(errText(e, "Couldn't set the brand."));
+    } finally {
+      setBusy(false);
+    }
+  }
+  return (
+    <div className="sch-stuck">
+      <span>This task has no brand, so there's nowhere to post its links. Which brand did it go out on?</span>
+      <span className="sch-stuck-row">
+        <select value={brand} onChange={(e) => setBrand(e.target.value)} aria-label="Its brand">
+          <option value="">Pick a brand…</option>
+          {(data?.brands ?? []).map((b) => <option key={b.id} value={b.id}>{b.name}</option>)}
+        </select>
+        <button type="button" className="btn btn-primary btn-sm" disabled={!brand || busy} onClick={save}>{busy ? "Saving…" : "Set brand"}</button>
+      </span>
+    </div>
   );
 }
 

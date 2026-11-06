@@ -37,3 +37,8 @@
 .sch-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px}
 .sch-details .btn{align-self:flex-start}
 @media (max-width:520px){.sch-grid{grid-template-columns:1fr}.sch-num{margin-left:0}}
+/* dated but nowhere to paste a link: no brand yet (pick it), or no accounts on its brand */
+.sch-stuck{display:flex;flex-direction:column;gap:8px;margin:0;padding:10px 12px;border:1px dashed var(--tb-line);border-radius:10px;background:var(--tb-sunk);
+  font-size:12.5px;line-height:1.5;color:var(--tb-text2)}
+.sch-stuck-row{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.sch-stuck-row select{height:32px;min-width:200px;padding:0 10px;border:1px solid var(--tb-line);border-radius:9px;background:var(--tb-solid);color:var(--tb-text);font-family:inherit;font-size:12.5px}
