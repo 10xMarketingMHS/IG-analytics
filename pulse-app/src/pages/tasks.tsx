@@ -985,9 +985,9 @@ export function TasksPage() {
       <div className="tb-bar">
         <div className="tb-row">
         <div className="seg tb-views" role="group" aria-label="View">
-          <button className={view === "board" ? "on" : ""} onClick={() => setView("board")}>{TB_ICON.board} Board</button>
-          <button className={view === "list" ? "on" : ""} onClick={() => setView("list")}>{TB_ICON.list} List</button>
-          <button className={view === "calendar" ? "on" : ""} onClick={() => setView("calendar")}>{TB_ICON.calendar} Calendar</button>
+          <button className={view === "board" ? "on" : ""} title="Board" onClick={() => setView("board")}>{TB_ICON.board} Board</button>
+          <button className={view === "list" ? "on" : ""} title="List" onClick={() => setView("list")}>{TB_ICON.list} List</button>
+          <button className={view === "calendar" ? "on" : ""} title="Calendar" onClick={() => setView("calendar")}>{TB_ICON.calendar} Calendar</button>
         </div>
         <div className="seg tb-scope">
           <button className={scope === "mine" ? "on" : ""} onClick={() => setScopeAndPersist("mine")}>{TB_ICON.me} My tasks</button>

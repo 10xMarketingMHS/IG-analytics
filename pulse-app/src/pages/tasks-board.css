@@ -681,6 +681,12 @@ html[data-theme="dark"] .task-panel-scrim.tp2-scrim{background:rgba(0,0,0,.55)}
 /* an admin's toolbar has Add finished work too: short of room, it's its icon
    alone (its name on hover), so New task stays on the first row */
 @media (max-width:1760px){.tb-new.ghost{padding:0 11px}.tb-new.ghost .tb-new-l{display:none}}
+/* …and Board · List · Calendar as their icons (names on hover), as on phones, so
+   My tasks · Team · To review, the due chips, Filters and New task fit beside them */
+@media (min-width:769px) and (max-width:1760px){
+  .tb .tb-bar .tb-views button{gap:0;font-size:0;padding:0 10px}
+  .tb .tb-bar .tb-views button .tb-ic{width:17px;height:17px}
+}
 .tb-new.ghost:hover{filter:none;border-color:var(--tb-ac);color:var(--tb-ac)}
 /* New task: the other brands Social work is also posted on (one task, scored once) */
 .tp2-also{display:flex;flex-wrap:wrap;align-items:center;gap:6px;margin-top:8px}
