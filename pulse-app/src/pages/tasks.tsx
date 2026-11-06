@@ -103,6 +103,8 @@ const ALSO_ON_HINT = "One task: reviewed and scored once. After approval each br
 // Work that closes without review: its type's Self close is on (Settings › Tasks &
 // time), or it's Service's Something else. Whoever did it closes it, like a General
 // task. Before Self close's database update, an off-goal type did. The server holds the same.
+// the org's Schedule type, as the server finds it (server/src/scheduling.js scheduleFormat)
+const isScheduleType = (f: ContentFormatDef) => ["schedule", "scheduling"].includes(f.name.trim().toLowerCase());
 const typeSelfCloses = (f: ContentFormatDef | null | undefined) => !!f && (f.self_close ?? f.counts_in_goal === false);
 function closesWithoutReview(t: Task, formats: ContentFormatDef[] | null | undefined) {
   if (t.task_type === "admin") return false;
@@ -2890,6 +2892,9 @@ export function TaskPanel({ mode, task, canWrite, editors, channels: yourBrands,
                   // Each goal type says what this person's goal still needs: "3 to go", "Goal met". For yourself the
                   // types in your goal come first; one outside it (yours or theirs) still counts, for the team or as Other work.
                   const goalOf = new Map((goalInfo?.types ?? []).map((g) => [g.contentFormatId, g]));
+                  // Schedule is the schedulers' work (a Schedule goal this month, server/src/scheduling.js):
+                  // offered only when whoever the task is for has one
+                  const offered = typeChoices.filter((f) => !isScheduleType(f) || goalOf.has(f.id));
                   const goalNote = (f: ContentFormatDef): { cls: string; text: string } | null => {
                     if (!goalInfo || !(goalInfo.goalPoints > 0) || f.counts_in_goal === false) return null;
                     const g = goalOf.get(f.id);
@@ -2944,17 +2949,17 @@ export function TaskPanel({ mode, task, canWrite, editors, channels: yourBrands,
                   const askAll = (f: ContentFormatDef) => (contentFormats ?? []).filter((x) => x.parent_id === f.id).reduce((n, s) => n + ask(s), ask(f));
                   // for yourself: the goal types in your goal first, a main type and its sub-types kept together
                   const mineFam = new Set((contentFormats ?? []).filter((x) => goalOf.has(x.id)).map((x) => x.parent_id ?? x.id));
-                  const goalTypes = typeChoices.filter((f) => f.counts_in_goal !== false).sort((a, b) => askAll(b) - askAll(a));
+                  const goalTypes = offered.filter((f) => f.counts_in_goal !== false).sort((a, b) => askAll(b) - askAll(a));
                   const inGoal = goalTypes.filter((f) => !ownGoalFirst || mineFam.has(f.parent_id ?? f.id)),
                     notMine = ownGoalFirst ? goalTypes.filter((f) => !mineFam.has(f.parent_id ?? f.id)) : [],
-                    offGoal = typeChoices.filter((f) => f.counts_in_goal === false);
+                    offGoal = offered.filter((f) => f.counts_in_goal === false);
                   const elsePick = category === "service" && (
                     <button type="button" className={"tp2-type off" + (otherPick ? " on" : "")} aria-pressed={otherPick}
                       onClick={() => { setOpenMain(null); onPickContentType(null); setOtherPick((v) => !v); }}>
                       <span>··· Something else</span><small>say what it is in the Brief</small>
                     </button>
                   );
-                  if (typeChoices.length === 0 && !elsePick) {
+                  if (offered.length === 0 && !elsePick) {
                     return <span className="tp2-faint">No {isProject ? "project" : CATEGORY_LABEL[category].toLowerCase()} types yet — add them under Settings › Tasks & time.</span>;
                   }
                   if (!notMine.length && !offGoal.length && !elsePick) {

@@ -12,7 +12,7 @@ import { callerScope } from "../attendance.js";
 import { closePendingHandovers } from "../handover.js";
 import { hasColumn } from "../schema-flags.js";
 import { coverFrom } from "../goal-score.js";
-import { enterScheduling, leaveScheduling, schedulerIds, schedulingReady } from "../scheduling.js";
+import { enterScheduling, isScheduler, leaveScheduling, scheduleFormat, schedulerIds, schedulingReady } from "../scheduling.js";
 import { adTeamsReady, enterUploads, leaveUploads, nextTeamAid, uploadsReady } from "../ad-uploads.js";
 import { parentTypeOf, taskTypeError } from "../type-tree.js";
 import { isSuperHere } from "../super-admin.js";
@@ -542,6 +542,13 @@ tasksRouter.post("/tasks", requireEditor, requireActiveEod, async (req, res, nex
     // when the assignee clicks Start on the board (todo -> in_progress).
     const status = "todo";
     const contentFormatId = isAdminTask ? null : (d.contentFormatId ?? null);
+    // Schedule work is the schedulers': whoever it's for needs a Schedule goal this month (../scheduling.js)
+    if (contentFormatId) {
+      const sf = await scheduleFormat(req.orgId);
+      if (sf && sf.id === contentFormatId && !(assigneeId && (await isScheduler(req.orgId, assigneeId)))) {
+        return res.status(400).json({ error: `${sf.name} tasks are for the schedulers: give them a ${sf.name} goal this month first (Goals › Set goals).` });
+      }
+    }
     // Admin tasks may optionally belong to a brand (Project) — they just never
     // get a content type, SID/AID or timer.
     const channelId = d.channelId ?? null;
