@@ -695,3 +695,7 @@ html[data-theme="dark"] .task-panel-scrim.tp2-scrim{background:rgba(0,0,0,.55)}
 /* My tasks · Team · To review: what waits for your review, its count warm */
 .tb-scope .tb-review .tb-chip-n{color:var(--tb-warn);font-weight:700}
 .tb-scope .tb-review.on .tb-chip-n{color:var(--tb-acText)}
+/* New task, the Schedule type picked: what waits to be scheduled */
+.tp2-waiting{display:flex;flex-direction:column;gap:3px;margin-top:10px;padding:10px 12px;border-radius:11px;background:var(--tb-acSoft);font-size:12.5px;color:var(--tb-text)}
+.tp2-waiting b{font-size:12px;font-weight:800;color:var(--tb-acText)}
+.tp2-waiting small{font-size:11.5px;color:var(--tb-text3)}

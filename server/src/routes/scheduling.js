@@ -410,21 +410,36 @@ async function deskTask(req) {
   if (!sf || sf.id !== t.content_format_id) return { status: 409, error: "Only a Schedule task has a desk." };
   return { t, sf };
 }
+// What waits to be scheduled, by type: the shared list (shared), and what this
+// person took but hasn't linked yet (mine). The desk, and the New task sheet.
+async function waitingByType(orgId, editorId) {
+  const { rows } = await pool.query(
+    `select coalesce(f.name, 'Other') as type,
+            count(*) filter (where x.scheduler_id is null)::int as shared,
+            count(*) filter (where $2::uuid is not null and x.scheduler_id = $2::uuid)::int as mine
+       from task x left join task_content_format f on f.id = x.content_format_id
+      where x.org_id = $1 and x.status = 'done' and x.schedule_from is not null
+        and (x.scheduler_id is null or x.scheduler_id = $2::uuid)
+        and not exists (select 1 from post p where p.from_task_id = x.id and p.deleted_at is null)
+      group by 1 order by 2 desc, 1`,
+    [orgId, editorId],
+  );
+  return rows;
+}
+// the New task sheet, once the Schedule type is picked: what's waiting for whoever it's for
+schedulingRouter.get("/scheduling/waiting", async (req, res, next) => {
+  try {
+    if (!(await schedulingReady())) return res.json({ waiting: [] });
+    const editorId = z.string().uuid().safeParse(req.query.editorId).success ? String(req.query.editorId) : null;
+    res.json({ waiting: await waitingByType(req.orgId, editorId) });
+  } catch (err) { next(err); }
+});
+
 async function deskView(req, t, sf) {
   const w = await who(req);
   const ready = await schedulingReady();
   const [waiting, scheduled, month] = await Promise.all([
-    ready && t.editor_id ? pool.query(
-      `select coalesce(f.name, 'Other') as type,
-              count(*) filter (where x.scheduler_id is null)::int as shared,
-              count(*) filter (where x.scheduler_id = $2)::int as mine
-         from task x left join task_content_format f on f.id = x.content_format_id
-        where x.org_id = $1 and x.status = 'done' and x.schedule_from is not null
-          and (x.scheduler_id is null or x.scheduler_id = $2)
-          and not exists (select 1 from post p where p.from_task_id = x.id and p.deleted_at is null)
-        group by 1 order by 2 desc, 1`,
-      [req.orgId, t.editor_id],
-    ) : { rows: [] },
+    ready && t.editor_id ? waitingByType(req.orgId, t.editor_id).then((rows) => ({ rows })) : { rows: [] },
     ready && t.editor_id ? pool.query(
       `select p.id, p.permalink, pl.name as "platformName", pl.key as "platformKey", coalesce(x.sid, x.tid) as ref, x.title
          from post p join task x on x.id = p.from_task_id left join platform pl on pl.id = p.platform_id

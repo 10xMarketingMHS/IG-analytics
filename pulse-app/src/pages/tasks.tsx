@@ -2437,6 +2437,20 @@ export function TaskPanel({ mode, task, canWrite, editors, channels: yourBrands,
       .catch(() => { if (live) setGoalInfo(null); });
     return () => { live = false; };
   }, [creating, draft.editor_id]);
+  // The Schedule type picked: what waits to be scheduled for whoever it's for
+  // (GET /scheduling/waiting); the task's own window then has Today's desk
+  type Waiting = { type: string; shared: number; mine: number };
+  const [schedWaiting, setSchedWaiting] = useState<Waiting[] | null>(null);
+  const schedPicked = creating && !!draft.content_format_id
+    && isScheduleType((contentFormats ?? []).find((f) => f.id === draft.content_format_id) ?? { name: "" } as ContentFormatDef);
+  useEffect(() => {
+    if (!schedPicked) { setSchedWaiting(null); return; }
+    let live = true;
+    api<{ waiting: Waiting[] }>(`/scheduling/waiting${draft.editor_id ? `?editorId=${draft.editor_id}` : ""}`)
+      .then((r) => { if (live) setSchedWaiting(r.waiting); })
+      .catch(() => { if (live) setSchedWaiting(null); });
+    return () => { live = false; };
+  }, [schedPicked, draft.editor_id]);
   // For yourself, with a goal this month: the goal types in it come first (see the
   // type chips); the rest still count, for your team or as Other work.
   const ownGoalFirst = creating && !!draft.editor_id && draft.editor_id === user?.editorId && !!goalInfo && goalInfo.goalPoints > 0;
@@ -2986,6 +3000,18 @@ export function TaskPanel({ mode, task, canWrite, editors, channels: yourBrands,
                           {chips(offGoal, "Off-goal types", elsePick)}
                         </div>
                       )}
+                    </div>
+                  );
+                })()}
+                {schedPicked && schedWaiting && (() => {
+                  const all = schedWaiting.filter((w) => w.shared + w.mine > 0);
+                  const mine = schedWaiting.reduce((n, w) => n + w.mine, 0);
+                  return (
+                    <div className="tp2-waiting" role="status">
+                      <b>Waiting to schedule</b>
+                      <span>{all.length ? all.map((w) => `${w.shared + w.mine} ${w.type}`).join(" · ") : "Nothing: every approved post is scheduled."}
+                        {mine > 0 ? ` · ${mine} taken by ${draft.editor_id && draft.editor_id === user?.editorId ? "you" : "them"}, links still to add` : ""}</span>
+                      <small>Once it's made, its window shows Today's desk: this list, what's scheduled that day, and the comment and lead counts.</small>
                     </div>
                   );
                 })()}
