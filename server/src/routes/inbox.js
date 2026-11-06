@@ -26,6 +26,11 @@ export const inboxRouter = Router();
 
 // the number the board shows (pages/tasks.tsx taskRef)
 const REF = "coalesce(t.sid, regexp_replace(t.ad_id, '^AdID', 'AID', 'i'), t.svid, t.pid, t.tid)";
+// what kind of work a task is, for its row ("Social · 🎥 Reels"): its category
+// and type, from the type joined as wf
+const WORK = `t.task_type as "taskType", wf.name as "workType", wf.icon as "workIcon"`;
+const WORK_JOIN = "left join task_content_format wf on wf.id = t.content_format_id";
+const work = (t) => ({ taskType: t.taskType ?? null, workType: t.workType ?? null, workIcon: t.workIcon ?? null });
 const none = Promise.resolve({ rows: [] });
 async function namesOf(ids) {
   if (!ids.length) return new Map();
@@ -71,16 +76,16 @@ inboxRouter.get("/inbox", async (req, res, next) => {
         )
         : none,
       pool.query(
-        `select t.id, t.title, t.status, t.editor_id, t.assigned_by, t.content_format_id, t.review_started_at, ${REF} as ref, e.name as "editorName", e.image_url as "imageUrl"
-           from task t left join editor e on e.id = t.editor_id
+        `select t.id, t.title, t.status, t.editor_id, t.assigned_by, t.content_format_id, t.review_started_at, ${REF} as ref, e.name as "editorName", e.image_url as "imageUrl", ${WORK}
+           from task t left join editor e on e.id = t.editor_id ${WORK_JOIN}
           where t.org_id = $1 and t.status = 'review'`,
         [req.orgId],
       ),
       me
         ? pool.query(
           `select t.id, t.title, ${REF} as ref, t.due_date::text as due, t.created_at as "at",
-                  coalesce(ae.name, au.name, au.email) as "fromName"
-             from task t
+                  coalesce(ae.name, au.name, au.email) as "fromName", ${WORK}
+             from task t ${WORK_JOIN}
              left join app_user au on au.id = coalesce(t.assigned_by, t.created_by)
              left join editor ae on ae.id = au.editor_id
             where t.org_id = $1 and t.editor_id = $2 and t.status in ('todo', 'in_progress') and not t.accepted`,
@@ -120,8 +125,8 @@ inboxRouter.get("/inbox", async (req, res, next) => {
       schedOn && me
         ? pool.query(
           `select t.id, t.title, ${REF} as ref, t.post_on::text as "postOn", to_char(t.post_time, 'HH24:MI') as "postTime",
-                  t.schedule_from as "at", e.name as "editorName", e.image_url as "imageUrl"
-             from task t left join editor e on e.id = t.editor_id
+                  t.schedule_from as "at", e.name as "editorName", e.image_url as "imageUrl", ${WORK}
+             from task t left join editor e on e.id = t.editor_id ${WORK_JOIN}
             where t.org_id = $1 and t.scheduler_id = $2 and t.schedule_from is not null and t.status = 'done'
               and not exists (select 1 from post p where p.from_task_id = t.id and p.deleted_at is null)`,
           [req.orgId, me],
@@ -132,7 +137,8 @@ inboxRouter.get("/inbox", async (req, res, next) => {
       // approved it, and every Manager and Asst. Manager
       schedOn && (caller.role === "manager" || caller.role === "lead")
         ? pool.query(
-          `select t.id, t.title, ${REF} as ref, t.completed_at as "at", e.name as "editorName", e.image_url as "imageUrl", f.name as "typeName"
+          `select t.id, t.title, ${REF} as ref, t.completed_at as "at", e.name as "editorName", e.image_url as "imageUrl", f.name as "typeName",
+                  t.task_type as "taskType", f.name as "workType", f.icon as "workIcon"
              from task t join task_content_format f on f.id = t.content_format_id and f.to_scheduling
              left join editor e on e.id = t.editor_id
             where t.org_id = $1 and t.task_type = 'service' and t.status = 'done' and t.meta->'use' is null
@@ -165,8 +171,8 @@ inboxRouter.get("/inbox", async (req, res, next) => {
         .map((h) => ({ kind: "handover", key: `handover:${h.id}`, at: h.escalatedAt ?? h.createdAt, handover: h })),
       // to review: yours too when you're its type's reviewer (can_review says so)
       ...reviewed.filter((t) => t.can_review)
-        .map((t) => ({ kind: "review", key: `review:${t.id}`, at: t.review_started_at, taskId: t.id, title: t.title, ref: t.ref, name: t.editorName, imageUrl: t.imageUrl })),
-      ...toAccept.rows.map((t) => ({ kind: "accept", key: `accept:${t.id}`, at: t.at, taskId: t.id, title: t.title, ref: t.ref, due: t.due, name: t.fromName })),
+        .map((t) => ({ kind: "review", key: `review:${t.id}`, at: t.review_started_at, taskId: t.id, title: t.title, ref: t.ref, name: t.editorName, imageUrl: t.imageUrl, ...work(t) })),
+      ...toAccept.rows.map((t) => ({ kind: "accept", key: `accept:${t.id}`, at: t.at, taskId: t.id, title: t.title, ref: t.ref, due: t.due, name: t.fromName, ...work(t) })),
       ...resets.rows.map((r) => ({ kind: "reset", key: `reset:${r.userId}`, at: r.at, userId: r.userId, name: r.name })),
       // to schedule: no date yet · post it: the day itself · links: the days after, until they're in (before the day, it waits)
       ...toSchedule.rows.flatMap((t) => {
@@ -175,10 +181,10 @@ inboxRouter.get("/inbox", async (req, res, next) => {
         return step ? [{ kind: "schedule", key: `schedule:${t.id}:${step}`, at: t.at, taskId: t.id, title: t.title, ref: t.ref, step,
           postOn: t.postOn, postTime: t.postTime, linksDueOn: t.postOn ? addDaysYmd(t.postOn, LINK_AFTER_DAYS) : null,
           linksDueAt: dueAt, late: !!dueAt && Date.now() > Date.parse(dueAt),
-          name: t.editorName, imageUrl: t.imageUrl }] : [];
+          name: t.editorName, imageUrl: t.imageUrl, ...work(t) }] : [];
       }),
       ...toDecide.rows.map((t) => ({ kind: "decide", key: `decide:${t.id}`, at: t.at, taskId: t.id, title: t.title, ref: t.ref,
-        typeName: t.typeName, name: t.editorName, imageUrl: t.imageUrl })),
+        typeName: t.typeName, name: t.editorName, imageUrl: t.imageUrl, ...work(t) })),
     ];
     const sent = [
       ...myLeave.rows.map((l) => ({ kind: "leave", key: `leave:${l.id}`, at: l.createdAt, leave: { ...l, decideBy: decideBy(l.from, today) } })),
@@ -186,7 +192,7 @@ inboxRouter.get("/inbox", async (req, res, next) => {
       ...handovers.items.filter((h) => h.mine === "from")
         .map((h) => ({ kind: "handover", key: `handover:${h.id}`, at: h.createdAt, handover: h })),
       ...reviewed.filter((t) => me && t.editor_id === me && !t.can_review)
-        .map((t) => ({ kind: "review", key: `review:${t.id}`, at: t.review_started_at, taskId: t.id, title: t.title, ref: t.ref, reviewBy: t.review_by ?? null })),
+        .map((t) => ({ kind: "review", key: `review:${t.id}`, at: t.review_started_at, taskId: t.id, title: t.title, ref: t.ref, reviewBy: t.review_by ?? null, ...work(t) })),
     ];
     const newest = (a, b) => new Date(b.at ?? 0).getTime() - new Date(a.at ?? 0).getTime();
     res.json({ waiting: waiting.sort(newest), sent: sent.sort(newest), count: waiting.length });

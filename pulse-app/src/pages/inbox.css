@@ -50,6 +50,8 @@ html[data-theme="dark"] .ib{--ib-text:#ededf0;--ib-text2:#b4b4bc;--ib-text3:#8b8
 .ib-what>span{display:flex;align-items:center;gap:6px}
 .ib-type{font-style:normal;padding:1px 6px;border-radius:5px;background:color-mix(in srgb,var(--tc) 14%,transparent);color:var(--tc);
   font-size:10px;font-weight:800;letter-spacing:.05em}
+/* the task's kind of work, beside the tag: "Social · 🎥 Reels" */
+.ib-work{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:11.5px;font-weight:600;color:var(--ib-text2)}
 .ib-ref{margin-right:6px;padding:2px 7px;border-radius:6px;background:var(--ib-acSoft);color:var(--ib-acText);font:600 11px 'Geist Mono',ui-monospace,monospace;vertical-align:1px}
 .ib-tag{display:inline-block;margin-left:8px;padding:1px 8px;border-radius:999px;font-size:11px;font-weight:800;vertical-align:1px}
 .ib-tag.warn{background:color-mix(in srgb,var(--ib-warn) 16%,transparent);color:var(--ib-warn)}

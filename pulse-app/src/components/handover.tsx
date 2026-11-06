@@ -19,6 +19,10 @@ export type HandoverItem = {
   taskTitle: string;
   taskStatus: string;
   taskRef: string | null;
+  // what kind of work it is (server/src/routes/handover.js), for its Inbox row
+  taskType?: string | null;
+  workType?: string | null;
+  workIcon?: string | null;
   fromEditorId: string | null;
   fromName: string | null;
   fromImage: string | null;

@@ -105,6 +105,9 @@ export async function handoverFeed(req) {
     `select h.id, h.task_id as "taskId", t.title as "taskTitle", t.status as "taskStatus",
             -- the number the board shows (pages/tasks.tsx taskRef)
             coalesce(t.sid, regexp_replace(t.ad_id, '^AdID', 'AID', 'i'), t.svid, t.pid, t.tid) as "taskRef",
+            -- what kind of work it is, for its Inbox row (routes/inbox.js)
+            t.task_type as "taskType", (select f.name from task_content_format f where f.id = t.content_format_id) as "workType",
+            (select f.icon from task_content_format f where f.id = t.content_format_id) as "workIcon",
             h.from_editor_id as "fromEditorId", ef.name as "fromName", ef.image_url as "fromImage",
             h.to_editor_id as "toEditorId", et.name as "toName", et.image_url as "toImage",
             h.note, h.level, h.reached, h.created_at as "createdAt", h.escalated_at as "escalatedAt"

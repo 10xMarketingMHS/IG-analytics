@@ -4,7 +4,7 @@ import { toast } from "sonner";
 import { api, ApiError } from "@/lib/api";
 import { useAuth } from "@/lib/auth-context";
 import { Avatar } from "@/lib/editor-visuals";
-import { relTime } from "@/lib/activity-meta";
+import { relTime, workLabel } from "@/lib/activity-meta";
 import { clockTime } from "@/lib/time-format";
 import { leftWords } from "@/lib/schedule";
 import { notifyTasksChanged } from "@/lib/task-events";
@@ -176,10 +176,13 @@ export function InboxPage() {
         acts = btn("Open Roster", () => navigate("/my-team?tab=roster"), "pri");
         break;
     }
+    // a task's row says what kind of work it is: "Social · 🎥 Reels", "Ads · 🖼️ Ad Image"
+    const w = i.kind === "handover" ? i.handover : "taskId" in i ? i : null;
+    const workWord = w ? workLabel(w.taskType, w.workType, w.workIcon) : null;
     return (
       <div key={i.key} className={"ib-tr k-" + i.kind + (open ? " link" : "")} role={open ? "button" : undefined} tabIndex={open ? 0 : undefined}
         onClick={open ?? undefined} onKeyDown={open ? (e) => { if (e.key === "Enter") open!(); } : undefined}>
-        <span className="ib-what"><b>{what}</b><span><em className="ib-type">{TAG.get(i.kind)}</em></span></span>
+        <span className="ib-what"><b>{what}</b><span><em className="ib-type">{TAG.get(i.kind)}</em>{workWord && <span className="ib-work">{workWord}</span>}</span></span>
         {who}
         <span className="ib-details">{details}</span>
         <span className="ib-when">{relTime(i.at)}</span>

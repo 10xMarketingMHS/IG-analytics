@@ -4,6 +4,12 @@ import type { Activity, ActivityVerb } from "@/lib/types";
 // What kind of work a task's notice is about: its type ("🖼️ Ad Image"), or
 // its category when it has no type
 const CATEGORY_WORD: Record<string, string> = { social: "Social", ad: "Ads", service: "Service", project: "Project", admin: "General" };
+// "Social · 🎥 Reels", "Ads · 🖼️ Ad Image": the category, then the type when it has one
+export function workLabel(taskType?: string | null, typeName?: string | null, typeIcon?: string | null): string | null {
+  const cat = taskType ? CATEGORY_WORD[taskType] ?? null : null;
+  const type = typeName ? `${typeIcon ? `${typeIcon} ` : ""}${typeName}` : null;
+  return cat && type ? `${cat} · ${type}` : cat ?? type;
+}
 export function workKindOf(a: Activity): string | null {
   if (a.type_name) return `${a.type_icon ? `${a.type_icon} ` : ""}${a.type_name}`;
   return a.task_type ? CATEGORY_WORD[a.task_type] ?? null : null;
