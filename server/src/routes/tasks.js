@@ -7,6 +7,7 @@ import { assignLimits, hasActiveGrant } from "../permissions.js";
 import { callerAccess } from "../page-access.js";
 import { reviewContext, routeReview, withReview } from "../review-route.js";
 import { logActivity } from "../activity.js";
+import { postInGeneral } from "./chat.js";
 import { canSeeTask, editorRanks, mayOpenTask, seesEditor, taskViewer } from "../hierarchy.js";
 import { callerScope } from "../attendance.js";
 import { closePendingHandovers } from "../handover.js";
@@ -32,6 +33,11 @@ const PRIORITY = ["low", "medium", "high"];
 // and "ad" each carry a secondary id alongside the task's own TID — see
 // nextTaskRef() below.
 const TASK_TYPE = ["content", "short_task", "general", "social", "ad", "admin", "service", "project"];
+// Social and Ads work is a thing to look at: its delivery link is always needed
+// before it goes to review or closes itself, whatever the task's or its type's
+// own setting (Settings › Tasks & time). The other kinds keep their setting.
+const LINK_ALWAYS = new Set(["social", "ad"]);
+const LINK_ALWAYS_SQL = "t.task_type in ('social', 'ad')";
 
 // Date-only helpers for Project start/due bounds. YYYY-MM-DD strings compare
 // lexicographically, so range checks need no Date math; addDaysYmd shifts a
@@ -168,7 +174,7 @@ const SELECT = `
          case when t.status = 'done' then coalesce((to_jsonb(t)->>'points_at_done')::numeric, cf.points) else cf.points end as content_format_points, cf.duration_days as content_format_duration,
          cf.metrics_description as content_format_metrics,
          cf.review_link_required as content_format_link_required,
-         coalesce(t.review_link_required, cf.review_link_required, false) as link_required,
+         (${LINK_ALWAYS_SQL} or coalesce(t.review_link_required, cf.review_link_required, false)) as link_required,
          t.budget_hours, t.budget_started_at, t.budget_used_seconds, t.accepted, t.on_hold, t.held_by, t.created_at, t.completed_at, t.created_by, t.assigned_by,
          -- Time spent waiting for a reviewer, taken off lateness when scoring.
          t.review_started_at, t.review_wait_seconds::float as review_wait_seconds,
@@ -1018,7 +1024,7 @@ tasksRouter.patch("/tasks/:id", requireEditor, requireActiveEod, async (req, res
         } else {
           const link = d.deliveryLink !== undefined ? d.deliveryLink : prior.delivery_link;
           if (!link && !d.approveWithoutWork) {
-            let required = prior.review_link_required;
+            let required = LINK_ALWAYS.has(prior.task_type) || prior.review_link_required;
             if (required == null && prior.content_format_id) {
               const { rows: cfRows } = await pool.query(
                 "select review_link_required from task_content_format where id = $1 and org_id = $2",
@@ -1092,7 +1098,7 @@ tasksRouter.patch("/tasks/:id", requireEditor, requireActiveEod, async (req, res
         const cfId = d.contentFormatId !== undefined ? (d.contentFormatId ?? null) : prior.content_format_id;
         const link = d.deliveryLink !== undefined ? d.deliveryLink : prior.delivery_link;
         // The task's own setting wins; with none, fall back to its content type.
-        let required = d.reviewLinkRequired !== undefined ? d.reviewLinkRequired : prior.review_link_required;
+        let required = LINK_ALWAYS.has(d.taskType ?? prior.task_type) || (d.reviewLinkRequired !== undefined ? d.reviewLinkRequired : prior.review_link_required);
         if (required == null && cfId) {
           const { rows: cfRows } = await pool.query(
             "select review_link_required from task_content_format where id = $1 and org_id = $2", [cfId, req.orgId],
@@ -1499,6 +1505,11 @@ tasksRouter.patch("/tasks/:id", requireEditor, requireActiveEod, async (req, res
         // The reason, so the feed says what needs fixing.
         meta: { note: reviewNote },
       });
+      // …and the team sees it in Team Chat's #general: the task's card, its
+      // person @mentioned, and what to fix.
+      const { rows: [who] } = await pool.query("select id from app_user where editor_id = $1 order by created_at limit 1", [full[0].editor_id]);
+      await postInGeneral(req.orgId, req.user.sub,
+        `↩️ Sent back for rework: <task:${full[0].id}>${who ? ` <@${who.id}>` : ""}\n${reviewNote}`);
     }
     // Record the review decision (and, for a rework cycle, the note the team
     // needs) against the revision it just landed on.

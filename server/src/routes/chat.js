@@ -553,7 +553,8 @@ async function taskSummaries(orgId, ids) {
   const { rows } = await pool.query(
     `select t.id, t.title, t.status, t.task_type, t.tid, t.sid, t.ad_id, t.svid, t.pid, t.due_date,
             t.editor_id, t.assigned_by, t.created_by, t.delivery_link, t.review_started_at, t.pending_note, t.content_format_id,
-            coalesce(t.review_link_required, cf.review_link_required, false) as link_required,
+            -- Social and Ads always need their link (tasks.js LINK_ALWAYS)
+            (t.task_type in ('social', 'ad') or coalesce(t.review_link_required, cf.review_link_required, false)) as link_required,
             e.name as editor_name, e.image_url as editor_image, w.name as channel_name,
             cf.name as content_format_name
        from task t
@@ -680,6 +681,42 @@ async function broadcastMessage(orgId, row, { isNew = false, extra = [] } = {}) 
     for (const id of ids) if (streams.has(id)) send(id, { ...event, tasks: await cardsFor({ orgId, userId: id }, tasks) });
   }
   return { message: messages[0], tasks };
+}
+
+// The app saying something in #general for someone (a send-back, routes/tasks.js):
+// posted as them, with its task cards and @mentions, like a message they wrote.
+// #general is made if the team never opened Team Chat. Never throws: a chat
+// hiccup mustn't undo the work it reports.
+export async function postInGeneral(orgId, authorId, body) {
+  try {
+    const { rows: [c] } = await pool.query(
+      `insert into chat_channel (org_id, kind, name, topic)
+       values ($1, 'channel', 'general', 'Everyone on the team')
+       on conflict (org_id, lower(name)) where kind = 'channel' do update set name = chat_channel.name
+       returning *`,
+      [orgId],
+    );
+    if (!c || c.archived_at) return null;
+    const { mentions, taskIds } = await refsIn(orgId, body, c, authorId);
+    // everyone is in #general; whoever it names joins now, so it reaches them as unread
+    await pool.query("insert into chat_member (channel_id, user_id) select $1, unnest($2::uuid[]) on conflict do nothing", [c.id, [authorId, ...mentions]]);
+    const { rows: [row] } = await pool.query(
+      `insert into chat_message (org_id, channel_id, author_id, body, mentions, task_ids)
+       values ($1, $2, $3, $4, $5::uuid[], $6::uuid[]) returning *`,
+      [orgId, c.id, authorId, body, mentions, taskIds],
+    );
+    await pool.query("update chat_channel set last_message_at = $2 where id = $1", [c.id, row.created_at]);
+    await pool.query(
+      `update chat_member set last_read_at = greatest(coalesce(last_read_at, '-infinity'), $3)
+        where channel_id = $1 and user_id = $2`,
+      [c.id, authorId, row.created_at],
+    );
+    await broadcastMessage(orgId, row, { isNew: true, extra: mentions });
+    return row;
+  } catch (err) {
+    console.error("[chat] couldn't post in #general:", err.message);
+    return null;
+  }
 }
 
 // Top-level messages, newest page first: `before` is a message id to page back

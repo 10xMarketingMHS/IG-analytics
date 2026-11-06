@@ -101,6 +101,10 @@ const CONTENT_LABEL = (v: string | null) => CONTENT_TYPES.find((c) => c.value ==
 type TaskCategory = "social" | "ad" | "service" | "project" | "admin";
 const CATEGORY_LABEL: Record<TaskCategory, string> = { social: "Social", ad: "Ads", service: "Service", project: "Project", admin: "General" };
 const ALSO_ON_HINT = "One task: reviewed and scored once. After approval each brand gets its own posting step in Scheduling.";
+// Social and Ads always need their delivery link before review, or before closing
+// themselves (server/src/routes/tasks.js LINK_ALWAYS); the other kinds go by their setting.
+const linkAlways = (kind?: string | null) => kind === "social" || kind === "ad";
+const LINK_ALWAYS_SAY = "Always needed for Social and Ads";
 // Work that closes without review: its type's Self close is on (Settings › Tasks &
 // time), or it's Service's Something else. Whoever did it closes it, like a General
 // task. Before Self close's database update, an off-goal type did. The server holds the same.
@@ -776,6 +780,13 @@ export function TasksPage() {
       );
       return;
     }
+    // Handing in work whose delivery link is needed (Social and Ads always) asks
+    // for the link first, then carries on — the server holds the same rule.
+    if (t.status === "in_progress" && (status === "review" || status === "done") && t.link_required && !t.delivery_link) {
+      setLinkValue("");
+      setLinkPrompt({ task: t, then: status });
+      return;
+    }
     // Starting a timed task you made yourself runs the same checks as Accept (a
     // heavy day, office hours) — starting it is what starts its clock.
     if (t.status === "todo" && status === "in_progress" && t.accepted && t.budget_hours != null) {
@@ -843,6 +854,28 @@ export function TasksPage() {
       toast.error(err instanceof ApiError ? err.message : "Could not set the due date.");
     } finally {
       setDueBusy(false);
+    }
+  }
+  // The card's Add link: the delivery link, before Review → (or Done) shows
+  const [linkPrompt, setLinkPrompt] = useState<{ task: Task; then?: TaskStatus } | null>(null);
+  const [linkValue, setLinkValue] = useState("");
+  const [linkBusy, setLinkBusy] = useState(false);
+  async function saveLink() {
+    const p = linkPrompt;
+    const v = linkValue.trim();
+    if (!p || linkBusy) return;
+    if (!isValidHttpUrl(v)) { toast.error("Paste the full link, starting with https://"); return; }
+    setLinkBusy(true);
+    try {
+      await api(`/tasks/${p.task.id}`, { method: "PATCH", body: JSON.stringify({ deliveryLink: v }) });
+      setLinkPrompt(null);
+      await refetch();
+      if (p.then) await move({ ...p.task, delivery_link: v }, p.then);
+      else toast.success("Delivery link added. It's ready to hand in.");
+    } catch (err) {
+      toast.error(err instanceof ApiError ? err.message : "Couldn't save the link.");
+    } finally {
+      setLinkBusy(false);
     }
   }
   const [sendBackNote, setSendBackNote] = useState("");
@@ -1242,6 +1275,8 @@ export function TasksPage() {
                     // Start is the main action; moving on to review is a link;
                     // approving is green; going back is quiet.
                     const nextKind = t.status === "todo" ? "pri" : t.status === "review" || closesItself ? "good" : "link";
+                    // work that needs its delivery link shows Add link first; once it's in, Review → (or Done)
+                    const needsLink = canNext && t.status === "in_progress" && t.link_required && !t.delivery_link;
                     return (
                       <>
                         {canPrev && (
@@ -1250,7 +1285,11 @@ export function TasksPage() {
                           </button>
                         )}
                         {holdCtrl}
-                        {canNext && (
+                        {needsLink ? (
+                          <button className="tb-act next link" title="The finished work, for whoever checks it" onClick={() => { setLinkValue(""); setLinkPrompt({ task: t }); }}>
+                            {TB_ICON.link} Add link
+                          </button>
+                        ) : canNext && (
                           <button className={"tb-act next " + nextKind} onClick={() => move(t, nextKey!)}>
                             {t.status === "todo" ? "▶ Start" : closesItself ? <>{TB_ICON.check} Done</> : t.status === "review" ? <>{TB_ICON.check} {COLUMNS[ci + 1].label}</> : `${COLUMNS[ci + 1].label} →`}
                           </button>
@@ -1537,7 +1576,7 @@ export function TasksPage() {
                 <b>{duePrompt.title}</b> has no due date, and a task can't start without one. Once it's set, only an admin or whoever assigned it can change it.
               </p>
               <div className="tp2-inline">
-                {quickDues().map((q) => (
+                {workDues().map((q) => (
                   <button key={q.value} type="button" className={"tp2-pill" + (dueValue === q.value ? " on" : "")} onClick={() => setDueValue(q.value)}>{q.label}</button>
                 ))}
                 <input className="t tp2-date" type="date" aria-label="Due date" min={today()} value={dueValue} onChange={(e) => setDueValue(e.target.value)} />
@@ -1547,6 +1586,31 @@ export function TasksPage() {
               <button type="button" className="btn" onClick={() => setDuePrompt(null)}>Cancel</button>
               <button type="button" className="btn btn-primary" disabled={dueBusy || !dueValue || dueValue < today()} onClick={setDueAndStart}>
                 {dueBusy ? "Starting…" : "Set date and start"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+      {linkPrompt && (
+        <div className="modal-bg show" onClick={() => setLinkPrompt(null)}>
+          <div className="modal" style={{ width: 440 }} onClick={(e) => e.stopPropagation()}>
+            <div className="mhead">
+              <span style={{ fontSize: 18 }}>🔗</span>
+              <h3>Add the delivery link</h3>
+              <button className="x" onClick={() => setLinkPrompt(null)}>×</button>
+            </div>
+            <div className="mbody">
+              <p style={{ margin: "0 0 10px", fontSize: 13.5, lineHeight: 1.6 }}>
+                <b>{linkPrompt.task.title}</b> needs the link to its finished work{linkPrompt.then === "done" ? " before it's closed" : ", so whoever reviews it can see it"}.
+                {!linkPrompt.then && " Once it's added, you can submit it."}
+              </p>
+              <input className="t" type="url" autoFocus placeholder="https://… Drive, Frame.io, YouTube or the post" value={linkValue}
+                onChange={(e) => setLinkValue(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); saveLink(); } }} style={{ width: "100%" }} />
+            </div>
+            <div className="mfoot">
+              <button type="button" className="btn" onClick={() => setLinkPrompt(null)}>Cancel</button>
+              <button type="button" className="btn btn-primary" disabled={linkBusy || !linkValue.trim()} onClick={saveLink}>
+                {linkBusy ? "Saving…" : linkPrompt.then === "review" ? "Add link and submit" : linkPrompt.then === "done" ? "Add link and complete" : "Add link"}
               </button>
             </div>
           </div>
@@ -2115,8 +2179,6 @@ function Row({ label, icon, note, children }: { label: string; icon?: ReactNode;
 
 // (The number a new task will be given is the server's to say: GET /tasks/next-ref.)
 
-// One-tap due dates for a new task: today, tomorrow, and the coming Friday
-// and Monday.
 // The New task sheet's kinds of work, each with what it covers.
 const KINDS: { k: TaskCategory; icon: string; label: string; sub: string; leadsOnly?: boolean }[] = [
   { k: "social", icon: "📣", label: "Social", sub: "Reels, carousels, posts" },
@@ -2125,27 +2187,17 @@ const KINDS: { k: TaskCategory; icon: string; label: string; sub: string; leadsO
   { k: "project", icon: "📁", label: "Project", sub: "Bigger work, with a start" },
   { k: "admin", icon: "📌", label: "General", sub: "Just for you · close it yourself", leadsOnly: true },
 ];
-// Its due picks: Today, Tomorrow, and the next two working days — no Sundays,
+// One-tap due dates: Today, Tomorrow, and the next working day after — no Sundays,
 // no Saturdays when the office is shut then, no holidays (Settings › General).
+// Any later day is picked from the calendar beside them.
 function workDues(cal?: { satOff?: boolean; holidays?: string[] } | null) {
   const now = new Date();
   const out = [{ label: "Today", value: ymd(now) }, { label: "Tomorrow", value: ymd(addDays(now, 1)) }];
   const off = (d: Date) => d.getDay() === 0 || (d.getDay() === 6 && !!cal?.satOff) || (cal?.holidays ?? []).includes(ymd(d));
-  for (let d = addDays(now, 2); out.length < 4; d = addDays(d, 1)) {
+  for (let d = addDays(now, 2); out.length < 3; d = addDays(d, 1)) {
     if (!off(d)) out.push({ label: d.toLocaleDateString("en-GB", { weekday: "short", day: "numeric" }), value: ymd(d) });
   }
   return out;
-}
-
-function quickDues() {
-  const now = new Date();
-  const out = [{ label: "Today", value: ymd(now) }, { label: "Tomorrow", value: ymd(addDays(now, 1)) }];
-  for (const dow of [5, 1]) {
-    let d = addDays(now, 2);
-    while (d.getDay() !== dow) d = addDays(d, 1);
-    out.push({ label: d.toLocaleDateString("en-GB", { weekday: "short", day: "numeric" }), value: ymd(d) });
-  }
-  return out.sort((a, b) => a.value.localeCompare(b.value));
 }
 
 // The time budget as a card: where its clock is, time used so far, and how
@@ -2384,9 +2436,10 @@ export function TaskPanel({ mode, task, canWrite, editors, channels: yourBrands,
       setDraft((d) => ({ ...d, content_format_id: null }));
     }
   }, [creating, limitTypes, draft.content_format_id, contentFormats]);
-  const linkRequired = creating
+  const linkFixed = linkAlways(creating ? activeCategory : task?.task_type);
+  const linkRequired = linkFixed || (creating
     ? (linkOverride ?? selectedFormat?.review_link_required ?? false)
-    : !!task?.link_required;
+    : !!task?.link_required);
   const projectDuration = isProject ? (selectedFormat?.duration_days ?? null) : null;
   const projectPoints = isProject ? (selectedFormat?.points ?? null) : null;
   // Social work that goes to Scheduling can be posted on more brands than its own:
@@ -2653,7 +2706,7 @@ export function TaskPanel({ mode, task, canWrite, editors, channels: yourBrands,
             if (canFillDue && !v) return;
             set("due_date", "dueDate", v);
           }} />
-        {(creating || canFillDue) && !isProject && !dueRo && quickDues().map((q) => (
+        {(creating || canFillDue) && !isProject && !dueRo && workDues(org?.calendar).map((q) => (
           <button key={q.value} type="button" className={"tp2-pill" + (cur.due_date === q.value ? " on" : "")} onClick={() => set("due_date", "dueDate", q.value)}>{q.label}</button>
         ))}
         {!creating && task!.due_date && <span className={"tp2-faint" + (overdueEdit ? " bad" : "")}>{dueLabel(task!.due_date)}</span>}
@@ -2757,11 +2810,11 @@ export function TaskPanel({ mode, task, canWrite, editors, channels: yourBrands,
         <input
           type="checkbox"
           checked={linkRequired}
-          disabled={ro || !canSetLink || (isDoneTask && !isAdmin)}
+          disabled={linkFixed || ro || !canSetLink || (isDoneTask && !isAdmin)}
           onChange={(e) => (creating ? setLinkOverride(e.target.checked) : patch({ reviewLinkRequired: e.target.checked }))}
         />
         <span className="tp2-track" aria-hidden="true"><span /></span>
-        <span>Required to submit for review</span>
+        <span>{linkFixed ? `Required to submit · ${LINK_ALWAYS_SAY.toLowerCase()}` : "Required to submit for review"}</span>
       </label>
     </Row>
   );
@@ -3067,19 +3120,6 @@ export function TaskPanel({ mode, task, canWrite, editors, channels: yourBrands,
                           {channels.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
                         </select>
                       )}
-                      {multiBrand && draft.channel_id && (
-                        <span className="tp2-also">
-                          <small>Also post on</small>
-                          {channels.filter((c) => c.id !== draft.channel_id).map((c) => {
-                            const on = alsoBrands.includes(c.id);
-                            return (
-                              <button key={c.id} type="button" className={"tp2-pill" + (on ? " on" : "")} aria-pressed={on}
-                                onClick={() => setAlsoBrands((xs) => (on ? xs.filter((x) => x !== c.id) : [...xs, c.id]))}>{c.name}</button>
-                            );
-                          })}
-                          {alsoBrands.some((b) => b !== draft.channel_id) && <small className="tp2-faint">{ALSO_ON_HINT}</small>}
-                        </span>
-                      )}
                     </label>
                   )}
                   <div className="tp2-ncell">
@@ -3107,6 +3147,20 @@ export function TaskPanel({ mode, task, canWrite, editors, channels: yourBrands,
                       </>
                     )}
                   </div>
+                  {/* the other brands it goes out on: one line across, under Brand and Assignee */}
+                  {!adminTask && multiBrand && draft.channel_id && (
+                    <div className="tp2-also" role="group" aria-label="Also post on">
+                      <small>Also post on</small>
+                      {channels.filter((c) => c.id !== draft.channel_id).map((c) => {
+                        const on = alsoBrands.includes(c.id);
+                        return (
+                          <button key={c.id} type="button" className={"tp2-pill" + (on ? " on" : "")} aria-pressed={on}
+                            onClick={() => setAlsoBrands((xs) => (on ? xs.filter((x) => x !== c.id) : [...xs, c.id]))}>{c.name}</button>
+                        );
+                      })}
+                      {alsoBrands.some((b) => b !== draft.channel_id) && <small className="tp2-faint">{ALSO_ON_HINT}</small>}
+                    </div>
+                  )}
                   {isProject && (
                     <label className="tp2-ncell">
                       <span>Start date</span>
@@ -3145,10 +3199,10 @@ export function TaskPanel({ mode, task, canWrite, editors, channels: yourBrands,
                   placeholder={otherPick ? "What is this work? e.g. Pack shots for the Diwali hamper: 6 photos on white, for the Longer Life team" : "What does done look like? Anything they need to know…"} />
                 {!adminTask && <Attachments links={cur.attachments} readOnly={false} onChange={(next) => setDraft((d) => ({ ...d, attachments: next }))} />}
                 {!adminTask && canAssign && (
-                  <label className={"tp-linkreq tp2-switch" + (linkRequired ? " on" : "")}>
-                    <input type="checkbox" checked={linkRequired} onChange={(e) => setLinkOverride(e.target.checked)} />
+                  <label className={"tp-linkreq tp2-switch" + (linkRequired ? " on" : "")} title={linkFixed ? LINK_ALWAYS_SAY : undefined}>
+                    <input type="checkbox" checked={linkRequired} disabled={linkFixed} onChange={(e) => setLinkOverride(e.target.checked)} />
                     <span className="tp2-track" aria-hidden="true"><span /></span>
-                    <span>Review link required to submit for review</span>
+                    <span>{linkFixed ? `Delivery link required to submit · ${LINK_ALWAYS_SAY.toLowerCase()}` : "Review link required to submit for review"}</span>
                   </label>
                 )}
               </section>
