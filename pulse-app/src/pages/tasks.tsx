@@ -2917,13 +2917,18 @@ export function TaskPanel({ mode, task, canWrite, editors, channels: yourBrands,
                     if (g.need > 0) return { cls: "need", text: `${g.need} to go${g.open ? ` · ${g.open} on the board` : ""}` };
                     return { cls: "met", text: g.done >= g.goal ? "Goal met" : "Rest on the board" };
                   };
+                  // once a type is picked (or Something else), the others shrink to one-line pills (CSS
+                  // .tp2-typegroups.picked): the pick keeps its points and goal line, the rest say theirs on hover
+                  const picked = !!cur.content_format_id || otherPick;
                   const chip = (f: ContentFormatDef, inGroup = false) => {
                     const note = goalNote(f);
+                    const sizes = `${tenths(f.points ?? 0)} ${Number(f.points) === 1 ? "pt" : "pts"}${isProject ? (f.duration_days ? ` · ${f.duration_days} day${f.duration_days === 1 ? "" : "s"}` : "") : f.hours != null ? ` · ${fmtHours(Number(f.hours))}h` : ""}`;
                     return (
                       <button key={f.id} type="button" className={"tp2-type" + (f.counts_in_goal === false ? " off" : "") + (note?.cls === "need" ? " goal" : "") + (cur.content_format_id === f.id ? " on" : "")} aria-pressed={cur.content_format_id === f.id}
+                        title={picked && cur.content_format_id !== f.id ? `${sizes}${note ? ` · ${note.text}` : ""}` : undefined}
                         onClick={() => { setOtherPick(false); if (!inGroup) setOpenMain(null); onPickContentType(cur.content_format_id === f.id ? null : f.id); }}>
                         <span>{f.icon} {f.name}</span>
-                        <small>{tenths(f.points ?? 0)} {Number(f.points) === 1 ? "pt" : "pts"}{isProject ? (f.duration_days ? ` · ${f.duration_days} day${f.duration_days === 1 ? "" : "s"}` : "") : f.hours != null ? ` · ${fmtHours(Number(f.hours))}h` : ""}</small>
+                        <small>{sizes}</small>
                         {note && <em className={"tp2-type-goal " + note.cls}>{note.text}</em>}
                       </button>
                     );
@@ -2978,10 +2983,10 @@ export function TaskPanel({ mode, task, canWrite, editors, channels: yourBrands,
                     return <span className="tp2-faint">No {isProject ? "project" : CATEGORY_LABEL[category].toLowerCase()} types yet — add them under Settings › Tasks & time.</span>;
                   }
                   if (!notMine.length && !offGoal.length && !elsePick) {
-                    return <div className="tp2-typegroup">{chips(inGoal, isProject ? "Project type" : "Content type")}</div>;
+                    return <div className={"tp2-typegroup" + (picked ? " picked" : "")}>{chips(inGoal, isProject ? "Project type" : "Content type")}</div>;
                   }
                   return (
-                    <div className="tp2-typegroups">
+                    <div className={"tp2-typegroups" + (picked ? " picked" : "")}>
                       {inGoal.length > 0 && (
                         <div className="tp2-typegroup">
                           <span className="tp2-typehead goal">{ownGoalFirst ? "In your goal" : "Counts in goals"}</span>
@@ -2990,13 +2995,13 @@ export function TaskPanel({ mode, task, canWrite, editors, channels: yourBrands,
                       )}
                       {notMine.length > 0 && (
                         <div className="tp2-typegroup">
-                          <span className="tp2-typehead goal">Not in your goal · counts for your team, or as Other work</span>
+                          <span className="tp2-typehead goal">{picked ? "Not in your goal" : "Not in your goal · counts for your team, or as Other work"}</span>
                           {chips(notMine, "Types not in your goal")}
                         </div>
                       )}
                       {(offGoal.length > 0 || elsePick) && (
                         <div className="tp2-typegroup">
-                          <span className="tp2-typehead off">Off-goal · help for another team, its time fills missed goals</span>
+                          <span className="tp2-typehead off">{picked ? "Off-goal" : "Off-goal · help for another team, its time fills missed goals"}</span>
                           {chips(offGoal, "Off-goal types", elsePick)}
                         </div>
                       )}

@@ -676,6 +676,14 @@ html[data-theme="dark"] .task-panel-scrim.tp2-scrim{background:rgba(0,0,0,.55)}
 .tp2-type.within{border-color:var(--tb-ac);border-style:solid}
 .tp2-subtypes{display:flex;flex-direction:column;gap:6px;margin-top:2px;padding:9px 10px;border-left:2px solid var(--tb-ac);border-radius:0 10px 10px 0;background:color-mix(in srgb,var(--tb-ac) 5%,transparent)}
 .tp2-subhead{font-size:11.5px;font-weight:700;color:var(--tb-text2)}
+/* once a type is picked, the others are one-line pills (their points on hover), so the
+   form below comes up; the pick, and the main type it sits under, keep their size */
+.tp2-typegroups.picked{gap:8px;padding:10px 12px}
+.tp2-typegroups.picked .tp2-typegroup{gap:5px}
+.picked .tp2-type:not(.on):not(.within){flex-direction:row;align-items:center;gap:6px;padding:4px 10px;border-radius:999px;font-size:12px;color:var(--tb-text2)}
+.picked .tp2-type:not(.on):not(.within):hover{color:var(--tb-text)}
+.picked .tp2-type:not(.on):not(.within) small,.picked .tp2-type:not(.on):not(.within) .tp2-type-goal{display:none}
+.picked .tp2-types{align-items:flex-start}
 /* Add finished work (Admins and the Super Admin): a quieter button beside New task */
 .tb-new.ghost{background:var(--tb-panel);color:var(--tb-text);border:1px solid var(--tb-line);box-shadow:none}
 /* an admin's toolbar has Add finished work too: short of room, it's its icon
