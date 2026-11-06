@@ -2,9 +2,52 @@ import { Router } from "express";
 import { z } from "zod";
 import { pool } from "../db.js";
 import { requireEditor } from "../resolve-workspace.js";
-import { requirePermission } from "../permissions.js";
+import { assignLimits, requirePermission } from "../permissions.js";
+import { requirePage } from "../page-access.js";
 import { logActivity } from "../activity.js";
-import { resolveBudgetHours, nextTaskRef, nextBrandTaskRef } from "./tasks.js";
+import { resolveBudgetHours, nextTaskRef, nextBrandTaskRef, callerEditorId, canAssignTasks, setUpBy } from "./tasks.js";
+import { closePendingHandovers } from "../handover.js";
+import { recordMetricDays } from "../post-history.js";
+import { editorRanks, seesEditor, taskViewer } from "../hierarchy.js";
+
+// The person on a post gets its editing task, so naming them is assigning work:
+// yourself is fine; anyone else (or taking someone else's) needs Assign tasks,
+// within its people limit, as on the Task Board. They must be on this team.
+async function personError(req, nextEditorId, priorEditorId = null, formatId = null) {
+  if (nextEditorId) {
+    const { rows } = await pool.query("select 1 from editor where id = $1 and org_id = $2", [nextEditorId, req.orgId]);
+    if (!rows.length) return { status: 400, error: "That team member wasn't found." };
+  }
+  const me = await callerEditorId(req);
+  const forOther = !!nextEditorId && nextEditorId !== me;
+  const fromOther = !!priorEditorId && priorEditorId !== me;
+  if (!forOther && !fromOther) return null;
+  // never to someone above you, as on the task board (the Super Admin: anyone)
+  if (forOther) {
+    const [viewer, ranks] = await Promise.all([taskViewer(req), editorRanks(req.orgId)]);
+    if (!seesEditor(viewer, ranks, nextEditorId)) return { status: 403, error: "You can't give work to someone above you." };
+  }
+  if (req.role === "admin") return null;
+  if (!(await canAssignTasks(req))) return { status: 403, error: "Giving a post's editing to someone else needs Assign tasks access." };
+  const lim = await assignLimits(req.orgId, req.user.sub);
+  if (forOther && lim?.editors && !lim.editors.includes(nextEditorId)) {
+    return { status: 403, error: "You can't assign work to that person." };
+  }
+  // limited to some content types: the post's task must be one of them
+  if (forOther && lim?.formats && !(formatId && lim.formats.includes(formatId))) {
+    return { status: 403, error: "Your Assign tasks access doesn't cover this kind of task." };
+  }
+  return null;
+}
+// The content type a post's editing task gets (reel → Video, carousel → Image),
+// as syncPostTask picks it.
+async function postTaskFormat(orgId, postType) {
+  const { rows } = await pool.query(
+    "select id from task_content_format where org_id = $1 and active and lower(name) = $2 limit 1",
+    [orgId, postType === "carousel" ? "image" : "video"],
+  );
+  return rows[0]?.id ?? null;
+}
 
 export const postsRouter = Router();
 
@@ -55,7 +98,9 @@ const EDIT_STAGES = ["not_started", "in_progress", "in_review", "pending", "comp
 // callerUserId: whoever is making this post write — if they're assigning the
 // post to someone else, that task needs an explicit accept; assigning to
 // themselves (their own linked editor) accepts it immediately.
-async function syncPostTask(postId, orgId, callerUserId) {
+// keepBrief: the caller may change the post but not its task's title and due
+// date (a task given to them, or someone else's): those stay as they were.
+async function syncPostTask(postId, orgId, callerUserId, { keepBrief = false } = {}) {
   try {
     const { rows } = await pool.query(
       "select id, editor_id, title, date, workspace_id, is_collab_mirror, post_type, status from post where id = $1 and deleted_at is null",
@@ -82,11 +127,16 @@ async function syncPostTask(postId, orgId, callerUserId) {
     const defaultFormatId = fmtRows[0]?.id ?? null;
 
     const existing = await pool.query(
-      "select id, editor_id, accepted, content_format_id, sid from task where post_id = $1",
+      "select id, editor_id, accepted, content_format_id, sid, status from task where post_id = $1",
       [postId],
     );
     if (existing.rows.length) {
       const prior = existing.rows[0];
+      // given to someone else another way: a waiting hand-over is over
+      if (prior.editor_id !== post.editor_id) await closePendingHandovers(prior.id);
+      // Waiting for review or completed: its person, title and due date stay as
+      // they were reviewed (moving it would move the work's points).
+      if (prior.status === "review" || prior.status === "done") return;
       // Reassigning to a different editor re-opens acceptance for them.
       const nextAccepted = prior.editor_id === post.editor_id ? prior.accepted : accepted;
       // Never override a format the user already picked (manually or via an
@@ -99,11 +149,14 @@ async function syncPostTask(postId, orgId, callerUserId) {
       // board uses, or the numbers clash and the save fails.
       const sid = prior.sid ?? await nextBrandTaskRef(post.workspace_id, "sid");
       await pool.query(
-        `update task set editor_id = $1, title = $2, due_date = $3, channel_id = $4, accepted = $5,
+        `update task set editor_id = $1, channel_id = $4, accepted = $5,
+                title = case when $10 then title else $2 end, due_date = case when $10 then due_date else $3 end,
                 content_format_id = $6, budget_hours = $7, sid = $9,
-                budget_started_at = case when $5 then budget_started_at else null end
+                budget_started_at = case when $5 then budget_started_at else null end,
+                assigned_by = case when editor_id is distinct from $1 then $11 else assigned_by end
           where post_id = $8`,
-        [post.editor_id, post.title, post.date, post.workspace_id, nextAccepted, nextFormatId, budgetHours, postId, sid],
+        [post.editor_id, post.title, post.date, post.workspace_id, nextAccepted, nextFormatId, budgetHours, postId, sid,
+          keepBrief, accepted ? null : callerUserId ?? null],
       );
     } else {
       // A post entered after it was published has no editing left to do — a
@@ -115,9 +168,10 @@ async function syncPostTask(postId, orgId, callerUserId) {
       const sid = await nextBrandTaskRef(post.workspace_id, "sid");
       await pool.query(
         `insert into task (org_id, post_id, editor_id, channel_id, title, due_date, status, priority,
-                           task_type, accepted, content_format_id, budget_hours, budget_started_at, tid, sid)
-         values ($1, $2, $3, $4, $5, $6, 'todo', 'medium', 'content', $7, $8, $9, null, $10, $11)`,
-        [orgId, postId, post.editor_id, post.workspace_id, post.title, post.date, accepted, defaultFormatId, budgetHours, tid, sid],
+                           task_type, accepted, content_format_id, budget_hours, budget_started_at, tid, sid, created_by, assigned_by)
+         values ($1, $2, $3, $4, $5, $6, 'todo', 'medium', 'content', $7, $8, $9, null, $10, $11, $12, $13)`,
+        [orgId, postId, post.editor_id, post.workspace_id, post.title, post.date, accepted, defaultFormatId, budgetHours, tid, sid,
+          callerUserId ?? null, accepted ? null : callerUserId ?? null],
       );
     }
   } catch (err) {
@@ -180,6 +234,17 @@ postsRouter.get("/posts", async (req, res, next) => {
   }
 });
 
+// GET /posts/count — how many posts this channel has (the sidebar's number),
+// without sending every post.
+postsRouter.get("/posts/count", async (req, res, next) => {
+  try {
+    const { rows } = await pool.query("select count(*)::int as n from post where workspace_id = $1 and deleted_at is null", [req.workspaceId]);
+    res.json({ count: rows[0].n });
+  } catch (err) {
+    next(err);
+  }
+});
+
 postsRouter.get("/posts/:id", async (req, res, next) => {
   try {
     const { rows } = await pool.query(
@@ -213,6 +278,8 @@ postsRouter.post("/posts", requirePermission("create_post", { alsoAllow: ["edito
       const { rows: u } = await pool.query("select editor_id from app_user where id = $1", [req.user.sub]);
       p.editorId = u[0]?.editor_id ?? null;
     }
+    const who = await personError(req, p.editorId || null, null, await postTaskFormat(req.orgId, p.postType));
+    if (who) return res.status(who.status).json({ error: who.error });
     // Target channel: the chosen one (validated to belong to the org) or the
     // active channel. Prevents writing into a channel outside your org.
     let targetWs = req.workspaceId;
@@ -264,6 +331,8 @@ postsRouter.post("/posts", requirePermission("create_post", { alsoAllow: ["edito
     );
     // Auto-create a Task Management task for the assigned editor.
     await syncPostTask(rows[0].id, req.orgId, req.user.sub);
+    // its numbers, as of today, into its history (../post-history.js)
+    await recordMetricDays([rows[0].id]);
     await logActivity({
       orgId: req.orgId,
       actorId: req.user.sub,
@@ -279,7 +348,7 @@ postsRouter.post("/posts", requirePermission("create_post", { alsoAllow: ["edito
   }
 });
 
-postsRouter.patch("/posts/:id", requireEditor, async (req, res, next) => {
+postsRouter.patch("/posts/:id", requireEditor, requirePage("posts"), async (req, res, next) => {
   const parsed = UpdatePostSchema.safeParse(req.body);
   if (!parsed.success) {
     return res.status(400).json({ error: parsed.error.flatten().fieldErrors });
@@ -327,9 +396,45 @@ postsRouter.patch("/posts/:id", requireEditor, async (req, res, next) => {
   try {
     // Capture prior status/stage so we log only genuine transitions.
     const prior = (await pool.query(
-      "select status, edit_stage, workspace_id from post where id = $1 and workspace_id = $2 and deleted_at is null",
+      "select status, edit_stage, workspace_id, editor_id, post_type, title, date::text as date from post where id = $1 and workspace_id = $2 and deleted_at is null",
       [req.params.id, req.workspaceId],
     )).rows[0];
+    if (prior && p.editorId !== undefined && (p.editorId || null) !== (prior.editor_id ?? null)) {
+      const { rows: linked } = await pool.query("select status, content_format_id from task where post_id = $1", [req.params.id]);
+      if (linked[0] && (linked[0].status === "review" || linked[0].status === "done")) {
+        return res.status(409).json({ error: linked[0].status === "review"
+          ? "This post's task is waiting for review, so its person can't change now."
+          : "This post's task is completed, so its person can't change." });
+      }
+      const fmt = linked[0]?.content_format_id ?? await postTaskFormat(req.orgId, p.postType ?? prior.post_type);
+      const who = await personError(req, p.editorId || null, prior.editor_id ?? null, fmt);
+      if (who) return res.status(who.status).json({ error: who.error });
+    }
+
+    // Its task follows the task board's rules: its title and due date change
+    // only for someone who may re-plan it there (an admin, whoever gave it, or
+    // its person on a task they made for themselves) — otherwise the post moves
+    // and the task keeps them; and only they move it to someone else.
+    let keepBrief = false;
+    const reDated = prior && ((p.date !== undefined && (p.date || null) !== (prior.date ?? null)) || (p.title !== undefined && p.title !== prior.title));
+    const rePersoned = prior && p.editorId !== undefined && (p.editorId || null) !== (prior.editor_id ?? null);
+    if (req.role !== "admin" && (reDated || rePersoned)) {
+      const { rows: lt } = await pool.query("select editor_id, created_by, assigned_by, status from task where post_id = $1", [req.params.id]);
+      const t = lt[0];
+      if (t && t.status !== "review" && t.status !== "done") {
+        const me = await callerEditorId(req);
+        // tasks made before Echo noted who set them up: as before (Assign tasks)
+        const legacy = !t.created_by && !t.assigned_by;
+        const mine = !!me && t.editor_id === me && t.created_by === req.user.sub && !t.assigned_by;
+        const mayReplan = mine || ((await canAssignTasks(req)) && (legacy || setUpBy(t, req.user.sub)));
+        if (rePersoned && t.editor_id && !legacy && !mayReplan) {
+          return res.status(403).json({ error: t.editor_id === me
+            ? "This post's task was given to you. To pass it on, use Hand over."
+            : "You can move only work you assigned. Ask whoever assigned it, or an admin." });
+        }
+        keepBrief = !mayReplan;
+      }
+    }
 
     const { rows } = await pool.query(
       `update post set ${sets.join(", ")}
@@ -339,7 +444,11 @@ postsRouter.patch("/posts/:id", requireEditor, async (req, res, next) => {
     );
     if (rows.length === 0) return res.status(404).json({ error: "Post not found" });
     // Keep the linked task in sync (e.g. editor assigned/changed on edit).
-    await syncPostTask(req.params.id, req.orgId, req.user.sub);
+    await syncPostTask(req.params.id, req.orgId, req.user.sub, { keepBrief });
+    // numbers typed in (or the post just published): today's totals into its history
+    if (["views", "reach", "likes", "comments", "shares", "saves", "status"].some((k) => p[k] !== undefined)) {
+      await recordMetricDays([req.params.id]);
+    }
 
     const post = rows[0];
     if (prior && prior.status !== "published" && post.status === "published") {
@@ -361,7 +470,7 @@ postsRouter.patch("/posts/:id", requireEditor, async (req, res, next) => {
   }
 });
 
-postsRouter.delete("/posts/:id", requireEditor, async (req, res, next) => {
+postsRouter.delete("/posts/:id", requireEditor, requirePage("posts"), async (req, res, next) => {
   try {
     // Permanent removal (the DELETE is recorded in audit_log by trigger).
     const { rowCount } = await pool.query(

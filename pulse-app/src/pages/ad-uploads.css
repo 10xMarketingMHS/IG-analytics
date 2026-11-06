@@ -1,0 +1,8 @@
+/* Ad uploads (ad-uploads.tsx), on the Scheduling page's look (scheduling.css, pipeline.css). */
+.adu-page .pp-th,.adu-page .pp-tr{grid-template-columns:minmax(240px,1fr) 100px 140px 150px 90px 150px 110px}
+.adu-refs{font:600 12px 'Geist Mono',ui-monospace,monospace;color:var(--pp-text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.adu-brands{display:flex;flex-wrap:wrap;gap:6px;margin:0 0 12px}
+.adu-brands button{height:30px;padding:0 12px;border:1px solid var(--pp-line);border-radius:999px;background:var(--pp-solid);color:var(--pp-text2);
+  font-family:'Plus Jakarta Sans',sans-serif;font-size:12.5px;font-weight:600;cursor:pointer}
+.adu-brands button:hover{border-color:var(--pp-ac);color:var(--pp-acText)}
+.adu-brands button.on{background:var(--pp-acSoft);border-color:transparent;color:var(--pp-acText)}

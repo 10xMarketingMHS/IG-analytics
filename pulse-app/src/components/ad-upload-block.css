@@ -1,0 +1,35 @@
+/* The Ad uploads part of an approved Ad task's window (ad-upload-block.tsx), on
+   the Scheduling part's look (schedule-block.css: .sch). */
+.sch-pill.to_upload{background:var(--tb-warnSoft);color:var(--tb-warn)}
+.sch-pill.uploaded{background:var(--tb-goodSoft);color:var(--tb-good)}
+.adu-ads{display:flex;flex-wrap:wrap;gap:6px}
+.adu-ad{display:inline-flex;align-items:center;gap:4px;height:28px;padding:0 4px 0 10px;border:1px solid var(--tb-line);border-radius:8px;background:var(--tb-solid);
+  font-size:12.5px;font-variant-numeric:tabular-nums}
+.adu-ad b{font-weight:700;font-family:'Geist Mono',ui-monospace,monospace;font-size:12px}
+.adu-src{padding:1px 6px;border-radius:5px;background:var(--tb-acSoft);color:var(--tb-acText);font-size:10.5px;font-weight:700;font-style:normal}
+.adu-ad button{width:20px;height:20px;border:0;border-radius:6px;background:transparent;color:var(--tb-text3);font-size:15px;line-height:1;cursor:pointer}
+.adu-ad button:hover{background:var(--tb-badSoft);color:var(--tb-bad)}
+.adu-add{display:flex;gap:8px}
+/* each ad, with its results (Ads performance) */
+.adu-list{display:flex;flex-direction:column;gap:8px}
+.adu-row{display:flex;flex-direction:column;gap:6px;padding:8px 10px;border:1px solid var(--tb-line2);border-radius:10px;background:var(--tb-sunk)}
+.adu-rowhead{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.adu-window{height:22px;display:inline-flex;align-items:center;padding:0 8px;border-radius:999px;background:var(--tb-solid);color:var(--tb-text2);font-size:11.5px;font-weight:700}
+.adu-window.soon{background:var(--tb-warnSoft);color:var(--tb-warn)}
+.adu-window.late{background:var(--tb-badSoft);color:var(--tb-bad)}
+.adu-edit{height:26px;padding:0 10px;border:1px solid var(--tb-line);border-radius:8px;background:var(--tb-solid);color:var(--tb-text);font-weight:600;font-size:12px;font-family:inherit;cursor:pointer}
+.adu-edit:hover{border-color:var(--tb-ac);color:var(--tb-acText)}
+.adu-results{display:flex;flex-wrap:wrap;align-items:center;gap:4px 12px;font-size:12.5px;color:var(--tb-text2);font-variant-numeric:tabular-nums}
+.adu-status{font-size:11.5px;color:var(--tb-text3)}
+.adu-status.on{color:var(--tb-good)}
+.adu-note{flex-basis:100%;font-style:normal;color:var(--tb-text)}
+.adu-at{flex-basis:100%;color:var(--tb-text3);font-size:11px}
+/* typing results in (ad-results-form.tsx) */
+.adr-form{display:flex;flex-direction:column;gap:8px}
+.adr-grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:8px}
+.adr-form label{display:flex;flex-direction:column;gap:3px;font-size:11.5px;font-weight:700;color:var(--tb-text3)}
+.adr-form input,.adr-form select{height:30px;padding:0 8px;border:1px solid var(--tb-line);border-radius:8px;background:var(--tb-solid);color:var(--tb-text);font-weight:500;font-size:12.5px;font-family:inherit;min-width:0}
+.adr-form input:focus,.adr-form select:focus{outline:none;border-color:var(--tb-ac)}
+.adr-acts{display:flex;justify-content:flex-end;gap:8px}
+@media (max-width:520px){.adr-grid{grid-template-columns:repeat(2,minmax(0,1fr))}}
+.adu-add input{flex:1}

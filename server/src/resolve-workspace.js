@@ -34,6 +34,9 @@ async function orgForWorkspace(wsId) {
 // verify the authenticated user is a member of it; otherwise fall back to
 // their oldest workspace. Sets req.workspaceId and req.role.
 export async function resolveWorkspace(req, res, next) {
+  // Each router is mounted with this (index.js): a request passes through it
+  // once per router before its own; resolve it the first time only.
+  if (req.workspaceId && req.orgId) return next();
   try {
     const uid = req.user.sub;
     const requested = req.get("X-Workspace-Id");

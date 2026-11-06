@@ -1,0 +1,57 @@
+/* Hand over (components/handover.tsx): the box in a task's panel, the pill on
+   a task card, and "Hand-overs for you" on Home and the Task Board. Built on
+   the app-wide tokens so it sits right on either page, light or dark. */
+.ho-box,.ho-inbox{--ho-ac:var(--accent);--ho-acSoft:color-mix(in srgb,var(--accent) 10%,transparent);--ho-warn:oklch(0.62 0.15 60);--ho-warnSoft:oklch(0.62 0.15 60 / .12);
+  --ho-bad:oklch(0.58 0.2 22)}
+
+.ho-box{display:flex;align-items:center;gap:10px;padding:12px 14px;border:1px solid var(--border);border-radius:12px;background:var(--panel2);font-size:13px;color:var(--text)}
+.ho-box.col{flex-direction:column;align-items:stretch;gap:8px}
+.ho-box.on{border-color:color-mix(in srgb,var(--accent) 45%,var(--border));background:var(--ho-acSoft)}
+.ho-box.wait{border-color:color-mix(in srgb,var(--ho-warn) 40%,var(--border));background:var(--ho-warnSoft)}
+.ho-row{display:flex;align-items:center;gap:8px;min-width:0}
+.ho-ic{flex:none;width:28px;height:28px;display:grid;place-items:center;border-radius:8px;background:var(--ho-acSoft);color:var(--accent-ink,var(--accent))}
+.ho-box.wait .ho-ic{background:var(--ho-warnSoft);color:var(--ho-warn)}
+.ho-tx{flex:1;min-width:0;display:flex;flex-direction:column;gap:1px}
+.ho-tx b,.ho-title{font-size:13.5px;font-weight:700}
+.ho-tx small,.ho-faint{font-size:12px;line-height:1.45;color:var(--muted)}
+.ho-note{font-size:13px;font-style:italic;color:var(--text)}
+.ho-climb{font-size:12px;font-weight:600;color:var(--ho-warn)}
+.ho-in{width:100%;height:38px;padding:0 10px;border:1px solid var(--border);border-radius:9px;background:var(--panel);color:var(--text);font:500 13px 'Plus Jakarta Sans',sans-serif;box-sizing:border-box}
+.ho-in:focus{outline:2px solid color-mix(in srgb,var(--accent) 50%,transparent);outline-offset:0}
+.ho-acts{display:flex;justify-content:flex-end;gap:8px}
+.ho-btn{flex:none;height:34px;padding:0 14px;border:1px solid var(--border);border-radius:9px;background:var(--panel);color:var(--text);font:600 13px 'Plus Jakarta Sans',sans-serif;cursor:pointer;white-space:nowrap}
+.ho-btn:hover{border-color:var(--muted)}
+.ho-btn:disabled{opacity:.55;cursor:default}
+.ho-btn.pri{border-color:transparent;background:linear-gradient(135deg,oklch(0.56 0.22 var(--acH)),oklch(0.62 0.2 var(--acH2)));color:#fff}
+.ho-btn.pri:hover{filter:brightness(1.06)}
+.ho-btn.warn{border-color:transparent;background:var(--ho-bad);color:#fff}
+.ho-btn.ghost{background:transparent}
+.ho-btn.sm{height:30px;padding:0 11px;font-size:12.5px}
+
+/* the pill on a card */
+.ho-pill{display:inline-flex;align-items:center;gap:5px;max-width:100%;height:24px;padding:0 9px;border-radius:8px;background:oklch(0.62 0.15 60 / .13);color:oklch(0.5 0.13 60);
+  font-size:11.5px;font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.ho-pill svg{flex:none;width:13px;height:13px}
+.ho-pill span{overflow:hidden;text-overflow:ellipsis}
+.ho-pill.late{background:oklch(0.58 0.2 22 / .12);color:oklch(0.52 0.19 22)}
+html[data-theme="dark"] .ho-pill{color:oklch(0.82 0.12 75)}
+html[data-theme="dark"] .ho-pill.late{color:oklch(0.78 0.14 22)}
+
+/* Hand-overs for you */
+.ho-inbox{display:flex;flex-direction:column;margin:0 0 14px;border:1px solid color-mix(in srgb,var(--accent) 35%,var(--border));border-radius:14px;background:var(--panel);overflow:hidden}
+.ho-inbox-head{display:flex;align-items:center;gap:8px;padding:10px 14px;border-bottom:1px solid var(--border);background:var(--ho-acSoft);color:var(--accent-ink,var(--accent));font-size:13px}
+.ho-inbox-head b{color:var(--text);font-weight:700}
+.ho-count{min-width:20px;height:20px;padding:0 6px;border-radius:10px;background:var(--accent);color:#fff;font-size:11px;font-weight:700;line-height:20px;text-align:center;box-sizing:border-box}
+.ho-item{display:flex;align-items:center;gap:10px;padding:10px 14px}
+.ho-item+.ho-item{border-top:1px solid var(--border)}
+.ho-item-main{flex:1;min-width:0;display:flex;flex-direction:column;gap:2px;padding:0;border:0;background:transparent;color:var(--text);text-align:left;cursor:pointer;font:inherit}
+.ho-item-title{font-size:13.5px;font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.ho-ref{margin-right:6px;font:600 11.5px 'Geist Mono',ui-monospace,monospace;color:var(--muted)}
+.ho-item-main small{font-size:12px;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.ho-item-acts{flex:none;display:flex;gap:6px}
+@media (max-width:560px){
+  .ho-item{flex-wrap:wrap}
+  .ho-item-acts{width:100%;justify-content:flex-end}
+  .ho-box:not(.col){flex-wrap:wrap}
+  .ho-box:not(.col) .ho-btn{margin-left:auto}
+}

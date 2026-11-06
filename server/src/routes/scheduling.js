@@ -1,0 +1,522 @@
+import { Router } from "express";
+import { z } from "zod";
+import { pool } from "../db.js";
+import { requireEditor } from "../resolve-workspace.js";
+import { requireActiveEod } from "./eod.js";
+import { mayOpenTask, taskViewer } from "../hierarchy.js";
+import { mayPage } from "../page-access.js";
+import { logActivity } from "../activity.js";
+import { hasColumn } from "../schema-flags.js";
+import { validYmd } from "../leave-math.js";
+import { callerEditorId, nextBrandTaskRef, nextTaskRef, taskSelect } from "./tasks.js";
+import {
+  LINK_AFTER_DAYS, NEEDS_SCHED_DB, addDaysYmd, isScheduler, linksDueAt, sameLink, scheduleFormat, scheduleStage, schedulerIds, schedulingReady, scheduledOn,
+} from "../scheduling.js";
+
+// Scheduling approved Social tasks (../scheduling.js). The schedulers — anyone
+// with a Schedule goal this month — share one list; whoever sets a task's post
+// date takes it (it leaves the others' list). They post it and paste each
+// platform's link: each becomes a post with the task's brand, title, date and
+// editor, on the same SID; when the team counts it per post (Settings › Tasks &
+// time › Scheduling), the scheduling is also one Schedule job of theirs (a
+// completed Schedule task, made once). The leads — Managers, Asst.
+// Managers and Team Leads by position (Team › Roster), and the Super Admin —
+// see everyone's, may do any of it, and hand a task to another scheduler.
+// Nobody else sees Scheduling, admins included.
+//   GET   /scheduling/access     may the caller see the list (the sidebar's Scheduling)
+//   GET   /scheduling            the list: the shared one, and what the caller took
+//   GET   /tasks/:id/schedule    where one task stands, what can be done
+//   PATCH /tasks/:id/schedule    { postOn, postTime, schedulerId }
+//   POST  /tasks/:id/links       { links: [{ platformId, url }], pillarId, contentTypeId, formatId, avatarId }
+//   POST  /tasks/:id/post        the same, for finished work that never went through Scheduling
+export const schedulingRouter = Router();
+
+const REF = "coalesce(t.sid, t.tid)";
+const dayWords = (ymd) => new Date(`${ymd}T12:00:00Z`).toLocaleDateString("en-IN", { day: "numeric", month: "short", timeZone: "UTC" });
+const clockWords = (hhmm) => { const [h, m] = hhmm.split(":").map(Number); return `${h % 12 || 12}:${String(m).padStart(2, "0")} ${h >= 12 ? "PM" : "AM"}`; };
+
+// who's asking: their roster id, a lead or not (Team Lead or above: the
+// hierarchy's rank 0–2, or the Super Admin), a scheduler this month or not.
+// Once their position's Page access row is saved (../page-access.js), its
+// Scheduling ticks stand in for the leads rule: See opens everyone's list,
+// Change acts as a lead. A Schedule goal keeps its own scheduler's part either way.
+async function who(req) {
+  const [me, viewer] = await Promise.all([callerEditorId(req), taskViewer(req)]);
+  const today = viewer.seesAll || viewer.rank <= 2;
+  const [sees, lead, scheduler] = await Promise.all([
+    mayPage(req, "scheduling", "see", today), mayPage(req, "scheduling", "change", today), isScheduler(req.orgId, me),
+  ]);
+  return { me, sees: sees || lead, lead, scheduler };
+}
+
+async function taskRow(orgId, taskId) {
+  const { rows } = await pool.query(
+    `select t.id, t.title, t.status, t.task_type, t.post_id, t.channel_id, t.editor_id, t.scheduler_id, t.schedule_from,
+            t.post_on::text as post_on, to_char(t.post_time, 'HH24:MI') as post_time, ${REF} as ref, se.name as scheduler_name,
+            (t.completed_at at time zone 'Asia/Kolkata')::date::text as done_on
+       from task t left join editor se on se.id = t.scheduler_id
+      where t.id = $1 and t.org_id = $2`,
+    [taskId, orgId],
+  );
+  return rows[0] ?? null;
+}
+// a task in scheduling may be opened by the schedulers, whoever's work it was
+async function mayOpen(req, t, w) {
+  return (!!t.schedule_from && (w.sees || w.scheduler || (!!w.me && w.me === t.scheduler_id))) || (await mayOpenTask(req, t.id));
+}
+const canAct = (t, w) => !!t.schedule_from && t.status === "done" && (w.lead || (!!w.me && w.me === t.scheduler_id) || (!t.scheduler_id && w.scheduler));
+// Finished Social work that never went through Scheduling (added as finished
+// work, or a type that doesn't go there): a lead or an admin adds its post
+// from its link afterwards (POST /tasks/:id/post), so its numbers sync.
+const canAddPost = (req, t, w) => !t.schedule_from && t.status === "done" && t.task_type === "social" && !t.post_id && !!t.channel_id
+  && (w.lead || req.role === "admin");
+
+// Where a task stands in scheduling and what the caller may do there.
+async function scheduleView(req, t, w) {
+  const [posts, platforms, schedulers] = await Promise.all([
+    pool.query(
+      `select p.id, p.platform_id as "platformId", pl.key as "platformKey", pl.name as "platformName", p.permalink,
+              p.date::text as date, p.views, p.saves, p.metrics_updated_at as "metricsUpdatedAt"
+         from post p left join platform pl on pl.id = p.platform_id
+        where p.from_task_id = $1 and p.deleted_at is null order by pl.sort_order`,
+      [t.id],
+    ),
+    t.channel_id
+      ? pool.query(
+        `select a.platform_id as "platformId", pl.key, pl.name from account a join platform pl on pl.id = a.platform_id
+          where a.workspace_id = $1 and a.active and pl.active order by pl.sort_order`,
+        [t.channel_id],
+      )
+      : { rows: [] },
+    w.lead ? schedulerIds(req.orgId).then(async (ids) => (ids.length
+      ? (await pool.query("select id, name from editor where id = any($1::uuid[]) order by name", [ids])).rows : [])) : [],
+  ]);
+  const canSchedule = canAct(t, w);
+  const addPost = canAddPost(req, t, w);
+  // the details the last post took, to start the link form from: yours on this brand first, else its latest
+  const defaults = (canSchedule || addPost) && t.channel_id ? (await pool.query(
+    `select pillar_id as "pillarId", content_type_id as "contentTypeId", format_id as "formatId", avatar_id as "avatarId"
+       from post where workspace_id = $1 and deleted_at is null and not is_collab_mirror
+      order by (created_by = $2) desc, created_at desc limit 1`,
+    [t.channel_id, req.user.sub],
+  )).rows[0] ?? null : null;
+  return {
+    ready: true,
+    inFlow: !!t.schedule_from,
+    stage: scheduleStage({ ...t, linked_posts: posts.rows.length }),
+    schedulerId: t.scheduler_id, schedulerName: t.scheduler_name, mine: !!w.me && w.me === t.scheduler_id,
+    postOn: t.post_on, postTime: t.post_time,
+    linksDueOn: t.post_on ? addDaysYmd(t.post_on, LINK_AFTER_DAYS) : null,
+    // the links' deadline, and whether it has passed with none in
+    linksDueAt: t.post_on ? linksDueAt(t.post_on) : null,
+    linksLate: !!t.post_on && !posts.rows.length && Date.now() > Date.parse(linksDueAt(t.post_on)),
+    canSchedule, canChangeScheduler: !!t.schedule_from && t.status === "done" && w.lead, canAddPost: addPost,
+    schedulers, platforms: platforms.rows, posts: posts.rows, defaults,
+    // no brand: nowhere to post until it has one (canSchedule picks it, PATCH channelId)
+    hasBrand: !!t.channel_id,
+  };
+}
+
+schedulingRouter.get("/scheduling/access", async (req, res, next) => {
+  try {
+    if (!(await schedulingReady())) return res.json({ allowed: false, scheduler: false });
+    const w = await who(req);
+    res.json({ allowed: w.sees || w.scheduler, scheduler: w.scheduler });
+  } catch (err) { next(err); }
+});
+
+// The list: everything waiting in the shared list, what the caller took (a
+// lead: everyone's), and what went live in the last 60 days.
+schedulingRouter.get("/scheduling", async (req, res, next) => {
+  try {
+    if (!(await schedulingReady())) return res.status(409).json({ error: NEEDS_SCHED_DB });
+    const w = await who(req);
+    if (!w.sees && !w.scheduler) return res.status(403).json({ error: "Scheduling is for the people with a Schedule goal this month." });
+    const { rows } = await pool.query(
+      `${await taskSelect()}
+        where t.org_id = $1 and t.status = 'done' and t.schedule_from is not null
+          and ($2::boolean or t.scheduler_id is null or t.scheduler_id = $3::uuid)
+          and (not exists (select 1 from post fp where fp.from_task_id = t.id and fp.deleted_at is null)
+               or t.schedule_from > now() - interval '60 days')
+        order by t.post_on nulls first, t.schedule_from`,
+      [req.orgId, w.sees, w.me],
+    );
+    const today = await scheduledOn(req.orgId, istToday(), w.sees ? null : w.me ?? "00000000-0000-0000-0000-000000000000");
+    res.json({ tasks: rows, me: w.me, lead: w.lead, scheduler: w.scheduler, today });
+  } catch (err) { next(err); }
+});
+
+schedulingRouter.get("/tasks/:id/schedule", async (req, res, next) => {
+  try {
+    if (!(await schedulingReady())) return res.json({ ready: false });
+    const t = await taskRow(req.orgId, req.params.id);
+    const w = t && (await who(req));
+    if (!t || !(await mayOpen(req, t, w))) return res.status(404).json({ error: "Task not found." });
+    res.json(await scheduleView(req, t, w));
+  } catch (err) { next(err); }
+});
+
+const ScheduleSchema = z.object({
+  postOn: z.string().refine(validYmd, "Pick a date.").nullable().optional(),
+  postTime: z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/, "Pick a time.").nullable().optional(),
+  schedulerId: z.string().uuid().nullable().optional(),
+  // work approved with no brand has nowhere to post: whoever schedules it says
+  // which brand it went out on, once (an admin changes a brand on the task itself)
+  channelId: z.string().uuid().optional(),
+});
+
+schedulingRouter.patch("/tasks/:id/schedule", requireEditor, requireActiveEod, async (req, res, next) => {
+  const parsed = ScheduleSchema.safeParse(req.body ?? {});
+  if (!parsed.success) return res.status(400).json({ error: parsed.error.issues[0]?.message ?? "That couldn't be read." });
+  try {
+    if (!(await schedulingReady())) return res.status(409).json({ error: NEEDS_SCHED_DB });
+    const t = await taskRow(req.orgId, req.params.id);
+    if (!t) return res.status(404).json({ error: "Task not found." });
+    if (!t.schedule_from || t.status !== "done") return res.status(409).json({ error: "This task isn't waiting to be scheduled." });
+    const d = parsed.data;
+    const w = await who(req);
+    if (!canAct(t, w)) {
+      return res.status(403).json({ error: t.scheduler_id ? `${t.scheduler_name ?? "Another scheduler"} has taken this one.` : "Scheduling is for the people with a Schedule goal this month." });
+    }
+    const sets = [], params = [req.params.id];
+    const push = (col, v) => { params.push(v); sets.push(`${col} = $${params.length}`); };
+    let handedTo = null;
+    if (d.schedulerId !== undefined && (d.schedulerId ?? null) !== t.scheduler_id) {
+      if (!w.lead) return res.status(403).json({ error: "Only a Manager or Team Lead can hand it to another scheduler." });
+      if (d.schedulerId && !(await schedulerIds(req.orgId)).includes(d.schedulerId)) {
+        return res.status(400).json({ error: "Pick someone with a Schedule goal this month (Goals › Set goals)." });
+      }
+      push("scheduler_id", d.schedulerId ?? null);
+      handedTo = d.schedulerId ?? null;
+    }
+    let brandSet = null;
+    if (d.channelId !== undefined && d.channelId !== t.channel_id) {
+      if (t.channel_id) return res.status(400).json({ error: "It already has its brand. An admin changes it on the task." });
+      const { rows: [b] } = await pool.query("select id, name from workspace where id = $1 and org_id = $2", [d.channelId, req.orgId]);
+      if (!b) return res.status(400).json({ error: "Pick one of the team's brands." });
+      push("channel_id", b.id);
+      brandSet = b;
+    }
+    const postOn = d.postOn !== undefined ? d.postOn : t.post_on;
+    if (d.postOn !== undefined) {
+      push("post_on", d.postOn);
+      // setting the date takes it (unless a lead is handing it to someone); clearing it gives it back to the list
+      if (d.schedulerId === undefined) {
+        if (d.postOn && !t.scheduler_id && w.me) push("scheduler_id", w.me);
+        if (!d.postOn && !w.lead) push("scheduler_id", null);
+      }
+    }
+    // a time only goes with a date
+    if (d.postTime !== undefined || (d.postOn === null && t.post_time)) push("post_time", postOn ? d.postTime ?? t.post_time ?? null : null);
+    if (!sets.length) return res.json(await scheduleView(req, t, w));
+    await pool.query(`update task set ${sets.join(", ")} where id = $1`, params);
+    const fresh = await taskRow(req.orgId, req.params.id);
+    if (d.postOn !== undefined && fresh.post_on !== t.post_on) {
+      await logActivity({
+        orgId: req.orgId, actorId: req.user.sub, verb: "schedule_set", entityType: "task", entityId: t.id, channelId: t.channel_id,
+        summary: fresh.post_on
+          ? `Set ${t.ref} “${t.title}” to post on ${dayWords(fresh.post_on)}${fresh.post_time ? `, ${clockWords(fresh.post_time)}` : ""}`
+          : `Put ${t.ref} “${t.title}” back in the scheduling list`,
+        meta: { postOn: fresh.post_on },
+      });
+    }
+    if (brandSet) {
+      await logActivity({
+        orgId: req.orgId, actorId: req.user.sub, verb: "schedule_set", entityType: "task", entityId: t.id, channelId: brandSet.id,
+        summary: `Gave ${t.ref} “${t.title}” its brand: ${brandSet.name}`,
+        meta: { brand: brandSet.name },
+      });
+    }
+    if (handedTo) {
+      await logActivity({
+        orgId: req.orgId, actorId: req.user.sub, verb: "schedule_ready", entityType: "task", entityId: t.id, channelId: t.channel_id,
+        summary: `${t.ref} “${t.title}” is yours to schedule`,
+        meta: { notifyEditorIds: [handedTo] },
+      });
+    }
+    res.json(await scheduleView(req, fresh, w));
+  } catch (err) { next(err); }
+});
+
+const LinksSchema = z.object({
+  links: z.array(z.object({
+    platformId: z.string().uuid(),
+    url: z.string().trim().max(500).regex(/^https?:\/\/\S+$/i, "Paste the post's link, starting with https://"),
+  })).min(1, "Paste at least one link.").max(6),
+  pillarId: z.string({ required_error: "Pick a pillar." }).uuid({ message: "Pick a pillar." }),
+  contentTypeId: z.string({ required_error: "Pick a content type." }).uuid({ message: "Pick a content type." }),
+  formatId: z.string({ required_error: "Pick a format." }).uuid({ message: "Pick a format." }),
+  avatarId: z.string({ required_error: "Pick an avatar." }).uuid({ message: "Pick an avatar." }),
+});
+
+// Does each linked post count as a Schedule job (org settings.scheduling.perPostJob)? Off by default.
+async function perPostJobs(orgId) {
+  const { rows } = await pool.query("select (to_jsonb(org)->'settings'->'scheduling'->>'perPostJob') = 'true' as on from org where id = $1", [orgId]);
+  return !!rows[0]?.on;
+}
+
+// The scheduling, as one Schedule job of the scheduler's: a completed task of
+// the org's Schedule type, made once per scheduled task, when its links go in —
+// so it counts in their goal, points and the Leaderboard like any other job.
+async function creditSchedule(orgId, t, schedulerId, userId) {
+  const fmt = await scheduleFormat(orgId);
+  if (!fmt || !schedulerId) return null;
+  const { rowCount } = await pool.query("select 1 from task where org_id = $1 and meta->>'schedulesTaskId' = $2", [orgId, t.id]);
+  if (rowCount) return null;
+  const category = fmt.category ?? "service";
+  const kind = { social: ["sid", "sid"], ad: ["adid", "ad_id"], service: ["svid", "svid"], project: ["pid", "pid"] }[category] ?? ["svid", "svid"];
+  const [tid, brandRef] = await Promise.all([nextTaskRef(orgId, "tid"), t.channel_id ? nextBrandTaskRef(t.channel_id, kind[0]) : null]);
+  const frozen = await hasColumn("task", "points_at_done");
+  const { rows } = await pool.query(
+    `insert into task (org_id, editor_id, channel_id, title, description, status, priority, task_type, accepted, content_format_id,
+                       due_date, completed_at, tid, ${kind[1]}, created_by, meta${frozen ? ", points_at_done" : ""})
+     values ($1, $2, $3, $4, $5, 'done', 'medium', $6, true, $7, (now() at time zone 'Asia/Kolkata')::date, now(), $8, $9, $10, $11${frozen ? ", $12" : ""})
+     returning id`,
+    [orgId, schedulerId, t.channel_id, `Scheduled ${t.ref} “${t.title}”`,
+      `Made by Echo when ${t.ref}'s links went in: the scheduling of it, as one ${fmt.name} job.`,
+      category, fmt.id, tid, brandRef, userId, JSON.stringify({ schedulesTaskId: t.id }), ...(frozen ? [fmt.points] : [])],
+  );
+  return rows[0]?.id ?? null;
+}
+
+// The links to add as a task's posts: one per platform, each a platform its
+// brand posts on and not one it has a post for already, the post's details from
+// the brand's own lists, and no link that's on a post already (any brand).
+// { brandPlat, postType } or { status, error }.
+async function checkLinks(req, t, w, d) {
+  const view = await scheduleView(req, t, w);
+  const brandPlat = new Map(view.platforms.map((p) => [p.platformId, p]));
+  const seen = new Set();
+  for (const l of d.links) {
+    const p = brandPlat.get(l.platformId);
+    if (!p) return { status: 400, error: "That platform isn't one this brand posts on." };
+    if (seen.has(l.platformId)) return { status: 400, error: `Only one ${p.name} link, please.` };
+    seen.add(l.platformId);
+    if (view.posts.some((x) => x.platformId === l.platformId)) return { status: 409, error: `This task already has its ${p.name} link.` };
+  }
+  // the post's details, from this brand's own lists (a content type sits under its pillar)
+  const { rows: [tx] } = await pool.query(
+    `select (select 1 from pillar where id = $1 and workspace_id = $5) as pillar,
+            (select 1 from content_type where id = $2 and workspace_id = $5 and pillar_id = $1) as ctype,
+            (select post_type::text from format where id = $3 and workspace_id = $5) as post_type,
+            (select 1 from avatar where id = $4 and workspace_id = $5) as avatar`,
+    [d.pillarId, d.contentTypeId, d.formatId, d.avatarId, t.channel_id],
+  );
+  if (!tx.pillar || !tx.ctype || !tx.post_type || !tx.avatar) {
+    return { status: 400, error: "Pick the post's pillar, content type, format and avatar from this brand's lists." };
+  }
+  const { rows: dup } = await pool.query(
+    `select p.title from post p join workspace w on w.id = p.workspace_id
+      where w.org_id = $1 and p.deleted_at is null and p.permalink is not null
+        and regexp_replace(regexp_replace(lower(trim(p.permalink)), '[?#].*$', ''), '/+$', '') = any($2::text[]) limit 1`,
+    [req.orgId, d.links.map((l) => sameLink(l.url))],
+  );
+  if (dup.length) return { status: 409, error: `That link is already on the post “${dup[0].title}”.` };
+  return { brandPlat, postType: tx.post_type };
+}
+// Each link becomes a post with the task's brand, title, date and editor, on the same SID.
+async function insertLinkPosts(req, t, d, postType, date) {
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+    for (const l of d.links) {
+      await client.query(
+        `insert into post (workspace_id, date, title, pillar_id, content_type_id, format_id, avatar_id, editor_id, post_type,
+                           status, published_at, permalink, created_by, platform_id, edit_stage, source, from_task_id)
+         values ($1, $2, $3, $4, $5, $6, $7, $8, $9, 'published', now(), $10, $11, $12, 'completed', 'manual', $13)`,
+        [t.channel_id, date, t.title, d.pillarId, d.contentTypeId, d.formatId, d.avatarId, t.editor_id, postType,
+          l.url.trim(), req.user.sub, l.platformId, t.id],
+      );
+    }
+    await client.query("COMMIT");
+  } catch (err) {
+    await client.query("ROLLBACK");
+    throw err;
+  } finally {
+    client.release();
+  }
+}
+
+schedulingRouter.post("/tasks/:id/links", requireEditor, requireActiveEod, async (req, res, next) => {
+  const parsed = LinksSchema.safeParse(req.body ?? {});
+  if (!parsed.success) return res.status(400).json({ error: parsed.error.issues[0]?.message ?? "That couldn't be read." });
+  const d = parsed.data;
+  try {
+    if (!(await schedulingReady())) return res.status(409).json({ error: NEEDS_SCHED_DB });
+    let t = await taskRow(req.orgId, req.params.id);
+    if (!t) return res.status(404).json({ error: "Task not found." });
+    if (!t.schedule_from || t.status !== "done" || !t.channel_id) return res.status(409).json({ error: "This task isn't waiting for its links." });
+    const w = await who(req);
+    if (!canAct(t, w)) {
+      return res.status(403).json({ error: t.scheduler_id ? `${t.scheduler_name ?? "Another scheduler"} has taken this one.` : "Scheduling is for the people with a Schedule goal this month." });
+    }
+    const checked = await checkLinks(req, t, w, d);
+    if (checked.error) return res.status(checked.status).json({ error: checked.error });
+
+    // linking it takes it, when it wasn't taken yet
+    if (!t.scheduler_id && w.me) {
+      await pool.query("update task set scheduler_id = $2 where id = $1 and scheduler_id is null", [t.id, w.me]);
+      t = await taskRow(req.orgId, req.params.id);
+    }
+    await insertLinkPosts(req, t, d, checked.postType, t.post_on ?? new Date(Date.now() + 330 * 60_000).toISOString().slice(0, 10));
+    // each post a Schedule job of theirs, only when the team counts it that way
+    // (Settings › Tasks & time › Scheduling; off: their daily Schedule task counts)
+    if (await perPostJobs(req.orgId)) await creditSchedule(req.orgId, t, t.scheduler_id, req.user.sub);
+    const names = d.links.map((l) => checked.brandPlat.get(l.platformId)?.name).filter(Boolean);
+    await logActivity({
+      orgId: req.orgId, actorId: req.user.sub, verb: "schedule_linked", entityType: "task", entityId: t.id, channelId: t.channel_id,
+      summary: `Posted ${t.ref} “${t.title}” on ${names.join(" and ")}`,
+      meta: { platforms: names, notifyEditorIds: [t.editor_id].filter(Boolean) },
+    });
+    res.status(201).json(await scheduleView(req, t, w));
+  } catch (err) { next(err); }
+});
+
+// Finished Social work that's already out but never went through Scheduling
+// (Add finished work, say): its link becomes its post, dated the day it was
+// finished, so its numbers sync and count for its editor. No Schedule job is
+// made: nobody scheduled it in Echo. A lead or an admin (canAddPost).
+//   POST /tasks/:id/post   { links: [{ platformId, url }], pillarId, contentTypeId, formatId, avatarId }
+schedulingRouter.post("/tasks/:id/post", requireEditor, async (req, res, next) => {
+  const parsed = LinksSchema.safeParse(req.body ?? {});
+  if (!parsed.success) return res.status(400).json({ error: parsed.error.issues[0]?.message ?? "That couldn't be read." });
+  const d = parsed.data;
+  try {
+    if (!(await schedulingReady())) return res.status(409).json({ error: NEEDS_SCHED_DB });
+    const t = await taskRow(req.orgId, req.params.id);
+    if (!t) return res.status(404).json({ error: "Task not found." });
+    const w = await who(req);
+    if (t.schedule_from) return res.status(409).json({ error: "This task is in Scheduling: add its links there." });
+    if (!canAddPost(req, t, w)) {
+      return res.status(t.status === "done" && t.task_type === "social" ? 403 : 409).json({
+        error: t.status !== "done" || t.task_type !== "social" || t.post_id
+          ? "Only finished Social work that isn't a post yet can have its post added."
+          : "Only a Team Lead, a Manager or an admin can add a finished task's post.",
+      });
+    }
+    const checked = await checkLinks(req, t, w, d);
+    if (checked.error) return res.status(checked.status).json({ error: checked.error });
+    await insertLinkPosts(req, t, d, checked.postType, t.done_on ?? new Date(Date.now() + 330 * 60_000).toISOString().slice(0, 10));
+    const names = d.links.map((l) => checked.brandPlat.get(l.platformId)?.name).filter(Boolean);
+    await logActivity({
+      orgId: req.orgId, actorId: req.user.sub, verb: "schedule_linked", entityType: "task", entityId: t.id, channelId: t.channel_id,
+      summary: `Added the post of ${t.ref} “${t.title}” on ${names.join(" and ")}`,
+      meta: { platforms: names, notifyEditorIds: [t.editor_id].filter(Boolean) },
+    });
+    res.status(201).json(await scheduleView(req, t, w));
+  } catch (err) { next(err); }
+});
+
+// Today's desk: a Schedule task's window (pulse-app/src/components/desk-block.tsx).
+// The day's social desk in one place: what waits to be scheduled (the shared
+// list, and what its person took but hasn't linked yet), what its person
+// scheduled that day (posts made from their links), and the day's counts of
+// negative comments cleaned and leads sent on to sales, kept on the task
+// (meta.desk), with the month's totals. Only for the org's Schedule type.
+//   GET   /tasks/:id/desk
+//   PATCH /tasks/:id/desk   { comments?, leads? }
+const DeskSchema = z.object({
+  comments: z.number().int().min(0).max(999).optional(),
+  leads: z.number().int().min(0).max(999).optional(),
+});
+async function deskTask(req) {
+  const { rows: [t] } = await pool.query(
+    `select id, editor_id, status, content_format_id, meta,
+            coalesce(due_date, (created_at at time zone 'Asia/Kolkata')::date)::text as day
+       from task where id = $1 and org_id = $2`,
+    [req.params.id, req.orgId],
+  );
+  if (!t || !(await mayOpenTask(req, t.id))) return { status: 404, error: "Task not found." };
+  const sf = await scheduleFormat(req.orgId);
+  if (!sf || sf.id !== t.content_format_id) return { status: 409, error: "Only a Schedule task has a desk." };
+  return { t, sf };
+}
+const istToday = () => new Date(Date.now() + 330 * 60_000).toISOString().slice(0, 10);
+
+// What waits to be scheduled, by type: the shared list (shared), and what this
+// person took but hasn't linked yet (mine). The desk, and the New task sheet.
+async function waitingByType(orgId, editorId) {
+  const { rows } = await pool.query(
+    `select coalesce(f.name, 'Other') as type,
+            count(*) filter (where x.scheduler_id is null)::int as shared,
+            count(*) filter (where $2::uuid is not null and x.scheduler_id = $2::uuid)::int as mine
+       from task x left join task_content_format f on f.id = x.content_format_id
+      where x.org_id = $1 and x.status = 'done' and x.schedule_from is not null
+        and (x.scheduler_id is null or x.scheduler_id = $2::uuid)
+        and not exists (select 1 from post p where p.from_task_id = x.id and p.deleted_at is null)
+      group by 1 order by 2 desc, 1`,
+    [orgId, editorId],
+  );
+  return rows;
+}
+// the New task sheet, once the Schedule type is picked: what's waiting for whoever it's for
+schedulingRouter.get("/scheduling/waiting", async (req, res, next) => {
+  try {
+    if (!(await schedulingReady())) return res.json({ waiting: [] });
+    const editorId = z.string().uuid().safeParse(req.query.editorId).success ? String(req.query.editorId) : null;
+    res.json({ waiting: await waitingByType(req.orgId, editorId) });
+  } catch (err) { next(err); }
+});
+
+async function deskView(req, t, sf) {
+  const w = await who(req);
+  const ready = await schedulingReady();
+  const [waiting, scheduled, month, dated] = await Promise.all([
+    ready && t.editor_id ? waitingByType(req.orgId, t.editor_id).then((rows) => ({ rows })) : { rows: [] },
+    ready && t.editor_id ? pool.query(
+      `select p.id, p.permalink, pl.name as "platformName", pl.key as "platformKey", coalesce(x.sid, x.tid) as ref, x.title
+         from post p join task x on x.id = p.from_task_id left join platform pl on pl.id = p.platform_id
+        where x.org_id = $1 and x.scheduler_id = $2 and p.deleted_at is null
+          and (p.created_at at time zone 'Asia/Kolkata')::date = $3::date
+        order by p.created_at`,
+      [req.orgId, t.editor_id, t.day],
+    ) : { rows: [] },
+    t.editor_id ? pool.query(
+      `select coalesce(sum((meta->'desk'->>'comments')::int), 0)::int as comments,
+              coalesce(sum((meta->'desk'->>'leads')::int), 0)::int as leads,
+              (count(*) filter (where meta ? 'desk'))::int as days
+         from task
+        where org_id = $1 and editor_id = $2 and content_format_id = $3
+          and coalesce(due_date, (created_at at time zone 'Asia/Kolkata')::date) >= date_trunc('month', $4::date)
+          and coalesce(due_date, (created_at at time zone 'Asia/Kolkata')::date) < date_trunc('month', $4::date) + interval '1 month'`,
+      [req.orgId, t.editor_id, sf.id, t.day],
+    ) : { rows: [{ comments: 0, leads: 0, days: 0 }] },
+    ready && t.editor_id ? scheduledOn(req.orgId, t.day, t.editor_id) : [],
+  ]);
+  const own = !!w.me && w.me === t.editor_id;
+  return {
+    desk: true, day: t.day,
+    waiting: waiting.rows,
+    scheduled: scheduled.rows,
+    // the posts they gave a date that day, by brand
+    dated: dated[0] ? { total: dated[0].total, brands: dated[0].brands } : { total: 0, brands: [] },
+    counts: { comments: Number(t.meta?.desk?.comments ?? 0), leads: Number(t.meta?.desk?.leads ?? 0) },
+    month: month.rows[0],
+    // its person, while the day's open; a lead or an admin, any time
+    canEdit: (own && t.status !== "done") || w.lead || req.role === "admin",
+  };
+}
+schedulingRouter.get("/tasks/:id/desk", async (req, res, next) => {
+  try {
+    const d = await deskTask(req);
+    if (d.error) return res.status(d.status).json({ error: d.error, desk: false });
+    res.json(await deskView(req, d.t, d.sf));
+  } catch (err) { next(err); }
+});
+schedulingRouter.patch("/tasks/:id/desk", requireEditor, async (req, res, next) => {
+  const parsed = DeskSchema.safeParse(req.body ?? {});
+  if (!parsed.success) return res.status(400).json({ error: "Counts are whole numbers from 0 to 999." });
+  try {
+    const d = await deskTask(req);
+    if (d.error) return res.status(d.status).json({ error: d.error });
+    const view = await deskView(req, d.t, d.sf);
+    if (!view.canEdit) return res.status(403).json({ error: "Only the person doing it can change the day's counts while it's open." });
+    const patch = Object.fromEntries(Object.entries(parsed.data).filter(([, v]) => v !== undefined));
+    await pool.query(
+      "update task set meta = coalesce(meta, '{}'::jsonb) || jsonb_build_object('desk', coalesce(meta->'desk', '{}'::jsonb) || $2::jsonb) where id = $1",
+      [d.t.id, JSON.stringify(patch)],
+    );
+    const fresh = await deskTask(req);
+    res.json(await deskView(req, fresh.t, fresh.sf));
+  } catch (err) { next(err); }
+});

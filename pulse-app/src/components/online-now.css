@@ -1,0 +1,42 @@
+/* Online now, on the top bar (online-now.tsx): a stack of faces that spreads
+   out on hover, each naming itself when pointed at. Its own styles: chat.css
+   only loads with the chat page. */
+.on-now{display:flex;align-items:center;gap:10px;flex:none}
+.on-label{display:inline-flex;align-items:center;gap:6px;font-size:12px;font-weight:600;color:var(--muted);white-space:nowrap}
+.on-label i{width:7px;height:7px;border-radius:50%;background:#22c55e;animation:on-pulse 2.4s ease-out infinite}
+@keyframes on-pulse{0%{box-shadow:0 0 0 0 rgba(34,197,94,.45)}70%,100%{box-shadow:0 0 0 7px rgba(34,197,94,0)}}
+.on-faces{display:flex;align-items:center;padding:3px 0}
+/* gathered: a tight stack of four, each face tucked under the one before;
+   spread: everyone side by side, the faces past four growing in */
+.on-face{position:relative;flex:none;width:30px;height:30px;margin:0 0 0 -15px;padding:0;border:0;border-radius:50%;background:none;color:#fff;font:inherit;cursor:pointer;
+  box-shadow:0 0 0 2px var(--panel);
+  transition:margin-left .42s cubic-bezier(.22,1,.36,1),width .42s cubic-bezier(.22,1,.36,1),opacity .3s ease,transform .42s cubic-bezier(.22,1,.36,1),box-shadow .2s ease}
+.on-now[data-open] .on-face{margin-left:6px}
+.on-faces .on-face:first-child{margin-left:0}
+.on-face.extra,.on-more.gone{width:0;margin-left:0;opacity:0;transform:scale(.4);pointer-events:none}
+.on-now[data-open] .on-face.extra{width:30px;margin-left:6px;opacity:1;transform:none;pointer-events:auto}
+.on-now[data-open] .on-more.gone{margin-left:0}
+.on-face img,.on-in{width:100%;height:100%;border-radius:50%;object-fit:cover;display:grid;place-items:center;font-size:11px;font-weight:700;letter-spacing:.01em;color:#fff}
+.on-more .on-in{background:var(--panel2);color:var(--muted);box-shadow:inset 0 0 0 1px var(--border)}
+/* the green dot on each face once they're spread (gathered, the label's dot says it) */
+.on-dot{position:absolute;right:-1px;bottom:-1px;width:9px;height:9px;border-radius:50%;background:#22c55e;box-shadow:0 0 0 2px var(--panel);opacity:0;transition:opacity .25s ease}
+.on-now[data-open] .on-dot{opacity:1}
+.on-face:hover,.on-face:focus-visible{outline:none;box-shadow:0 0 0 2px var(--panel),0 0 0 4px var(--accent)}
+.on-face:disabled{cursor:progress}
+.on-face[aria-busy]{opacity:.7}
+/* the name, under the face pointed at */
+.on-tip{position:absolute;top:calc(100% + 10px);left:50%;z-index:30;display:flex;flex-direction:column;align-items:center;gap:1px;
+  padding:7px 10px;border-radius:9px;background:var(--panel);border:1px solid var(--border);box-shadow:0 10px 24px -12px rgba(20,10,60,.35);
+  color:var(--text);white-space:nowrap;pointer-events:none;opacity:0;transform:translate(-50%,-4px);transition:opacity .18s ease,transform .18s ease}
+.on-tip b{font-size:12.5px;font-weight:700}
+.on-tip span{font-size:11px;font-weight:500;color:var(--muted)}
+.on-more .on-tip b{white-space:normal;width:max-content;max-width:240px;text-align:center}
+.on-face:hover .on-tip,.on-face:focus-visible .on-tip{opacity:1;transform:translate(-50%,0)}
+/* one name at a time: the face under the mouse wins over the one with keyboard focus */
+.on-faces:hover .on-face:not(:hover) .on-tip{opacity:0;transform:translate(-50%,-4px)}
+@media (max-width:1100px){.on-label{display:none}}
+@media (max-width:700px){.on-now{display:none}}
+@media (prefers-reduced-motion:reduce){
+  .on-face,.on-tip,.on-dot{transition:none}
+  .on-label i{animation:none}
+}

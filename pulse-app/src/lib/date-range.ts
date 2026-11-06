@@ -1,26 +1,31 @@
 export type RangeKey =
-  | "today" | "yesterday" | "last7" | "last14" | "last28" | "last30"
+  | "today" | "yesterday" | "last7" | "last14" | "last28" | "last30" | "last90"
   | "thisweek" | "lastweek" | "thismonth" | "lastmonth" | "thisyear" | "all" | "custom";
 
 export const RANGE_PRESETS: [RangeKey, string][] = [
   ["today", "Today"], ["yesterday", "Yesterday"], ["last7", "Last 7 days"],
-  ["last14", "Last 14 days"], ["last28", "Last 28 days"], ["last30", "Last 30 days"],
+  ["last14", "Last 14 days"], ["last28", "Last 28 days"], ["last30", "Last 30 days"], ["last90", "Last 90 days"],
   ["thisweek", "This week"], ["lastweek", "Last week"], ["thismonth", "This month"],
   ["lastmonth", "Last month"], ["thisyear", "This year"], ["all", "All time"],
 ];
 
+// The calendar date where the user is. (toISOString gives the UTC date, which in
+// India is the day before for every local midnight, so "Today" read as yesterday.)
 function iso(d: Date) {
-  return d.toISOString().slice(0, 10);
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
 }
 function addDays(d: Date, n: number) {
   const c = new Date(d);
   c.setDate(c.getDate() + n);
   return c;
 }
+// Which day a week starts on — Monday unless Settings › General says Sunday
+// (set once the organisation's settings load; see app-shell.tsx).
+let weekStartsSunday = false;
+export function setWeekStart(ws: "mon" | "sun") { weekStartsSunday = ws === "sun"; }
 function startOfWeek(d: Date) {
-  // Monday-based (PRD §10.4 weekly rollup is Mon–Sun)
   const c = new Date(d);
-  const day = (c.getDay() + 6) % 7;
+  const day = weekStartsSunday ? c.getDay() : (c.getDay() + 6) % 7;
   return addDays(c, -day);
 }
 
@@ -36,6 +41,7 @@ export function rangeFor(key: RangeKey): { from: string | null; to: string | nul
     case "last14": return { from: iso(addDays(today, -13)), to: iso(today) };
     case "last28": return { from: iso(addDays(today, -27)), to: iso(today) };
     case "last30": return { from: iso(addDays(today, -29)), to: iso(today) };
+    case "last90": return { from: iso(addDays(today, -89)), to: iso(today) };
     case "thisweek": return { from: iso(startOfWeek(today)), to: iso(today) };
     case "lastweek": {
       const s = addDays(startOfWeek(today), -7);

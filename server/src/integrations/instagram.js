@@ -93,6 +93,70 @@ export async function listIgAccounts(userToken) {
   return out;
 }
 
+// Which of the Instagram accounts a token sees is this channel's: the one picked
+// (igId), else the one whose username matches the channel's handle (case,
+// spaces and dots aside, so "@MHS Diabetes" is mhsdiabetes), else the only one.
+// { chosen } (null when it can't tell), or { error } for a pick it can't see.
+const squashHandle = (s) => String(s || "").toLowerCase().replace(/[^a-z0-9]/g, "");
+export function pickIgAccount(accounts, handle, igId) {
+  if (igId) {
+    const chosen = accounts.find((a) => String(a.igId) === String(igId));
+    return chosen ? { chosen } : { error: "That Instagram account isn't one this token can see." };
+  }
+  const h = squashHandle(handle);
+  return { chosen: (h && accounts.find((a) => squashHandle(a.igUsername) === h)) || (accounts.length === 1 ? accounts[0] : null) };
+}
+// Several accounts and none matches: the connect window lists them to pick from.
+export const pickIgReply = (accounts) => ({
+  error: `This token sees ${accounts.length} Instagram accounts. Pick the one for this channel.`,
+  code: "pick_instagram",
+  accounts: accounts.map((a) => ({ igId: a.igId, igUsername: a.igUsername, pageName: a.pageName })),
+});
+
+// Why a token finds no Instagram account to connect: what kind of token it is,
+// the Facebook Pages it sees (and the Instagram linked to each, if any), and
+// which of SCOPES it lacks. Each read is best-effort; the token is never logged.
+export async function explainNoIg(token) {
+  const out = { type: null, pages: null, missing: [] };
+  try {
+    const me = await graphGet("me", { fields: "id,name", metadata: "1", access_token: token });
+    out.type = me.metadata?.type ?? null;
+  } catch { /* unknown */ }
+  try {
+    const json = await graphGet("me/accounts", { fields: "name,instagram_business_account{username}", access_token: token, limit: "100" });
+    out.pages = (json.data ?? []).map((p) => ({ name: p.name, ig: p.instagram_business_account?.username ?? null }));
+  } catch { /* unknown */ }
+  if (out.type !== "page") {
+    try {
+      const json = await graphGet("me/permissions", { access_token: token });
+      const granted = new Set((json.data ?? []).filter((p) => p.status === "granted").map((p) => p.permission));
+      if (granted.size) out.missing = SCOPES.filter((s) => !granted.has(s));
+    } catch { /* unknown */ }
+  }
+  return out;
+}
+
+// What to tell whoever pasted the token, in plain words (explainNoIg's answer;
+// handle is the channel's Instagram handle).
+export function noIgMessage(info, handle) {
+  const at = handle ? `@${String(handle).replace(/^@/, "")}` : "this brand's Instagram";
+  if (info.type === "page") {
+    return "This is a Page token. Use a System User token instead (Business Settings › Users › System users › Generate token), with the brand's Page and Instagram assigned to that System User.";
+  }
+  const parts = [];
+  if (info.pages && !info.pages.length) {
+    parts.push("This token can't see any Facebook Page. In Business Settings, assign the brand's Page and its Instagram account to the token's System User, then generate the token again.");
+  } else if (info.pages?.length) {
+    const names = info.pages.map((p) => p.name).join(", ");
+    const one = info.pages.length === 1;
+    parts.push(`This token sees ${one ? "one Page" : "these Pages"}: ${names}. ${one ? "It has no" : "None of them has an"} Instagram professional account linked. Link ${at} to its Facebook Page (in Instagram: Professional account, then connect it to the Page), then try again.`);
+  } else {
+    parts.push("This token can't see any Instagram Business account. Check its assigned assets & permissions.");
+  }
+  if (info.missing.length) parts.push(`It's also missing these permissions: ${info.missing.join(", ")}.`);
+  return parts.join(" ");
+}
+
 // Current follower count for an IG business account (node field, like the FB
 // Page followers helper — not an insights metric, so unaffected by the Insights
 // deprecations). Best-effort: returns null on any error.
@@ -157,8 +221,9 @@ const INSIGHT_ATTEMPTS = [
   ["reach"],
 ];
 
+// A number Meta didn't give is null, not 0 (see getMediaMetricsBatch).
 export async function getMediaMetrics(media, token) {
-  const out = { views: 0, reach: 0, likes: media.like_count ?? 0, comments: media.comments_count ?? 0, shares: 0, saves: 0 };
+  const out = { views: null, reach: null, likes: media.like_count ?? null, comments: media.comments_count ?? null, shares: null, saves: null };
   for (const metrics of INSIGHT_ATTEMPTS) {
     try {
       const json = await graphGet(`${media.id}/insights`, { metric: metrics.join(","), access_token: token });
@@ -203,10 +268,13 @@ async function graphBatch(requests, token) {
 // instead of one per media. Mirrors the per-item metric-set fallback: try the
 // richest set for all pending media, then re-request only those that rejected it
 // with the next, smaller set. Returns { metrics: Map(mediaId -> {...}), usage }.
+// A number Meta didn't give this time is null, not 0 — a media whose insights
+// were refused (rate-limited, say) keeps the views and reach it already had,
+// rather than having them wiped to 0 until the next good sync.
 export async function getMediaMetricsBatch(mediaList, token) {
   const out = new Map();
   for (const m of mediaList) {
-    out.set(m.id, { views: 0, reach: 0, likes: m.like_count ?? 0, comments: m.comments_count ?? 0, shares: 0, saves: 0 });
+    out.set(m.id, { views: null, reach: null, likes: m.like_count ?? null, comments: m.comments_count ?? null, shares: null, saves: null });
   }
   let usage = null;
   let pending = mediaList.map((m) => m.id);
