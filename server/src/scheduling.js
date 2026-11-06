@@ -115,3 +115,60 @@ export async function leaveScheduling(taskId) {
 export function sameLink(url) {
   return String(url || "").trim().toLowerCase().replace(/[?#].*$/, "").replace(/\/+$/, "");
 }
+
+// What each scheduler scheduled on a day, by brand: the work whose post date was
+// first set that day (its schedule_set activity), still dated and still theirs.
+// A re-date later doesn't count it again; a posting copy for another brand
+// (meta.postsFor) is its own post, so it counts for that brand. editorId: just theirs.
+export async function scheduledOn(orgId, day, editorId = null) {
+  const { rows } = await pool.query(
+    `select x.scheduler_id as "editorId", e.name, w.id as "brandId", coalesce(w.name, 'No brand') as brand, count(*)::int as n
+       from task x
+       join editor e on e.id = x.scheduler_id
+       left join workspace w on w.id = x.channel_id
+      where x.org_id = $1 and x.schedule_from is not null and x.post_on is not null
+        and ($3::uuid is null or x.scheduler_id = $3::uuid)
+        and (select min(a.created_at at time zone 'Asia/Kolkata')::date from activity a
+              where a.org_id = $1 and a.entity_id = x.id and a.verb = 'schedule_set' and a.meta->>'postOn' is not null) = $2::date
+      group by 1, 2, 3, 4
+      order by e.name, n desc, brand`,
+    [orgId, day, editorId],
+  );
+  // one line per scheduler: their total, then each brand
+  const out = new Map();
+  for (const r of rows) {
+    const p = out.get(r.editorId) ?? { editorId: r.editorId, name: r.name, total: 0, brands: [] };
+    p.total += r.n;
+    p.brands.push({ brandId: r.brandId, brand: r.brand, n: r.n });
+    out.set(r.editorId, p);
+  }
+  return [...out.values()].sort((a, b) => b.total - a.total || a.name.localeCompare(b.name));
+}
+// A scheduler's day for the End of Day report (routes/eod.js): what they
+// scheduled (by brand), what went live with its links that day, and their
+// Schedule task's desk counts. null when there's nothing and they don't schedule.
+export async function schedulingDay(orgId, editorId, date) {
+  if (!editorId || !(await schedulingReady())) return null;
+  const [dated, live, desk, sched] = await Promise.all([
+    scheduledOn(orgId, date, editorId),
+    pool.query(
+      `select count(*)::int as n from post p join task x on x.id = p.from_task_id
+        where x.org_id = $1 and x.scheduler_id = $2 and p.deleted_at is null
+          and (p.created_at at time zone 'Asia/Kolkata')::date = $3::date`,
+      [orgId, editorId, date],
+    ),
+    scheduleFormat(orgId).then((sf) => (sf ? pool.query(
+      `select coalesce(sum((meta->'desk'->>'comments')::int), 0)::int as comments,
+              coalesce(sum((meta->'desk'->>'leads')::int), 0)::int as leads, bool_or(meta ? 'desk') as has
+         from task where org_id = $1 and editor_id = $2 and content_format_id = $3
+          and coalesce(due_date, (created_at at time zone 'Asia/Kolkata')::date) = $4::date`,
+      [orgId, editorId, sf.id, date],
+    ) : { rows: [{ comments: 0, leads: 0, has: false }] })),
+    isScheduler(orgId, editorId),
+  ]);
+  const scheduled = dated[0] ? { total: dated[0].total, brands: dated[0].brands.map(({ brand, n }) => ({ brand, n })) } : { total: 0, brands: [] };
+  const d = desk.rows[0] ?? {};
+  const out = { scheduled, live: live.rows[0]?.n ?? 0, comments: d.comments ?? 0, leads: d.leads ?? 0, desk: !!d.has };
+  if (!sched && !out.scheduled.total && !out.live && !out.desk) return null;
+  return out;
+}

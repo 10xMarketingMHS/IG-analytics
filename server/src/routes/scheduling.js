@@ -10,7 +10,7 @@ import { hasColumn } from "../schema-flags.js";
 import { validYmd } from "../leave-math.js";
 import { callerEditorId, nextBrandTaskRef, nextTaskRef, taskSelect } from "./tasks.js";
 import {
-  LINK_AFTER_DAYS, NEEDS_SCHED_DB, addDaysYmd, isScheduler, linksDueAt, sameLink, scheduleFormat, scheduleStage, schedulerIds, schedulingReady,
+  LINK_AFTER_DAYS, NEEDS_SCHED_DB, addDaysYmd, isScheduler, linksDueAt, sameLink, scheduleFormat, scheduleStage, schedulerIds, schedulingReady, scheduledOn,
 } from "../scheduling.js";
 
 // Scheduling approved Social tasks (../scheduling.js). The schedulers — anyone
@@ -430,34 +430,6 @@ async function deskTask(req) {
   const sf = await scheduleFormat(req.orgId);
   if (!sf || sf.id !== t.content_format_id) return { status: 409, error: "Only a Schedule task has a desk." };
   return { t, sf };
-}
-// What each scheduler scheduled on a day, by brand: the work whose post date was
-// first set that day (its schedule_set activity), still dated and still theirs.
-// A re-date later doesn't count it again; a posting copy for another brand
-// (meta.postsFor) is its own post, so it counts for that brand. editorId: just theirs.
-async function scheduledOn(orgId, day, editorId = null) {
-  const { rows } = await pool.query(
-    `select x.scheduler_id as "editorId", e.name, w.id as "brandId", coalesce(w.name, 'No brand') as brand, count(*)::int as n
-       from task x
-       join editor e on e.id = x.scheduler_id
-       left join workspace w on w.id = x.channel_id
-      where x.org_id = $1 and x.schedule_from is not null and x.post_on is not null
-        and ($3::uuid is null or x.scheduler_id = $3::uuid)
-        and (select min(a.created_at at time zone 'Asia/Kolkata')::date from activity a
-              where a.org_id = $1 and a.entity_id = x.id and a.verb = 'schedule_set' and a.meta->>'postOn' is not null) = $2::date
-      group by 1, 2, 3, 4
-      order by e.name, n desc, brand`,
-    [orgId, day, editorId],
-  );
-  // one line per scheduler: their total, then each brand
-  const out = new Map();
-  for (const r of rows) {
-    const p = out.get(r.editorId) ?? { editorId: r.editorId, name: r.name, total: 0, brands: [] };
-    p.total += r.n;
-    p.brands.push({ brandId: r.brandId, brand: r.brand, n: r.n });
-    out.set(r.editorId, p);
-  }
-  return [...out.values()].sort((a, b) => b.total - a.total || a.name.localeCompare(b.name));
 }
 const istToday = () => new Date(Date.now() + 330 * 60_000).toISOString().slice(0, 10);
 

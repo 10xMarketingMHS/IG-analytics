@@ -1,6 +1,7 @@
 import { pool } from "./db.js";
 import { hasColumn } from "./schema-flags.js";
 import { openingFor, readSettings } from "./attendance.js";
+import { jobCount } from "./job-count.js";
 
 // Goal scoring: one rule for the Leaderboard, Goals and Management
 // Performance. (pulse-app/src/lib/goal-points.ts takes the counted numbers
@@ -197,7 +198,9 @@ export async function scoreMonthAll(orgId, monthFirst, editorId = null) {
                 (coalesce(t.budget_used_seconds, 0)
                   + case when t.budget_started_at is not null and t.completed_at > t.budget_started_at
                          then extract(epoch from (t.completed_at - t.budget_started_at)) else 0 end) / 3600.0,
-                t.budget_hours)::float as hours
+                t.budget_hours)::float as hours,
+              -- bulk work (./job-count.js): that many jobs of its type
+              ${jobCount("t")} as jobs
          from task t left join task_content_format cf on cf.id = t.content_format_id
         where t.org_id = $1 and t.status = 'done' and t.task_type <> 'admin' and t.editor_id is not null
           and coalesce(t.meta->>'postsFor', '') = '' -- a posting copy is its original's work
@@ -235,10 +238,14 @@ export async function scoreMonthAll(orgId, monthFirst, editorId = null) {
   for (const t of jobRes.rows) {
     if (!jobs.has(t.editor_id)) jobs.set(t.editor_id, []);
     const source = t.covered_from && t.covered_from !== t.editor_id ? "covered" : t.assigned_by ? "assigned" : "self";
-    jobs.get(t.editor_id).push({
-      contentFormatId: t.content_format_id, source, points: Number(t.pts ?? 1),
-      hours: Number(t.hours) || 0, taskId: t.id, title: t.title, typeName: t.type_name, requestedBy: t.requested_by, completedAt: t.completed_at,
-    });
+    // bulk work is that many jobs; its time stays on the first, so Other work lists it once, whole
+    for (let k = 0; k < (Number(t.jobs) || 1); k++) {
+      jobs.get(t.editor_id).push({
+        contentFormatId: t.content_format_id, source, points: Number(t.pts ?? 1),
+        hours: k === 0 ? Number(t.hours) || 0 : 0, taskId: t.id, title: t.title, typeName: t.type_name, requestedBy: t.requested_by, completedAt: t.completed_at,
+        ...(k === 0 && Number(t.jobs) > 1 ? { jobs: Number(t.jobs) } : {}),
+      });
+    }
     if (t.content_format_id && !kinds.has(t.content_format_id)) kinds.set(t.content_format_id, t);
   }
   const { credit, team } = teamCredit(goals, jobs);

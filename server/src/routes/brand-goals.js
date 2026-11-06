@@ -5,6 +5,7 @@ import { requirePermission } from "../permissions.js";
 import { hasColumn } from "../schema-flags.js";
 import { logActivity } from "../activity.js";
 import { headingError, headingTypes, notHeadingSql } from "../type-tree.js";
+import { jobCount } from "../job-count.js";
 
 // Goals › Brand goals: how many jobs of each task type a brand needs in a month
 // (Doctor Farmer 30 Reels, My Health School 30 Reels), and for Ads each Ads team
@@ -66,7 +67,8 @@ brandGoalsRouter.get("/brand-goals", requirePermission("edit_goals"), async (req
         `select t.content_format_id as "contentFormatId",
                 case when t.task_type = 'ad' then null else t.channel_id end as "channelId",
                 case when t.task_type = 'ad' then (to_jsonb(t)->>'ad_team_id')::uuid end as "adTeamId",
-                count(*)::int as n
+                -- bulk work counts its jobs on its own brand; its own-brand pieces (meta.pieceOf) are in that count
+                sum(case when t.meta ? 'pieceOf' then 0 else ${jobCount("t")} end)::int as n
            from task t
           where t.org_id = $1 and t.status = 'done' and t.content_format_id is not null and ${IST_MONTH("t.completed_at")}
           group by 1, 2, 3`,

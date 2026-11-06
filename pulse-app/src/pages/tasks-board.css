@@ -713,3 +713,13 @@ html[data-theme="dark"] .task-panel-scrim.tp2-scrim{background:rgba(0,0,0,.55)}
 .tp2-waiting{display:flex;flex-direction:column;gap:3px;margin-top:10px;padding:10px 12px;border-radius:11px;background:var(--tb-acSoft);font-size:12.5px;color:var(--tb-text)}
 .tp2-waiting b{font-size:12px;font-weight:800;color:var(--tb-acText)}
 .tp2-waiting small{font-size:11.5px;color:var(--tb-text3)}
+/* Bulk work (lib/job-count.ts): How many in one task — New task, the task window, the card's ×N */
+.tp2-jobs{display:flex;align-items:center;flex-wrap:wrap;gap:8px 14px;margin-top:10px;padding:10px 12px;border:1.5px dashed var(--tb-line);border-radius:11px;background:var(--tb-sunk)}
+.tp2-jobs.on{border-style:solid;border-color:color-mix(in srgb,var(--tb-ac) 45%,var(--tb-line));background:var(--tb-acSoft)}
+.tp2-jobs-l{flex:1 1 220px;min-width:0;display:flex;flex-direction:column;gap:2px;font-size:12.5px}
+.tp2-jobs-l small{font-size:11.5px;line-height:1.45;color:var(--tb-text2)}
+.tp2-jobs-pick{display:flex;align-items:center;gap:6px;flex-wrap:wrap}
+.tp2-jobs-pick .tp2-pill{height:30px;min-width:38px}
+.tp2 input.t.tp2-jobs-n,.tp2-jobs-n{width:64px!important;height:30px!important;padding:0 8px!important;border:1.5px solid var(--tb-line);border-radius:999px;background:var(--tb-solid);
+  color:var(--tb-text);font:700 12.5px 'Plus Jakarta Sans',sans-serif;text-align:center}
+.tb-jobs{margin-left:4px;padding:0 5px;border-radius:5px;background:var(--tb-acSoft);color:var(--tb-acText);font-size:10.5px;font-weight:800}

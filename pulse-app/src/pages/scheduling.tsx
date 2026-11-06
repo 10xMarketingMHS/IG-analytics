@@ -7,6 +7,7 @@ import { useWorkspaces } from "@/lib/workspaces-context";
 import { gradFor, initialsOf } from "@/lib/editor-visuals";
 import { STAGE_WORDS, clockWords, dayWords, leftTone, leftWords, linksDueAt, scheduleStage, useNow, type SchedStage } from "@/lib/schedule";
 import { TaskPanel } from "@/pages/tasks";
+import { pieceLabel } from "@/lib/job-count";
 import type { Task } from "@/lib/types";
 import "./pipeline.css";
 import "./scheduling.css";
@@ -138,6 +139,7 @@ export function SchedulingPage() {
                   <b>{t.title}</b>
                   <span>
                     {t.content_format_name && <em className="pp-type">{t.content_format_name.toUpperCase()}</em>}
+                    {pieceLabel(t.meta) && <em className="pp-type" title="Bulk work: its first post; the others are their own rows">{pieceLabel(t.meta)}</em>}
                     {t.delivery_link && (
                       <a className="sch-work" href={t.delivery_link} target="_blank" rel="noopener noreferrer" onClick={(e) => e.stopPropagation()}>Open the work ↗</a>
                     )}

@@ -5,6 +5,7 @@ import { requirePermission } from "../permissions.js";
 import { hasColumn } from "../schema-flags.js";
 import { logActivity } from "../activity.js";
 import { scoreMonthAll } from "../goal-score.js";
+import { jobCount } from "../job-count.js";
 
 // Goals › Lead goals: a Team Lead's key results for a month — 200 L1
 // Conversions, 500 Leads, 50,000 Followers — the team delivers and the lead
@@ -113,8 +114,9 @@ async function teamReviews(orgId, month) {
     ),
     pool.query(
       `select editor_id, content_format_id,
-              count(*) filter (where extract(day from completed_at at time zone 'Asia/Kolkata') <= 15)::int as h1,
-              count(*) filter (where extract(day from completed_at at time zone 'Asia/Kolkata') > 15)::int as h2
+              -- bulk work (../job-count.js) is that many jobs
+              coalesce(sum(${jobCount("task")}) filter (where extract(day from completed_at at time zone 'Asia/Kolkata') <= 15), 0)::int as h1,
+              coalesce(sum(${jobCount("task")}) filter (where extract(day from completed_at at time zone 'Asia/Kolkata') > 15), 0)::int as h2
          from task
         where org_id = $1 and status = 'done' and content_format_id is not null and editor_id is not null
           and coalesce(meta->>'postsFor', '') = '' -- a posting copy is its original's work

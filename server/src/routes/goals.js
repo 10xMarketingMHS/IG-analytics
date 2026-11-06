@@ -16,6 +16,7 @@ import { monthFrozen } from "../leave-math.js";
 import { brandNeedByType } from "./brand-goals.js";
 import { headingError, headingTypes, notHeadingSql } from "../type-tree.js";
 import { disciplineByEditor, disciplineShares, raterOf, reviewsReady, rolesSeenBy } from "../discipline.js";
+import { jobCount } from "../job-count.js";
 
 export const goalsRouter = Router();
 
@@ -368,7 +369,7 @@ goalsRouter.get("/goals/performance-all", goalView, async (req, res, next) => {
         P,
       ),
       pool.query(
-        `select editor_id, content_format_id, count(*)::int actual
+        `select editor_id, content_format_id, sum(case when coalesce(meta->>'postsFor', '') <> '' then 0 else ${jobCount("task")} end)::int actual -- bulk work: its jobs; posting copies: its original's
            from task
           where org_id=$1 and status='done' and content_format_id is not null
             and completed_at >= ($2::date)::timestamp at time zone 'Asia/Kolkata' and completed_at < ($2::date + interval '1 month')::timestamp at time zone 'Asia/Kolkata'${self ? " and editor_id = $3" : ""}
@@ -453,7 +454,7 @@ goalsRouter.get("/goals/preview", async (req, res, next) => {
     const [kinds, open] = ids.length ? await Promise.all([
       pool.query("select id, category from task_content_format where org_id = $1 and active and category is not null and id = any($2::uuid[])", [req.orgId, ids]),
       pool.query(
-        `select content_format_id as id, count(*)::int as n from task
+        `select content_format_id as id, sum(${jobCount("task")})::int as n from task
           where org_id = $1 and editor_id = $2 and status <> 'done' and content_format_id = any($3::uuid[])
           group by content_format_id`,
         [req.orgId, editorId, ids],
@@ -672,7 +673,7 @@ goalsRouter.get("/goals/performance", goalView, async (req, res, next) => {
     // Actual completed counts per content type this month (admin tasks have a
     // null content_format_id, so they never appear here).
     const { rows: actuals } = await pool.query(
-      `select content_format_id, count(*)::int actual
+      `select content_format_id, sum(case when coalesce(meta->>'postsFor', '') <> '' then 0 else ${jobCount("task")} end)::int actual -- bulk work: its jobs; posting copies: its original's
          from task
         where org_id=$1 and editor_id=$2 and status='done' and content_format_id is not null
           and completed_at >= ($3::date)::timestamp at time zone 'Asia/Kolkata' and completed_at < ($3::date + interval '1 month')::timestamp at time zone 'Asia/Kolkata'
@@ -764,7 +765,7 @@ goalsRouter.get("/goals/export", requireAdmin, async (req, res, next) => {
       [req.orgId, month],
     );
     const { rows: actuals } = await pool.query(
-      `select editor_id, content_format_id, count(*)::int actual
+      `select editor_id, content_format_id, sum(case when coalesce(meta->>'postsFor', '') <> '' then 0 else ${jobCount("task")} end)::int actual -- bulk work: its jobs; posting copies: its original's
          from task
         where org_id=$1 and status='done' and content_format_id is not null
           and completed_at >= ($2::date)::timestamp at time zone 'Asia/Kolkata' and completed_at < ($2::date + interval '1 month')::timestamp at time zone 'Asia/Kolkata'

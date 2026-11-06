@@ -40,6 +40,10 @@ export type EodSummary = {
   plan?: SodComparison | null;
   // The day's tasks with their status, channel and the note written for each.
   tasks?: EodDayTask[];
+  // A scheduler's day (server/src/scheduling.js schedulingDay): posts given a
+  // date that day by brand, posts gone live with their links, and the Schedule
+  // task's desk counts. null for anyone who doesn't schedule.
+  scheduling?: { scheduled: { total: number; brands: { brand: string; n: number }[] }; live: number; comments: number; leads: number; desk: boolean } | null;
 };
 
 // One of the day's tasks in the End of Day window and report.

@@ -5,6 +5,7 @@ import { useEditors } from "@/lib/use-editors";
 import { useWorkspaces } from "@/lib/workspaces-context";
 import { clockWords, dayWords, leftTone, leftWords, linksDueAt, scheduleStage, useNow } from "@/lib/schedule";
 import { brandShort } from "@/lib/brand-short";
+import { pieceLabel } from "@/lib/job-count";
 import { TaskPanel } from "@/pages/tasks";
 import type { Task } from "@/lib/types";
 import "./schedule-card.css";
@@ -72,7 +73,7 @@ function ScheduleCardBody() {
         </span>
         <span className="scd-what">
           <b>{t.title}</b>
-          <small title={t.channel_name ?? undefined}>{[t.sid, shortOf(t), t.content_format_name].filter(Boolean).join(" · ")}</small>
+          <small title={t.channel_name ?? undefined}>{[t.sid, shortOf(t), t.content_format_name, pieceLabel(t.meta)].filter(Boolean).join(" · ")}</small>
         </span>
         {when === "todo" ? <span className="scd-tag due">Set date</span>
           : stage === "live" ? <span className="scd-tag live">Live</span>

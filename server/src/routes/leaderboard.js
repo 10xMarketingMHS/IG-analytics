@@ -4,6 +4,7 @@ import { requirePage } from "../page-access.js";
 import { hasColumn } from "../schema-flags.js";
 import { istNow, istYmd } from "../attendance.js";
 import { scoreMonthAll } from "../goal-score.js";
+import { jobCount } from "../job-count.js";
 
 // Media House Leaders (Leaderboard), worked out here so everyone sees the
 // same board whoever is looking (a member's own task list leaves out the
@@ -56,7 +57,8 @@ leaderboardRouter.get("/leaderboard/house", requirePage("leaderboard"), async (r
       ),
       pool.query(
         `select t.editor_id, t.content_format_id, t.due_date, t.completed_at, t.revision, t.review_wait_seconds,
-                coalesce((to_jsonb(t)->>'points_at_done')::numeric, cf.points) as base
+                coalesce((to_jsonb(t)->>'points_at_done')::numeric, cf.points) as base,
+                ${jobCount("t")} as jobs -- bulk work (../job-count.js) is that many jobs
            from task t left join task_content_format cf on cf.id = t.content_format_id
           where t.org_id = $1 and t.status = 'done' and t.task_type <> 'admin' and t.editor_id is not null
             and coalesce(t.meta->>'postsFor', '') = '' -- a posting copy is its original's work
@@ -68,7 +70,7 @@ leaderboardRouter.get("/leaderboard/house", requirePage("leaderboard"), async (r
     ]);
     const rows = people.filter((p) => p.scored).map((p) => {
       const mine = done.filter((t) => t.editor_id === p.id);
-      const points = mine.reduce((s, t) => s + taskPoints(t), 0);
+      const points = mine.reduce((s, t) => s + taskPoints(t) * (Number(t.jobs) || 1), 0);
       const s = scores.get(p.id);
       const byType = (s?.types ?? []).map((t) => ({
         contentFormatId: t.contentFormatId, name: t.name, icon: t.icon,
@@ -85,7 +87,7 @@ leaderboardRouter.get("/leaderboard/house", requirePage("leaderboard"), async (r
       const ownPts = (s?.types ?? []).reduce((n, t) => n + (t.own ?? 0) * t.points, 0);
       const filledPts = (s?.types ?? []).reduce((n, t) => n + (t.filled ?? 0) * t.points, 0);
       return {
-        editorId: p.id, points: Math.round(points * 100) / 100, completed: mine.length,
+        editorId: p.id, points: Math.round(points * 100) / 100, completed: mine.reduce((n, t) => n + (Number(t.jobs) || 1), 0),
         goalPoints: Math.round((s?.goalPoints ?? 0) * 10) / 10,
         goalPct: s?.pct == null ? null : Math.round(s.pct * 10) / 10,
         coveredJobs: s?.coveredJobs ?? 0, leaveDays: s?.leaveDays ?? 0, otherHours: s?.otherHours ?? 0,

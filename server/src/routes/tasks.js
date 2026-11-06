@@ -8,6 +8,7 @@ import { callerAccess } from "../page-access.js";
 import { reviewContext, routeReview, withReview } from "../review-route.js";
 import { logActivity } from "../activity.js";
 import { postInGeneral } from "./chat.js";
+import { MAX_JOBS, jobsOf } from "../job-count.js";
 import { canSeeTask, editorRanks, mayOpenTask, seesEditor, taskViewer } from "../hierarchy.js";
 import { callerScope } from "../attendance.js";
 import { closePendingHandovers } from "../handover.js";
@@ -94,6 +95,10 @@ const TaskSchema = z.object({
   // one task, reviewed and scored once; each other brand gets a posting copy
   // when it's approved (makePostingCopies below).
   alsoBrands: z.array(z.string().uuid()).max(10).optional(),
+  // Bulk work (../job-count.js): one task for several of the same thing — 10
+  // stories, 5 posts. Kept in meta.count; timed and scored as that many jobs,
+  // reviewed once, split into that many posts in Scheduling once approved.
+  count: z.number().int().min(1).max(MAX_JOBS, `At most ${MAX_JOBS} in one task.`).optional(),
   // Per-task "delivery link required to submit for review". null = follow the
   // content type's default. Only an admin / assign_tasks grantee may set it.
   reviewLinkRequired: z.boolean().nullable().optional(),
@@ -287,7 +292,9 @@ async function cleanAlsoBrands(orgId, list, ownChannelId, taskType) {
 // other (its date, its post, its links). The work is the original's: a copy
 // scores nothing for the editor (goal scoring, the Leaderboard, Performance and
 // the day's summary skip meta.postsFor), while its brand's goals count it,
-// since it's posted there. The ids made.
+// since it's posted there. Bulk work (meta.count, ../job-count.js) is that many
+// posts: its own brand gets pieces 2..N (meta.pieceOf: the original is piece 1,
+// and its brand's goals count all N on it), each other brand pieces 1..N. The ids made.
 async function makePostingCopies(orgId, taskId, actorId) {
   const { rows: [t] } = await pool.query(
     `select id, title, editor_id, channel_id, content_format_id, due_date::text as due_date, priority, created_by, assigned_by, meta,
@@ -295,16 +302,25 @@ async function makePostingCopies(orgId, taskId, actorId) {
        from task where id = $1 and org_id = $2`,
     [taskId, orgId],
   );
-  const brands = Array.isArray(t?.meta?.alsoBrands) ? t.meta.alsoBrands.filter((b) => b && b !== t.channel_id) : [];
-  if (!brands.length) return [];
-  const { rows: have } = await pool.query("select channel_id from task where org_id = $1 and meta->>'postsFor' = $2", [orgId, taskId]);
-  const already = new Set(have.map((r) => r.channel_id));
-  const { rows: names } = await pool.query("select id, name from workspace where org_id = $1 and id = any($2::uuid[])", [orgId, brands]);
+  if (!t) return [];
+  const jobs = jobsOf(t.meta);
+  const brands = Array.isArray(t.meta?.alsoBrands) ? t.meta.alsoBrands.filter((b) => b && b !== t.channel_id) : [];
+  if (!brands.length && jobs < 2) return [];
+  const wanted = [];
+  if (t.channel_id) for (let k = 2; k <= jobs; k++) wanted.push({ b: t.channel_id, k, own: true });
+  for (const b of brands) for (let k = 1; k <= jobs; k++) wanted.push({ b, k, own: false });
+  const { rows: have } = await pool.query(
+    "select channel_id, coalesce((meta->>'piece')::int, 1) as piece from task where org_id = $1 and meta->>'postsFor' = $2",
+    [orgId, taskId],
+  );
+  const already = new Set(have.map((r) => `${r.channel_id}:${r.piece}`));
+  const { rows: names } = await pool.query("select id, name from workspace where org_id = $1 and id = any($2::uuid[])", [orgId, [...brands, t.channel_id].filter(Boolean)]);
   const nameOf = new Map(names.map((w) => [w.id, w.name]));
   const frozen = await hasColumn("task", "points_at_done");
   const made = [];
-  for (const b of brands) {
-    if (already.has(b) || !nameOf.has(b)) continue;
+  const madeOn = new Map();
+  for (const { b, k, own } of wanted) {
+    if (already.has(`${b}:${k}`) || !nameOf.has(b)) continue;
     const [tid, sid] = await Promise.all([nextTaskRef(orgId, "tid"), nextBrandTaskRef(b, "sid")]);
     const { rows } = await pool.query(
       `with s as (update org set task_seq = task_seq + 1 where id = $1 returning task_seq)
@@ -313,15 +329,23 @@ async function makePostingCopies(orgId, taskId, actorId) {
        select $1, $2, $3, $4, $5, 'done', $6, $7::date, 'social', $8, true, now(), now(), $9, $10, $11, $12, $13::jsonb,
               (select task_seq from s)${frozen ? ", 0" : ""}
        returning id`,
-      [orgId, t.editor_id, b, t.title,
-        `Posting copy of ${t.ref} for ${nameOf.get(b)}. The work, its review and its points are on ${t.ref}.`,
+      [orgId, t.editor_id, b, jobs > 1 ? `${t.title} · ${k}/${jobs}` : t.title,
+        own ? `Post ${k} of ${jobs} from ${t.ref}. The work, its review and its points are on ${t.ref}.`
+          : `Posting copy of ${t.ref} for ${nameOf.get(b)}${jobs > 1 ? `, post ${k} of ${jobs}` : ""}. The work, its review and its points are on ${t.ref}.`,
         t.priority ?? "medium", t.due_date, t.content_format_id, tid, sid, t.created_by, t.assigned_by,
-        JSON.stringify({ postsFor: t.id, postsForRef: t.ref })],
+        JSON.stringify({ postsFor: t.id, postsForRef: t.ref, ...(jobs > 1 ? { piece: k, pieces: jobs } : {}), ...(own ? { pieceOf: t.id } : {}) })],
     );
     made.push(rows[0].id);
+    madeOn.set(b, [...(madeOn.get(b) ?? []), sid]);
+  }
+  // one line per brand in the feed, however many posts
+  for (const [b, sids] of madeOn) {
     await logActivity({
-      orgId, actorId, verb: "created", entityType: "task", entityId: rows[0].id, channelId: b,
-      summary: `Made ${sid} to post ${t.ref} “${t.title}” on ${nameOf.get(b)} too`,
+      orgId, actorId, verb: "created", entityType: "task", entityId: t.id, channelId: b,
+      summary: b === t.channel_id
+        ? `Split ${t.ref} “${t.title}” into its ${jobs} posts for Scheduling`
+        : sids.length > 1 ? `Made ${sids.length} posts (${sids[0]}–${sids[sids.length - 1]}) to post ${t.ref} “${t.title}” on ${nameOf.get(b)} too`
+        : `Made ${sids[0]} to post ${t.ref} “${t.title}” on ${nameOf.get(b)} too`,
     });
   }
   return made;
@@ -601,9 +625,16 @@ tasksRouter.post("/tasks", requireEditor, requireActiveEod, async (req, res, nex
     const accepted = !assigneeId || callerEid === assigneeId;
     // Admin tasks carry no time tracking at all — skip the budget lookup. A
     // task given to someone else may come with the time it should take.
+    // Bulk work: Social, Ads and Service work of a type, several in one task
+    const jobs = d.count && d.count > 1 ? d.count : 1;
+    if (jobs > 1 && (isAdminTask || isProject || !contentFormatId)) {
+      return res.status(400).json({ error: "Only Social, Ads and Service work of a type comes several in one task." });
+    }
+    // The time it should take: given (for all of them), else the type's time for each, times how many
+    const perJob = isAdminTask || (d.budgetHours != null && !accepted) ? null : await resolveBudgetHours(req.orgId, assigneeId, contentFormatId);
     const budgetHours = isAdminTask ? null
       : d.budgetHours != null && !accepted ? d.budgetHours
-      : await resolveBudgetHours(req.orgId, assigneeId, contentFormatId);
+      : perJob != null ? Math.round(Number(perJob) * jobs * 100) / 100 : null;
     // The clock never starts at creation: an assigned task's starts on Accept,
     // one you made for yourself when you press Start (see PATCH). A morning plan
     // full of new tasks would otherwise start every timer at once.
@@ -648,7 +679,7 @@ tasksRouter.post("/tasks", requireEditor, requireActiveEod, async (req, res, nex
         sid,
         adId,
         svid,
-        JSON.stringify({ ...(d.meta ?? {}), ...(d.requestedBy ? { requestedBy: d.requestedBy } : {}), ...(also.list.length ? { alsoBrands: also.list } : {}) }),
+        JSON.stringify({ ...(d.meta ?? {}), ...(d.requestedBy ? { requestedBy: d.requestedBy } : {}), ...(also.list.length ? { alsoBrands: also.list } : {}), ...(jobs > 1 ? { count: jobs } : {}) }),
         d.contentType ?? null,
         d.platforms ?? [],
         JSON.stringify(d.attachments ?? []),
@@ -830,6 +861,19 @@ tasksRouter.patch("/tasks/:id", requireEditor, requireActiveEod, async (req, res
       alsoNext = prior.meta.alsoBrands.filter((b) => b !== d.channelId);
     }
     const alsoChanged = alsoNext !== undefined && JSON.stringify([...alsoNext].sort()) !== JSON.stringify([...(prior.meta?.alsoBrands ?? [])].sort());
+    // bulk work: how many in it (../job-count.js), changed only before it's done
+    const priorJobs = jobsOf(prior.meta);
+    const countNext = d.count !== undefined && d.count !== priorJobs ? d.count : undefined;
+    if (countNext !== undefined) {
+      if (prior.status === "done") return res.status(400).json({ error: "A finished task keeps how many it was." });
+      if (prior.meta?.postsFor) return res.status(400).json({ error: "A posting copy is one post." });
+      const kind = d.taskType ?? prior.task_type;
+      const cf = d.contentFormatId !== undefined ? d.contentFormatId : prior.content_format_id;
+      if (countNext > 1 && (kind === "admin" || kind === "project" || !cf)) {
+        return res.status(400).json({ error: "Only Social, Ads and Service work of a type comes several in one task." });
+      }
+    }
+    const jobsNext = countNext ?? priorJobs;
 
     // a task already on a main type keeps it, but none moves onto one (../type-tree.js)
     if (d.contentFormatId && d.contentFormatId !== prior.content_format_id) {
@@ -879,6 +923,7 @@ tasksRouter.patch("/tasks/:id", requireEditor, requireActiveEod, async (req, res
         || (d.description !== undefined && (d.description ?? "") !== (prior.description ?? ""))
         || (d.channelId !== undefined && !same(d.channelId, prior.channel_id))
         || alsoChanged
+        || countNext !== undefined
         || (d.priority !== undefined && d.priority !== prior.priority)
         || (d.dueDate !== undefined && !fillingDue && !same(d.dueDate || null, prior.due_date))
         || (d.startDate !== undefined && !same(d.startDate || null, prior.start_date))
@@ -1306,16 +1351,18 @@ tasksRouter.patch("/tasks/:id", requireEditor, requireActiveEod, async (req, res
       push("review_link_required", d.reviewLinkRequired);
     }
     // Requested by lives in meta but is its own field: a meta edit keeps it
-    if (d.meta !== undefined || d.requestedBy !== undefined || alsoNext !== undefined) {
+    if (d.meta !== undefined || d.requestedBy !== undefined || alsoNext !== undefined || countNext !== undefined) {
       const next = { ...(d.meta !== undefined ? d.meta : prior.meta ?? {}) };
       const asked = d.requestedBy !== undefined ? d.requestedBy || null : prior.meta?.requestedBy ?? null;
       if (asked) next.requestedBy = asked; else delete next.requestedBy;
       // what R&D work became, what a follow-up was made from (POST /tasks/:id/use),
-      // and a posting copy's original stay; so do the other brands, unless changed here
-      for (const k of ["use", "fromTask", "postsFor", "postsForRef", "alsoBrands", "desk"]) {
+      // and a posting copy's original stay; so do the other brands, unless changed here,
+      // and bulk work's count and a piece's place in it
+      for (const k of ["use", "fromTask", "postsFor", "postsForRef", "alsoBrands", "desk", "count", "pieceOf", "piece", "pieces"]) {
         if (prior.meta?.[k] !== undefined) next[k] = prior.meta[k]; else delete next[k];
       }
       if (alsoNext !== undefined) { if (alsoNext.length) next.alsoBrands = alsoNext; else delete next.alsoBrands; }
+      if (countNext !== undefined) { if (countNext > 1) next.count = countNext; else delete next.count; }
       push("meta", JSON.stringify(next));
     }
 
@@ -1352,9 +1399,12 @@ tasksRouter.patch("/tasks/:id", requireEditor, requireActiveEod, async (req, res
       const effectiveFormatId = d.contentFormatId !== undefined ? (d.contentFormatId ?? null) : prior.content_format_id;
       // the time it was given (Should take) stays unless the work itself changed
       const sameWork = effectiveEditorId === prior.editor_id && effectiveFormatId === prior.content_format_id;
-      const budgetHours = d.budgetHours != null ? d.budgetHours
-        : sameWork && prior.budget_hours != null ? Number(prior.budget_hours)
+      // bulk work: the time for each, times how many (../job-count.js)
+      const perJob = d.budgetHours != null || (sameWork && prior.budget_hours != null) ? null
         : await resolveBudgetHours(req.orgId, effectiveEditorId, effectiveFormatId);
+      const budgetHours = d.budgetHours != null ? d.budgetHours
+        : sameWork && prior.budget_hours != null ? Math.round((Number(prior.budget_hours) / priorJobs) * jobsNext * 100) / 100
+        : perJob != null ? Math.round(Number(perJob) * jobsNext * 100) / 100 : null;
       push("budget_hours", budgetHours);
       // A task that hasn't been started (still To Do) keeps its clock stopped.
       const runs = budgetHours !== null && accepted && (prior.status !== "todo" || budgetStartSet);
@@ -1370,7 +1420,11 @@ tasksRouter.patch("/tasks/:id", requireEditor, requireActiveEod, async (req, res
     }
     // Should take changed on its own: the budget changes, the clock doesn't
     if (d.budgetHours !== undefined && d.contentFormatId === undefined && d.editorId === undefined && prior.task_type !== "admin") {
-      push("budget_hours", d.budgetHours ?? await resolveBudgetHours(req.orgId, prior.editor_id, prior.content_format_id));
+      const perJob = d.budgetHours ?? await resolveBudgetHours(req.orgId, prior.editor_id, prior.content_format_id);
+      push("budget_hours", d.budgetHours ?? (perJob != null ? Math.round(Number(perJob) * jobsNext * 100) / 100 : null));
+    } else if (countNext !== undefined && d.contentFormatId === undefined && d.editorId === undefined && prior.budget_hours != null) {
+      // how many changed on its own: its time grows or shrinks with it
+      push("budget_hours", Math.round((Number(prior.budget_hours) / priorJobs) * jobsNext * 100) / 100);
     }
     // The points a completed task earns: its type's points the moment it's
     // approved, kept from then on, so changing a type's points never rewrites

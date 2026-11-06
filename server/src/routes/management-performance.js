@@ -7,6 +7,7 @@ import { monthPenalties } from "../attendance.js";
 import { scoreMonthAll } from "../goal-score.js";
 import { SETTLE_DAYS } from "../leave-math.js";
 import { disciplineByEditor, disciplinePoints, disciplineShares } from "../discipline.js";
+import { jobCount } from "../job-count.js";
 
 // Management Performance (points-based). Admin-only board + config; a self view
 // for My Day. The performance measure is Overall Performance % — the Earned
@@ -442,7 +443,7 @@ async function computeDetail(orgId, editorId, monthFirst, isCurrent) {
               from editor_goal where org_id = $1 and editor_id = $2 and period_month = $3
               group by content_format_id
           ), a as (
-            select content_format_id id, count(*)::int n
+            select content_format_id id, sum(${jobCount("task")})::int n -- bulk work is that many jobs
               from task where org_id = $1 and editor_id = $2 and status = 'done' and coalesce(meta->>'postsFor', '') = ''
                 and content_format_id is not null
                 and completed_at >= ($3::date)::timestamp at time zone 'Asia/Kolkata' and completed_at < ($3::date + interval '1 month')::timestamp at time zone 'Asia/Kolkata'

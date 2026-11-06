@@ -143,6 +143,11 @@ export type TaskMeta = {
   // a posting copy for another brand: the task whose work it is
   postsFor?: string;
   postsForRef?: string;
+  // bulk work (lib/job-count.ts): how many in one task; a piece of it in Scheduling: which one of how many
+  count?: number;
+  pieceOf?: string;
+  piece?: number;
+  pieces?: number;
   platform?: string;
   caption?: string;
   assetLinks?: string;

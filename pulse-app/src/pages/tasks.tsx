@@ -6,6 +6,7 @@ import {
   type DragStartEvent, type DragEndEvent,
 } from "@dnd-kit/core";
 import { useTasks } from "@/lib/use-tasks";
+import { JOB_PICKS, MAX_JOBS, jobsOf } from "@/lib/job-count";
 import { useEditors } from "@/lib/use-editors";
 import { useContentFormats } from "@/lib/use-content-formats";
 import { noteTaskSeen } from "@/lib/use-task-notify";
@@ -1350,6 +1351,7 @@ export function TasksPage() {
                         )}
                         <span className="tb-tag" title={TYPE_LABEL[t.task_type]}>
                           {t.content_format_name ? <>{t.content_format_icon} {t.content_format_name}</> : <>{TYPE_ICON[t.task_type]} {TYPE_LABEL[t.task_type]}</>}
+                          {jobsOf(t.meta) > 1 && <b className="tb-jobs" title={`${jobsOf(t.meta)} in one task`}>×{jobsOf(t.meta)}</b>}
                         </span>
                         {t.content_type && <span className="tb-tag">{CONTENT_LABEL(t.content_type)}</span>}
                         {t.platforms?.length > 0 && (
@@ -2446,6 +2448,8 @@ export function TaskPanel({ mode, task, canWrite, editors, channels: yourBrands,
   // one task, scored once; each other brand gets its posting step after approval.
   const multiBrand = activeCategory === "social" && !adByTeam && !!selectedFormat?.to_scheduling && channels.length > 1;
   const [alsoBrands, setAlsoBrands] = useState<string[]>([]);
+  // Bulk work (lib/job-count.ts): Social, Ads and Service work of a type, several in one task
+  const [jobs, setJobs] = useState(1);
   // a due date is today or later (a project's, not before its start either)
   const dueMin = isProject && cur.start_date && cur.start_date > today() ? cur.start_date : today();
   const pastDue = creating && !!draft.due_date && draft.due_date < today();
@@ -2468,6 +2472,10 @@ export function TaskPanel({ mode, task, canWrite, editors, channels: yourBrands,
   // Service › Something else: an off-goal request that has no type of its own,
   // so the Brief says what it is (required)
   const [otherPick, setOtherPick] = useState(false);
+  // bulk work: may this one be several in one task, and how many it is
+  const bulkKind = (kind: string | null | undefined) => kind === "social" || kind === "ad" || kind === "service";
+  const bulkOk = creating ? bulkKind(activeCategory) && !!draft.content_format_id && !otherPick : bulkKind(task?.task_type) && !!task?.content_format_id && !task?.meta?.postsFor;
+  const jobsN = creating ? (bulkOk ? jobs : 1) : jobsOf(task?.meta);
   // the main type whose chip is open, to choose among its sub-types
   const [openMain, setOpenMain] = useState<string | null>(null);
   const elseNeedsBrief = creating && otherPick && !description.trim();
@@ -2585,6 +2593,7 @@ export function TaskPanel({ mode, task, canWrite, editors, channels: yourBrands,
         priority: draft.priority, contentFormatId: draft.content_format_id,
         ...(multiBrand && alsoBrands.some((b) => b !== draft.channel_id) ? { alsoBrands: alsoBrands.filter((b) => b !== draft.channel_id) } : {}),
         ...(canAssign && linkOverride != null ? { reviewLinkRequired: linkOverride } : {}),
+        ...(jobsN > 1 ? { count: jobsN } : {}),
         // given to someone: which team asked, and how long it should take
         ...(draft.editor_id && draft.editor_id !== user?.editorId ? {
           requestedBy: draft.requested_by.trim() || undefined,
@@ -2869,7 +2878,8 @@ export function TaskPanel({ mode, task, canWrite, editors, channels: yourBrands,
     // (server/src/goal-score.js rules 3, 5, 6).
     const forMe = !!cur.editor_id && cur.editor_id === user?.editorId;
     const forName = forMe ? "your" : `${editors.find((e) => e.id === cur.editor_id)?.name ?? "their"}'s`;
-    const shouldTake = draft.budget_hours ?? selectedFormat?.hours ?? null;
+    // given: the time for all of it; else the type's time for each, times how many
+    const shouldTake = draft.budget_hours ?? (selectedFormat?.hours != null ? Number(selectedFormat.hours) * jobsN : null);
     const pv = preview;
     let tag: "goal" | "other" | "none" | null = null, big = "", line = "";
     let after: number | null = null;
@@ -2880,9 +2890,12 @@ export function TaskPanel({ mode, task, canWrite, editors, channels: yourBrands,
     else if (previewBusy && !pv) line = "Working it out…";
     else if (!pv || !(pv.goalPoints > 0)) { tag = "none"; big = "No goal yet"; line = `${forMe ? "You have" : `${forName.replace(/'s$/, "")} has`} no goals set this month, so it won't add points yet.`; }
     else if (pv.inGoal && (!pv.typeGoal || pv.typeGoal.done < pv.typeGoal.goal)) {
-      tag = "goal"; big = `+${tenths(pv.points ?? 0)} pts`;
-      line = `Counts toward ${forName} ${pv.typeName} goal${pv.typeGoal ? `: ${tenths(pv.typeGoal.done)} of ${tenths(pv.typeGoal.goal)} done so far` : ""}.`;
-      after = ((pv.reached + (pv.points ?? 0)) / pv.goalPoints) * 100;
+      // bulk work: as many as the goal still has room for count toward it
+      const room = pv.typeGoal ? Math.max(1, Math.ceil(pv.typeGoal.goal - pv.typeGoal.done)) : jobsN;
+      const counted = Math.min(jobsN, room);
+      tag = "goal"; big = `+${tenths((pv.points ?? 0) * counted)} pts`;
+      line = `${jobsN > 1 ? `${counted === jobsN ? `All ${jobsN}` : `${counted} of the ${jobsN}`} count` : "Counts"} toward ${forName} ${pv.typeName} goal${pv.typeGoal ? `: ${tenths(pv.typeGoal.done)} of ${tenths(pv.typeGoal.goal)} done so far` : ""}.${counted < jobsN ? " The rest go past it, as team goal credit or carried." : ""}`;
+      after = ((pv.reached + (pv.points ?? 0) * counted) / pv.goalPoints) * 100;
     } else if (pv.teamType) {
       const why = pv.inGoal ? `Past ${forName} own ${pv.typeName} goal` : `${pv.typeName} isn't in ${forName} goals`;
       if ((pv.teamLeft ?? 0) > 0) {
@@ -3073,6 +3086,23 @@ export function TaskPanel({ mode, task, canWrite, editors, channels: yourBrands,
                     </div>
                   );
                 })()}
+                {bulkOk && selectedFormat && (
+                  <div className={"tp2-jobs" + (jobsN > 1 ? " on" : "")}>
+                    <span className="tp2-jobs-l">
+                      <b>How many?</b>
+                      <small>{jobsN > 1
+                        ? `One task for all ${jobsN} ${selectedFormat.name}: timed and scored as ${jobsN}, reviewed once with one link (a folder is fine)${selectedFormat.to_scheduling ? `, then ${jobsN} posts in Scheduling` : ""}.`
+                        : "Doing several at once? Make them one task."}</small>
+                    </span>
+                    <span className="tp2-jobs-pick" role="group" aria-label="How many">
+                      {JOB_PICKS.map((n) => (
+                        <button key={n} type="button" className={"tp2-pill" + (jobsN === n ? " on" : "")} aria-pressed={jobsN === n} onClick={() => setJobs(n)}>{n}</button>
+                      ))}
+                      <input className="t tp2-jobs-n" type="number" min={1} max={MAX_JOBS} value={jobs} aria-label="How many, any number"
+                        onChange={(e) => setJobs(Math.max(1, Math.min(MAX_JOBS, Math.round(Number(e.target.value) || 1))))} />
+                    </span>
+                  </div>
+                )}
                 {limitTypes && !adminTask && (
                   <span className="hint">For someone else you can pick only {limitNames}.</span>
                 )}
@@ -3311,6 +3341,21 @@ export function TaskPanel({ mode, task, canWrite, editors, channels: yourBrands,
             {placeRow}
             {priorityRow}
             {typeRow}
+            {(jobsN > 1 || (bulkOk && !briefRo && t.status !== "done")) && (
+              <Row label="How many" icon={ic(TB_ICON.list)}>
+                {briefRo || t.status === "done" ? (
+                  <span className="tp2-faint">{jobsN} in this task{t.meta?.pieces ? "" : jobsN > 1 && t.status === "done" ? " · split into its posts in Scheduling" : ""}</span>
+                ) : (
+                  <span className="tp2-inline">
+                    {JOB_PICKS.map((n) => (
+                      <button key={n} type="button" className={"tp2-pill" + (jobsN === n ? " on" : "")} aria-pressed={jobsN === n} onClick={() => { if (n !== jobsN) patch({ count: n }); }}>{n}</button>
+                    ))}
+                    <input className="t tp2-jobs-n" type="number" min={1} max={MAX_JOBS} defaultValue={jobsN} key={jobsN} aria-label="How many, any number"
+                      onBlur={(e) => { const n = Math.max(1, Math.min(MAX_JOBS, Math.round(Number(e.target.value) || 1))); if (n !== jobsN) patch({ count: n }); }} />
+                  </span>
+                )}
+              </Row>
+            )}
             {linkRow}
             {repeatRow}
             {pointsRow}

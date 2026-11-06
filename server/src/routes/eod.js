@@ -1,8 +1,10 @@
 import { Router } from "express";
+import { schedulingDay } from "../scheduling.js";
 import { z } from "zod";
 import { pool } from "../db.js";
 import { mayPage } from "../page-access.js";
 import { hasColumn } from "../schema-flags.js";
+import { jobCount } from "../job-count.js";
 
 // Start/End EOD — one clock-in session per editor per workday. Editors are
 // gated out of the whole app (and, server-side, task mutations) until they Start
@@ -111,7 +113,7 @@ export async function summaryFor(orgId, editorId, date) {
 
   // Completed tasks grouped by content type (format name), within any session window.
   const { rows: groups } = await pool.query(
-    `select coalesce(cf.name, 'Task') as label, count(*)::int as n
+    `select coalesce(cf.name, 'Task') as label, sum(${jobCount("t")})::int as n -- bulk work is that many jobs
        from task t
        left join task_content_format cf on cf.id = t.content_format_id
       where t.editor_id = $1 and t.org_id = $2 and t.status = 'done' and t.completed_at is not null
@@ -186,6 +188,8 @@ export async function summaryFor(orgId, editorId, date) {
     dueToday: due[0].n, dueTodayDone: due[0].done,
     workedSeconds, sessionCount: sessions.length, breakSeconds, autoClosed, plan,
     tasks: await dayTasks(orgId, editorId, date),
+    // a scheduler's day: scheduled by brand, gone live, the desk's counts (null for everyone else)
+    scheduling: await schedulingDay(orgId, editorId, date).catch(() => null),
   };
 }
 
