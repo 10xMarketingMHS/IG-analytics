@@ -28,6 +28,7 @@ import { groupTypes, isHeading, kindsWord } from "@/lib/type-groups";
 import "./tasks-board.css";
 import { HandoverBlock, HandoverInbox, HandoverPill, useHandovers } from "@/components/handover";
 import { ScheduleBlock } from "@/components/schedule-block";
+import { DeskBlock } from "@/components/desk-block";
 import { AdUploadBlock } from "@/components/ad-upload-block";
 import { RndUseBlock } from "@/components/rnd-use-block";
 import { placeOf, useAdTeams } from "@/lib/ad-teams";
@@ -3191,6 +3192,8 @@ export function TaskPanel({ mode, task, canWrite, editors, channels: yourBrands,
           {/* approved social work: its scheduler sets the date and pastes the links */}
           {/* in Scheduling; or finished Social work outside it, whose post can be added from its link */}
           {(t.schedule_from || (t.status === "done" && t.task_type === "social" && !t.post_id)) && <ScheduleBlock task={t} editors={editors} onChanged={onChanged} />}
+          {/* a Schedule task: the day's social desk */}
+          {selectedFormat && isScheduleType(selectedFormat) && <DeskBlock task={t} />}
           {/* approved Ad work: the Managers and Team Leads record the ads it became */}
           {t.upload_from && <AdUploadBlock task={t} onChanged={onChanged} />}
           {/* approved R&D work (AI Job): what it becomes, a Reel, an Ad, both or not used */}

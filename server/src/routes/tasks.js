@@ -1306,7 +1306,7 @@ tasksRouter.patch("/tasks/:id", requireEditor, requireActiveEod, async (req, res
       if (asked) next.requestedBy = asked; else delete next.requestedBy;
       // what R&D work became, what a follow-up was made from (POST /tasks/:id/use),
       // and a posting copy's original stay; so do the other brands, unless changed here
-      for (const k of ["use", "fromTask", "postsFor", "postsForRef", "alsoBrands"]) {
+      for (const k of ["use", "fromTask", "postsFor", "postsForRef", "alsoBrands", "desk"]) {
         if (prior.meta?.[k] !== undefined) next[k] = prior.meta[k]; else delete next[k];
       }
       if (alsoNext !== undefined) { if (alsoNext.length) next.alsoBrands = alsoNext; else delete next.alsoBrands; }

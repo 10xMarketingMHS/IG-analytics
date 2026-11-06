@@ -385,3 +385,97 @@ schedulingRouter.post("/tasks/:id/post", requireEditor, async (req, res, next) =
     res.status(201).json(await scheduleView(req, t, w));
   } catch (err) { next(err); }
 });
+
+// Today's desk: a Schedule task's window (pulse-app/src/components/desk-block.tsx).
+// The day's social desk in one place: what waits to be scheduled (the shared
+// list, and what its person took but hasn't linked yet), what its person
+// scheduled that day (posts made from their links), and the day's counts of
+// negative comments cleaned and leads sent on to sales, kept on the task
+// (meta.desk), with the month's totals. Only for the org's Schedule type.
+//   GET   /tasks/:id/desk
+//   PATCH /tasks/:id/desk   { comments?, leads? }
+const DeskSchema = z.object({
+  comments: z.number().int().min(0).max(999).optional(),
+  leads: z.number().int().min(0).max(999).optional(),
+});
+async function deskTask(req) {
+  const { rows: [t] } = await pool.query(
+    `select id, editor_id, status, content_format_id, meta,
+            coalesce(due_date, (created_at at time zone 'Asia/Kolkata')::date)::text as day
+       from task where id = $1 and org_id = $2`,
+    [req.params.id, req.orgId],
+  );
+  if (!t || !(await mayOpenTask(req, t.id))) return { status: 404, error: "Task not found." };
+  const sf = await scheduleFormat(req.orgId);
+  if (!sf || sf.id !== t.content_format_id) return { status: 409, error: "Only a Schedule task has a desk." };
+  return { t, sf };
+}
+async function deskView(req, t, sf) {
+  const w = await who(req);
+  const ready = await schedulingReady();
+  const [waiting, scheduled, month] = await Promise.all([
+    ready && t.editor_id ? pool.query(
+      `select coalesce(f.name, 'Other') as type,
+              count(*) filter (where x.scheduler_id is null)::int as shared,
+              count(*) filter (where x.scheduler_id = $2)::int as mine
+         from task x left join task_content_format f on f.id = x.content_format_id
+        where x.org_id = $1 and x.status = 'done' and x.schedule_from is not null
+          and (x.scheduler_id is null or x.scheduler_id = $2)
+          and not exists (select 1 from post p where p.from_task_id = x.id and p.deleted_at is null)
+        group by 1 order by 2 desc, 1`,
+      [req.orgId, t.editor_id],
+    ) : { rows: [] },
+    ready && t.editor_id ? pool.query(
+      `select p.id, p.permalink, pl.name as "platformName", pl.key as "platformKey", coalesce(x.sid, x.tid) as ref, x.title
+         from post p join task x on x.id = p.from_task_id left join platform pl on pl.id = p.platform_id
+        where x.org_id = $1 and x.scheduler_id = $2 and p.deleted_at is null
+          and (p.created_at at time zone 'Asia/Kolkata')::date = $3::date
+        order by p.created_at`,
+      [req.orgId, t.editor_id, t.day],
+    ) : { rows: [] },
+    t.editor_id ? pool.query(
+      `select coalesce(sum((meta->'desk'->>'comments')::int), 0)::int as comments,
+              coalesce(sum((meta->'desk'->>'leads')::int), 0)::int as leads,
+              (count(*) filter (where meta ? 'desk'))::int as days
+         from task
+        where org_id = $1 and editor_id = $2 and content_format_id = $3
+          and coalesce(due_date, (created_at at time zone 'Asia/Kolkata')::date) >= date_trunc('month', $4::date)
+          and coalesce(due_date, (created_at at time zone 'Asia/Kolkata')::date) < date_trunc('month', $4::date) + interval '1 month'`,
+      [req.orgId, t.editor_id, sf.id, t.day],
+    ) : { rows: [{ comments: 0, leads: 0, days: 0 }] },
+  ]);
+  const own = !!w.me && w.me === t.editor_id;
+  return {
+    desk: true, day: t.day,
+    waiting: waiting.rows,
+    scheduled: scheduled.rows,
+    counts: { comments: Number(t.meta?.desk?.comments ?? 0), leads: Number(t.meta?.desk?.leads ?? 0) },
+    month: month.rows[0],
+    // its person, while the day's open; a lead or an admin, any time
+    canEdit: (own && t.status !== "done") || w.lead || req.role === "admin",
+  };
+}
+schedulingRouter.get("/tasks/:id/desk", async (req, res, next) => {
+  try {
+    const d = await deskTask(req);
+    if (d.error) return res.status(d.status).json({ error: d.error, desk: false });
+    res.json(await deskView(req, d.t, d.sf));
+  } catch (err) { next(err); }
+});
+schedulingRouter.patch("/tasks/:id/desk", requireEditor, async (req, res, next) => {
+  const parsed = DeskSchema.safeParse(req.body ?? {});
+  if (!parsed.success) return res.status(400).json({ error: "Counts are whole numbers from 0 to 999." });
+  try {
+    const d = await deskTask(req);
+    if (d.error) return res.status(d.status).json({ error: d.error });
+    const view = await deskView(req, d.t, d.sf);
+    if (!view.canEdit) return res.status(403).json({ error: "Only the person doing it can change the day's counts while it's open." });
+    const patch = Object.fromEntries(Object.entries(parsed.data).filter(([, v]) => v !== undefined));
+    await pool.query(
+      "update task set meta = coalesce(meta, '{}'::jsonb) || jsonb_build_object('desk', coalesce(meta->'desk', '{}'::jsonb) || $2::jsonb) where id = $1",
+      [d.t.id, JSON.stringify(patch)],
+    );
+    const fresh = await deskTask(req);
+    res.json(await deskView(req, fresh.t, fresh.sf));
+  } catch (err) { next(err); }
+});
