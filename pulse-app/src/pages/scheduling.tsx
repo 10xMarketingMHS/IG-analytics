@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { api, ApiError } from "@/lib/api";
 import { Loader } from "@/components/loader";
+import { Icon } from "@/components/icon";
 import { useEditors } from "@/lib/use-editors";
 import { useWorkspaces } from "@/lib/workspaces-context";
 import { gradFor, initialsOf } from "@/lib/editor-visuals";
@@ -16,7 +17,14 @@ import "./scheduling.css";
 // links go in the task window's Scheduling part — two days for them, counted
 // down beside the date — and each becomes a post on the same SID. Data: GET /scheduling (server/src/routes/scheduling.js).
 
-type Data = { tasks: Task[]; me: string | null; lead: boolean; scheduler: boolean };
+// today: what each scheduler scheduled today (a post date first set today), by brand —
+// everyone's for the Managers and Team Leads, else your own
+type Today = { editorId: string; name: string; total: number; brands: { brandId: string | null; brand: string; n: number }[] };
+type Data = { tasks: Task[]; me: string | null; lead: boolean; scheduler: boolean; today?: Today[] };
+// the Brand filter is each viewer's own, kept in this browser
+const BRAND_KEY = "echo.scheduling.brand";
+const readBrand = () => { try { return localStorage.getItem(BRAND_KEY) ?? ""; } catch { return ""; } };
+const keepBrand = (v: string) => { try { if (v) localStorage.setItem(BRAND_KEY, v); else localStorage.removeItem(BRAND_KEY); } catch { /* private window */ } };
 const TABS: { key: SchedStage; color: string; empty: string }[] = [
   { key: "to_schedule", color: "oklch(0.72 0.15 65)", empty: "Nothing waiting. Approved reels, carousels and posts arrive here." },
   { key: "scheduled", color: "oklch(0.62 0.13 230)", empty: "Nothing scheduled ahead. Set a post date on one waiting to be scheduled." },
@@ -33,6 +41,8 @@ export function SchedulingPage() {
   const [error, setError] = useState<string | null>(null);
   const [tab, setTab] = useState<SchedStage>("to_schedule");
   const [openId, setOpenId] = useState<string | null>(null);
+  const [brand, setBrandState] = useState(readBrand);
+  const setBrand = (v: string) => { setBrandState(v); keepBrand(v); };
   const load = useCallback(async () => {
     try {
       setData(await api<Data>("/scheduling"));
@@ -43,7 +53,15 @@ export function SchedulingPage() {
   }, []);
   useEffect(() => { load(); }, [load]);
 
-  const staged = useMemo(() => (data?.tasks ?? []).map((t) => ({ t, stage: scheduleStage(t) ?? "to_schedule" })), [data]);
+  // the brands in the list, for its filter; a brand no longer in it shows everything
+  const brands = useMemo(() => {
+    const m = new Map<string, string>();
+    for (const t of data?.tasks ?? []) if (t.channel_id) m.set(t.channel_id, t.channel_name ?? "—");
+    return [...m].map(([id, name]) => ({ id, name })).sort((a, b) => a.name.localeCompare(b.name));
+  }, [data]);
+  const brandOn = brand && brands.some((b) => b.id === brand) ? brand : "";
+  const staged = useMemo(() => (data?.tasks ?? []).filter((t) => !brandOn || t.channel_id === brandOn)
+    .map((t) => ({ t, stage: scheduleStage(t) ?? "to_schedule" })), [data, brandOn]);
   const count = (k: SchedStage) => staged.filter((x) => x.stage === k).length;
   const rows = staged.filter((x) => x.stage === tab).map((x) => x.t);
   const edOf = (id: string | null) => (editors ?? []).find((e) => e.id === id) ?? null;
@@ -65,6 +83,15 @@ export function SchedulingPage() {
           <span>{data.lead && !data.scheduler ? "Everyone's scheduling, for the Managers and Team Leads." : "Set a post date to take one. Once it's up, paste its links in the task."}</span>
         </div>
         <span className="pp-grow" />
+        {brands.length > 1 && (
+          <label className="pp-select">
+            <select value={brandOn} onChange={(e) => setBrand(e.target.value)} aria-label="Brand">
+              <option value="">All brands</option>
+              {brands.map((b) => <option key={b.id} value={b.id}>{b.name}</option>)}
+            </select>
+            <Icon name="expand_more" size={18} />
+          </label>
+        )}
         <div className="pp-seg" role="tablist" aria-label="Stage">
           {TABS.map((x) => (
             <button key={x.key} type="button" role="tab" aria-selected={tab === x.key} className={tab === x.key ? "on" : ""} onClick={() => setTab(x.key)}>
@@ -73,6 +100,30 @@ export function SchedulingPage() {
           ))}
         </div>
       </div>
+
+      {data.today && (data.scheduler || data.lead) && (() => {
+        // today's scheduling, by brand: the Brand filter keeps to its brand
+        const people = data.today.map((p) => {
+          const bs = brandOn ? p.brands.filter((b) => b.brandId === brandOn) : p.brands;
+          return { ...p, brands: bs, total: bs.reduce((n, b) => n + b.n, 0) };
+        }).filter((p) => p.total > 0);
+        const mineOnly = !data.lead;
+        return (
+          <section className="pp-card sch-today" aria-label="Scheduled today">
+            <b className="sch-today-h">Scheduled today</b>
+            {people.length === 0 ? (
+              <span className="pp-faint">{mineOnly ? "Nothing yet. Each post you set a date on today counts here." : "Nothing yet. Each post given a date today counts here, by scheduler and brand."}</span>
+            ) : people.map((p) => (
+              <span key={p.editorId} className="sch-today-p">
+                <span className="pp-ava" style={{ width: 22, height: 22, background: gradFor(p.name) }}>{initialsOf(p.name)}</span>
+                <b>{p.editorId === data.me ? "You" : p.name}</b>
+                <span className="sch-today-n">{p.total}</span>
+                <span className="sch-today-b">{p.brands.map((b) => `${b.brand} ${b.n}`).join(" · ")}</span>
+              </span>
+            ))}
+          </section>
+        );
+      })()}
 
       <section className="pp-card pp-table">
         <div className="pp-scroll"><div className="pp-grid">

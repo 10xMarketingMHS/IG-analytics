@@ -9,7 +9,8 @@ import "./desk-block.css";
 
 // Today's desk: a Schedule task's window (server/src/routes/scheduling.js
 // GET/PATCH /tasks/:id/desk). The day's social desk in one place: what waits to
-// be scheduled, what its person scheduled that day, and the day's counts of
+// be scheduled, what its person scheduled that day (by brand), what went live
+// with its links that day, and the day's counts of
 // negative comments cleaned and leads sent on to sales, with the month's totals.
 // Hidden for any other task.
 
@@ -18,6 +19,8 @@ type Desk = {
   day: string;
   waiting: { type: string; shared: number; mine: number }[];
   scheduled: { id: string; permalink: string | null; platformName: string | null; platformKey: string | null; ref: string | null; title: string }[];
+  // the posts its person gave a post date that day, by brand
+  dated?: { total: number; brands: { brandId: string | null; brand: string; n: number }[] };
   counts: { comments: number; leads: number };
   month: { comments: number; leads: number; days: number };
   canEdit: boolean;
@@ -79,7 +82,16 @@ export function DeskBlock({ task }: { task: Task }) {
       </div>
 
       <div className="dsk-part">
-        <span className="dsk-h">Scheduled {today ? "today" : `on ${dayWords(data.day)}`}<small>{data.scheduled.length}</small></span>
+        <span className="dsk-h">Scheduled {today ? "today" : `on ${dayWords(data.day)}`}<small>{data.dated?.total ?? 0}</small></span>
+        <p className="sch-say">
+          {data.dated && data.dated.total > 0
+            ? data.dated.brands.map((b) => `${b.brand} ${b.n}`).join(" · ")
+            : `Nothing yet. Each post ${task.editor_name ?? "they"} sets a date on counts here, by brand.`}
+        </p>
+      </div>
+
+      <div className="dsk-part">
+        <span className="dsk-h">Live {today ? "today" : `on ${dayWords(data.day)}`}<small>{data.scheduled.length}</small></span>
         {data.scheduled.length === 0 ? (
           <p className="sch-say">Nothing yet. Each post whose links {task.editor_name ? `${task.editor_name} adds` : "they add"} shows here.</p>
         ) : (

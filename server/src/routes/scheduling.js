@@ -139,7 +139,8 @@ schedulingRouter.get("/scheduling", async (req, res, next) => {
         order by t.post_on nulls first, t.schedule_from`,
       [req.orgId, w.sees, w.me],
     );
-    res.json({ tasks: rows, me: w.me, lead: w.lead, scheduler: w.scheduler });
+    const today = await scheduledOn(req.orgId, istToday(), w.sees ? null : w.me ?? "00000000-0000-0000-0000-000000000000");
+    res.json({ tasks: rows, me: w.me, lead: w.lead, scheduler: w.scheduler, today });
   } catch (err) { next(err); }
 });
 
@@ -410,6 +411,36 @@ async function deskTask(req) {
   if (!sf || sf.id !== t.content_format_id) return { status: 409, error: "Only a Schedule task has a desk." };
   return { t, sf };
 }
+// What each scheduler scheduled on a day, by brand: the work whose post date was
+// first set that day (its schedule_set activity), still dated and still theirs.
+// A re-date later doesn't count it again; a posting copy for another brand
+// (meta.postsFor) is its own post, so it counts for that brand. editorId: just theirs.
+async function scheduledOn(orgId, day, editorId = null) {
+  const { rows } = await pool.query(
+    `select x.scheduler_id as "editorId", e.name, w.id as "brandId", coalesce(w.name, 'No brand') as brand, count(*)::int as n
+       from task x
+       join editor e on e.id = x.scheduler_id
+       left join workspace w on w.id = x.channel_id
+      where x.org_id = $1 and x.schedule_from is not null and x.post_on is not null
+        and ($3::uuid is null or x.scheduler_id = $3::uuid)
+        and (select min(a.created_at at time zone 'Asia/Kolkata')::date from activity a
+              where a.org_id = $1 and a.entity_id = x.id and a.verb = 'schedule_set' and a.meta->>'postOn' is not null) = $2::date
+      group by 1, 2, 3, 4
+      order by e.name, n desc, brand`,
+    [orgId, day, editorId],
+  );
+  // one line per scheduler: their total, then each brand
+  const out = new Map();
+  for (const r of rows) {
+    const p = out.get(r.editorId) ?? { editorId: r.editorId, name: r.name, total: 0, brands: [] };
+    p.total += r.n;
+    p.brands.push({ brandId: r.brandId, brand: r.brand, n: r.n });
+    out.set(r.editorId, p);
+  }
+  return [...out.values()].sort((a, b) => b.total - a.total || a.name.localeCompare(b.name));
+}
+const istToday = () => new Date(Date.now() + 330 * 60_000).toISOString().slice(0, 10);
+
 // What waits to be scheduled, by type: the shared list (shared), and what this
 // person took but hasn't linked yet (mine). The desk, and the New task sheet.
 async function waitingByType(orgId, editorId) {
@@ -438,7 +469,7 @@ schedulingRouter.get("/scheduling/waiting", async (req, res, next) => {
 async function deskView(req, t, sf) {
   const w = await who(req);
   const ready = await schedulingReady();
-  const [waiting, scheduled, month] = await Promise.all([
+  const [waiting, scheduled, month, dated] = await Promise.all([
     ready && t.editor_id ? waitingByType(req.orgId, t.editor_id).then((rows) => ({ rows })) : { rows: [] },
     ready && t.editor_id ? pool.query(
       `select p.id, p.permalink, pl.name as "platformName", pl.key as "platformKey", coalesce(x.sid, x.tid) as ref, x.title
@@ -458,12 +489,15 @@ async function deskView(req, t, sf) {
           and coalesce(due_date, (created_at at time zone 'Asia/Kolkata')::date) < date_trunc('month', $4::date) + interval '1 month'`,
       [req.orgId, t.editor_id, sf.id, t.day],
     ) : { rows: [{ comments: 0, leads: 0, days: 0 }] },
+    ready && t.editor_id ? scheduledOn(req.orgId, t.day, t.editor_id) : [],
   ]);
   const own = !!w.me && w.me === t.editor_id;
   return {
     desk: true, day: t.day,
     waiting: waiting.rows,
     scheduled: scheduled.rows,
+    // the posts they gave a date that day, by brand
+    dated: dated[0] ? { total: dated[0].total, brands: dated[0].brands } : { total: 0, brands: [] },
     counts: { comments: Number(t.meta?.desk?.comments ?? 0), leads: Number(t.meta?.desk?.leads ?? 0) },
     month: month.rows[0],
     // its person, while the day's open; a lead or an admin, any time
