@@ -235,8 +235,8 @@ export function AccessSection() {
                   <div className="st-scopeline">Which tasks they review</div>
                   <FormatPicker formats={formats} picked={reviewFmts} onChange={setReviewFmts} label="Content types they review" />
                   <span className="st-note">
-                    Every task of these types comes to them when it's sent for review, whoever did it and whoever gave it (a main type takes its sub-types with it).
-                    Their own go to the usual reviewer, and after 24 hours waiting a Manager can review it too.
+                    Every task of these types comes to them when it's sent for review, whoever did it and whoever gave it, their own included (a main type takes its sub-types with it).
+                    They review and close it. If it's still waiting after 24 hours, a Manager can review it too, as a backup.
                   </span>
                 </div>
               )}

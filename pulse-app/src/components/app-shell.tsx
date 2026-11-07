@@ -56,7 +56,7 @@ import { PositionMark } from "@/components/position-mark";
 // that isn't placed here lands at the end of Operations.
 const SIDEBAR_GROUPS: { label: string; hrefs: string[] }[] = [
   { label: "Workspace", hrefs: ["/home", "/inbox", "/chat", "/tasks", "/analytics"] },
-  { label: "Operations", hrefs: ["/social", "/ads", "/leaderboard", "/goals-board", "/my-team", "/knowledge", "/widgets"] },
+  { label: "Operations", hrefs: ["/social", "/ads", "/leaderboard", "/goals-board", "/my-team", "/team-tracker", "/knowledge", "/widgets"] },
 ];
 // Social and Ads stand for these, as tabs (lib/sections.ts); they stay reachable by address and search
 const OFF_SIDEBAR = new Set(["/settings", "/posts/new", "/metrics", "/scheduling", "/posts", "/ad-uploads", "/ads-performance"]);
@@ -429,7 +429,9 @@ function AppShellInner() {
     const today = (!i.adminOnly || isAdmin || (!!i.permission && hasPermission(i.permission)) || (i.href === "/my-team" && leadsPeople))
       && (!i.chatBadge || chatAvailable)
       && (!i.schedulerOnly || !!schedAccess?.allowed)
-      && (!i.uploadsOnly || !!uploadsAccess?.allowed);
+      && (!i.uploadsOnly || !!uploadsAccess?.allowed)
+      // Team tracker: a Manager, Asst. Manager or Team Lead (by position), or an admin
+      && (!i.leadsOnly || isAdmin || homeRoleOf(myEd?.designation, false) !== "editor");
     if (i.area) return today && SECTIONS[i.area].tabs.some(canSeeTab);
     // a saved Page access row decides the pages it covers
     const page = NAV_PAGE[i.href];

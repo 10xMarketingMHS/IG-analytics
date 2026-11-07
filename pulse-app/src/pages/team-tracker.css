@@ -1,0 +1,126 @@
+/* Team tracker (pages/team-tracker.tsx): the team on the left, one person on
+   the right — on the Inbox's look (inbox.css): glass panels, no lift on hover. */
+.tt{--tt-text:#18181b;--tt-text2:#52525b;--tt-text3:#85858f;--tt-line:rgba(30,20,80,.08);--tt-line2:rgba(30,20,80,.05);
+  --tt-panel:rgba(255,255,255,.84);--tt-sunk:rgba(30,20,80,.035);--tt-solid:#fff;
+  --tt-sh1:0 1px 2px rgba(30,20,80,.04),0 10px 28px -8px rgba(60,40,140,.14);
+  --tt-ac:oklch(0.55 0.2 var(--acH));--tt-acSoft:oklch(0.96 0.025 var(--acH));--tt-acText:oklch(0.48 0.19 var(--acH));
+  --tt-good:oklch(0.55 0.14 155);--tt-warn:oklch(0.62 0.14 65);--tt-bad:oklch(0.58 0.2 25);
+  display:flex;flex-direction:column;gap:14px;font-family:'Plus Jakarta Sans',system-ui,sans-serif;color:var(--tt-text)}
+html[data-theme="dark"] .tt{--tt-text:#ededf0;--tt-text2:#b4b4bc;--tt-text3:#8b8b96;--tt-line:rgba(255,255,255,.08);--tt-line2:rgba(255,255,255,.055);
+  --tt-panel:rgba(26,24,40,.78);--tt-sunk:rgba(255,255,255,.04);--tt-solid:rgba(255,255,255,.06);
+  --tt-sh1:0 1px 2px rgba(0,0,0,.3),0 12px 30px -10px rgba(0,0,0,.55);
+  --tt-ac:oklch(0.7 0.16 var(--acH));--tt-acSoft:oklch(0.3 0.07 var(--acH));--tt-acText:oklch(0.82 0.11 var(--acH));
+  --tt-good:oklch(0.72 0.14 155);--tt-warn:oklch(0.78 0.13 75);--tt-bad:oklch(0.7 0.17 25)}
+
+.tt-top{display:flex;align-items:flex-end;gap:12px;flex-wrap:wrap}
+.tt-title{display:flex;flex-direction:column;gap:2px}
+.tt-title h1{margin:0;font-size:22px;font-weight:800;letter-spacing:-.02em}
+.tt-title span{color:var(--tt-text2);font-size:13px}
+.tt-grow{flex:1}
+.tt-month{display:flex;align-items:center;gap:4px;padding:3px;border:1px solid var(--tt-line);border-radius:12px;background:var(--tt-panel);box-shadow:var(--tt-sh1)}
+.tt-month b{min-width:130px;text-align:center;font-size:13px;font-weight:800}
+.tt-month button{width:30px;height:30px;border:0;border-radius:9px;background:transparent;color:var(--tt-text2);font-size:18px;line-height:1;cursor:pointer}
+.tt-month button:hover:not(:disabled){background:var(--tt-sunk);color:var(--tt-text)}
+.tt-month button:disabled{opacity:.3;cursor:default}
+
+.tt-card{border:1px solid var(--tt-line);border-radius:18px;background:var(--tt-panel);box-shadow:var(--tt-sh1);backdrop-filter:blur(16px) saturate(160%)}
+.tt-empty{padding:28px 18px;text-align:center;color:var(--tt-text3);font-size:13px}
+.tt-split{display:grid;grid-template-columns:minmax(300px,380px) minmax(0,1fr);gap:14px;align-items:start}
+.tt-detail{display:flex;flex-direction:column;gap:14px;min-width:0}
+.tt-pick{padding:60px 18px}
+
+/* the people */
+.tt-people{display:flex;flex-direction:column;gap:8px;padding:10px;position:sticky;top:10px;max-height:calc(100vh - 140px)}
+.tt-search{display:flex;align-items:center;gap:8px;height:36px;padding:0 12px;border:1px solid var(--tt-line);border-radius:11px;background:var(--tt-sunk);color:var(--tt-text3)}
+.tt-search input{flex:1;min-width:0;border:0;background:transparent;outline:none;color:var(--tt-text);font:500 13px 'Plus Jakarta Sans',sans-serif}
+.tt-list{display:flex;flex-direction:column;gap:2px;overflow-y:auto;min-height:0}
+.tt-person{display:grid;grid-template-columns:auto minmax(0,1fr) auto auto;align-items:center;gap:10px;width:100%;padding:9px 10px;border:1px solid transparent;border-radius:12px;
+  background:transparent;color:inherit;font-family:inherit;text-align:left;cursor:pointer}
+.tt-person:hover{background:var(--tt-sunk)}
+.tt-person.on{border-color:color-mix(in srgb,var(--tt-ac) 40%,transparent);background:var(--tt-acSoft)}
+.tt-ava{flex:none;display:grid;place-items:center;border-radius:50%;color:#fff;font-weight:800;object-fit:cover}
+.tt-pmain{display:flex;flex-direction:column;gap:2px;min-width:0}
+.tt-pmain b{font-size:13.5px;font-weight:800;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.tt-pmain b small{font-weight:600;color:var(--tt-text3)}
+.tt-pmain small{font-size:11.5px;color:var(--tt-text3);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.tt-day{font-style:normal;font-weight:700}
+.tt-day.working{color:var(--tt-good)}
+.tt-day.leave,.tt-day.half_day{color:var(--tt-warn)}
+.tt-pnums{display:flex;flex-direction:column;align-items:flex-end;gap:1px;font-size:11.5px;color:var(--tt-text2);white-space:nowrap}
+.tt-pnums b{color:var(--tt-text);font-variant-numeric:tabular-nums}
+.tt-pnums .bad{color:var(--tt-bad);font-weight:700}
+.tt-pct{min-width:44px;padding:3px 7px;border-radius:999px;background:var(--tt-sunk);text-align:center;font:800 11.5px 'Geist Mono',ui-monospace,monospace;color:var(--tt-text2)}
+.tt-pct.good{background:color-mix(in srgb,var(--tt-good) 14%,transparent);color:var(--tt-good)}
+.tt-pct.mid{background:color-mix(in srgb,var(--tt-warn) 15%,transparent);color:var(--tt-warn)}
+.tt-pct.low{background:color-mix(in srgb,var(--tt-bad) 13%,transparent);color:var(--tt-bad)}
+
+/* one person */
+.tt-profile{display:flex;align-items:flex-start;gap:16px;padding:18px 20px}
+.tt-pro-main{flex:1;min-width:0;display:flex;flex-direction:column;gap:4px}
+.tt-pro-main h2{margin:0;display:flex;align-items:center;gap:8px;font-size:19px;font-weight:800;letter-spacing:-.01em}
+.tt-off{padding:2px 8px;border-radius:999px;background:var(--tt-sunk);color:var(--tt-text3);font-size:11px;font-weight:700}
+.tt-pro-sub{font-size:13px;color:var(--tt-text2)}
+.tt-facts{display:grid;grid-template-columns:auto minmax(0,1fr);gap:4px 14px;margin:8px 0 0;font-size:12.5px}
+.tt-facts dt{color:var(--tt-text3);font-weight:600}
+.tt-facts dd{margin:0;min-width:0;overflow-wrap:anywhere}
+.tt-stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(112px,1fr));gap:10px}
+.tt-stat{display:flex;flex-direction:column;gap:2px;padding:12px 14px;border:1px solid var(--tt-line);border-radius:14px;background:var(--tt-panel);box-shadow:var(--tt-sh1)}
+.tt-stat small{font-size:11px;font-weight:800;letter-spacing:.05em;text-transform:uppercase;color:var(--tt-text3)}
+.tt-stat b{font-size:22px;font-weight:800;font-variant-numeric:tabular-nums}
+.tt-stat span{font-size:12px;color:var(--tt-text2)}
+.tt-stat.good b{color:var(--tt-good)}
+.tt-stat.mid b{color:var(--tt-warn)}
+.tt-stat.low b{color:var(--tt-bad)}
+.tt-side{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:18px;padding:16px 18px}
+.tt-h{font-size:12px;font-weight:800;letter-spacing:.04em;text-transform:uppercase;color:var(--tt-text2)}
+.tt-goals,.tt-att{display:flex;flex-direction:column;gap:8px;min-width:0}
+.tt-goal{display:grid;grid-template-columns:minmax(0,140px) minmax(0,1fr) auto;align-items:center;gap:10px;font-size:12.5px}
+.tt-goal-n{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-weight:600}
+.tt-bar{height:8px;border-radius:999px;background:var(--tt-sunk);overflow:hidden}
+.tt-bar i{display:block;height:100%;border-radius:999px;background:var(--tt-ac)}
+.tt-goal-v{font:700 12px 'Geist Mono',ui-monospace,monospace;color:var(--tt-text2)}
+.tt-note{font-size:12px;color:var(--tt-text3)}
+.tt-chips{display:flex;flex-wrap:wrap;gap:6px}
+.tt-chip{display:inline-flex;align-items:center;gap:6px;height:26px;padding:0 10px;border-radius:999px;background:var(--tt-sunk);font-size:12px;font-weight:600;color:var(--tt-text2)}
+.tt-chip b{color:var(--tt-text);font-variant-numeric:tabular-nums}
+.tt-chip.on_time{background:color-mix(in srgb,var(--tt-good) 12%,transparent)}
+.tt-chip.late,.tt-chip.half_day{background:color-mix(in srgb,var(--tt-warn) 13%,transparent)}
+.tt-chip.absent,.tt-chip.no_sod{background:color-mix(in srgb,var(--tt-bad) 11%,transparent)}
+
+/* the task history */
+.tt-tasks{display:flex;flex-direction:column;padding:6px 0 8px}
+.tt-tasks-head{display:flex;align-items:center;gap:10px;flex-wrap:wrap;padding:10px 16px}
+.tt-seg{display:flex;padding:3px;border:1px solid var(--tt-line);border-radius:11px;background:var(--tt-sunk)}
+.tt-seg button{height:28px;padding:0 12px;border:0;border-radius:8px;background:transparent;color:var(--tt-text3);font:700 12px 'Plus Jakarta Sans',sans-serif;cursor:pointer}
+.tt-seg button.on{background:var(--tt-panel);color:var(--tt-text);box-shadow:var(--tt-sh1)}
+.tt-trows{display:flex;flex-direction:column}
+.tt-trow{display:grid;grid-template-columns:minmax(0,1fr) 110px 90px auto;align-items:center;gap:12px;width:100%;padding:10px 16px;border:0;border-top:1px solid var(--tt-line2);
+  background:transparent;color:inherit;font-family:inherit;text-align:left;cursor:pointer}
+.tt-trow:hover{background:var(--tt-sunk)}
+.tt-tmain{display:flex;flex-direction:column;gap:2px;min-width:0}
+.tt-tmain b{font-size:13px;font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.tt-tmain small{font-size:11.5px;color:var(--tt-text3);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.tt-ref{margin-right:7px;padding:1px 6px;border-radius:6px;background:var(--tt-acSoft);color:var(--tt-acText);font:600 10.5px 'Geist Mono',ui-monospace,monospace;vertical-align:1px}
+.tt-jobs{margin-left:6px;padding:0 5px;border-radius:5px;background:var(--tt-acSoft);color:var(--tt-acText);font-size:10.5px;font-weight:800}
+.tt-twhen{display:flex;flex-direction:column;gap:1px;font-size:12px}
+.tt-twhen b{font-weight:700}
+.tt-twhen small{color:var(--tt-text3);font-size:11px}
+.tt-ttime{font:700 12px 'Geist Mono',ui-monospace,monospace;color:var(--tt-text2);white-space:nowrap}
+.tt-ttime small{font-weight:500;color:var(--tt-text3)}
+.tt-ttags{display:flex;align-items:center;justify-content:flex-end;gap:5px;flex-wrap:wrap}
+.tt-tag{padding:2px 8px;border-radius:999px;font-style:normal;font-size:11px;font-weight:800;white-space:nowrap;background:var(--tt-sunk);color:var(--tt-text2)}
+.tt-tag.bad{background:color-mix(in srgb,var(--tt-bad) 13%,transparent);color:var(--tt-bad)}
+.tt-tag.mid{background:color-mix(in srgb,var(--tt-warn) 15%,transparent);color:var(--tt-warn)}
+.tt-tag.st.done{background:color-mix(in srgb,var(--tt-good) 13%,transparent);color:var(--tt-good)}
+.tt-tag.st.review{background:var(--tt-acSoft);color:var(--tt-acText)}
+
+@media (max-width:1100px){
+  .tt-split{grid-template-columns:minmax(0,1fr)}
+  .tt-people{position:static;max-height:360px}
+}
+@media (max-width:640px){
+  .tt-trow{grid-template-columns:minmax(0,1fr) auto;row-gap:4px}
+  .tt-twhen,.tt-ttime{display:none}
+  .tt-profile{padding:14px}
+  .tt-goal{grid-template-columns:minmax(0,1fr) 80px auto}
+}

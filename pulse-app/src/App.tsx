@@ -48,6 +48,7 @@ import { WidgetsPage } from "@/pages/widgets";
 import { FormatAnalyticsPage } from "@/pages/format-analytics";
 import { LeaderboardPage } from "@/pages/leaderboard";
 import { MyTeamPage } from "@/pages/my-team";
+import { TeamTrackerPage } from "@/pages/team-tracker";
 
 // Adding posts is for admins and anyone given Add Post access — everyone else
 // who opens the address gets a short explanation instead of an empty page.
@@ -132,6 +133,7 @@ function AppRoutes() {
             <Route path="/integrations" element={<Navigate to="/channels" replace />} />
             <Route path="/tasks" element={<TasksPage />} />
             <Route path="/my-team" element={<MyTeamPage />} />
+            <Route path="/team-tracker" element={<TeamTrackerPage />} />
             <Route path="/task-rules" element={<SettingsPage />} />
             <Route path="/social-media" element={<SocialMediaPage />} />
             <Route path="/activity" element={<ActivityPage />} />
