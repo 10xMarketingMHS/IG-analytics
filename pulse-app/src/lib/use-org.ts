@@ -16,8 +16,9 @@ export type Org = {
   // Settings › Tasks & time › Scheduling: each post scheduled a Schedule job, or not (off by default)
   scheduling?: { perPostJob: boolean };
   // Settings › Tasks & time › Review hand-offs: hours a review waits before
-  // the Team Leads, then the Managers, can review it too (null: never)
-  review?: { leadHours: number | null; managerHours: number | null };
+  // the Team Leads, the Asst. Managers, then the Managers can review it too
+  // (null: never; Asst. Managers: with the Managers)
+  review?: { leadHours: number | null; asstHours?: number | null; managerHours: number | null };
   // Whether you may change what only the Super Admin changes: the work
   // calendar, task points, attendance penalties, the scoring bands and Access.
   superAdmin?: boolean;

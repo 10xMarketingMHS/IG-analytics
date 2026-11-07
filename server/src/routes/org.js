@@ -8,7 +8,7 @@ import { CALENDAR_DEFAULTS, normalizeCalendar } from "../work-calendar.js";
 import { ATTENDANCE_DEFAULTS, clearSettingsCache, normalizeAttendance } from "../attendance.js";
 import { clearCapacityCache } from "./goals.js";
 import { isSuperHere } from "../super-admin.js";
-import { HANDOFF_HOURS, REVIEW_DEFAULTS, normalizeReview } from "../review-route.js";
+import { HANDOFF_HOURS, REVIEW_DEFAULTS, handoffOrderError, normalizeReview } from "../review-route.js";
 
 // Settings › General: the organisation's name, the week start and the work
 // calendar. Anyone signed in can read them (the sidebar shows the name, date
@@ -50,10 +50,11 @@ const PatchSchema = z.object({
   // tasks count, such as the daily social-desk task.
   scheduling: z.object({ perPostJob: z.boolean() }).optional(),
   // Review hand-offs (Settings › Tasks & time; ../review-route.js): hours a
-  // review waits before the Team Leads, then the Managers, can review it too.
-  // null: never.
+  // review waits before the Team Leads, the Asst. Managers, then the Managers
+  // can review it too. null: never (Asst. Managers: with the Managers).
   review: z.object({
     leadHours: z.number().int().refine((h) => HANDOFF_HOURS.includes(h)).nullable(),
+    asstHours: z.number().int().refine((h) => HANDOFF_HOURS.includes(h)).nullable().optional(),
     managerHours: z.number().int().refine((h) => HANDOFF_HOURS.includes(h)).nullable(),
   }).optional(),
 });
@@ -90,8 +91,10 @@ orgRouter.patch("/org", async (req, res, next) => {
   const parsed = PatchSchema.safeParse(req.body);
   if (!parsed.success) return res.status(400).json({ error: "Those settings don't look right." });
   const d = parsed.data;
-  if (d.review && d.review.leadHours != null && d.review.managerHours != null && d.review.managerHours <= d.review.leadHours) {
-    return res.status(400).json({ error: "Managers come after the Team Leads: pick a longer wait for Managers." });
+  if (d.review) {
+    d.review = { leadHours: d.review.leadHours, asstHours: d.review.asstHours ?? null, managerHours: d.review.managerHours };
+    const wrong = handoffOrderError(d.review);
+    if (wrong) return res.status(400).json({ error: wrong });
   }
   try {
     // Who changes what: once the caller's Page access row is saved (../page-access.js),

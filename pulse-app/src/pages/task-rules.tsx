@@ -4,6 +4,8 @@ import { api, ApiError } from "@/lib/api";
 import { useWorkspaces } from "@/lib/workspaces-context";
 import { useContentFormats } from "@/lib/use-content-formats";
 import { useIsSuper, useOrg } from "@/lib/use-org";
+import { useEditors } from "@/lib/use-editors";
+import { positionKey } from "@/lib/home-role";
 import type { ContentFormatDef, TaskTimeRule } from "@/lib/types";
 import { LookOnly, SI, Stepper, Toggle, fmtHours } from "@/pages/settings-ui";
 import { AdTeamsCard } from "@/pages/ad-teams-card";
@@ -353,17 +355,27 @@ function SchedulingCard() {
 }
 
 // Review hand-offs (server/src/review-route.js): a task still waiting in Review
-// after so long can be reviewed by the Team Leads too, and later the Managers
-// too; each step sends them one bell notice. Team Leads: for work that has its
-// own reviewer (Settings › Access › Review tasks), off by default. Managers:
-// after a day by default; Never keeps those tasks away from them.
+// can be reviewed by more people as the days go by: the Team Leads, then the
+// Asst. Managers, then the Managers; each step sends them one bell notice.
+// Each wait counts from handing in, and each one set comes after the one
+// before. Team Leads: for work that has its own reviewer (Settings › Access ›
+// Review tasks), off by default. Asst. Managers: off by default (they come
+// with the Managers); none on the team → the Managers come at their time.
+// Managers: after a day by default; Never keeps those tasks away from them.
 const HANDOFF = [24, 48, 72, 120, 168];
 const dayWords = (h: number) => `${h / 24} day${h === 24 ? "" : "s"}`;
+type Handoffs = { leadHours: number | null; asstHours: number | null; managerHours: number | null };
+const STEPS: { key: keyof Handoffs; name: string }[] = [
+  { key: "leadHours", name: "Team Leads" }, { key: "asstHours", name: "Asst. Managers" }, { key: "managerHours", name: "Managers" },
+];
 function ReviewHandoffCard() {
   const { org, refetch } = useOrg();
-  const saved = org?.review ?? { leadHours: null, managerHours: 24 };
+  const { editors } = useEditors();
+  const saved: Handoffs = { leadHours: null, asstHours: null, managerHours: 24, ...org?.review };
+  // anyone in the Asst. Manager position? (none: the Managers come in their place)
+  const hasAsst = (editors ?? []).some((e) => e.active !== false && positionKey(e.designation) === "asstManager");
   const [busy, setBusy] = useState(false);
-  async function save(next: { leadHours: number | null; managerHours: number | null }, ok: string) {
+  async function save(next: Handoffs, ok: string) {
     setBusy(true);
     try {
       await api("/org", { method: "PATCH", body: JSON.stringify({ review: next }) });
@@ -375,64 +387,86 @@ function ReviewHandoffCard() {
       setBusy(false);
     }
   }
-  function setLeads(leadHours: number | null) {
-    // Managers stay after the Team Leads: moved to the next wait when needed
-    let managerHours = saved.managerHours;
-    let moved = "";
-    if (leadHours != null && managerHours != null && managerHours <= leadHours) {
-      managerHours = HANDOFF.find((h) => h > leadHours) ?? null;
-      moved = managerHours == null ? " Managers set to Never." : ` Managers moved to after ${dayWords(managerHours)}.`;
+  function set(key: keyof Handoffs, hours: number | null) {
+    // the steps after it stay later: moved to the next wait when needed
+    const next = { ...saved, [key]: hours };
+    const moved: string[] = [];
+    let prev = 0;
+    for (const s of STEPS) {
+      const h = next[s.key];
+      if (h == null) continue;
+      if (h <= prev) {
+        next[s.key] = HANDOFF.find((x) => x > prev) ?? null;
+        moved.push(next[s.key] == null ? `${s.name} set to ${s.key === "managerHours" ? "Never" : "Off"}.` : `${s.name} moved to after ${dayWords(next[s.key]!)}.`);
+      }
+      prev = next[s.key] ?? prev;
     }
-    save({ leadHours, managerHours }, (leadHours == null ? "Team Leads don't get these tasks now." : `Team Leads can review after ${dayWords(leadHours)}.`) + moved);
-  }
-  function setManagers(managerHours: number | null) {
-    save({ leadHours: saved.leadHours, managerHours }, managerHours == null
-      ? "Managers don't get waiting reviews now."
-      : `Managers can review after ${dayWords(managerHours)}.`);
+    const name = STEPS.find((s) => s.key === key)!.name;
+    const said = hours != null ? `${name} can review after ${dayWords(hours)}.`
+      : key === "asstHours" ? "Asst. Managers come with the Managers now."
+      : `${name} don't get waiting reviews now.`;
+    save(next, [said, ...moved].join(" "));
   }
   const pick = (v: string) => (v === "" ? null : Number(v));
-  // the way a waiting task goes, in words: "Its reviewer → after 1 day, Team Leads too → …"
+  // a step's choices: only waits after the steps before it that are set
+  const after = (key: keyof Handoffs) => {
+    const i = STEPS.findIndex((s) => s.key === key);
+    return Math.max(0, ...STEPS.slice(0, i).map((s) => saved[s.key] ?? 0));
+  };
+  // the way a waiting task goes, in words: "its reviewer → after 1 day, Team Leads too → …"
   const flow = (first: string, withLeads: boolean) => {
+    const asstOwn = saved.asstHours != null;
     const rest = [
       ...(withLeads && saved.leadHours != null ? [`after ${dayWords(saved.leadHours)}, Team Leads too`] : []),
-      ...(saved.managerHours != null ? [`after ${dayWords(saved.managerHours)}, Managers too`] : []),
+      ...(asstOwn ? [`after ${dayWords(saved.asstHours!)}, ${hasAsst ? "Asst. Managers too" : "Managers too (no Asst. Manager yet)"}`] : []),
+      ...(saved.managerHours != null && !(asstOwn && !hasAsst)
+        ? [`after ${dayWords(saved.managerHours)}, ${asstOwn || !hasAsst ? "Managers" : "Managers and Asst. Managers"} too`] : []),
     ];
     return rest.length ? [first, ...rest].join(" → ") : `${first} only, however long it waits`;
   };
+  const choose = (key: keyof Handoffs, label: string, none: string, noneFirst: boolean) => (
+    <select className="st-in st-handoff" value={saved[key] ?? ""} disabled={busy || !org} aria-label={label}
+      onChange={(e) => set(key, pick(e.target.value))}>
+      {noneFirst && <option value="">{none}</option>}
+      {HANDOFF.map((h) => <option key={h} value={h} disabled={h <= after(key)}>After {dayWords(h)}</option>)}
+      {!noneFirst && <option value="">{none}</option>}
+    </select>
+  );
   return (
     <section className="st-card">
       <div className="st-cardhead">
         <b>Review hand-offs</b>
-        <span>When a task waits too long in Review, who else can review it. Each step sends them one bell notice, so a longer wait means fewer notices.</span>
+        <span>When a task waits too long in Review, who else can review it. Each wait counts from when the work was handed in, and each step sends them one bell notice, so a longer wait means fewer notices.</span>
       </div>
       <div className="st-row">
         <span className="st-label">
           <b>Team Leads</b>
           <small>For work that has its own reviewer (Settings › Access › Review tasks). An editor's other work goes to the Team Leads first anyway.</small>
         </span>
-        <select className="st-in st-handoff" value={saved.leadHours ?? ""} disabled={busy || !org} aria-label="When Team Leads can review a waiting task"
-          onChange={(e) => setLeads(pick(e.target.value))}>
-          <option value="">Off</option>
-          {HANDOFF.map((h) => <option key={h} value={h}>After {dayWords(h)}</option>)}
-        </select>
+        {choose("leadHours", "When Team Leads can review a waiting task", "Off", true)}
+      </div>
+      <div className="st-row">
+        <span className="st-label">
+          <b>Asst. Managers</b>
+          <small>
+            {hasAsst ? "Before the Managers." : "No one is an Asst. Manager yet, so the Managers come in at this time in their place."} Off: Asst. Managers come with the Managers.
+          </small>
+        </span>
+        {choose("asstHours", "When Asst. Managers can review a waiting task", "Off", true)}
       </div>
       <div className="st-row">
         <span className="st-label">
           <b>Managers</b>
-          <small>Managers and Asst. Managers. Never: these tasks don't reach them, and only the first reviewers can close them.</small>
+          <small>Never: these tasks don't reach them, and only the people before them can close them.</small>
         </span>
-        <select className="st-in st-handoff" value={saved.managerHours ?? ""} disabled={busy || !org} aria-label="When Managers can review a waiting task"
-          onChange={(e) => setManagers(pick(e.target.value))}>
-          {HANDOFF.map((h) => <option key={h} value={h} disabled={saved.leadHours != null && h <= saved.leadHours}>After {dayWords(h)}</option>)}
-          <option value="">Never</option>
-        </select>
+        {choose("managerHours", "When Managers can review a waiting task", "Never", false)}
       </div>
       <div className="st-row sunk">
         <span className="st-label">
           <b>How it goes now</b>
           <small>Work with its own reviewer: {flow("its reviewer", true)}.</small>
           <small>An editor's other work: {flow("Team Leads", false)}.</small>
-          <small>A task someone gave: the person who gave it, only. A Team Lead's own work of other types: Managers straight away.</small>
+          <small>A task someone gave: the person who gave it, only. A Team Lead's own work of other types: Managers and Asst. Managers straight away.</small>
         </span>
       </div>
     </section>
