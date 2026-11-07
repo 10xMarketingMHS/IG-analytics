@@ -5,7 +5,7 @@ import { requireEditor } from "../resolve-workspace.js";
 import { requireActiveEod } from "./eod.js";
 import { assignLimits, hasActiveGrant } from "../permissions.js";
 import { callerAccess } from "../page-access.js";
-import { reviewContext, routeReview, withReview } from "../review-route.js";
+import { reviewContext, routeReview, waitWords, withReview } from "../review-route.js";
 import { logActivity } from "../activity.js";
 import { postInGeneral } from "./chat.js";
 import { MAX_JOBS, jobsOf } from "../job-count.js";
@@ -1046,7 +1046,8 @@ tasksRouter.patch("/tasks/:id", requireEditor, requireActiveEod, async (req, res
         // Resolving a review (approve into done, or send back for rework)
         // follows one rule for everyone, admins included (../review-route.js):
         // a type's own reviewer; else whoever assigned it; for a task its owner
-        // made, a Team Lead, or a Manager (a Team Lead's task, or after 24 hours).
+        // made, a Team Lead, or a Manager (a Team Lead's task, or after the
+        // hand-off time in Settings › Tasks & time › Review hand-offs).
         // Never the owner, unless they're its type's reviewer (Settings › Access).
         const route = routeReview(prior, await reviewContext(req.orgId));
         const typeReviewer = route.kind === "type" && route.reviewers.includes(req.user.sub);
@@ -1054,12 +1055,10 @@ tasksRouter.patch("/tasks/:id", requireEditor, requireActiveEod, async (req, res
           return res.status(403).json({ error: "You can't review a task that's assigned to you." });
         }
         if (!route.reviewers.includes(req.user.sub)) {
+          const later = route.next ? ` ${route.next.who.replace(/^a/, "A")} can too once it has waited ${waitWords(route.next.hours)}.` : "";
           return res.status(403).json({
-            error: route.kind === "type" && route.copyAt ? `${route.label} reviews this type of task. A Manager can too once it has waited 24 hours.`
-              : route.kind === "type" ? `Only ${route.label} can review this task: ${route.label} reviews this type of task.`
-              : route.kind === "assigner" ? `Only ${route.label}, who assigned this task, can review it.`
-              : route.kind === "leads" && route.copyAt ? "A Team Lead reviews this task. A Manager can too once it has waited 24 hours."
-              : route.kind === "leads" ? "Only a Team Lead or a Manager can review this task."
+            error: route.kind === "assigner" ? `Only ${route.label}, who assigned this task, can review it.`
+              : route.kind === "type" || route.kind === "leads" ? `Only ${route.label} can review this task now.${later}`
               : "Only a Manager can review this task.",
           });
         }

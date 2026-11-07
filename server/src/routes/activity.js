@@ -14,7 +14,7 @@ export const activityRouter = Router();
 // assigned to them (including one that was deleted or moved to someone else),
 // things they did themselves, and their own joining the team — plus review
 // notices meant for them (meta.notifyUserIds: whoever reviews the task, and
-// the Managers' copy after 24 hours; see ../review-route.js).
+// whoever a waiting review is handed to later; see ../review-route.js).
 // Other people's tasks and arrivals, published posts and channel changes are
 // left out. Hand-over notices go to the people they name (meta.notifyEditorIds).
 activityRouter.get("/activity", async (req, res, next) => {
@@ -22,7 +22,8 @@ activityRouter.get("/activity", async (req, res, next) => {
     // an unanswered hand-over climbs at each office close (../handover.js);
     // checked at most once a minute, in the background (shows on the next look)
     syncHandovers(req.orgId).catch(() => {});
-    // a task waiting 24 hours for a Team Lead: the Managers get a copy (same pacing)
+    // a review still waiting at its hand-off time: the Team Leads or Managers
+    // get a copy (Settings › Tasks & time › Review hand-offs; same pacing)
     syncReviewCopies(req.orgId).catch(() => {});
     const params = [req.orgId];
     let where = "a.org_id = $1";

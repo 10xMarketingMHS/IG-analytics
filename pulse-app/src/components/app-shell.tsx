@@ -369,7 +369,7 @@ function AppShellInner() {
   };
   useLiveNotices(activityItems, user?.id, user?.editorId);
   // Anyone who reviews hears when work lands in review for them (or reaches
-  // them after 24 hours) — each task says can_review.
+  // them later, at a review hand-off) — each task says can_review.
   const review = useReviewAccess();
   // the alerts' one shared list of open tasks: the team's for admins and
   // reviewers, otherwise just your own (lib/use-task-alerts.ts)

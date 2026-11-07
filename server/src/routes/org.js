@@ -8,6 +8,7 @@ import { CALENDAR_DEFAULTS, normalizeCalendar } from "../work-calendar.js";
 import { ATTENDANCE_DEFAULTS, clearSettingsCache, normalizeAttendance } from "../attendance.js";
 import { clearCapacityCache } from "./goals.js";
 import { isSuperHere } from "../super-admin.js";
+import { HANDOFF_HOURS, REVIEW_DEFAULTS, normalizeReview } from "../review-route.js";
 
 // Settings › General: the organisation's name, the week start and the work
 // calendar. Anyone signed in can read them (the sidebar shows the name, date
@@ -48,6 +49,13 @@ const PatchSchema = z.object({
   // count as a Schedule job of theirs? Off (the default): only their Schedule
   // tasks count, such as the daily social-desk task.
   scheduling: z.object({ perPostJob: z.boolean() }).optional(),
+  // Review hand-offs (Settings › Tasks & time; ../review-route.js): hours a
+  // review waits before the Team Leads, then the Managers, can review it too.
+  // null: never.
+  review: z.object({
+    leadHours: z.number().int().refine((h) => HANDOFF_HOURS.includes(h)).nullable(),
+    managerHours: z.number().int().refine((h) => HANDOFF_HOURS.includes(h)).nullable(),
+  }).optional(),
 });
 
 async function readOrg(orgId) {
@@ -63,6 +71,7 @@ async function readOrg(orgId) {
     calendarSaved: !!s.calendar,
     attendance: normalizeAttendance(s.attendance),
     scheduling: { perPostJob: s.scheduling?.perPostJob === true },
+    review: normalizeReview(s.review),
     canSaveSettings: withSettings,
   };
 }
@@ -71,7 +80,7 @@ orgRouter.get("/org", async (req, res, next) => {
   try {
     // superAdmin: whether this person may change the Super Admin settings here
     const [org, superAdmin] = await Promise.all([readOrg(req.orgId), isSuperHere(req)]);
-    res.json({ org: { ...org, superAdmin }, calendarDefaults: CALENDAR_DEFAULTS, attendanceDefaults: ATTENDANCE_DEFAULTS });
+    res.json({ org: { ...org, superAdmin }, calendarDefaults: CALENDAR_DEFAULTS, attendanceDefaults: ATTENDANCE_DEFAULTS, reviewDefaults: REVIEW_DEFAULTS });
   } catch (err) {
     next(err);
   }
@@ -81,6 +90,9 @@ orgRouter.patch("/org", async (req, res, next) => {
   const parsed = PatchSchema.safeParse(req.body);
   if (!parsed.success) return res.status(400).json({ error: "Those settings don't look right." });
   const d = parsed.data;
+  if (d.review && d.review.leadHours != null && d.review.managerHours != null && d.review.managerHours <= d.review.leadHours) {
+    return res.status(400).json({ error: "Managers come after the Team Leads: pick a longer wait for Managers." });
+  }
   try {
     // Who changes what: once the caller's Page access row is saved (../page-access.js),
     // General's Change the workspace (name, week start, calendar) and Attendance's
@@ -88,14 +100,15 @@ orgRouter.patch("/org", async (req, res, next) => {
     // for the calendar). The Super Admin's own parts are checked below either way.
     const a = await callerAccess(req);
     const general = d.name !== undefined || d.weekStart !== undefined || d.calendar !== undefined;
+    const tasksPart = d.scheduling !== undefined || d.review !== undefined;
     if (a.pages && !a.super) {
       if ((general && !a.pages.setGeneral.change) || (d.attendance !== undefined && !a.pages.setAttendance.change)
-          || (d.scheduling !== undefined && !a.pages.setTasks.change)) {
+          || (tasksPart && !a.pages.setTasks.change)) {
         return res.status(403).json({ error: "Your position doesn't have this. Ask an admin (Settings › Page access)." });
       }
     } else if (!a.super) {
-      if (d.scheduling !== undefined && req.role !== "admin") {
-        return res.status(403).json({ error: "Only an admin can change how scheduling counts." });
+      if (tasksPart && req.role !== "admin") {
+        return res.status(403).json({ error: d.review ? "Only an admin can change the review hand-offs." : "Only an admin can change how scheduling counts." });
       }
       if (req.role !== "admin" && !(await hasActiveGrant(req.orgId, req.user.sub, "edit_goals"))) {
         return res.status(403).json({ error: "You don't have access to this." });
@@ -141,7 +154,7 @@ orgRouter.patch("/org", async (req, res, next) => {
       }
     }
     if (d.name !== undefined) await pool.query("update org set name = $2 where id = $1", [req.orgId, d.name]);
-    if (d.weekStart !== undefined || d.calendar !== undefined || d.attendance !== undefined || d.scheduling !== undefined) {
+    if (d.weekStart !== undefined || d.calendar !== undefined || d.attendance !== undefined || d.scheduling !== undefined || d.review !== undefined) {
       if (!(await hasColumn("org", "settings"))) {
         return res.status(409).json({ error: "These settings need a database update first — ask whoever runs the database to apply 20261023120000_org_settings_notify_prefs." });
       }
@@ -149,6 +162,7 @@ orgRouter.patch("/org", async (req, res, next) => {
       if (d.weekStart !== undefined) patch.weekStart = d.weekStart;
       if (d.calendar !== undefined) patch.calendar = nextCal;
       if (d.scheduling !== undefined) patch.scheduling = d.scheduling;
+      if (d.review !== undefined) patch.review = d.review;
       await pool.query("update org set settings = coalesce(settings, '{}'::jsonb) || $2::jsonb where id = $1", [req.orgId, JSON.stringify(patch)]);
       // Attendance merges, so the date attendance started (since) is kept.
       if (d.attendance !== undefined) {

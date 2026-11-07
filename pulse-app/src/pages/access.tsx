@@ -236,7 +236,7 @@ export function AccessSection() {
                   <FormatPicker formats={formats} picked={reviewFmts} onChange={setReviewFmts} label="Content types they review" />
                   <span className="st-note">
                     Every task of these types comes to them when it's sent for review, whoever did it and whoever gave it, their own included (a main type takes its sub-types with it).
-                    They review and close it. If it's still waiting after 24 hours, a Manager can review it too, as a backup.
+                    They review and close it. If it's still waiting, Team Leads and Managers can review it too, after the wait set in Settings › Tasks & time › Review hand-offs.
                   </span>
                 </div>
               )}
