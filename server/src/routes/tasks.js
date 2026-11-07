@@ -442,6 +442,19 @@ tasksRouter.get("/tasks/next-ref", async (req, res, next) => {
   }
 });
 
+// One task, as the board has it (with who may review it), for a window opened
+// outside the board — Team tracker (pages/team-tracker.tsx). The board's rule:
+// only a task the caller may see. Anything that isn't an id goes on to the routes below.
+tasksRouter.get("/tasks/:id", async (req, res, next) => {
+  if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(req.params.id)) return next();
+  try {
+    if (!(await mayOpenTask(req, req.params.id))) return res.status(404).json({ error: "Task not found." });
+    const { rows } = await pool.query(`${await taskSelect()} where t.id = $1 and t.org_id = $2`, [req.params.id, req.orgId]);
+    if (!rows.length) return res.status(404).json({ error: "Task not found." });
+    res.json({ task: await withReview(req, rows[0]) });
+  } catch (err) { next(err); }
+});
+
 tasksRouter.get("/tasks", async (req, res, next) => {
   try {
     const clauses = ["t.org_id = $1"];
