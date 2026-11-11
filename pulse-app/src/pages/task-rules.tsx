@@ -1,4 +1,5 @@
 import { Fragment, useCallback, useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
+import { useSearchParams } from "react-router-dom";
 import { toast } from "sonner";
 import { api, ApiError } from "@/lib/api";
 import { useWorkspaces } from "@/lib/workspaces-context";
@@ -10,6 +11,7 @@ import type { ContentFormatDef, TaskTimeRule } from "@/lib/types";
 import { LookOnly, SI, Stepper, Toggle, fmtHours } from "@/pages/settings-ui";
 import { AdTeamsCard } from "@/pages/ad-teams-card";
 import { groupTypes, kindsWord, useFolds } from "@/lib/type-groups";
+import { scheduleTypeIds } from "@/lib/schedule-types";
 
 // Settings › Tasks & time (Pulse Redesign v5): every task type in one list,
 // grouped Social / Ads / Service / Project — its icon, name, category, whether
@@ -39,9 +41,24 @@ const CATS: { key: Cat; label: string; icon: ReactNode }[] = [
   { key: "service", label: "Service", icon: SI.headset },
   { key: "project", label: "Project", icon: SI.folder },
 ];
+// The page's tabs (?t= in the address, Types when none): one job each, so no
+// screen carries every switch at once.
+type Tab = "types" | "rules" | "checklists" | "scheduling" | "review" | "teams";
+// the tabs that show the type list, each with its own columns
+type RowTab = "types" | "rules" | "checklists" | "scheduling";
+const TABS: { k: Tab; l: string; d: string }[] = [
+  { k: "types", l: "Types", d: "Names, sub-types, points and time" },
+  { k: "rules", l: "Rules", d: "Goal, link, next step, self close and metric, for each type" },
+  { k: "checklists", l: "Checklists", d: "The steps every task of a type starts with" },
+  { k: "scheduling", l: "Scheduling", d: "What counts as a Schedule job" },
+  { k: "review", l: "Review", d: "Who else reviews work that waits" },
+  { k: "teams", l: "Teams & breaks", d: "Ads teams and breaks" },
+];
 // Matches the server's daily break cap (routes/breaks.js).
 const BREAK_MINUTES = 75;
 const trim = (n: number) => String(Math.round(n * 100) / 100);
+// "A, B and C"
+const andWords = (a: string[]) => (a.length <= 1 ? a.join("") : `${a.slice(0, -1).join(", ")} and ${a[a.length - 1]}`);
 
 // Saves `value` a moment after it last changed, unless it already matches what's
 // saved — so three quick clicks on + make one request, not three.
@@ -70,8 +87,21 @@ export function TaskRulesSection() {
   // the main type a new type goes under ("" on its own)
   const [newParent, setNewParent] = useState("");
   const [adding, setAdding] = useState(false);
+  // Scheduling tab: making each kind its own schedule goal type
+  const [making, setMaking] = useState(false);
   // main types showing their sub-types
   const folds = useFolds();
+  const [params, setParams] = useSearchParams();
+  const tab: Tab = TABS.find((t) => t.k === params.get("t"))?.k ?? "types";
+  const pickTab = (k: Tab) => setParams((p) => {
+    const next = new URLSearchParams(p);
+    if (k === "types") next.delete("t"); else next.set("t", k);
+    return next;
+  }, { replace: true });
+  // does each scheduled Social task count as a Schedule job (Scheduling tab)?
+  // (one copy for the page: the Scheduling card saves through it, so the list below follows)
+  const { org, refetch: refetchOrg } = useOrg();
+  const jobsOn = !!org?.scheduling?.perPostJob;
 
   const load = useCallback(() => {
     api<{ rules: TaskTimeRule[] }>("/task-time-rules")
@@ -114,8 +144,10 @@ export function TaskRulesSection() {
       const r = await api<{ schedulingMoved?: number }>(`/content-formats/${id}`, { method: "PATCH", body: JSON.stringify(patch) });
       await refetchFormats();
       if (okMsg) toast.success(typeof okMsg === "function" ? okMsg(r) : okMsg);
+      return true;
     } catch (err) {
       toast.error(err instanceof ApiError ? err.message : errorMsg);
+      return false;
     }
   }
   async function addFormat() {
@@ -163,6 +195,10 @@ export function TaskRulesSection() {
   const parentOf = (id: string) => formats.find((x) => x.id === id)?.parent_id;
   // the database has sub-types (parent_id comes with 20261114120000_type_parent)
   const parentReady = formats.some((f) => f.parent_id !== undefined);
+  // the org's Schedule type (server/src/scheduling.js scheduleFormat)
+  const scheduleType = formats.find((f) => ["schedule", "scheduling"].includes(f.name.trim().toLowerCase())) ?? null;
+  // how many types have a checklist (the Checklists tab says it)
+  const checkCount = formats.filter((f) => (f.checklist?.length ?? 0) > 0).length;
   // what a main type's row shows: its sub-types added up
   const totalsOf = (subs: ContentFormatDef[]): SubTotals | null => (!subs.length ? null : {
     n: subs.length,
@@ -173,42 +209,104 @@ export function TaskRulesSection() {
     link: subs.filter((s) => s.review_link_required).length,
     sched: subs.filter((s) => s.to_scheduling).length,
     self: subs.filter((s) => s.self_close).length,
+    jobable: subs.filter((s) => s.to_scheduling).length,
+    checks: subs.filter((s) => (s.checklist?.length ?? 0) > 0).length,
   });
   function setParent(f: ContentFormatDef, parent_id: string | null) {
     const to = formats.find((x) => x.id === parent_id);
     if (to) folds.show(to.id);
     patchFormat(f.id, { parent_id }, "Could not change its main type.", to ? `${f.name} is a sub-type of ${to.name} now.` : `${f.name} is on its own now.`);
   }
+  // Scheduling tab: what scheduling a Social type's work counts as — a schedule
+  // type (Reels → Reels schedule), or nothing. The choices: the schedule types
+  // (lib/schedule-types.ts), but not a main type with sub-types: they take the jobs.
+  const isHead = (id: string) => formats.some((s) => s.parent_id === id);
+  const schedIds = scheduleTypeIds(formats);
+  const scheduleOptions = formats.filter((f) => schedIds.has(f.id) && !isHead(f.id));
+  // with none named, the Schedule type takes it, as before (unless it's a heading now)
+  const defaultScheduleId = scheduleType && !isHead(scheduleType.id) ? scheduleType.id : null;
+  // what a type's scheduling counts as now: "none", a schedule type's id, or "" (nothing it can count as: pick one)
+  const countsOf = (f: ContentFormatDef): string => !f.to_scheduling || f.schedule_job === false ? "none"
+    : f.schedule_as ? (scheduleOptions.some((o) => o.id === f.schedule_as) ? f.schedule_as : "") : defaultScheduleId ?? "";
+  // a main type's: its sub-types' that go to Scheduling, when they agree
+  const countsOfGroup = (subs: ContentFormatDef[]): string => {
+    const vals = [...new Set(subs.filter((s) => s.to_scheduling).map(countsOf))];
+    return vals.length === 1 ? vals[0] : vals.length ? "mixed" : "none";
+  };
+  // Each kind its own goal: a Social type that goes to Scheduling (a main type:
+  // its sub-types that do) gets "<name> schedule", a type next to Schedule, and
+  // its scheduling counts as it — so Goals › Set goals has a row for it, where
+  // each scheduler is given its count. A kind already set not to count is left.
+  const socialGroups = groupTypes(formats.filter((f) => f.category === "social"), (f) => f.id, parentOf)
+    .map((g) => ({ main: g.main, members: (g.subs.length ? g.subs : [g.main]).filter((s) => s.to_scheduling) }))
+    .filter((g) => g.members.length > 0);
+  const ownName = (f: ContentFormatDef) => `${f.name.trim().slice(0, 31)} schedule`;
+  const ownTypeOf = (f: ContentFormatDef) => formats.find((x) => x.name.trim().toLowerCase() === ownName(f).toLowerCase()) ?? null;
+  const missingOwn = socialGroups.filter((g) => !ownTypeOf(g.main) && !g.members.every((m) => countsOf(m) === "none"));
+  async function giveOwnGoals(groups: typeof socialGroups) {
+    if (!groups.length) return;
+    setMaking(true);
+    const done: string[] = [];
+    try {
+      for (const g of groups) {
+        let own = ownTypeOf(g.main);
+        if (!own) {
+          const r = await api<{ contentFormat: ContentFormatDef }>("/content-formats", { method: "POST",
+            body: JSON.stringify({ name: ownName(g.main), category: scheduleType?.category ?? "service", icon: scheduleType?.icon ?? "🗓️" }) });
+          own = r.contentFormat;
+        }
+        const id = own.id;
+        await Promise.all(g.members.map((m) => api(`/content-formats/${m.id}`, { method: "PATCH", body: JSON.stringify({ schedule_job: true, schedule_as: id }) })));
+        done.push(own.name);
+      }
+      toast.success(`${andWords(done)} ${done.length === 1 ? "is" : "are"} ready: give each scheduler their count in Goals › Set goals.`
+        + (jobsOn ? "" : " Switch on “Each Social task scheduled counts as a Schedule job” above, so scheduling counts toward them."));
+    } catch (err) {
+      toast.error(err instanceof ApiError ? err.message : "Could not make that.");
+    } finally {
+      await refetchFormats();
+      setMaking(false);
+    }
+  }
+  // A main type's choice sets each of its sub-types that goes to Scheduling.
+  // "new": the kind gets its own goal (above).
+  async function setCountsAs(f: ContentFormatDef, subs: ContentFormatDef[] | null, value: string) {
+    if (value === "new") { const g = socialGroups.find((x) => x.main.id === f.id); if (g) await giveOwnGoals([g]); return; }
+    const targets = subs ? subs.filter((s) => s.to_scheduling) : [f];
+    if (!targets.length || !value || value === "mixed") return;
+    const body = value === "none" ? { schedule_job: false } : { schedule_job: true, schedule_as: value };
+    const to = value === "none" ? null : formats.find((x) => x.id === value)?.name ?? "that";
+    try {
+      await Promise.all(targets.map((s) => api(`/content-formats/${s.id}`, { method: "PATCH", body: JSON.stringify(body) })));
+      const who = !subs ? `Scheduling ${f.name}` : targets.length === 1 ? `${f.name}'s sub-type` : `All ${targets.length} of ${f.name}'s sub-types`;
+      const many = !!subs && targets.length > 1;
+      toast.success(to ? `${who} ${many ? "count" : "counts"} as ${to} now.` : `${who} ${many ? "don't" : "doesn't"} count as a schedule job now.`);
+    } catch (err) {
+      toast.error(err instanceof ApiError ? err.message : "Could not save that.");
+    } finally {
+      await refetchFormats();
+    }
+  }
 
-  return (
-    <LookOnly on={!canManage}>
-      <section className="st-card">
-        <div className="st-cardhead">
-          <span className="st-titleline"><b>Task types</b><span className="st-count">{formats.length}</span></span>
-          <span>One list for the whole workspace. Points are what a finished job earns; time budget is how long the timer gives it. A change to points counts from now on: jobs already completed, and goals already set, keep the points they had.{canPoints ? "" : " Only a Super Admin can change points."} A type can go under a main type, as Video Carousel under Carousel: it keeps its own points, time and goals, and the lists fold it under the main type. A main type with sub-types is only a heading: its points and time are its sub-types' totals, and goals and new tasks go on its sub-types.</span>
-          <span className="st-uses">
-            <span>{SI.addTask}New task picker</span>
-            <span>{SI.flag}Goal types</span>
-            <span>{SI.groups}Team · Today</span>
-            <span>{SI.stopwatch}Timer budget</span>
-          </span>
-        </div>
-        <div className="st-tt-head" aria-hidden="true">
-          <span>Type</span>
-          <span className="st-c-goal">Goal</span>
-          <span className="st-c-link">Link</span>
-          <span className="st-c-sched">Next step</span>
-          <span className="st-c-self">Self close</span>
-          <span className="st-c-metric">Metric</span>
-          <span className="st-c-pts">Points</span>
-          <span className="st-c-time">Time</span>
-          <span className="st-c-del" />
-        </div>
-        {contentFormats === null || rules === null ? (
-          <div className="st-empty">Loading…</div>
-        ) : formats.length === 0 ? (
-          <div className="st-empty">No task types yet — add the first one below.</div>
-        ) : CATS.map((c) => {
+  // The type list as a tab shows it: each category (Scheduling: Social only), the
+  // sub-types folded under their main type, and that tab's columns.
+  const HEADS: Record<RowTab, ReactNode> = {
+    types: <><span className="st-c-pts">Points</span><span className="st-c-time">Time</span><span className="st-c-del" /></>,
+    rules: <>
+      <span className="st-c-goal">Goal</span><span className="st-c-link">Link</span><span className="st-c-sched">Next step</span>
+      <span className="st-c-self">Self close</span><span className="st-c-metric">Metric</span>
+    </>,
+    checklists: <span className="st-c-check">Checklist</span>,
+    scheduling: <><span className="st-c-flow">Goes to Scheduling</span><span className="st-c-as">Counts as</span></>,
+  };
+  const typeTable = (tab: RowTab) => (
+    <>
+      <div className={"st-tt-head t-" + tab} aria-hidden="true"><span>Type</span>{HEADS[tab]}</div>
+      {contentFormats === null || rules === null ? (
+        <div className="st-empty">Loading…</div>
+      ) : formats.length === 0 ? (
+        <div className="st-empty">No task types yet{tab === "types" ? " — add the first one below." : ". Add them on Types."}</div>
+      ) : CATS.filter((c) => tab !== "scheduling" || c.key === "social").map((c) => {
           const rows = formats.filter((f) => f.category === c.key);
           if (!rows.length) return null;
           return (
@@ -217,6 +315,12 @@ export function TaskRulesSection() {
               {groupTypes(rows, (f) => f.id, parentOf).flatMap((g) => [g.main, ...(folds.isOpen(g.main.id) ? g.subs : [])].map((f) => (
                 <TypeRow
                   key={f.id}
+                  tab={tab}
+                  jobsOn={jobsOn}
+                  scheduleOptions={scheduleOptions}
+                  newOwn={tab === "scheduling" && f === g.main && !ownTypeOf(f) ? ownName(f) : null}
+                  countsAs={f === g.main && g.subs.length ? countsOfGroup(g.subs) : countsOf(f)}
+                  onCountsAs={(v) => setCountsAs(f, f === g.main && g.subs.length ? g.subs : null, v)}
                   format={f}
                   sub={f !== g.main}
                   subCount={f === g.main ? g.subs.length : 0}
@@ -258,12 +362,41 @@ export function TaskRulesSection() {
                   onClearHours={() => { const r = globalFor(f); if (r) removeRule(r.id); }}
                   onDuration={(duration_days) => patchFormat(f.id, { duration_days }, "Could not save the duration.", "Duration saved.")}
                   onMetrics={(metrics_description) => patchFormat(f.id, { metrics_description }, "Could not save that note.")}
+                  onChecklist={(checklist, ok) => patchFormat(f.id, { checklist }, "Could not save the checklist.", ok)}
                   onRemove={() => removeFormat(f)}
                 />
               )))}
             </Fragment>
           );
         })}
+    </>
+  );
+
+  return (
+    <>
+    <div className="st-tabs" role="tablist" aria-label="Tasks and time">
+      {TABS.map((t) => (
+        <button key={t.k} type="button" role="tab" aria-selected={tab === t.k} className={tab === t.k ? "on" : ""} onClick={() => pickTab(t.k)} title={t.d}
+          aria-label={t.k === "checklists" && checkCount > 0 ? `${t.l}, ${checkCount}` : t.l}>
+          {t.l}
+          {t.k === "checklists" && checkCount > 0 && <span className="st-tabn">{checkCount}</span>}
+        </button>
+      ))}
+    </div>
+    <LookOnly on={!canManage}>
+      {tab === "types" && (
+      <section className="st-card">
+        <div className="st-cardhead">
+          <span className="st-titleline"><b>Task types</b><span className="st-count">{formats.length}</span></span>
+          <span>One list for the whole workspace. Points are what a finished job earns; time budget is how long the timer gives it. A change to points counts from now on: jobs already completed, and goals already set, keep the points they had.{canPoints ? "" : " Only a Super Admin can change points."} A type can go under a main type, as Video Carousel under Carousel: it keeps its own points, time and goals, and the lists fold it under the main type. A main type with sub-types is only a heading: its points and time are its sub-types' totals, and goals and new tasks go on its sub-types.</span>
+          <span className="st-uses">
+            <span>{SI.addTask}New task picker</span>
+            <span>{SI.flag}Goal types</span>
+            <span>{SI.groups}Team · Today</span>
+            <span>{SI.stopwatch}Timer budget</span>
+          </span>
+        </div>
+        {typeTable("types")}
         <div className="st-foot">
           <IconPicker value={newIcon} onPick={setNewIcon} />
           <input className="st-in grow" placeholder="New task type" value={newName} onChange={(e) => setNewName(e.target.value)}
@@ -280,43 +413,128 @@ export function TaskRulesSection() {
           <button type="button" className="st-btn pri" disabled={adding || !newName.trim()} onClick={addFormat}>{SI.plus}{adding ? "Adding…" : "Add"}</button>
         </div>
       </section>
-      <span className="st-note">
-        Link — a task of this type can't go to review without a delivery link (untick it for scheduling, data or technical work). Next step — an approved
-        Social task of this type goes to Scheduling, for its post date and links (untick it for thumbnails and other work that isn't posted on its own); an approved
-        Ads task goes to Ad uploads, for the ad numbers it became; an approved Service task of the type is R&D (AI Job): a Manager or Team Lead decides
-        whether it becomes a Reel, an Ad, both, or isn't used, and the Reel and Ad are made from it as new tasks. Points — on or
-        before the due date earns them in full, 1 day late half, 2 days none, 3 or more costs them back. Self close — whoever did the work moves it to Completed themselves, with no review (Schedule work, say). Removing a type doesn't touch tasks already using it.
-      </span>
+      )}
+      {tab === "types" && (
+        <span className="st-note">
+          Points — on or before the due date earns them in full, 1 day late half, 2 days none, 3 or more costs them back. Time — how long the timer
+          gives a task of the type. Removing a type doesn't touch tasks already using it.
+        </span>
+      )}
 
-      <AdTeamsCard />
-
-      <SchedulingCard />
-
-      <ReviewHandoffCard />
-
-      <section className="st-card">
-        <div className="st-cardhead"><b>Breaks</b></div>
-        <div className="st-row">
-          <span className="st-label">
-            <b>Daily break allowance</b>
-            <small>Lunch 45m and two tea breaks of 15m, the same for everyone · shown in the sidebar</small>
+      {tab === "rules" && (
+        <>
+          <section className="st-card">
+            <div className="st-cardhead">
+              <b>How each type's work goes</b>
+              <span>Whether it counts in goals, what it needs before Review, where approved work goes next, and its metric tag.</span>
+            </div>
+            {typeTable("rules")}
+          </section>
+          <span className="st-note">
+            Goal — the type is tracked in goals; off, it's not offered in Set goals and counts as Other work. Link — a task of this type can't go to review
+            without a delivery link (untick it for scheduling, data or technical work). Next step — an approved Social task of this type goes to Scheduling,
+            for its post date and links (untick it for thumbnails and other work that isn't posted on its own); an approved Ads task goes to Ad uploads, for
+            the ad numbers it became; an approved Service task of the type is R&D (AI Job): a Manager or Team Lead decides whether it becomes a Reel, an Ad,
+            both, or isn't used. Self close — whoever did the work moves it to Completed themselves, with no review (Schedule work, say).
           </span>
-          <span className="st-value st-mono">{fmtHours(BREAK_MINUTES / 60)} / day</span>
-        </div>
-        <RuleRow l="Pause the running timer during a break" d="Break time is added back to the task's time budget" />
-      </section>
+          <section className="st-card">
+            <div className="st-cardhead">
+              <b>Task rules</b>
+              <span>How tasks work for everyone. These are always on for now.</span>
+            </div>
+            <RuleRow l="Create a task when an editor is assigned to a post" d="Title, channel and due date carry over and stay in sync" />
+            <RuleRow l="Assignee accepts before work starts" d="A task someone else gives you waits as “Pending accept” until you take it" />
+            <RuleRow l="Finished work goes to review first" d="Its reviewer approves it before it counts as completed, unless its type is Self close" />
+            <RuleRow l="A checklist is finished before review" d="Every item, from its type's checklist or added by hand, is ticked before the work is handed in" />
+            <RuleRow l="Flag tasks that pass their time budget" d="The timer turns red once a task runs past its time" />
+          </section>
+        </>
+      )}
 
-      <section className="st-card">
-        <div className="st-cardhead">
-          <b>Task rules</b>
-          <span>How tasks work for everyone. These are always on for now.</span>
-        </div>
-        <RuleRow l="Create a task when an editor is assigned to a post" d="Title, channel and due date carry over and stay in sync" />
-        <RuleRow l="Assignee accepts before work starts" d="A task someone else gives you waits as “Pending accept” until you take it" />
-        <RuleRow l="Finished work goes to review first" d="Its reviewer approves it before it counts as completed, unless its type is Self close" />
-        <RuleRow l="Flag tasks that pass their time budget" d="The timer turns red once a task runs past its time" />
-      </section>
+      {tab === "checklists" && (
+        <section className="st-card">
+          <div className="st-cardhead">
+            <span className="st-titleline"><b>Checklists</b><span className="st-count">{checkCount}</span></span>
+            <span>
+              The steps every new task of a type starts with. Whoever does the task ticks each one before it goes to Review (or closes itself), and
+              can't remove them; an admin, or whoever assigned the task, can. Tasks already made keep the checklist they have. A main type with
+              sub-types has none of its own: set it on each sub-type.
+            </span>
+          </div>
+          {typeTable("checklists")}
+        </section>
+      )}
+
+      {tab === "scheduling" && (
+        <>
+          <SchedulingCard on={jobsOn} ready={!!org} refetch={refetchOrg} />
+          <section className={"st-card" + (jobsOn ? "" : " st-dim")}>
+            <div className="st-cardhead">
+              <b>What each type's scheduling counts as</b>
+              <span>
+                {jobsOn
+                  ? "Once its links are in, each Social task counts as one job of the schedule type picked here, for whoever scheduled it: Reels as Reels schedule, Story as Story schedule, so each kind has its own goal in Goals. Only types that go to Scheduling (Next step, on Rules) can count."
+                  : "These count only while “Each Social task scheduled counts as a Schedule job” is on, above. You can set them now."}
+                {" "}A main type's choice sets all its sub-types.
+              </span>
+            </div>
+            {typeTable("scheduling")}
+            {missingOwn.length > 0 && (
+              <div className="st-foot">
+                <span className="st-note">
+                  {SI.info} Give each kind its own goal: {andWords(missingOwn.map((g) => ownName(g.main)))}, made next to Schedule. Each scheduler's
+                  count for each is then set in Goals › Set goals, like any other type.
+                </span>
+                <button type="button" className="st-btn pri" disabled={making}
+                  onClick={() => {
+                    const names = andWords(missingOwn.map((g) => ownName(g.main)));
+                    if (window.confirm(`Make ${names}? Scheduling each kind then counts as one job of its own type, and you give each scheduler their count for it in Goals › Set goals.`)) giveOwnGoals(missingOwn);
+                  }}>
+                  {SI.plus}{making ? "Making…" : "Give each its own goal"}
+                </button>
+              </div>
+            )}
+          </section>
+          {scheduleOptions.length > 0 && (
+            <section className="st-card">
+              <div className="st-cardhead">
+                <b>Schedule types</b>
+                <span>
+                  Each is a goal type like any other: every job earns its points, and Goals plans it as jobs × its time, so with each post a job, set the few
+                  minutes one takes. Anyone with a goal on one of these this month is a scheduler. A change to points counts from now on: jobs already
+                  done keep the points they had.
+                </span>
+              </div>
+              {scheduleOptions.map((o) => (
+                <ScheduleTypeRow key={o.id} format={o} rule={globalFor(o)} canPoints={canPoints}
+                  onPoints={(points) => patchFormat(o.id, { points }, "Could not save points.", `${o.name}: ${trim(points)} point${points === 1 ? "" : "s"} a job.`)}
+                  onHours={(h) => setRule(o.id, null, h)} onClearHours={() => { const r = globalFor(o); if (r) removeRule(r.id); }} />
+              ))}
+            </section>
+          )}
+        </>
+      )}
+
+      {tab === "review" && <ReviewHandoffCard />}
+
+      {tab === "teams" && (
+        <>
+          <AdTeamsCard />
+          <section className="st-card">
+            <div className="st-cardhead"><b>Breaks</b></div>
+            <div className="st-row">
+              <span className="st-label">
+                <b>Daily break allowance</b>
+                <small>Lunch 45m and two tea breaks of 15m, the same for everyone · shown in the sidebar</small>
+              </span>
+              <span className="st-value st-mono">{fmtHours(BREAK_MINUTES / 60)} / day</span>
+            </div>
+            <RuleRow l="Pause the running timer during a break" d="Break time is added back to the task's time budget" />
+          </section>
+        </>
+      )}
     </LookOnly>
+    </>
   );
 }
 
@@ -324,9 +542,55 @@ export function TaskRulesSection() {
 // theirs (server/src/routes/scheduling.js)? Off, the default: only their
 // Schedule tasks count, such as a daily social-desk task; the posts stay
 // listed on Scheduling either way.
-function SchedulingCard() {
-  const { org, refetch } = useOrg();
-  const on = !!org?.scheduling?.perPostJob;
+// The time each schedule job plans in goals (a schedule type's time, Scheduling
+// tab): with each post a job, a few minutes, in 5-minute steps up to an hour.
+const minuteStep = (h: number | null, dir: 1 | -1) => {
+  const m = h == null ? 0 : Math.round(h * 60);
+  const next = dir > 0 ? m + (m < 60 ? 5 : 15) : m - (m <= 60 ? 5 : 15);
+  return next <= 0 ? null : Math.min(999, Math.round((next / 60) * 100) / 100);
+};
+// One schedule type (Scheduling tab): its points, who has its goal, and the time
+// each job plans in goals — the same time as on Types.
+// A schedule job's points, in small steps (one post is quick work): 0.1 under a
+// point, 0.5 up to 5, then whole points.
+const pointStep = (p: number, dir: 1 | -1) => {
+  const step = dir > 0 ? (p < 1 ? 0.1 : p < 5 ? 0.5 : 1) : (p <= 1 ? 0.1 : p <= 5 ? 0.5 : 1);
+  return Math.min(1000, Math.max(0, Math.round((p + dir * step) * 100) / 100));
+};
+function ScheduleTypeRow({ format, rule, canPoints, onPoints, onHours, onClearHours }: {
+  format: ContentFormatDef; rule: TaskTimeRule | null; canPoints: boolean; onPoints: (points: number) => void;
+  onHours: (h: number) => void; onClearHours: () => void;
+}) {
+  const savedHours = rule?.hours != null ? Number(rule.hours) : null;
+  const [hours, setHours] = useState<number | null>(savedHours);
+  useEffect(() => setHours(savedHours), [savedHours]);
+  useAutoSave(hours, savedHours, (h) => (h == null ? onClearHours() : onHours(h)));
+  const savedPts = Number(format.points ?? 0);
+  const [points, setPoints] = useState(savedPts);
+  useEffect(() => setPoints(savedPts), [savedPts]);
+  useAutoSave(points, savedPts, onPoints);
+  const goals = format.goal_people ? `In ${format.goal_people} ${format.goal_people === 1 ? "person's" : "people's"} goals` : "In nobody's goals yet";
+  return (
+    <div className="st-row st-schedrow">
+      <span className="st-label">
+        <b>{format.icon} {format.name}</b>
+        <small>{goals}{canPoints ? "" : " · only a Super Admin changes points"}</small>
+      </span>
+      <span className="st-schedctl">
+        <small>Points a job</small>
+        <Stepper className="sm acc pts" label={`points for each ${format.name} job`} value={trim(points)}
+          onDec={() => setPoints((p) => pointStep(p, -1))} onInc={() => setPoints((p) => pointStep(p, 1))}
+          decDisabled={!canPoints || points <= 0} incDisabled={!canPoints} />
+      </span>
+      <span className="st-schedctl">
+        <small>Time a job</small>
+        <Stepper className={"sm time" + (hours == null ? " none" : "")} label={`time for each ${format.name} job`} value={hours == null ? "No timer" : fmtHours(hours)}
+          onDec={() => setHours((h) => minuteStep(h, -1))} onInc={() => setHours((h) => minuteStep(h, 1))} decDisabled={hours == null} />
+      </span>
+    </div>
+  );
+}
+function SchedulingCard({ on, ready, refetch }: { on: boolean; ready: boolean; refetch: () => Promise<unknown> }) {
   const [busy, setBusy] = useState(false);
   async function set(next: boolean) {
     setBusy(true);
@@ -342,13 +606,13 @@ function SchedulingCard() {
   }
   return (
     <section className="st-card">
-      <div className="st-cardhead"><b>Scheduling</b><span>What counts toward a scheduler's Schedule goal.</span></div>
+      <div className="st-cardhead"><b>Schedule jobs</b><span>What counts toward a scheduler's Schedule goal.</span></div>
       <div className="st-row">
         <span className="st-label">
           <b>Each Social task scheduled counts as a Schedule job</b>
-          <small>Any Social type with Next step on (Reels, Story, Carousel, Post…), once its links are in. Off: only their Schedule tasks count, such as a daily 2-hour social-desk task. Scheduled work stays listed on Scheduling either way.</small>
+          <small>On: once its links are in, each one counts as one job for whoever scheduled it, of the schedule type its type counts as (below). Off: only their Schedule tasks count, such as a daily 2-hour social-desk task. Scheduled work stays listed on Scheduling either way.</small>
         </span>
-        <Toggle on={on} onChange={set} disabled={busy || !org} label="Each Social task scheduled counts as a Schedule job" />
+        <Toggle on={on} onChange={set} disabled={busy || !ready} label="Each Social task scheduled counts as a Schedule job" />
       </div>
     </section>
   );
@@ -522,20 +786,37 @@ function IconPicker({ value, onPick }: { value: string; onPick: (icon: string) =
 }
 
 // A main type's sub-types added up: points, time (or days), and how many have each switch on.
-type SubTotals = { n: number; points: number; hours: number; days: number; goal: number; link: number; sched: number; self: number };
+type SubTotals = {
+  n: number; points: number; hours: number; days: number; goal: number; link: number; sched: number; self: number;
+  // Scheduling tab: how many go to Scheduling; Checklists: how many have one
+  jobable: number; checks: number;
+};
 // How many of its sub-types have a switch on, in place of the switch.
 const SubCount = ({ n, of, what }: { n: number; of: number; what: string }) => (
   <span className="st-total plain" title={`Sub-types ${what}: ${n} of ${of}. Set it on each of them.`}>{n} / {of}</span>
 );
 
-// One task type: icon, name (click to rename), link toggle, scheduling toggle
-// (Social types), metric tag, points and time (or duration). Every field saves on
-// its own. A main type with sub-types (`totals`) is only a heading: it keeps its
-// name, icon and category, and the rest shows what's on its sub-types.
+// One task type, as a tab shows it. Types: icon, name (click to rename),
+// category, main type, points and time (or duration). Rules: goal, link, next
+// step, self close and metric tag. Checklists: its steps. Scheduling: whether
+// scheduling its work counts as a Schedule job. Every field saves on its own. A
+// main type with sub-types (`totals`) is only a heading: it keeps its name, icon
+// and category, and the rest shows what's on its sub-types.
 function TypeRow({
+  tab, jobsOn, scheduleOptions, newOwn = null, countsAs, onCountsAs,
   format, sub = false, subCount = 0, totals = null, open = false, onFold, mains, onParent,
-  rule, canPoints, onCategory, onIcon, onRename, onPoints, onMetric, onGoal, onLink, onSched, onSelfClose, onHours, onClearHours, onDuration, onMetrics, onRemove,
+  rule, canPoints, onCategory, onIcon, onRename, onPoints, onMetric, onGoal, onLink, onSched, onSelfClose, onHours, onClearHours, onDuration, onMetrics, onChecklist, onRemove,
 }: {
+  tab: RowTab;
+  // Scheduling tab: does each scheduled Social task count as a job; what this
+  // type's scheduling counts as ("none", a schedule type's id, "" none it can,
+  // "mixed" sub-types that differ), and the schedule types it can count as
+  jobsOn: boolean;
+  scheduleOptions: ContentFormatDef[];
+  // a main row's own schedule type still to make ("Reels schedule"), offered as "+ New"
+  newOwn?: string | null;
+  countsAs: string;
+  onCountsAs: (value: string) => void;
   format: ContentFormatDef;
   // a sub-type (indented under its main type); a main type's sub-types, shown or folded
   sub?: boolean;
@@ -561,9 +842,14 @@ function TypeRow({
   onClearHours: () => void;
   onDuration: (days: number | null) => void;
   onMetrics: (text: string | null) => void;
+  onChecklist: (list: string[], ok: string) => Promise<boolean>;
   onRemove: () => void;
 }) {
   const isProject = format.category === "project";
+  // its checklist, shown under the row (a main type with sub-types has none: its sub-types do)
+  const [checksOpen, setChecksOpen] = useState(false);
+  const steps = format.checklist?.length ?? 0;
+  const hasChecks = format.checklist !== undefined && !totals;
   const [name, setName] = useState(format.name);
   const [metrics, setMetrics] = useState(format.metrics_description ?? "");
   const [points, setPoints] = useState(Number(format.points));
@@ -595,38 +881,98 @@ function TypeRow({
   const goalNote = !format.counts_in_goal ? "Not tracked in goals"
     : format.goal_people ? `In ${format.goal_people} ${format.goal_people === 1 ? "person's" : "people's"} goals` : "Tracked in goals";
 
+  // a main type's sub-types, shown or folded (on every tab)
+  const fold = subCount > 0 && (
+    <button type="button" className="st-tt-fold" aria-expanded={open} onClick={onFold} title={open ? "Hide its sub-types" : "Show its sub-types"}>
+      {kindsWord(subCount)} {open ? "▴" : "▾"}
+    </button>
+  );
+  const preview = (format.checklist ?? []).join(" · ");
+
   return (
-    <div className={"st-tt" + (sub ? " sub" : "")}>
-      <span className="st-tt-name">
-        <IconPicker value={format.icon} onPick={onIcon} />
-        <span>
-          <input className="st-plain" value={name} aria-label="Name" onChange={(e) => setName(e.target.value)} onBlur={saveName} onKeyDown={blurOnEnter} />
-          <span className="st-tt-sub">
-            <select className="st-kind" value={format.category ?? "social"} aria-label={`${format.name} category`} title="Change the category"
-              onChange={(e) => onCategory(e.target.value as Cat)}>
-              {CATS.map((c) => <option key={c.key} value={c.key}>{c.label}</option>)}
-            </select>
-            {subCount > 0 ? (
-              <button type="button" className="st-tt-fold" aria-expanded={open} onClick={onFold} title={open ? "Hide its sub-types" : "Show its sub-types"}>
-                {kindsWord(subCount)} {open ? "▴" : "▾"}
-              </button>
-            ) : format.parent_id !== undefined && (mains.length > 0 || format.parent_id) ? (
-              <select className={"st-kind" + (format.parent_id ? "" : " none")} value={format.parent_id ?? ""} aria-label={`${format.name} main type`} title="Put it under a main type, as Video Carousel under Carousel"
-                onChange={(e) => onParent(e.target.value || null)}>
-                <option value="">{format.parent_id ? "On its own" : "Put under…"}</option>
-                {mains.map((m) => <option key={m.id} value={m.id}>Under {m.name}</option>)}
+    <>
+    <div className={"st-tt t-" + tab + (sub ? " sub" : "") + (checksOpen && hasChecks ? " checks-open" : "")}>
+      {tab === "types" ? (
+        <span className="st-tt-name">
+          <IconPicker value={format.icon} onPick={onIcon} />
+          <span>
+            <input className="st-plain" value={name} aria-label="Name" onChange={(e) => setName(e.target.value)} onBlur={saveName} onKeyDown={blurOnEnter} />
+            <span className="st-tt-sub">
+              <select className="st-kind" value={format.category ?? "social"} aria-label={`${format.name} category`} title="Change the category"
+                onChange={(e) => onCategory(e.target.value as Cat)}>
+                {CATS.map((c) => <option key={c.key} value={c.key}>{c.label}</option>)}
               </select>
-            ) : null}
-            {format.counts_in_goal !== undefined && !totals && (
-              <small className={"st-tt-goal" + (format.counts_in_goal ? "" : " off")} title={goalNote}>{goalNote}</small>
-            )}
-            {isProject && (
-              <input className="st-metrics" value={metrics} placeholder="What this project delivers (a note, not scored)…" aria-label={`What ${format.name} delivers`}
-                onChange={(e) => setMetrics(e.target.value)} onBlur={saveMetrics} onKeyDown={blurOnEnter} />
-            )}
+              {fold || (format.parent_id !== undefined && (mains.length > 0 || format.parent_id) ? (
+                <select className={"st-kind" + (format.parent_id ? "" : " none")} value={format.parent_id ?? ""} aria-label={`${format.name} main type`} title="Put it under a main type, as Video Carousel under Carousel"
+                  onChange={(e) => onParent(e.target.value || null)}>
+                  <option value="">{format.parent_id ? "On its own" : "Put under…"}</option>
+                  {mains.map((m) => <option key={m.id} value={m.id}>Under {m.name}</option>)}
+                </select>
+              ) : null)}
+              {isProject && (
+                <input className="st-metrics" value={metrics} placeholder="What this project delivers (a note, not scored)…" aria-label={`What ${format.name} delivers`}
+                  onChange={(e) => setMetrics(e.target.value)} onBlur={saveMetrics} onKeyDown={blurOnEnter} />
+              )}
+            </span>
           </span>
         </span>
-      </span>
+      ) : (
+        <span className="st-tt-name">
+          <div className="st-ic"><span className="st-ic-face" aria-hidden="true">{format.icon}</span></div>
+          <span>
+            <b className="st-tt-title">{format.name}</b>
+            <span className="st-tt-sub">
+              {fold}
+              {tab === "rules" && format.counts_in_goal !== undefined && !totals && (
+                <small className={"st-tt-goal" + (format.counts_in_goal ? "" : " off")} title={goalNote}>{goalNote}</small>
+              )}
+              {tab === "checklists" && (totals
+                ? <small>{totals.checks ? `${totals.checks} of ${totals.n} have a checklist` : "Set it on each sub-type"}</small>
+                : <small className={preview ? "" : "st-tt-goal off"} title={preview || undefined}>{preview || "No steps yet"}</small>)}
+              {tab === "scheduling" && !totals && format.to_scheduling === false && <small className="st-tt-goal off">Next step is off, so it doesn't go to Scheduling</small>}
+            </span>
+          </span>
+        </span>
+      )}
+      {tab === "checklists" && (
+        <span className="st-c-check">
+          {totals ? <span className="st-note" title="A main type with sub-types is only a heading">—</span>
+            : hasChecks ? (
+              <button type="button" className={"st-btn sm st-checkbtn" + (steps ? "" : " none")} aria-expanded={checksOpen} onClick={() => setChecksOpen((v) => !v)}
+                title={steps ? `Every new ${format.name} task starts with ${steps} step${steps === 1 ? "" : "s"}` : `Add the steps every ${format.name} task starts with`}>
+                {steps ? `☑ ${steps} step${steps === 1 ? "" : "s"}` : "+ Add steps"} {checksOpen ? "▴" : "▾"}
+              </button>
+            ) : <span className="st-note" title="Needs the database update 20261117120000_type_checklist">—</span>}
+        </span>
+      )}
+      {tab === "scheduling" && (
+        <>
+          <span className="st-c-flow">
+            <span className="st-mlabel">Goes to Scheduling</span>
+            {totals ? <SubCount n={totals.jobable} of={totals.n} what="that go to Scheduling" />
+              : format.to_scheduling === undefined ? <span className="st-note">—</span>
+              : <span className={"st-flag" + (format.to_scheduling ? " on" : "")}>{format.to_scheduling ? "Yes" : "No"}</span>}
+          </span>
+          <span className={"st-c-as" + (jobsOn ? "" : " idle")}>
+            <span className="st-mlabel">Counts as</span>
+            {format.schedule_as === undefined ? <span className="st-note" title="Needs the database updates 20261118120000_type_schedule_job and 20261118130000_type_schedule_as">—</span>
+              : (totals ? !totals.jobable : !format.to_scheduling) ? <span className="st-note" title="Its work doesn't go to Scheduling">—</span>
+              : (
+                <select className={"st-in st-counts" + (countsAs === "" ? " warn" : countsAs === "none" ? " none" : "")} value={countsAs}
+                  aria-label={totals ? `What scheduling ${format.name}'s sub-types counts as` : `What scheduling ${format.name} counts as`}
+                  title={totals ? `Sets it on all ${format.name}'s sub-types that go to Scheduling` : undefined}
+                  onChange={(e) => onCountsAs(e.target.value)}>
+                  {countsAs === "" && <option value="" disabled>Pick one…</option>}
+                  {countsAs === "mixed" && <option value="mixed" disabled>Mixed</option>}
+                  <option value="none">Doesn't count</option>
+                  {scheduleOptions.map((o) => <option key={o.id} value={o.id}>{o.name}</option>)}
+                  {newOwn && <option value="new">+ New: {newOwn}</option>}
+                </select>
+              )}
+          </span>
+        </>
+      )}
+      {tab === "rules" && (<>
       <span className="st-c-goal">
         <span className="st-mlabel">Goal</span>
         {totals ? <SubCount n={totals.goal} of={totals.n} what="that count in goals" />
@@ -667,6 +1013,8 @@ function TypeRow({
           </select>
         )}
       </span>
+      </>)}
+      {tab === "types" && (<>
       <span className="st-c-pts">
         <span className="st-mlabel">Points</span>
         {totals ? (
@@ -697,6 +1045,81 @@ function TypeRow({
       <span className="st-c-del">
         <button type="button" className="st-icobtn" onClick={onRemove} title="Remove" aria-label={`Remove ${format.name}`}>{SI.trash}</button>
       </span>
+      </>)}
+    </div>
+    {tab === "checklists" && checksOpen && hasChecks && <ChecklistEditor format={format} sub={sub} onSave={onChecklist} />}
+    </>
+  );
+}
+
+// A type's checklist (Settings › Tasks & time): the steps every new task of the
+// type starts with, in order. Whoever does the task ticks each one before it
+// goes to Review (or closes itself), and can't remove them; an admin or whoever
+// assigned it can (server/src/routes/tasks.js). Each change saves on its own.
+// Tasks already made keep the checklist they have.
+const CHECK_MAX = 30;
+function ChecklistEditor({ format, sub, onSave }: { format: ContentFormatDef; sub: boolean; onSave: (list: string[], ok: string) => Promise<boolean> }) {
+  const savedKey = JSON.stringify(format.checklist ?? []);
+  const [items, setItems] = useState<string[]>(format.checklist ?? []);
+  const [draft, setDraft] = useState("");
+  // bumped to put the step inputs back to what's saved
+  const [ver, setVer] = useState(0);
+  const reset = () => { setItems(JSON.parse(savedKey) as string[]); setVer((v) => v + 1); };
+  useEffect(() => setItems(JSON.parse(savedKey) as string[]), [savedKey]);
+  const save = async (next: string[], ok: string) => {
+    setItems(next);
+    if (!(await onSave(next, ok))) reset();
+  };
+  const has = (t: string, except = -1) => items.some((x, k) => k !== except && x.toLowerCase() === t.toLowerCase());
+  function add() {
+    const t = draft.trim().replace(/\s+/g, " ");
+    if (!t) return;
+    if (has(t)) { toast.error("That step is on the list already."); return; }
+    save([...items, t], `${format.name}: step ${items.length + 1} added.`);
+    setDraft("");
+  }
+  function rename(i: number, value: string) {
+    const t = value.trim().replace(/\s+/g, " ");
+    if (t === items[i]) return;
+    if (!t || has(t, i)) { if (t) toast.error("That step is on the list already."); reset(); return; }
+    save(items.map((x, k) => (k === i ? t : x)), `${format.name}: step ${i + 1} renamed.`);
+  }
+  function move(i: number, by: number) {
+    const j = i + by;
+    if (j < 0 || j >= items.length) return;
+    const next = [...items];
+    [next[i], next[j]] = [next[j], next[i]];
+    save(next, `${format.name}: order saved.`);
+  }
+  const when = format.self_close ? "before it's completed" : "before it goes to Review";
+  return (
+    <div className={"st-tt-checks" + (sub ? " sub" : "")}>
+      <span className="st-tt-checkhead">
+        <b>{format.name} checklist</b>
+        <small>Every new {format.name} task starts with these steps. Whoever does it ticks each one {when}, and can't remove them. Tasks already made keep the checklist they have.</small>
+      </span>
+      {items.length > 0 && (
+        <ol className="st-checks">
+          {items.map((s, i) => (
+            <li key={`${ver}:${i}:${s}`}>
+              <span className="st-check-n">{i + 1}</span>
+              <input className="st-check-in" defaultValue={s} maxLength={300} aria-label={`Step ${i + 1}`}
+                onBlur={(e) => rename(i, e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") (e.target as HTMLInputElement).blur(); }} />
+              <button type="button" className="st-icobtn mv" onClick={() => move(i, -1)} disabled={i === 0} title="Move up" aria-label={`Move step ${i + 1} up`}>↑</button>
+              <button type="button" className="st-icobtn mv" onClick={() => move(i, 1)} disabled={i === items.length - 1} title="Move down" aria-label={`Move step ${i + 1} down`}>↓</button>
+              <button type="button" className="st-icobtn" onClick={() => save(items.filter((_, k) => k !== i), `${format.name}: step removed.`)} title="Remove" aria-label={`Remove step ${i + 1}`}>{SI.trash}</button>
+            </li>
+          ))}
+        </ol>
+      )}
+      {items.length < CHECK_MAX ? (
+        <div className="st-check-add">
+          <input className="st-in grow" value={draft} maxLength={300} onChange={(e) => setDraft(e.target.value)}
+            placeholder={items.length ? "Add a step…" : `The first step for every ${format.name} task…`} aria-label={`New step for ${format.name}`}
+            onKeyDown={(e) => { if (e.key === "Enter") add(); }} />
+          <button type="button" className="st-btn" disabled={!draft.trim()} onClick={add}>{SI.plus}Add</button>
+        </div>
+      ) : <small className="st-note">A checklist has up to {CHECK_MAX} steps.</small>}
     </div>
   );
 }

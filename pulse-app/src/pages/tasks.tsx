@@ -26,6 +26,7 @@ import { Modal } from "@/components/modal";
 import { toast } from "sonner";
 import type { Task, TaskStatus, TaskPriority, TaskType, TaskMeta, TaskAttachment, TaskReviewLogEntry, ContentFormatDef, Editor, Subtask, TaskComment } from "@/lib/types";
 import { groupTypes, isHeading, kindsWord } from "@/lib/type-groups";
+import { scheduleTypeIds } from "@/lib/schedule-types";
 import "./tasks-board.css";
 import { HandoverBlock, HandoverInbox, HandoverPill, useHandovers } from "@/components/handover";
 import { ScheduleBlock } from "@/components/schedule-block";
@@ -2973,9 +2974,12 @@ export function TaskPanel({ mode, task, canWrite, editors, channels: yourBrands,
                   // Each goal type says what this person's goal still needs: "3 to go", "Goal met". For yourself the
                   // types in your goal come first; one outside it (yours or theirs) still counts, for the team or as Other work.
                   const goalOf = new Map((goalInfo?.types ?? []).map((g) => [g.contentFormatId, g]));
-                  // Schedule is the schedulers' work (a Schedule goal this month, server/src/scheduling.js):
-                  // offered only when whoever the task is for has one
-                  const offered = typeChoices.filter((f) => !isScheduleType(f) || goalOf.has(f.id));
+                  // Schedule work (Schedule, Reels schedule…) is the schedulers' (a goal on it this month,
+                  // server/src/scheduling.js): each offered only when whoever the task is for has its goal
+                  // (a main type: a goal on one of its sub-types)
+                  const schedIds = scheduleTypeIds(contentFormats ?? []);
+                  const hasGoal = (f: ContentFormatDef) => goalOf.has(f.id) || (contentFormats ?? []).some((s) => s.parent_id === f.id && goalOf.has(s.id));
+                  const offered = typeChoices.filter((f) => !schedIds.has(f.id) || hasGoal(f));
                   const goalNote = (f: ContentFormatDef): { cls: string; text: string } | null => {
                     if (!goalInfo || !(goalInfo.goalPoints > 0) || f.counts_in_goal === false) return null;
                     const g = goalOf.get(f.id);
@@ -3071,6 +3075,19 @@ export function TaskPanel({ mode, task, canWrite, editors, channels: yourBrands,
                           {chips(offGoal, "Off-goal types", elsePick)}
                         </div>
                       )}
+                    </div>
+                  );
+                })()}
+                {(() => {
+                  // the picked type's checklist (Settings › Tasks & time): the task starts with it
+                  const f = (contentFormats ?? []).find((x) => x.id === cur.content_format_id);
+                  const steps = f?.checklist ?? [];
+                  if (!f || !steps.length) return null;
+                  return (
+                    <div className="tp2-waiting" role="note">
+                      <b>☑ {steps.length}-step checklist</b>
+                      <span>{steps.join(" · ")}</span>
+                      <small>Every {f.name} task starts with these steps. Each one is ticked before {typeSelfCloses(f) ? "it's completed" : "it goes to Review"}.</small>
                     </div>
                   );
                 })()}
@@ -3365,7 +3382,8 @@ export function TaskPanel({ mode, task, canWrite, editors, channels: yourBrands,
             <Attachments links={cur.attachments} readOnly={!canEditWork} onChange={(next) => set("attachments", "attachments", next)} />
           )}
           {!t.post_id && canEditWork && <LinkPostControl taskId={t.id} onLinked={onChanged} />}
-          <Checklist taskId={t.id} readOnly={!canEditWork} onChanged={onChanged} />
+          <Checklist taskId={t.id} readOnly={!canEditWork} onChanged={onChanged}
+            handIn={!canEditWork || t.status !== "in_progress" ? null : t.task_type === "admin" || closesWithoutReview(t, contentFormats) ? "complete" : "review"} />
           {!adminEdit && <DeliveryLink task={t} canEdit={canEditDelivery} onChanged={onChanged} />}
           <ReviewHistory taskId={t.id} />
           <TaskHistory taskId={t.id} title={t.title} />
@@ -3436,15 +3454,24 @@ function Attachments({ links, readOnly, onChange }: { links: TaskAttachment[]; r
   );
 }
 
-function Checklist({ taskId, readOnly = false, onChanged }: { taskId: string; readOnly?: boolean; onChanged?: () => void }) {
+// A task's checklist. The steps from its type (Settings › Tasks & time ›
+// Checklist) come first, marked with the type: whoever does the task ticks them,
+// and only an admin or whoever assigned it removes one (the server holds the
+// same). Every item is ticked before the work goes to Review.
+function Checklist({ taskId, readOnly = false, onChanged, handIn = null }: {
+  taskId: string; readOnly?: boolean; onChanged?: () => void;
+  // the work is still to be handed in: to Review, or closed by whoever does it
+  handIn?: "review" | "complete" | null;
+}) {
   const [items, setItems] = useState<Subtask[]>([]);
   const [loading, setLoading] = useState(true);
   const [newTitle, setNewTitle] = useState("");
+  const [typeEditable, setTypeEditable] = useState(true);
 
   useEffect(() => {
     let cancel = false;
-    api<{ subtasks: Subtask[] }>(`/tasks/${taskId}/subtasks`)
-      .then((d) => { if (!cancel) setItems(d.subtasks); })
+    api<{ subtasks: Subtask[]; typeItemsEditable?: boolean }>(`/tasks/${taskId}/subtasks`)
+      .then((d) => { if (!cancel) { setItems(d.subtasks); setTypeEditable(d.typeItemsEditable !== false); } })
       .catch(() => {})
       .finally(() => { if (!cancel) setLoading(false); });
     return () => { cancel = true; };
@@ -3468,15 +3495,16 @@ function Checklist({ taskId, readOnly = false, onChanged }: { taskId: string; re
       const { subtask } = await api<{ subtask: Subtask }>(`/subtasks/${s.id}`, { method: "PATCH", body: JSON.stringify({ done: !s.done }) });
       setItems((x) => x.map((i) => (i.id === s.id ? subtask : i)));
       onChanged?.();
-    } catch { toast.error("Could not update item."); }
+    } catch (e) { toast.error(e instanceof ApiError ? e.message : "Could not update item."); }
   }
   async function del(s: Subtask) {
     try {
       await api(`/subtasks/${s.id}`, { method: "DELETE" });
       setItems((x) => x.filter((i) => i.id !== s.id));
       onChanged?.();
-    } catch { toast.error("Could not delete item."); }
+    } catch (e) { toast.error(e instanceof ApiError ? e.message : "Could not delete item."); }
   }
+  const open = items.length - done;
 
   return (
     <div className="field">
@@ -3488,14 +3516,18 @@ function Checklist({ taskId, readOnly = false, onChanged }: { taskId: string; re
       )}
       <div className="chk-list">
         {items.map((s) => (
-          <div className="chk-row" key={s.id}>
-            <button type="button" className={"chk-box" + (s.done ? " on" : "")} onClick={() => !readOnly && toggle(s)} disabled={readOnly} aria-label="Toggle">{s.done ? "✓" : ""}</button>
+          <div className={"chk-row" + (s.from_type ? " typed" : "")} key={s.id}>
+            <button type="button" className={"chk-box" + (s.done ? " on" : "")} onClick={() => !readOnly && toggle(s)} disabled={readOnly} aria-label={`${s.done ? "Untick" : "Tick"} ${s.title}`}>{s.done ? "✓" : ""}</button>
             <span className={"chk-title" + (s.done ? " done" : "")}>{s.title}</span>
-            {!readOnly && <button type="button" className="chk-del" onClick={() => del(s)} title="Remove">✕</button>}
+            {s.from_type && <span className="chk-from" title="A step every task of this type has (Settings › Tasks & time › Checklist)">Type step</span>}
+            {!readOnly && (!s.from_type || typeEditable) && <button type="button" className="chk-del" onClick={() => del(s)} title="Remove" aria-label={`Remove ${s.title}`}>✕</button>}
           </div>
         ))}
         {loading && <div className="hint">Loading…</div>}
         {!loading && items.length === 0 && <div className="hint" style={{ marginTop: 2 }}>Break this task into steps.</div>}
+        {handIn && !loading && open > 0 && (
+          <div className="hint chk-gate">Tick every item before you {handIn === "complete" ? "complete it" : "submit it for review"}: {open} still open.</div>
+        )}
       </div>
       {!readOnly && (
         <div className="chk-add">

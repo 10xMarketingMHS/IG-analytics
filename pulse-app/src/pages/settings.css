@@ -392,6 +392,52 @@ html[data-theme="dark"] .st-box{border-color:rgba(255,255,255,.22)}
 .st-tt-fold:hover{text-decoration:underline}
 .st-kind.none{color:var(--st-text3)}
 
+/* Tasks & time: its tabs (task-rules.tsx), one job each */
+.st-tabs{display:flex;gap:4px;padding:4px;border:1px solid var(--st-line);border-radius:12px;background:var(--st-panel);overflow-x:auto;scrollbar-width:none}
+.st-tabs::-webkit-scrollbar{display:none}
+.st-tabs>button{flex:none;display:inline-flex;align-items:center;gap:6px;height:34px;padding:0 14px;border:0;border-radius:9px;background:transparent;color:var(--st-text3);font:600 13px 'Plus Jakarta Sans',sans-serif;cursor:pointer;white-space:nowrap}
+.st-tabs>button:hover{color:var(--st-text);background:var(--st-hover)}
+.st-tabs>button.on{background:var(--st-acSoft);color:var(--st-acText)}
+.st-tabn{display:inline-grid;place-items:center;min-width:18px;height:18px;padding:0 5px;border-radius:999px;background:var(--st-solid);color:var(--st-text2);font-size:11px;font-weight:700}
+/* the type list on Rules, Checklists and Scheduling: the name as text, its icon as a tile */
+.st-ic-face{width:30px;height:30px;display:grid;place-items:center;border:1px solid var(--st-line);border-radius:8px;background:var(--st-solid);font-size:15px}
+.st-tt-title{display:block;height:24px;line-height:24px;font-size:13.5px;font-weight:700;color:var(--st-text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.st-c-check{flex:none;width:150px;display:flex;justify-content:flex-end}
+.st-c-flow{flex:none;width:140px;display:flex;justify-content:center;text-align:center}
+.st-c-as{flex:none;width:190px;display:flex;justify-content:center;text-align:center}
+.st-c-as.idle{opacity:.55}
+.st-tt select.st-in.st-counts{width:180px}
+.st-counts.none{color:var(--st-text3)}
+.st-counts.warn{border-color:var(--st-warn);color:var(--st-warn)}
+.st-tt-head .st-c-check{justify-content:flex-end;padding-right:6px}
+.st-flag{display:inline-flex;align-items:center;height:22px;padding:0 9px;border-radius:999px;background:var(--st-sunk);color:var(--st-text3);font-size:11.5px;font-weight:700}
+.st-flag.on{background:var(--st-acSoft);color:var(--st-acText)}
+.st-checkbtn{white-space:nowrap}
+.st-checkbtn.none{color:var(--st-text3)}
+.st-dim .st-cardhead b{color:var(--st-text2)}
+@media (max-width:720px){.st-c-check,.st-c-flow,.st-c-as{width:auto}}
+/* Scheduling tab › Schedule types: points and time a job, each with its label */
+.st-schedrow .st-label{flex:1 1 220px}
+.st-schedctl{flex:none;display:flex;flex-direction:column;align-items:center;gap:3px}
+.st-schedctl>small{font-size:10.5px;font-weight:700;letter-spacing:.04em;text-transform:uppercase;color:var(--st-text3)}
+
+/* Tasks & time: a type's checklist, opened under its row */
+.st-tt.checks-open{background:var(--st-acSoft)}
+.st-tt-checks{display:flex;flex-direction:column;gap:8px;padding:10px 14px 14px 52px;border-top:1px dashed var(--st-line);background:var(--st-sunk)}
+.st-tt-checks.sub{padding-left:84px}
+.st-tt-checkhead{display:flex;flex-direction:column;gap:2px;font-size:12.5px;color:var(--st-text)}
+.st-tt-checkhead small{font-size:11.5px;color:var(--st-text3);line-height:1.4;white-space:normal;max-width:640px}
+.st-checks{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:4px;max-width:640px}
+.st-checks li{display:flex;align-items:center;gap:6px}
+.st-check-n{flex:none;width:22px;height:22px;display:grid;place-items:center;border-radius:6px;background:var(--st-solid);border:1px solid var(--st-line);font-size:11px;font-weight:700;color:var(--st-text3)}
+.st-check-in{flex:1;min-width:0;height:30px;padding:0 8px;border:1px solid transparent;border-radius:7px;background:transparent;color:var(--st-text);font:inherit;font-size:13px}
+.st-check-in:hover{border-color:var(--st-line)}
+.st-check-in:focus{outline:none;border-color:var(--st-ac);background:var(--st-solid)}
+.st-checks .st-icobtn.mv{width:26px;height:26px;color:var(--st-text3)}
+.st-checks .st-icobtn.mv:disabled{opacity:.35;cursor:default}
+.st-check-add{display:flex;gap:8px;max-width:640px}
+@media (max-width:640px){.st-tt-checks,.st-tt-checks.sub{padding-left:14px}}
+
 /* Tasks & time: a main type with sub-types shows their totals, not controls */
 .st-total{display:flex;align-items:center;justify-content:center;gap:5px;height:32px;padding:0 6px;border:1px dashed var(--st-line);border-radius:9px;background:var(--st-sunk);color:var(--st-text2);font:600 12.5px 'Geist Mono',monospace;white-space:nowrap}
 .st-total small{font:700 9px 'Plus Jakarta Sans',sans-serif;letter-spacing:.05em;text-transform:uppercase;color:var(--st-text3)}

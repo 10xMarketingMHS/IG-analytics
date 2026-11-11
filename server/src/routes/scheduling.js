@@ -10,7 +10,7 @@ import { hasColumn } from "../schema-flags.js";
 import { validYmd } from "../leave-math.js";
 import { callerEditorId, nextBrandTaskRef, nextTaskRef, taskSelect } from "./tasks.js";
 import {
-  LINK_AFTER_DAYS, NEEDS_SCHED_DB, addDaysYmd, isScheduler, linksDueAt, sameLink, scheduleFormat, scheduleStage, schedulerIds, schedulingReady, scheduledOn,
+  LINK_AFTER_DAYS, NEEDS_SCHED_DB, addDaysYmd, scheduleCreditType, isScheduler, linksDueAt, sameLink, scheduleFormat, scheduleStage, schedulerIds, schedulingReady, scheduledOn,
 } from "../scheduling.js";
 
 // Scheduling approved Social tasks (../scheduling.js). The schedulers — anyone
@@ -255,11 +255,12 @@ async function perPostJobs(orgId) {
   return !!rows[0]?.on;
 }
 
-// The scheduling, as one Schedule job of the scheduler's: a completed task of
-// the org's Schedule type, made once per scheduled task, when its links go in —
-// so it counts in their goal, points and the Leaderboard like any other job.
-async function creditSchedule(orgId, t, schedulerId, userId) {
-  const fmt = await scheduleFormat(orgId);
+// The scheduling, as one job of the scheduler's: a completed task of the
+// schedule type it counts as (fmt: Reels schedule for a Reels task, say; the
+// Schedule type when its type names none — ../scheduling.js scheduleCreditType),
+// made once per scheduled task, when its links go in — so it counts in their
+// goal, points and the Leaderboard like any other job.
+async function creditSchedule(orgId, t, schedulerId, userId, fmt) {
   if (!fmt || !schedulerId) return null;
   const { rowCount } = await pool.query("select 1 from task where org_id = $1 and meta->>'schedulesTaskId' = $2", [orgId, t.id]);
   if (rowCount) return null;
@@ -359,9 +360,10 @@ schedulingRouter.post("/tasks/:id/links", requireEditor, requireActiveEod, async
       t = await taskRow(req.orgId, req.params.id);
     }
     await insertLinkPosts(req, t, d, checked.postType, t.post_on ?? new Date(Date.now() + 330 * 60_000).toISOString().slice(0, 10));
-    // each post a Schedule job of theirs, only when the team counts it that way
-    // (Settings › Tasks & time › Scheduling; off: their daily Schedule task counts)
-    if (await perPostJobs(req.orgId)) await creditSchedule(req.orgId, t, t.scheduler_id, req.user.sub);
+    // each post a job of theirs, only when the team counts it that way (Settings ›
+    // Tasks & time › Scheduling; off: their daily Schedule task counts), as the
+    // schedule type its type counts as (Reels → Reels schedule; Trailer none, say)
+    if (await perPostJobs(req.orgId)) await creditSchedule(req.orgId, t, t.scheduler_id, req.user.sub, await scheduleCreditType(t.id));
     const names = d.links.map((l) => checked.brandPlat.get(l.platformId)?.name).filter(Boolean);
     await logActivity({
       orgId: req.orgId, actorId: req.user.sub, verb: "schedule_linked", entityType: "task", entityId: t.id, channelId: t.channel_id,

@@ -6,6 +6,7 @@ import { hasColumn } from "../schema-flags.js";
 import { logActivity } from "../activity.js";
 import { headingError, headingTypes, notHeadingSql } from "../type-tree.js";
 import { jobCount } from "../job-count.js";
+import { scheduleLinks } from "../scheduling.js";
 
 // Goals › Brand goals: how many jobs of each task type a brand needs in a month
 // (Doctor Farmer 30 Reels, My Health School 30 Reels), and for Ads each Ads team
@@ -37,14 +38,70 @@ const IST_MONTH = (col) => `${col} >= ($2::date)::timestamp at time zone 'Asia/K
 // the types tracked in goals (Settings › Tasks & time › Goal)
 const GOAL_TYPE = "active and category in ('social', 'ad', 'service', 'project') and coalesce((to_jsonb(task_content_format)->>'counts_in_goal')::boolean, true)";
 
-// Each brand's goals per type: { [contentFormatId]: jobs } summed (for Set goals)
+// What the team's goals give out, per type (Set goals) — not counting anyone
+// exempt from task scoring (Team › Roster › Task score), who isn't given goals.
+const GIVEN_SQL = `select g.content_format_id as id, sum(g.jc)::int as n
+     from editor_goal g join editor e on e.id = g.editor_id
+    where g.org_id = $1 and g.period_month = $2 and g.jc > 0 and e.active
+      and coalesce((to_jsonb(e)->>'in_task_score')::boolean, true)
+    group by g.content_format_id`;
+
+// The schedule types' needs (Settings › Tasks & time › Scheduling): each needs
+// what the Social types that count as it need — Reels schedule what the brands
+// need of Reels, brand by brand. A linked type with no brand goal this month
+// counts what its editors are given in Set goals instead (in the total only:
+// that has no brand). { [scheduleTypeId]: { need, byPlace, from: [{ id, name, n, given }] } }
+export async function scheduleNeeds(orgId, month) {
+  const links = await scheduleLinks(orgId);
+  if (!links.length) return {};
+  // a main type's goals from before its sub-types (Carousel's, now Video Carousel's)
+  // count toward what its sub-types count as: that work is still to be scheduled
+  if (await hasColumn("task_content_format", "parent_id")) {
+    const { rows: mains } = await pool.query(
+      `select distinct on (p.id) p.id, p.name, s.id as sub from task_content_format s join task_content_format p on p.id = s.parent_id
+        where s.id = any($1::uuid[]) and p.active order by p.id, s.sort_order, s.name`,
+      [links.map((l) => l.id)],
+    );
+    for (const m of mains) links.push({ id: m.id, name: m.name, target: links.find((l) => l.id === m.sub).target, main: true });
+  }
+  const ids = links.map((l) => l.id);
+  const [goals, given] = await Promise.all([
+    (await brandGoalsReady()) ? pool.query(
+      `select content_format_id as id, channel_id as place, sum(jobs)::int as n from brand_goal
+        where org_id = $1 and period_month = $2 and content_format_id = any($3::uuid[]) and channel_id is not null group by 1, 2`,
+      [orgId, month, ids],
+    ) : { rows: [] },
+    pool.query(GIVEN_SQL, [orgId, month]),
+  ]);
+  const givenOf = new Map(given.rows.map((g) => [g.id, g.n]));
+  const out = {};
+  for (const l of links) {
+    const o = (out[l.target] ??= { need: 0, byPlace: {}, from: [] });
+    const mine = goals.rows.filter((r) => r.id === l.id);
+    if (mine.length) {
+      const n = mine.reduce((s, r) => s + r.n, 0);
+      for (const r of mine) o.byPlace[r.place] = (o.byPlace[r.place] ?? 0) + r.n;
+      o.need += n;
+      o.from.push({ id: l.id, name: l.name, n, given: false });
+    } else {
+      const n = givenOf.get(l.id) ?? 0;
+      o.need += n;
+      // a main type with nothing of its own from before isn't named
+      if (n > 0 || !l.main) o.from.push({ id: l.id, name: l.name, n, given: n > 0 });
+    }
+  }
+  return out;
+}
+
+// Each brand's goals per type: { [contentFormatId]: jobs } summed (for Set goals);
+// a schedule type's is what the types counting as it need (scheduleNeeds)
 export async function brandNeedByType(orgId, month) {
-  if (!(await brandGoalsReady())) return {};
-  const { rows } = await pool.query(
+  const derived = await scheduleNeeds(orgId, month);
+  const own = !(await brandGoalsReady()) ? [] : (await pool.query(
     "select content_format_id as id, sum(jobs)::int as n from brand_goal where org_id = $1 and period_month = $2 group by content_format_id",
     [orgId, month],
-  );
-  return Object.fromEntries(rows.map((r) => [r.id, r.n]));
+  )).rows;
+  return { ...Object.fromEntries(own.map((r) => [r.id, r.n])), ...Object.fromEntries(Object.entries(derived).map(([id, d]) => [id, d.need])) };
 }
 
 brandGoalsRouter.get("/brand-goals", requirePermission("edit_goals"), async (req, res, next) => {
@@ -74,23 +131,18 @@ brandGoalsRouter.get("/brand-goals", requirePermission("edit_goals"), async (req
           group by 1, 2, 3`,
         [req.orgId, month],
       ),
-      // what the team's goals give out, per type (Set goals) — not counting anyone
-      // exempt from task scoring (Team › Roster › Task score), who isn't given goals
-      pool.query(
-        `select g.content_format_id as id, sum(g.jc)::int as n
-           from editor_goal g join editor e on e.id = g.editor_id
-          where g.org_id = $1 and g.period_month = $2 and g.jc > 0 and e.active
-            and coalesce((to_jsonb(e)->>'in_task_score')::boolean, true)
-          group by g.content_format_id`,
-        [req.orgId, month],
-      ),
+      // what the team's goals give out, per type (Set goals)
+      pool.query(GIVEN_SQL, [req.orgId, month]),
     ]);
+    // the schedule types' needs follow the types that count as them; theirs aren't typed in
+    const derived = await scheduleNeeds(req.orgId, month);
     res.json({
       ready: true, month, prevMonth: prevMonth(month),
       types: types.rows, brands: brands.rows, teams: teams.rows,
-      goals: goals.rows,
+      goals: goals.rows.filter((g) => !derived[g.contentFormatId]),
       done: done.rows.filter((d) => d.channelId || d.adTeamId),
       given: Object.fromEntries(given.rows.map((g) => [g.id, g.n])),
+      derived,
     });
   } catch (err) {
     next(err);
@@ -125,9 +177,13 @@ brandGoalsRouter.put("/brand-goals", requirePermission("edit_goals"), async (req
     ]);
     const kind = new Map(types.rows.map((t) => [t.id, t.category]));
     const brandIds = new Set(brands.rows.map((b) => b.id)), teamIds = new Set(teams.rows.map((t) => t.id));
+    const derived = await scheduleNeeds(req.orgId, month);
     for (const c of cells) {
       const cat = kind.get(c.contentFormatId);
       if (!cat) return res.status(400).json({ error: "That task type isn't one tracked in goals." });
+      if (derived[c.contentFormatId] && c.jobs != null) {
+        return res.status(400).json({ error: "A schedule type's need follows the types that count as it (Settings › Tasks & time › Scheduling), so it isn't typed in." });
+      }
       if (cat === "ad" ? !(c.adTeamId && teamIds.has(c.adTeamId) && !c.channelId) : !(c.channelId && brandIds.has(c.channelId) && !c.adTeamId)) {
         return res.status(400).json({ error: cat === "ad" ? "Ads goals go on an Ads team." : "That goal needs one of your brands." });
       }

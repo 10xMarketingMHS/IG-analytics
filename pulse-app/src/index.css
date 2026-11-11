@@ -380,6 +380,8 @@ main{min-width:0;display:flex;flex-direction:column}
 .chk-title.done{text-decoration:line-through;color:var(--muted)}
 .chk-del{border:0;background:transparent;color:var(--faint);cursor:pointer;font-size:12px;padding:3px 6px;border-radius:6px}
 .chk-del:hover{color:var(--rose);background:rgba(225,29,72,.12)}
+.chk-from{flex:none;padding:1px 7px;border-radius:999px;background:var(--panel2);color:var(--faint);font-size:10.5px;font-weight:700;letter-spacing:.02em}
+.hint.chk-gate{margin-top:6px;color:var(--tb-warn,var(--amber))}
 .chk-add{display:flex;gap:8px}
 .chk-add .t{flex:1}
 /* Delivery Link — saved-state row: the link + an Edit button. */

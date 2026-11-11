@@ -46,12 +46,32 @@ export async function scheduleFormat(orgId) {
   );
   return rows[0] ?? null;
 }
-// Who schedules this month: everyone with a Schedule goal (editor ids).
+// The schedule types: the ones scheduling counts as, each with its own goals,
+// points and time — Schedule itself, its sub-types, any type with "schedule" in
+// its name (Reels schedule, Story schedule), and any a Social type counts as
+// (Settings › Tasks & time › Scheduling). pulse-app/src/lib/schedule-types.ts
+// holds the same.
+export const scheduleJobReady = () => hasColumn("task_content_format", "schedule_job");
+export const scheduleAsReady = () => hasColumn("task_content_format", "schedule_as");
+async function scheduleTypesSql() {
+  const parent = await hasColumn("task_content_format", "parent_id");
+  const as = await scheduleAsReady();
+  return `select f.id from task_content_format f
+           where f.org_id = $1 and f.active and (
+             lower(f.name) like '%schedul%'
+             ${parent ? "or exists (select 1 from task_content_format p where p.id = f.parent_id and lower(trim(p.name)) in ('schedule', 'scheduling'))" : ""}
+             ${as ? "or exists (select 1 from task_content_format s where s.org_id = $1 and s.active and s.schedule_as = f.id)" : ""})`;
+}
+export async function scheduleTypeIds(orgId) {
+  const { rows } = await pool.query(await scheduleTypesSql(), [orgId]);
+  return rows.map((r) => r.id);
+}
+// Who schedules this month: everyone with a goal on a schedule type (editor ids).
 export async function schedulerIds(orgId) {
   const { rows } = await pool.query(
-    `select distinct g.editor_id from editor_goal g join task_content_format cf on cf.id = g.content_format_id
+    `select distinct g.editor_id from editor_goal g
       where g.org_id = $1 and g.period_month = date_trunc('month', now() at time zone 'Asia/Kolkata')::date
-        and lower(trim(cf.name)) in ('schedule', 'scheduling')
+        and g.content_format_id in (${await scheduleTypesSql()})
         and (coalesce(g.jc, 0) > 0 or coalesce((to_jsonb(g)->>'points')::numeric, 0) > 0)`,
     [orgId],
   );
@@ -59,6 +79,56 @@ export async function schedulerIds(orgId) {
 }
 export async function isScheduler(orgId, editorId) {
   return !!editorId && (await schedulerIds(orgId)).includes(editorId);
+}
+
+// Each Social type that counts toward a schedule type, and which (Settings ›
+// Tasks & time › Scheduling): types that go to Scheduling and aren't set not to
+// count, each to the type it names, else the Schedule type — as
+// scheduleCreditType below decides for one task. Not a main type with sub-types
+// (its sub-types are the ones made), nor to one (it takes no jobs).
+export async function scheduleLinks(orgId) {
+  if (!(await schedulingReady())) return [];
+  const [job, as, parent] = await Promise.all([scheduleJobReady(), scheduleAsReady(), hasColumn("task_content_format", "parent_id")]);
+  const [sf, { rows }, heads] = await Promise.all([
+    scheduleFormat(orgId),
+    pool.query(
+      `select f.id, f.name, ${as ? "f.schedule_as, (t.id is not null) as as_ok" : "null::uuid as schedule_as, false as as_ok"}
+         from task_content_format f ${as ? "left join task_content_format t on t.id = f.schedule_as and t.org_id = f.org_id and t.active" : ""}
+        where f.org_id = $1 and f.active and f.category = 'social' and coalesce(f.to_scheduling, false)
+          and coalesce(${job ? "f.schedule_job" : "null::boolean"}, true)`,
+      [orgId],
+    ),
+    parent ? pool.query("select distinct parent_id as id from task_content_format where org_id = $1 and active and parent_id is not null", [orgId])
+      : { rows: [] },
+  ]);
+  const head = new Set(heads.rows.map((r) => r.id));
+  return rows
+    .filter((r) => !head.has(r.id))
+    .map((r) => ({ id: r.id, name: r.name, target: r.schedule_as ? (r.as_ok ? r.schedule_as : null) : sf?.id ?? null }))
+    .filter((r) => r.target && !head.has(r.target));
+}
+
+// What scheduling this task counts as (Settings › Tasks & time › Scheduling), or
+// null when it counts as nothing. Whether it counts: its type's own setting,
+// else whether the type goes to Scheduling (Next step), as before
+// (20261118120000_type_schedule_job). As what: the type it names (Reels →
+// Reels schedule, 20261118130000_type_schedule_as), else the Schedule type. A
+// type that's gone, or a main type with sub-types (a heading), takes no jobs.
+export async function scheduleCreditType(taskId) {
+  const [job, as, parent] = await Promise.all([scheduleJobReady(), scheduleAsReady(), hasColumn("task_content_format", "parent_id")]);
+  const { rows: [f] } = await pool.query(
+    `select f.org_id, coalesce(${job ? "f.schedule_job" : "null::boolean"}, f.to_scheduling, false) and coalesce(f.to_scheduling, false) as on,
+            ${as ? "f.schedule_as" : "null::uuid"} as target
+       from task t join task_content_format f on f.id = t.content_format_id where t.id = $1`,
+    [taskId],
+  );
+  if (!f?.on) return null;
+  const target = f.target
+    ? (await pool.query("select id, name, category, points from task_content_format where id = $1 and org_id = $2 and active", [f.target, f.org_id])).rows[0]
+    : await scheduleFormat(f.org_id);
+  if (!target) return null;
+  if (parent && (await pool.query("select 1 from task_content_format where parent_id = $1 and active limit 1", [target.id])).rowCount) return null;
+  return target;
 }
 
 // Just approved (or closed without review): a Social task of a type that goes

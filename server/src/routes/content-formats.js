@@ -7,6 +7,7 @@ import { hasColumn } from "../schema-flags.js";
 import { followTypeTick } from "../scheduling.js";
 import { followAdTypeTick } from "../ad-uploads.js";
 import { headingFieldError, headingTypes } from "../type-tree.js";
+import { CHECKLIST_ITEM_MAX, CHECKLIST_MAX, NEEDS_CHECKLIST, cleanChecklist } from "../type-checklist.js";
 
 // What a type is worth is the Super Admin's call; an admin adds, renames and
 // times types, and sees their points.
@@ -50,6 +51,14 @@ const Schema = z.object({
   // The main type it sits under (Carousel for Video Carousel), or null: on its
   // own. Same category, one level only. 20261114120000_type_parent
   parent_id: z.string().uuid().nullable().optional(),
+  // The steps every new task of this type starts with, in order (../type-checklist.js).
+  // 20261117120000_type_checklist
+  checklist: z.array(z.string().max(CHECKLIST_ITEM_MAX)).max(CHECKLIST_MAX).optional(),
+  // Does scheduling its work count as a Schedule job (Settings › Tasks & time ›
+  // Scheduling)? null: it follows Next step (../scheduling.js). 20261118120000_type_schedule_job
+  schedule_job: z.boolean().nullable().optional(),
+  // …and as which schedule type (Reels → Reels schedule); null: the Schedule type. 20261118130000_type_schedule_as
+  schedule_as: z.string().uuid().nullable().optional(),
 });
 
 const SELECT = "id, name, icon, sort_order, active, points, category, metric_tier, duration_days, metrics_description, review_link_required";
@@ -58,8 +67,12 @@ const schedCol = () => hasColumn("task_content_format", "to_scheduling");
 const goalCol = () => hasColumn("task_content_format", "counts_in_goal");
 const parentCol = () => hasColumn("task_content_format", "parent_id");
 const selfCol = () => hasColumn("task_content_format", "self_close");
+const checkCol = () => hasColumn("task_content_format", "checklist");
+const jobCol = () => hasColumn("task_content_format", "schedule_job");
+const asCol = () => hasColumn("task_content_format", "schedule_as");
 const select = async () => SELECT + ((await schedCol()) ? ", to_scheduling" : "") + ((await goalCol()) ? ", counts_in_goal" : "") + ((await parentCol()) ? ", parent_id" : "")
-  + ((await selfCol()) ? ", self_close" : "");
+  + ((await selfCol()) ? ", self_close" : "") + ((await checkCol()) ? ", checklist" : "") + ((await jobCol()) ? ", schedule_job" : "")
+  + ((await asCol()) ? ", schedule_as" : "");
 const NEEDS_PARENT = "Sub-types need a database update first — ask whoever runs the database to apply 20261114120000_type_parent.";
 
 // Can this type go under that main type? Null when it can, else what to say.
@@ -168,7 +181,10 @@ contentFormatsRouter.post("/content-formats", requirePermission("task_settings")
 
 contentFormatsRouter.patch("/content-formats/:id", requirePermission("task_settings"), async (req, res, next) => {
   const parsed = Schema.partial().safeParse(req.body);
-  if (!parsed.success) return res.status(400).json({ error: "Invalid update." });
+  if (!parsed.success) {
+    const onList = parsed.error.issues.some((i) => i.path[0] === "checklist");
+    return res.status(400).json({ error: onList ? `A checklist has up to ${CHECKLIST_MAX} items, each up to ${CHECKLIST_ITEM_MAX} characters.` : "Invalid update." });
+  }
   const sets = [];
   const vals = [];
   if (parsed.data.name !== undefined) { vals.push(parsed.data.name); sets.push(`name = $${vals.length}`); }
@@ -187,6 +203,27 @@ contentFormatsRouter.patch("/content-formats/:id", requirePermission("task_setti
     if (!(await selfCol())) return res.status(409).json({ error: "Self close needs a database update first — ask whoever runs the database to apply 20261116120000_type_self_close." });
     vals.push(parsed.data.self_close); sets.push(`self_close = $${vals.length}`);
   }
+  if (parsed.data.schedule_job !== undefined) {
+    if (!(await jobCol())) return res.status(409).json({ error: "Choosing which types count as Schedule jobs needs a database update first — ask whoever runs the database to apply 20261118120000_type_schedule_job." });
+    vals.push(parsed.data.schedule_job); sets.push(`schedule_job = $${vals.length}`);
+  }
+  const asIn = parsed.data.schedule_as;
+  if (asIn !== undefined) {
+    if (!(await asCol())) return res.status(409).json({ error: "Choosing what a type's scheduling counts as needs a database update first — ask whoever runs the database to apply 20261118130000_type_schedule_as." });
+    if (asIn) {
+      // a type of this workspace, in use, not itself, and not a heading (its sub-types take the jobs)
+      if (asIn === req.params.id) return res.status(400).json({ error: "A type's scheduling can't count as itself." });
+      const { rows: [to] } = await pool.query("select name from task_content_format where id = $1 and org_id = $2 and active", [asIn, req.orgId]);
+      if (!to) return res.status(400).json({ error: "That schedule type wasn't found." });
+      const heading = (await headingTypes(req.orgId, [asIn])).get(asIn);
+      if (heading) return res.status(400).json({ error: `${to.name} has sub-types, so it's only a heading. Pick one of them.` });
+    }
+    vals.push(asIn); sets.push(`schedule_as = $${vals.length}`);
+  }
+  if (parsed.data.checklist !== undefined) {
+    if (!(await checkCol())) return res.status(409).json({ error: NEEDS_CHECKLIST });
+    vals.push(JSON.stringify(cleanChecklist(parsed.data.checklist))); sets.push(`checklist = $${vals.length}::jsonb`);
+  }
   const parentIn = parsed.data.parent_id;
   if (parentIn !== undefined) {
     if (!(await parentCol())) return res.status(409).json({ error: NEEDS_PARENT });
@@ -203,7 +240,7 @@ contentFormatsRouter.patch("/content-formats/:id", requirePermission("task_setti
   vals.push(req.params.id, req.orgId);
   try {
     // a main type with sub-types keeps only its name, icon and category (../type-tree.js)
-    if (["points", "metric_tier", "duration_days", "review_link_required", "counts_in_goal", "to_scheduling", "self_close"].some((k) => parsed.data[k] !== undefined)) {
+    if (["points", "metric_tier", "duration_days", "review_link_required", "counts_in_goal", "to_scheduling", "self_close", "checklist", "schedule_job", "schedule_as"].some((k) => parsed.data[k] !== undefined)) {
       const heading = (await headingTypes(req.orgId, [req.params.id])).get(req.params.id);
       if (heading) return res.status(400).json({ error: headingFieldError(heading) });
     }

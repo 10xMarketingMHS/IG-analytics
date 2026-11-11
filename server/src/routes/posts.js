@@ -7,6 +7,7 @@ import { requirePage } from "../page-access.js";
 import { logActivity } from "../activity.js";
 import { resolveBudgetHours, nextTaskRef, nextBrandTaskRef, callerEditorId, canAssignTasks, setUpBy } from "./tasks.js";
 import { closePendingHandovers } from "../handover.js";
+import { fillTypeChecklist } from "../type-checklist.js";
 import { recordMetricDays } from "../post-history.js";
 import { editorRanks, seesEditor, taskViewer } from "../hierarchy.js";
 
@@ -158,6 +159,8 @@ async function syncPostTask(postId, orgId, callerUserId, { keepBrief = false } =
         [post.editor_id, post.title, post.date, post.workspace_id, nextAccepted, nextFormatId, budgetHours, postId, sid,
           keepBrief, accepted ? null : callerUserId ?? null],
       );
+      // its type filled in just now: its checklist comes with it (../type-checklist.js)
+      if (!prior.content_format_id && nextFormatId) await fillTypeChecklist(prior.id);
     } else {
       // A post entered after it was published has no editing left to do — a
       // fresh To Do task due on a past date would only show up as overdue work
@@ -166,13 +169,14 @@ async function syncPostTask(postId, orgId, callerUserId, { keepBrief = false } =
       const budgetHours = await resolveBudgetHours(orgId, post.editor_id, defaultFormatId);
       const tid = await nextTaskRef(orgId, "tid");
       const sid = await nextBrandTaskRef(post.workspace_id, "sid");
-      await pool.query(
+      const { rows: made } = await pool.query(
         `insert into task (org_id, post_id, editor_id, channel_id, title, due_date, status, priority,
                            task_type, accepted, content_format_id, budget_hours, budget_started_at, tid, sid, created_by, assigned_by)
-         values ($1, $2, $3, $4, $5, $6, 'todo', 'medium', 'content', $7, $8, $9, null, $10, $11, $12, $13)`,
+         values ($1, $2, $3, $4, $5, $6, 'todo', 'medium', 'content', $7, $8, $9, null, $10, $11, $12, $13) returning id`,
         [orgId, postId, post.editor_id, post.workspace_id, post.title, post.date, accepted, defaultFormatId, budgetHours, tid, sid,
           callerUserId ?? null, accepted ? null : callerUserId ?? null],
       );
+      await fillTypeChecklist(made[0]?.id);
     }
   } catch (err) {
     // A task-sync failure must never break the post write.

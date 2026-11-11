@@ -176,6 +176,12 @@ export type ContentFormatDef = {
   counts_in_goal?: boolean;
   // its work closes without review: whoever did it completes it (Settings › Tasks & time › Self close). Absent before the database has it.
   self_close?: boolean;
+  // the steps every new task of this type starts with, ticked before it goes to Review (Settings › Tasks & time › Checklist). Absent before the database has it.
+  checklist?: string[];
+  // scheduling its work counts as one Schedule job (Settings › Tasks & time › Scheduling); null: it follows to_scheduling. Absent before the database has it.
+  schedule_job?: boolean | null;
+  // …as which schedule type (Reels → Reels schedule); null: the Schedule type. Absent before the database has it.
+  schedule_as?: string | null;
   // how many people have a goal for it this month
   goal_people?: number;
   // the main type it sits under (Carousel for Video Carousel), or null: on its own
@@ -383,7 +389,9 @@ export type Activity = {
   type_icon?: string | null;
 };
 
-export type Subtask = { id: string; title: string; done: boolean; sort_order: number };
+// from_type: it came with the task's type's checklist (Settings › Tasks & time):
+// whoever does the task ticks it, and only an admin or its assigner removes it.
+export type Subtask = { id: string; title: string; done: boolean; sort_order: number; from_type?: boolean };
 export type TaskComment = { id: string; body: string; created_at: string; author_id: string | null; author_name: string | null };
 
 export type PostStatus = "planned" | "published";

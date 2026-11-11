@@ -14,11 +14,12 @@ import { callerScope } from "../attendance.js";
 import { closePendingHandovers } from "../handover.js";
 import { hasColumn } from "../schema-flags.js";
 import { coverFrom } from "../goal-score.js";
-import { enterScheduling, isScheduler, leaveScheduling, scheduleFormat, schedulerIds, schedulingReady } from "../scheduling.js";
+import { enterScheduling, isScheduler, leaveScheduling, scheduleTypeIds, schedulerIds, schedulingReady } from "../scheduling.js";
 import { adTeamsReady, enterUploads, leaveUploads, nextTeamAid, uploadsReady } from "../ad-uploads.js";
 import { parentTypeOf, taskTypeError } from "../type-tree.js";
 import { isSuperHere } from "../super-admin.js";
 import { isHoliday, normalizeCalendar } from "../work-calendar.js";
+import { fillTypeChecklist, openChecklist, swapTypeChecklist, typeChecklistReady } from "../type-checklist.js";
 
 export const tasksRouter = Router();
 
@@ -585,12 +586,12 @@ tasksRouter.post("/tasks", requireEditor, requireActiveEod, async (req, res, nex
     // when the assignee clicks Start on the board (todo -> in_progress).
     const status = "todo";
     const contentFormatId = isAdminTask ? null : (d.contentFormatId ?? null);
-    // Schedule work is the schedulers': whoever it's for needs a Schedule goal this month (../scheduling.js)
-    if (contentFormatId) {
-      const sf = await scheduleFormat(req.orgId);
-      if (sf && sf.id === contentFormatId && !(assigneeId && (await isScheduler(req.orgId, assigneeId)))) {
-        return res.status(400).json({ error: `${sf.name} tasks are for the schedulers: give them a ${sf.name} goal this month first (Goals › Set goals).` });
-      }
+    // Schedule work (Schedule, Reels schedule…) is the schedulers': whoever it's
+    // for needs a goal on a schedule type this month (../scheduling.js)
+    if (contentFormatId && (await scheduleTypeIds(req.orgId)).includes(contentFormatId)
+        && !(assigneeId && (await isScheduler(req.orgId, assigneeId)))) {
+      const { rows: [sf] } = await pool.query("select name from task_content_format where id = $1", [contentFormatId]);
+      return res.status(400).json({ error: `${sf?.name ?? "Schedule"} tasks are for the schedulers: give them a schedule goal this month first (Goals › Set goals).` });
     }
     // Admin tasks may optionally belong to a brand (Project) — they just never
     // get a content type, SID/AID or timer.
@@ -708,6 +709,8 @@ tasksRouter.post("/tasks", requireEditor, requireActiveEod, async (req, res, nex
     if (typeof d.reviewLinkRequired === "boolean" && (await canAssignTasks(req))) {
       await pool.query("update task set review_link_required = $2 where id = $1", [rows[0].id, d.reviewLinkRequired]);
     }
+    // it starts with its type's checklist (Settings › Tasks & time)
+    await fillTypeChecklist(rows[0].id);
     const { rows: full } = await pool.query(`${await taskSelect()} where t.id = $1`, [rows[0].id]);
     await logActivity({
       orgId: req.orgId,
@@ -1166,6 +1169,18 @@ tasksRouter.patch("/tasks/:id", requireEditor, requireActiveEod, async (req, res
           return res.status(400).json({ error: selfClose ? "Add your delivery link before completing it." : "Add your delivery link before submitting for review." });
         }
       }
+      // Handing work in (to Review, or closing it yourself) needs every checklist
+      // item ticked: its type's steps and any added by hand (../type-checklist.js).
+      if (prior.status === "in_progress" && (d.status === "review" || selfClosed)) {
+        const { open, total } = await openChecklist(req.params.id);
+        if (open > 0) {
+          const left = open === total ? `none of its ${total} are ticked yet` : `${open} of ${total} ${open === 1 ? "is" : "are"} still open`;
+          return res.status(400).json({
+            error: `Tick every checklist item before ${selfClose || selfClosed ? "completing it" : "submitting for review"}: ${left}.`,
+            code: "checklist_open",
+          });
+        }
+      }
       // Entering review pauses the clock — bank whatever's elapsed so far
       // rather than letting review time (or a later rework cycle) eat into
       // the assignee's actual working budget; resumes exactly where it left
@@ -1472,6 +1487,12 @@ tasksRouter.patch("/tasks/:id", requireEditor, requireActiveEod, async (req, res
     );
     if (!rows.length && moving) return res.status(409).json({ error: "Someone else just changed this task. Reload it and try again." });
     if (!rows.length) return res.status(404).json({ error: "Task not found" });
+    // A new type before the work is handed in: its checklist comes with it, in
+    // place of the old type's (items added by hand stay).
+    if (d.contentFormatId !== undefined && (d.contentFormatId ?? null) !== (prior.content_format_id ?? null)
+        && ["todo", "in_progress"].includes(d.status ?? prior.status)) {
+      await swapTypeChecklist(req.params.id);
+    }
     // its recorded ads, to the team it moved to (with none, its brand)
     if (adsMoveTo) {
       await pool.query(
@@ -1784,10 +1805,13 @@ async function spawnNextOccurrence(taskId, recurrence) {
     );
     const newId = rows[0].id;
     if (t.ad_team_id) await pool.query("update task set ad_team_id = $2 where id = $1", [newId, t.ad_team_id]);
+    // the items added by hand, unticked; its type's checklist as it is now
+    const typed = await typeChecklistReady();
     await pool.query(
-      "insert into subtask (task_id, title, sort_order) select $1, title, sort_order from subtask where task_id = $2",
+      `insert into subtask (task_id, title, sort_order) select $1, title, sort_order from subtask where task_id = $2${typed ? " and not from_type" : ""}`,
       [newId, taskId],
     );
+    await fillTypeChecklist(newId);
   } catch (err) {
     console.error("spawnNextOccurrence failed:", err.message);
   }
@@ -1875,13 +1899,22 @@ async function checklistRefusal(req, task) {
   return { status: 403, error: "Only an admin can change someone else's task." };
 }
 async function taskOfSubtask(subtaskId, orgId) {
+  const typed = await typeChecklistReady();
   const { rows } = await pool.query(
-    `select t.id, t.status, t.editor_id, t.assigned_by from subtask s join task t on t.id = s.task_id
+    `select t.id, t.status, t.editor_id, t.assigned_by, ${typed ? "s.from_type" : "false as from_type"} from subtask s join task t on t.id = s.task_id
       where s.id = $1 and t.org_id = $2`,
     [subtaskId, orgId],
   );
   return rows[0] ?? null;
 }
+// The items a task gets from its type's checklist are the steps its work is
+// checked against: whoever does it ticks them, and only an admin, or whoever
+// assigned the task (with Assign tasks), removes or renames one.
+async function mayChangeTypeItems(req, task) {
+  if (req.role === "admin") return true;
+  return task.assigned_by === req.user.sub && (await hasActiveGrant(req.orgId, req.user.sub, "assign_tasks"));
+}
+const TYPE_ITEM_LOCKED = "This step comes with the task's type (Settings › Tasks & time). Tick it when it's done; only an admin or whoever assigned the task can remove or rename it.";
 
 // Every review decision on this task — sent back (with its note) or
 // approved — newest first, so the team can see exactly what changed each
@@ -1910,11 +1943,15 @@ tasksRouter.get("/tasks/:id/subtasks", async (req, res, next) => {
   try {
     if (!(await ownsTask(req.params.id, req.orgId))) return res.status(404).json({ error: "Task not found" });
     if (!(await mayOpenTask(req, req.params.id))) return res.status(404).json({ error: "Task not found" });
+    const typed = await typeChecklistReady();
     const { rows } = await pool.query(
-      "select id, title, done, sort_order from subtask where task_id = $1 order by sort_order, created_at",
+      `select id, title, done, sort_order${typed ? ", from_type" : ""} from subtask where task_id = $1 order by sort_order, created_at`,
       [req.params.id],
     );
-    res.json({ subtasks: rows });
+    // may the viewer remove or rename the items from its type?
+    const t = rows.some((r) => r.from_type)
+      ? (await pool.query("select editor_id, assigned_by from task where id = $1", [req.params.id])).rows[0] : null;
+    res.json({ subtasks: rows, typeItemsEditable: t ? await mayChangeTypeItems(req, t) : true });
   } catch (err) {
     next(err);
   }
@@ -1928,9 +1965,11 @@ tasksRouter.post("/tasks/:id/subtasks", requireEditor, requireActiveEod, async (
     const parent = (await pool.query("select id, status, editor_id, assigned_by from task where id = $1 and org_id = $2", [req.params.id, req.orgId])).rows[0];
     const refusal = await checklistRefusal(req, parent);
     if (refusal) return res.status(refusal.status).json({ error: refusal.error });
+    // after everything on it; the type's steps sit below 0 (../type-checklist.js), so
+    // a step added by hand stays after them, even when the type's list changes
     const { rows } = await pool.query(
       `insert into subtask (task_id, title, sort_order)
-       values ($1, $2, (select coalesce(max(sort_order), 0) + 1 from subtask where task_id = $1))
+       values ($1, $2, (select greatest(coalesce(max(sort_order), 0), 0) + 1 from subtask where task_id = $1))
        returning id, title, done, sort_order`,
       [req.params.id, title],
     );
@@ -1952,10 +1991,14 @@ tasksRouter.patch("/subtasks/:id", requireEditor, requireActiveEod, async (req, 
     if (!parent) return res.status(404).json({ error: "Checklist item not found" });
     const refusal = await checklistRefusal(req, parent);
     if (refusal) return res.status(refusal.status).json({ error: refusal.error });
+    if (parent.from_type && typeof req.body?.title === "string" && !(await mayChangeTypeItems(req, parent))) {
+      return res.status(403).json({ error: TYPE_ITEM_LOCKED });
+    }
+    const typed = await typeChecklistReady();
     const { rows } = await pool.query(
       `update subtask set ${sets.join(", ")}
        where id = $1 and task_id in (select id from task where org_id = $2)
-       returning id, title, done, sort_order`,
+       returning id, title, done, sort_order${typed ? ", from_type" : ""}`,
       params,
     );
     if (!rows.length) return res.status(404).json({ error: "Checklist item not found" });
@@ -1971,6 +2014,7 @@ tasksRouter.delete("/subtasks/:id", requireEditor, requireActiveEod, async (req,
     if (!parent) return res.status(404).json({ error: "Checklist item not found" });
     const refusal = await checklistRefusal(req, parent);
     if (refusal) return res.status(refusal.status).json({ error: refusal.error });
+    if (parent.from_type && !(await mayChangeTypeItems(req, parent))) return res.status(403).json({ error: TYPE_ITEM_LOCKED });
     const { rowCount } = await pool.query(
       "delete from subtask where id = $1 and task_id in (select id from task where org_id = $2)",
       [req.params.id, req.orgId],

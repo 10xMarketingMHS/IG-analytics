@@ -21,10 +21,15 @@ type TypeRow = { id: string; name: string; icon: string | null; category: Cat };
 type Place = { id: string; name: string; leadName?: string };
 type Cell = { contentFormatId: string; channelId: string | null; adTeamId: string | null; jobs: number };
 type Done = { contentFormatId: string; channelId: string | null; adTeamId: string | null; n: number };
+// A schedule type's need (Settings › Tasks & time › Scheduling): what the Social
+// types counting as it need — brand by brand from their brand goals; one with no
+// brand goal counts what its editors are given (in the total only). Not typed in.
+type Derived = { need: number; byPlace: Record<string, number>; from: { id: string; name: string; n: number; given: boolean }[] };
 type Resp = {
   ready: boolean; error?: string; month: string; prevMonth?: string;
   types: TypeRow[]; brands: Place[]; teams: Place[];
   goals: Cell[]; done: Done[]; given: Record<string, number>;
+  derived?: Record<string, Derived>;
 };
 type Spot = { key: string; id: string; name: string; team: boolean; sub: string };
 
@@ -118,6 +123,14 @@ export function BrandGoals() {
   ];
   if (!spots.length) return <div className="gl-card gl-empty">No brands or Ads teams yet — add brands in Settings › Channels.</div>;
   const typesFor = (s: Spot) => data.types.filter((t) => (t.category === "ad") === s.team);
+  // the schedule types' needs follow their Social types (Reels schedule: what Reels needs)
+  const derived = data.derived ?? {};
+  const fromWords = (id: string) => {
+    const d = derived[id];
+    if (!d) return null;
+    if (!d.from.length) return "No type counts as it yet (Settings › Tasks & time › Scheduling)";
+    return `From ${d.from.map((f) => (f.given ? `${f.name} (${f.n} given, no brand goal)` : f.name)).join(" + ")}`;
+  };
   // how far along the month is: all of it for a month gone, none for one to come
   const now = new Date();
   const elapsed = month < thisMonth ? 1 : month > thisMonth ? 0
@@ -125,7 +138,8 @@ export function BrandGoals() {
   const calc = (s: Spot) => {
     const rows = typesFor(s).map((t) => {
       const k = keyOf(t.id, s.id);
-      return { t, k, jobs: Number(text(k) || 0), done: doneOf.get(k) ?? 0 };
+      const jobs = derived[t.id] ? derived[t.id].byPlace[s.id] ?? 0 : Number(text(k) || 0);
+      return { t, k, jobs, done: doneOf.get(k) ?? 0 };
     });
     const need = rows.reduce((n, r) => n + r.jobs, 0);
     const toward = rows.reduce((n, r) => n + Math.min(r.done, r.jobs), 0);
@@ -143,7 +157,7 @@ export function BrandGoals() {
   const totalOn = (selKey ?? "total") === "total";
   const totals = data.types.map((t) => {
     const places = spots.filter((x) => x.team === (t.category === "ad"));
-    const need = places.reduce((n, x) => n + Number(text(keyOf(t.id, x.id)) || 0), 0);
+    const need = derived[t.id] ? derived[t.id].need : places.reduce((n, x) => n + Number(text(keyOf(t.id, x.id)) || 0), 0);
     const done = places.reduce((n, x) => n + (doneOf.get(keyOf(t.id, x.id)) ?? 0), 0);
     return { t, need, done, given: data.given[t.id] ?? 0 };
   });
@@ -182,7 +196,8 @@ export function BrandGoals() {
   const c = calc(sel);
   const selDirty = dirtyKeys.filter((k) => k.endsWith(`:${sel.id}`));
   const others = (s: Spot) => spots.filter((x) => x.team === s.team);
-  const allNeed = (t: TypeRow, s: Spot) => others(s).reduce((n, x) => n + Number(text(keyOf(t.id, x.id)) || 0), 0);
+  const allNeed = (t: TypeRow, s: Spot) => (derived[t.id] ? derived[t.id].need
+    : others(s).reduce((n, x) => n + Number(text(keyOf(t.id, x.id)) || 0), 0));
 
   async function save() {
     if (totalOn || !selDirty.length || busy) return;
@@ -321,6 +336,7 @@ export function BrandGoals() {
                             <span className="gs-typecell">
                               <span className="gs-type"><b>{r.t.icon} {r.t.name}</b><small>{CAT[r.t.category]}</small></span>
                               {subs.length > 0 && foldBtn(r.t, subs.length, open, "")}
+                              {derived[r.t.id] && <small className="gb-from">{fromWords(r.t.id)}</small>}
                             </span>
                             <b className="c gb-done">{all.need || "—"}</b>
                             <b className="c gb-done">{all.given || "—"}</b>
@@ -337,6 +353,7 @@ export function BrandGoals() {
             <p className="gs-hint">
               Brands need adds up every brand's goal for the type (Ads: every Ads team's). Given is what the editors' goals in Set goals add up to.
               When they match, everything the brands need has someone on it. Done counts the type's tasks completed this month.
+              A schedule type (Reels schedule, Story schedule…) needs what the Social types that count as it need: set those in Settings › Tasks & time › Scheduling.
             </p>
           </section>
 
@@ -399,8 +416,10 @@ export function BrandGoals() {
                         <span className="gs-type"><b>{r.t.icon} {r.t.name}</b><small>{CAT[r.t.category]}</small></span>
                         {subs.length > 0 && foldBtn(r.t, subs.length, open, !heading && subJobs ? `${subJobs} job${subJobs === 1 ? "" : "s"}` : "")}
                         {hasOld && <small className="gs-need warn" title="It has sub-types now, so it's only a heading. Clear this goal and give the jobs to its sub-types.">Goal from before its sub-types · clear it and use them</small>}
+                        {derived[r.t.id] && <small className="gb-from">{fromWords(r.t.id)}</small>}
                       </span>
-                      {heading ? <b className="c gb-done" title="Added up from its sub-types">{subJobs || "—"}</b> : (
+                      {derived[r.t.id] ? <b className="c gb-done" title="Follows the Social types that count as it: change their brand goals">{r.jobs || "—"}</b>
+                        : heading ? <b className="c gb-done" title="Added up from its sub-types">{subJobs || "—"}</b> : (
                         <input type="number" min={0} step={1} placeholder="—" aria-label={`${r.t.name} jobs for ${sel.name}`}
                           value={text(r.k)} onChange={(e) => setJobs(r.k, e.target.value)} />
                       )}
@@ -419,7 +438,8 @@ export function BrandGoals() {
             <p className="gs-hint">
               Jobs is how many of each type {sel.name} needs in {monthName(month)}. Done counts that type's tasks completed for {sel.team ? "this Ads team" : "this brand"} this month.
               The last column adds up every {sel.team ? "team" : "brand"} and sets it against the team's goals: give out the rest in Set goals. Brand goals don't change anyone's score.
-              A type with sub-types is only a heading: open it and enter the jobs on its sub-types.
+              A type with sub-types is only a heading: open it and enter the jobs on its sub-types. A schedule type isn't typed in: it needs what
+              the Social types that count as it need here.
             </p>
           </section>
 
