@@ -1,5 +1,7 @@
 import { useEffect, useLayoutEffect, useMemo, useState } from "react";
+import { createPortal } from "react-dom";
 import { Loader } from "@/components/loader";
+import { PositionMark } from "@/components/position-mark";
 import { Link } from "react-router-dom";
 import { useEditors } from "@/lib/use-editors";
 import { useWorkspaces } from "@/lib/workspaces-context";
@@ -7,7 +9,7 @@ import { ManagementPerformanceBoard } from "@/pages/management-performance";
 import { useResource } from "@/lib/use-resource";
 import { useTasks } from "@/lib/use-tasks";
 import { rangeFor, inRange, compactNum } from "@/lib/date-range";
-import { ymd, taskPoints, isScorableTask } from "@/lib/task-points";
+import { ymd, countsInTaskScore } from "@/lib/task-points";
 import { Avatar, ringColorOf } from "@/lib/editor-visuals";
 import type { Post, Editor, Task } from "@/lib/types";
 
@@ -15,7 +17,19 @@ type Period = "month" | "all";
 type Tab = "social" | "house" | "path" | "mp";
 
 type Row = { editor: Editor; reels: number; carousels: number; views: number; points: number };
-type HouseRow = { editor: Editor; points: number; completed: number; goal: number };
+// One person on Media House Leaders (server/src/routes/leaderboard.js): the
+// month's points, jobs completed, goal points, and the share of the goal
+// reached, counted in jobs per type (null with no goal set).
+type GoalType = { contentFormatId: string; name: string; icon: string | null; goal: number; done: number; covered?: number; points: number; filled?: number };
+// The rank (server/src/hours-score.js): Hours filled (the hours their finished
+// work is worth, by the kind of work, against the working time so far, less
+// approved leave) × Quality (Points kept: their points against the same work's best).
+type Hours = { available: number; availableMonth: number; earned: number; own: number; team: number; company: number; covered: number; pct: number | null; workingDays: number; hoursPerDay: number; leaveDays: number; leaveSoFar: number };
+type HouseRow = { editor: Editor; points: number; completed: number; goal: number; goalPct: number | null; byType: GoalType[]; coveredJobs: number; leaveDays: number; otherHours: number; creditHours: number; carriedJobs: number; split: Split | null;
+  hours: Hours | null; keptPct: number | null; fullPoints: number; score: number | null; lateJobs: number; reworkJobs: number };
+type HouseApiRow = { editorId: string; points: number; completed: number; goalPoints: number; goalPct: number | null; byType: GoalType[]; coveredJobs?: number; leaveDays?: number; otherHours?: number; creditHours?: number; carriedJobs?: number; split?: Split | null;
+  hours?: Hours; keptPct?: number | null; fullPoints?: number; score?: number | null; lateJobs?: number; reworkJobs?: number };
+type SoFar = { workingDaysGone: number; workingDays: number };
 
 // Weighted engagement across an editor's reels & carousels.
 function pointsOf(p: Post) {
@@ -66,62 +80,34 @@ function usePrefersReducedMotion() {
   return reduce;
 }
 
-// Daily cumulative score + rank for one month. Fresh start: day 1 = 0 for every
-// editor (ties broken alphabetically). Task mode uses the points formula (see
-// taskPoints above) — timeliness-based, bounded to each task's own base value.
-//
+// Progress Path, from the server (server/src/routes/leaderboard.js /leaderboard/path):
+// the Media House board as each day of the month closed, by the same score (out
+// of 1000), so its last day is the board as it stands. Everyone who had work
+// that month, ranked among themselves.
+type PathApi = { month: string; days: string[]; people: { editorId: string; scores: number[]; ranks: number[] }[]; scoreMax?: number };
+
 // The x-axis always spans the FULL calendar month (`axisDays`, 28-31 days); the
 // drawn line/dots/avatars stop at `dataLen` — today for the in-progress month,
 // the whole month for a completed past month. Future days render as bare ticks.
-function buildSeries(mode: PathMode, month: string, editors: Editor[], posts: Post[], tasks: Task[]) {
+function seriesOf(month: string, data: PathApi | null) {
   const [y, mo] = month.split("-").map(Number);
   const daysInMonth = new Date(y, mo, 0).getDate();
-  const today = new Date();
-  const isCurrent = ymd(today).slice(0, 7) === month;
-  const dataLen = isCurrent ? Math.min(today.getDate(), daysInMonth) : daysInMonth;
   const axisDays = Array.from({ length: daysInMonth }, (_, i) => new Date(y, mo - 1, i + 1));
-  const dayKeys = axisDays.map(ymd);
-
-  // Point-scoring events within the month, each landing on a specific day.
-  const events: { e: string; day: string; pts: number }[] = [];
-  if (mode === "content") {
-    for (const p of posts) {
-      if (p.status !== "published" || !p.editor_id) continue;
-      if (p.date.slice(0, 7) !== month) continue;
-      events.push({ e: p.editor_id, day: p.date.slice(0, 10), pts: pointsOf(p) });
-    }
-  } else {
-    for (const t of tasks) {
-      if (!t.editor_id || !t.completed_at || !isScorableTask(t)) continue;
-      const comp = ymd(new Date(t.completed_at)); // local calendar day of completion
-      if (comp.slice(0, 7) !== month) continue;
-      events.push({ e: t.editor_id, day: comp, pts: taskPoints(t) });
-    }
-  }
-
-  // Cumulative score per editor at the close of each DRAWN day, then rank (1 = best).
+  const mine = data && data.month === month ? data : null;
   const ranks = new Map<string, number[]>();
-  let finalScore: Record<string, number> = {};
-  for (let i = 0; i < dataLen; i++) {
-    const D = dayKeys[i];
-    const m: Record<string, number> = {};
-    for (const e of editors) m[e.id] = 0;
-    for (const ev of events) if (ev.day <= D && m[ev.e] !== undefined) m[ev.e] += ev.pts;
-    [...editors].sort((a, b) => (m[b.id] - m[a.id]) || a.name.localeCompare(b.name)).forEach((e, idx) => {
-      const arr = ranks.get(e.id) ?? [];
-      arr[i] = idx + 1;
-      ranks.set(e.id, arr);
-    });
-    if (i === dataLen - 1) finalScore = m;
+  const finalScore: Record<string, number> = {};
+  for (const p of mine?.people ?? []) {
+    ranks.set(p.editorId, p.ranks);
+    finalScore[p.editorId] = p.scores[p.scores.length - 1] ?? 0;
   }
-  return { axisDays, dataLen, ranks, finalScore };
+  return { axisDays, dataLen: mine?.days.length ?? 0, ranks, finalScore };
 }
 
 const EASE_DUR = 1000; // ms — fixed replay length, independent of the month's day count
 
-function ProgressPath({ mode, month, editors, posts, tasks }: { mode: PathMode; month: string; editors: Editor[]; posts: Post[]; tasks: Task[] }) {
+function ProgressPath({ month, editors, data, scoreMax }: { month: string; editors: Editor[]; data: PathApi | null; scoreMax: number }) {
   const N = editors.length;
-  const series = useMemo(() => buildSeries(mode, month, editors, posts, tasks), [mode, month, editors, posts, tasks]);
+  const series = useMemo(() => seriesOf(month, data), [month, data]);
   const { axisDays, dataLen, ranks, finalScore } = series;
   const axisLen = axisDays.length;
 
@@ -150,7 +136,7 @@ function ProgressPath({ mode, month, editors, posts, tasks }: { mode: PathMode; 
     };
     raf = requestAnimationFrame(tick);
     return () => cancelAnimationFrame(raf);
-  }, [mode, month, dataLen, N, reduceMotion]);
+  }, [month, dataLen, N, reduceMotion]);
 
   const rowH = 40, padTop = 30, padBot = 36, padLeft = 44, padRight = 190, W = 760;
   const H = padTop + N * rowH + padBot;
@@ -177,7 +163,7 @@ function ProgressPath({ mode, month, editors, posts, tasks }: { mode: PathMode; 
 
   return (
     <div className="pp-wrap">
-      <svg viewBox={`0 0 ${W} ${H}`} className="pp-svg" role="img" aria-label={`Editor ${mode === "task" ? "task-completion" : "content"} progress for ${labelMonth(month)}`}>
+      <svg viewBox={`0 0 ${W} ${H}`} className="pp-svg" role="img" aria-label={`Each person's Media House rank by day, ${labelMonth(month)}`}>
         {Array.from({ length: N }, (_, r) => (
           <g key={r}>
             <line x1={plotLeft} y1={yFor(r + 1)} x2={plotRight} y2={yFor(r + 1)} className="pp-grid" />
@@ -221,8 +207,8 @@ function ProgressPath({ mode, month, editors, posts, tasks }: { mode: PathMode; 
                 <text x={cx} y={cy + 4} textAnchor="middle" fontSize="12" fontWeight="800" fill={color}>{e.name.charAt(0).toUpperCase()}</text>
               )}
               <text x={cx + 22} y={cy - 1} className="pp-name">{e.name}</text>
-              <text x={cx + 22} y={cy + 12} className="pp-pts">{(finalScore[e.id] || 0).toLocaleString()} pts · #{fr}</text>
-              <title>{`${e.name} — rank #${fr}, ${(finalScore[e.id] || 0).toLocaleString()} pts`}</title>
+              <text x={cx + 22} y={cy + 12} className="pp-pts">#{fr} · score {finalScore[e.id] || 0}</text>
+              <title>{`${e.name}: rank #${fr}, score ${finalScore[e.id] || 0} of ${scoreMax}`}</title>
             </g>
           );
         })}
@@ -257,19 +243,106 @@ function Laurel({ rank, variant }: { rank: number; variant: "gold" | "silver" | 
   );
 }
 
-// Media House Leaders Goal column: the month's Goal Points target (Σ jc × the
-// content type's points, from Goal Setting) plus a completion bar (Points ÷
-// Goal, capped at 100%). No goal set → a dash.
-function GoalCell({ points, goal }: { points: number; goal: number }) {
-  if (goal <= 0) return <span className="lb-goal-none">—</span>;
-  const pct = Math.max(0, Math.min(100, (points / goal) * 100));
+// Media House Leaders' Hours filled column (server/src/hours-score.js): the
+// hours their finished work is worth out of the working time so far, coloured
+// by the target band (under 70% red, 70–85% amber, 85–95% green, the target,
+// over 95% gold), with a bar of the kinds of work it is, as Goals colours them:
+// own goal green, team goal blue, company task purple, covered amber. The bar's
+// end is the working time so far; its faint band marks 85–95%. Hovering (or
+// focusing) opens a card with each part, Quality, and the goal by type.
+type Split = { own: number; team: number; co: number; covered: number };
+const bandOf = (pct: number) => (pct < 70 ? "low" : pct < 85 ? "near" : pct <= 95 ? "target" : "over");
+const BAND_WORD: Record<ReturnType<typeof bandOf>, string> = { low: "Under 70%", near: "70–85%: nearly there", target: "85–95%: on target", over: "Above 95%" };
+const fmtH = (n: number) => `${Number.isInteger(n) ? n : n.toFixed(1)}h`;
+// what the On time % means for one person, in words
+const onTimeWords = (r: HouseRow) => r.keptPct == null ? "Nothing finished yet"
+  : r.lateJobs === 0 && r.reworkJobs === 0 ? "Everything finished on time, none sent back more than 3 times"
+  : [r.lateJobs > 0 ? `${r.lateJobs} finished late` : "", r.reworkJobs > 0 ? `${r.reworkJobs} sent back more than 3 times` : ""].filter(Boolean).join(", ") + ": those lose points";
+
+function HoursCell({ r, soFar, cap, scoreMax }: { r: HouseRow; soFar: SoFar | null; cap: number; scoreMax: number }) {
+  const [card, setCard] = useState<DOMRect | null>(null);
+  const h = r.hours;
+  if (!h || h.pct == null) return <span className="lb-goal-none">No working time yet</span>;
+  const show = (e: React.SyntheticEvent<HTMLElement>) => setCard(e.currentTarget.getBoundingClientRect());
+  const hide = () => setCard(null);
+  const band = bandOf(h.pct);
+  // the bar's parts, as shares of the working time so far; past it, as shares
+  // of all they did (the bar full), so each kind of work still shows
+  const over = h.earned > h.available;
+  const base = Math.max(h.available, h.earned);
+  const parts: [string, number][] = [];
+  let room = 100;
+  for (const [k, v] of [["own", h.own], ["team", h.team], ["co", h.company], ["covered", h.covered]] as const) {
+    const w = base > 0 ? Math.max(0, Math.min(room, (v / base) * 100)) : 0;
+    if (w > 0) parts.push([k, w]);
+    room -= w;
+  }
   return (
-    <div className="lb-goal">
+    <div className="lb-goal lb-hours" tabIndex={0} onMouseEnter={show} onMouseLeave={hide} onFocus={show} onBlur={hide}
+      aria-label={`${Math.round(h.pct)}% of the working time so far filled: ${fmtH(h.earned)} of ${fmtH(h.available)}`}>
+      {/* the % (in its band's colour) and the hours, then the bar of the kinds of
+          work; each kind's hours are in the hover card */}
       <div className="lb-goal-top">
-        <span className="lb-goal-num">{Math.round(goal).toLocaleString()}</span>
-        <span className="lb-goal-pct">{Math.round(pct)}%</span>
+        <span className={"lb-hpct " + band} title={BAND_WORD[band]}>{Math.round(h.pct)}%</span>
+        <span className="lb-hrs">{Math.round(h.earned)}h of {Math.round(h.available)}h{h.leaveDays > 0 ? ` · ${h.leaveDays}d leave` : ""}</span>
       </div>
-      <div className="lb-goal-bar"><div className="lb-goal-fill" style={{ width: `${pct}%` }} /></div>
+      <div className={"lb-goal-bar lb-hbar" + (over ? " full" : "")}>
+        {parts.map(([k, w]) => <span key={k} className={"lb-goal-seg " + k} style={{ width: `${w}%` }} />)}
+      </div>
+      {card && createPortal(<HoursCard at={card} r={r} h={h} soFar={soFar} cap={cap} scoreMax={scoreMax} />, document.body)}
+    </div>
+  );
+}
+
+// The Hours filled column's hover card: the working time, each kind of work,
+// Quality, the score, then the goal by type. It sits under the cell, or
+// over it when there's no room below, and inside the window.
+function HoursCard({ at, r, h, soFar, cap, scoreMax }: { at: DOMRect; r: HouseRow; h: Hours; soFar: SoFar | null; cap: number; scoreMax: number }) {
+  const W = 310;
+  const left = Math.max(12, Math.min(at.right - W, window.innerWidth - W - 12));
+  const below = at.bottom + 360 < window.innerHeight;
+  const style: React.CSSProperties = below ? { left, top: at.bottom + 8 } : { left, bottom: window.innerHeight - at.top + 8 };
+  const pct = h.pct ?? 0;
+  const s = (n: number, one: string, many = `${one}s`) => `${n} ${n === 1 ? one : many}`;
+  const daysGone = soFar ? Math.round((h.workingDays * soFar.workingDaysGone / Math.max(1, soFar.workingDays)) * 10) / 10 : null;
+  return (
+    <div className="lb-gcard" role="tooltip" style={style}>
+      <div className="lb-gcard-hd"><b>{Math.round(pct)}%</b><span>of the working time so far filled · {BAND_WORD[bandOf(pct)]}</span></div>
+      <div className="lb-gcard-notes" style={{ paddingTop: 8 }}>
+        <span>
+          Working time so far: <b>{fmtH(h.available)}</b>
+          {daysGone != null && <> ({daysGone} of {h.workingDays} working days × {fmtH(h.hoursPerDay)}{h.leaveSoFar > 0 ? `, less ${s(h.leaveSoFar, "day")} of leave` : ""})</>}.
+          {" "}The whole month: {fmtH(h.availableMonth)}.
+        </span>
+      </div>
+      <div className="lb-gcard-parts">
+        <div><i className="lb-dot own" /><span>Own goal</span><b>{fmtH(h.own)}</b></div>
+        <div><i className="lb-dot team" /><span>Team goal</span><b>{fmtH(h.team)}</b></div>
+        <div><i className="lb-dot co" /><span>Company task</span><b>{fmtH(h.company)}</b></div>
+        {h.covered > 0 && <div><i className="lb-dot covered" /><span>Covered for others · {s(r.coveredJobs, "job")}</span><b>{fmtH(h.covered)}</b></div>}
+        <div><span><b>Hours filled</b></span><b>{fmtH(h.earned)}</b></div>
+      </div>
+      <div className="lb-gcard-parts">
+        <div><span>On time · kept {r.points.toFixed(1)} of {r.fullPoints.toFixed(1)} points</span><b>{r.keptPct == null ? "—" : `${Math.round(r.keptPct)}%`}</b></div>
+        <div><span className="lb-faint">{onTimeWords(r)}</span></div>
+        <div><span>Score · {Math.round(Math.min(pct, cap))}%{pct > cap ? ` (up to ${cap}% counts)` : ""} × {r.keptPct == null ? "—" : `${Math.round(r.keptPct)}%`}</span><b>{r.score == null ? "—" : `${r.score} of ${scoreMax}`}</b></div>
+      </div>
+      {r.byType.length > 0 && (
+        <div className="lb-gcard-types">
+          {r.byType.map((g) => (
+            <div key={g.contentFormatId} className="lb-gcard-row">
+              <span>{g.name}</span>
+              <span><b>{g.done}</b> of {g.goal}{(g.covered ?? 0) > 0 && <em> · {g.covered} covered</em>}</span>
+            </div>
+          ))}
+          {r.goalPct != null && <div className="lb-gcard-row"><span>Goal reached</span><span><b>{Math.round(r.goalPct)}%</b> of {Math.round(r.goal)} pts</span></div>}
+        </div>
+      )}
+      {r.carriedJobs > 0 && (
+        <div className="lb-gcard-notes">
+          <span>{s(r.carriedJobs, "job")} carried to next month, as the team didn't need {r.carriedJobs === 1 ? "it" : "them"}.</span>
+        </div>
+      )}
     </div>
   );
 }
@@ -282,15 +355,10 @@ export function LeaderboardPage() {
   // Editor rankings & the progress path are performance — exclude collab mirrors.
   const posts = postData?.posts?.filter((p) => !p.is_collab_mirror) ?? null;
   const { tasks } = useTasks();
-  // Per-editor Goal Points (Σ jc × points) for the current month — powers the
-  // Goal column + completion on Media House Leaders. Readable by any member.
-  const goalMonth = ymd(new Date()).slice(0, 7) + "-01";
-  const { data: goalData } = useResource<{ totals: { editorId: string; goalPoints: number }[] }>(`/goals/totals?month=${goalMonth}`);
-  const goalByEditor = useMemo(() => {
-    const m = new Map<string, number>();
-    for (const g of goalData?.totals ?? []) m.set(g.editorId, g.goalPoints);
-    return m;
-  }, [goalData]);
+  // Media House Leaders, worked out on the server for everyone alike
+  // (server/src/routes/leaderboard.js): points, jobs and % of goal.
+  const { data: houseData } = useResource<{ month: string; rows: HouseApiRow[]; soFar?: SoFar; hoursCap?: number; scoreMax?: number }>("/leaderboard/house");
+  const scoreMax = houseData?.scoreMax ?? 1000;
   const [tab, setTab] = useState<Tab>("social");
   const [period, setPeriod] = useState<Period>("month");
   // Progress Path: content-points vs task-completion mode + selected month.
@@ -306,7 +374,9 @@ export function LeaderboardPage() {
     const scoped = posts.filter(
       (p) => p.status === "published" && inRange(p.date, bounds.from, bounds.to),
     );
+    // People a Super Admin made exempt (Team › Roster) aren't on the leaderboard.
     return editors
+      .filter((e) => e.active !== false && countsInTaskScore(e))
       .map((editor) => {
         const own = scoped.filter((p) => p.editor_id === editor.id);
         return {
@@ -323,28 +393,24 @@ export function LeaderboardPage() {
   const socialRanked = socialRows.filter((r) => r.reels + r.carousels > 0);
   const socialUnranked = socialRows.filter((r) => r.reels + r.carousels === 0);
 
-  // ---- Media House Leaders — Points Formula (locked spec) ----
-  // Ranked monthly, current calendar month only: no carryover, no persisted
-  // running balance — a plain sum of this month's completed tasks' points,
-  // recomputed fresh every render (so an admin correcting a task after the
-  // fact just updates the total, no manual reversal needed).
+  // ---- Media House Leaders ----
+  // This calendar month only, ranked by the share of each person's own goal
+  // reached (jobs per type, each up to its goal), then points, then jobs; people
+  // with no goal set come after, by points. The server orders them. People a
+  // Super Admin switched out of the task score aren't on it.
   const houseRows = useMemo<HouseRow[]>(() => {
-    if (!editors || !tasks) return [];
-    const thisMonth = ymd(new Date()).slice(0, 7);
-    return editors
-      .map((editor) => {
-        const own = tasks.filter(
-          (t) => t.editor_id === editor.id && t.completed_at && isScorableTask(t) && ymd(new Date(t.completed_at)).slice(0, 7) === thisMonth,
-        );
-        const points = own.reduce((sum, t) => sum + taskPoints(t), 0);
-        return { editor, points, completed: own.length, goal: goalByEditor.get(editor.id) ?? 0 };
-      })
-      // Rank by points, then by volume completed (fair tiebreak).
-      .sort((a, b) => b.points - a.points || b.completed - a.completed);
-  }, [editors, tasks, goalByEditor]);
+    if (!editors || !houseData) return [];
+    const byId = new Map(editors.map((e) => [e.id, e]));
+    return houseData.rows.flatMap((r) => {
+      const editor = byId.get(r.editorId);
+      return editor ? [{ editor, points: r.points, completed: r.completed, goal: r.goalPoints, goalPct: r.goalPct, byType: r.byType, coveredJobs: r.coveredJobs ?? 0, leaveDays: r.leaveDays ?? 0, otherHours: r.otherHours ?? 0, creditHours: r.creditHours ?? 0, carriedJobs: r.carriedJobs ?? 0, split: r.split ?? null,
+        hours: r.hours ?? null, keptPct: r.keptPct ?? null, fullPoints: r.fullPoints ?? 0, score: r.score ?? null, lateJobs: r.lateJobs ?? 0, reworkJobs: r.reworkJobs ?? 0 }] : [];
+    });
+  }, [editors, houseData]);
 
   const houseRanked = houseRows.filter((r) => r.completed > 0);
   const houseUnranked = houseRows.filter((r) => r.completed === 0);
+  const notScored = (editors ?? []).filter((e) => e.active && !countsInTaskScore(e));
   // Team-wide Goal total (pts) — sum across everyone with a goal this month.
   const houseTeamGoal = houseRows.reduce((s, r) => s + r.goal, 0);
 
@@ -359,24 +425,19 @@ export function LeaderboardPage() {
   const effectiveMonth = pathMonths.includes(pathMonth) ? pathMonth : (pathMonths[pathMonths.length - 1] ?? "");
   const monthFellBack = pathMonth !== "" && pathMonths.length > 0 && !pathMonths.includes(pathMonth);
 
-  // Task mode only: editors with zero tasks assigned in the selected month are
-  // dropped from the ranked lines entirely (a task counts if its due date OR its
-  // completion falls in the month — the same rule that lists the month). Editors
-  // WITH tasks but zero completed stay (flat at 0 = genuinely behind). Content
-  // mode is untouched: every editor is shown, nobody excluded.
+  // The path, worked out on the server by the board's own score, the same for
+  // whoever looks. Who's on it: everyone with work that month (due or finished
+  // in it), even with nothing finished yet (flat at the bottom); the rest are
+  // listed under it. People out of the task score never get a line.
+  const { data: pathData } = useResource<PathApi>(`/leaderboard/path?month=${effectiveMonth}`);
+  const pathReady = !!pathData && pathData.month === effectiveMonth;
   const pathShown = useMemo(() => {
-    if (!editors) return { shown: [] as Editor[], excluded: [] as Editor[] };
-    if (pathMode !== "task" || !effectiveMonth) return { shown: editors, excluded: [] as Editor[] };
-    const assignedInMonth = (e: Editor) =>
-      (tasks ?? []).some(
-        (t) =>
-          t.editor_id === e.id &&
-          (((t.due_date && t.due_date.slice(0, 7) === effectiveMonth)) ||
-            (t.completed_at && ymd(new Date(t.completed_at)).slice(0, 7) === effectiveMonth)),
-      );
-    const shown = editors.filter(assignedInMonth);
-    return { shown, excluded: editors.filter((e) => !shown.includes(e)) };
-  }, [editors, tasks, pathMode, effectiveMonth]);
+    if (!editors || !pathReady) return { shown: [] as Editor[], excluded: [] as Editor[] };
+    const on = new Set(pathData!.people.map((p) => p.editorId));
+    const scored = editors.filter((e) => e.active !== false && countsInTaskScore(e));
+    const shown = scored.filter((e) => on.has(e.id));
+    return { shown, excluded: scored.filter((e) => !on.has(e.id)) };
+  }, [editors, pathData, pathReady]);
 
   const loading = editors === null || posts === null;
 
@@ -387,7 +448,7 @@ export function LeaderboardPage() {
         <div className="htext">
           <p>
             Two ways to lead: <b>Social Media Leaders</b> climb on the performance of the Reels &amp;
-            Carousels they edit, <b>Media House Leaders</b> climb on points earned finishing tasks on time.
+            Carousels they edit, <b>Media House Leaders</b> climb on how much of their working time they fill with finished work, and how much of it is on time.
           </p>
         </div>
       </div>
@@ -443,7 +504,7 @@ export function LeaderboardPage() {
                     </div>
                     <div className="lb-player">
                       <Avatar editor={r.editor} />
-                      <div className="who"><b>{r.editor.name}</b><small>{r.editor.designation || "Editor"}</small></div>
+                      <div className="who"><b>{r.editor.name}<PositionMark designation={r.editor.designation} /></b><small>{r.editor.designation || "Editor"}</small></div>
                     </div>
                     <div className="lb-cell lb-hidesm"><div className="lb-rc"><span>🎬 <b>{r.reels}</b></span><span>🖼️ <b>{r.carousels}</b></span></div></div>
                     <div className="lb-cell num lb-hidesm">{r.views.toLocaleString()}</div>
@@ -455,7 +516,7 @@ export function LeaderboardPage() {
                     <div className="lb-rankcell"><span className="lb-rnum">—</span></div>
                     <div className="lb-player">
                       <Avatar editor={r.editor} />
-                      <div className="who"><b>{r.editor.name}</b><small>{r.editor.designation || "Editor"}</small></div>
+                      <div className="who"><b>{r.editor.name}<PositionMark designation={r.editor.designation} /></b><small>{r.editor.designation || "Editor"}</small></div>
                     </div>
                     <div className="lb-cell lb-hidesm" style={{ gridColumn: "3 / span 3" }}>
                       No published posts {period === "month" ? "this month" : "yet"}
@@ -467,6 +528,11 @@ export function LeaderboardPage() {
             {socialRanked.length === 0 && (
               <div className="hint" style={{ marginTop: 14 }}>
                 No editor has published posts {period === "month" ? "this month" : "yet"}.
+              </div>
+            )}
+            {notScored.length > 0 && (
+              <div className="hint" style={{ marginTop: 10 }}>
+                Not on the leaderboard (exempt): {notScored.map((e) => e.name).join(", ")}. A Super Admin can change this on Team › Roster.
               </div>
             )}
           </div>
@@ -484,7 +550,7 @@ export function LeaderboardPage() {
             </div>
           </div>
           <div className="hint" style={{ margin: "0 0 4px" }}>
-            On time earns full points, 1 day late half, 2 days late none, 3+ days late costs the task's full points back. Days waiting for a reviewer don't count as late. Resets each month.
+            <span>Each day's place on Media House Leaders, by the same score out of {scoreMax} (Hours filled × On time) as that day closed. The last day is the board as it stands now. Resets each month.</span>
           </div>
           {monthFellBack && (
             <div className="pp-note">
@@ -495,16 +561,23 @@ export function LeaderboardPage() {
             <div className="hint" style={{ marginTop: 12 }}>
               No assigned tasks with due dates yet — the path fills in as work gets scheduled and completed.
             </div>
+          ) : !pathReady ? (
+            <Loader label="Loading the path…" />
           ) : pathShown.shown.length === 0 ? (
             <div className="hint" style={{ marginTop: 12 }}>
               No tasks assigned to anyone in {labelMonth(effectiveMonth)}.
             </div>
           ) : (
             <>
-              <ProgressPath mode={pathMode} month={effectiveMonth} editors={pathShown.shown} posts={posts} tasks={tasks ?? []} />
+              <ProgressPath month={effectiveMonth} editors={pathShown.shown} data={pathData ?? null} scoreMax={scoreMax} />
               {pathShown.excluded.length > 0 && (
                 <div className="hint" style={{ marginTop: 10 }}>
                   Not shown: {pathShown.excluded.map((e) => e.name).join(", ")} — no tasks assigned in {labelMonth(effectiveMonth)}.
+                </div>
+              )}
+              {pathMode === "task" && notScored.length > 0 && (
+                <div className="hint" style={{ marginTop: 6 }}>
+                  Exempt from task scoring: {notScored.map((e) => e.name).join(", ")}.
                 </div>
               )}
             </>
@@ -517,16 +590,32 @@ export function LeaderboardPage() {
           <div className="lb-main">
             <div className="lb-statbar">
               <h3>Work performance</h3>
-              <div className="hint" style={{ margin: 0 }}>Ranked by points earned this month — resets on the 1st</div>
+              <div className="lb-statbar-txt">
+                <p className="lb-sub">How much of their working time they filled with finished work, and how well. Resets on the 1st.</p>
+                <div className="lb-hlegend" aria-label="Kinds of work">
+                  <span><i className="lb-dot own" />Own goal</span><span><i className="lb-dot team" />Team goal</span>
+                  <span><i className="lb-dot co" />Company task</span><span><i className="lb-dot covered" />Covered</span>
+                  <details className="lb-how">
+                    <summary>How it's scored</summary>
+                    <div className="lb-how-body">
+                      <p><b>Hours filled</b>: each finished job is worth its type's time (a company task, the time it took). Added up, out of the same working time for everyone so far this month, less approved leave. Aim for 85–95%.</p>
+                      <p><b>On time</b>: how much of their work was on time and right first time, by its points. A job 1 day late keeps half its points, 2 days late none; one sent back more than 3 times keeps less. 100% = all on time.</p>
+                      <p><b>Score</b> (out of {scoreMax}) = Hours filled, up to 100% × On time × {scoreMax}. Ties go to points.</p>
+                    </div>
+                  </details>
+                </div>
+              </div>
             </div>
 
             <div className="lb-table-wrap">
+              {/* each heading shares its column's class (index.css .lb-c-*), so they line up */}
               <div className="lb-head lb-head-house">
-                <div>Position</div>
-                <div>Team member</div>
-                <div className="lb-hidesm" style={{ textAlign: "right", paddingRight: 24 }}>Completed</div>
-                <div className="lb-hidesm">Goal · progress</div>
-                <div style={{ textAlign: "right", paddingRight: 22 }}>Points</div>
+                <div className="lb-c-pos">Position</div>
+                <div className="lb-c-who">Team member</div>
+                <div className="lb-c-num lb-hidesm lb-hidemd">Completed</div>
+                <div className="lb-c-hours lb-hidesm">Hours filled</div>
+                <div className="lb-c-num lb-hidesm lb-hidemd2" title="How much of their work was on time and right first time">On time</div>
+                <div className="lb-c-score" title={`Out of ${scoreMax}`}>Score <span className="lb-of">/{scoreMax}</span></div>
               </div>
               <div className="lb-list">
                 {houseRanked.map((r, i) => (
@@ -536,11 +625,15 @@ export function LeaderboardPage() {
                     </div>
                     <div className="lb-player">
                       <Avatar editor={r.editor} />
-                      <div className="who"><b>{r.editor.name}</b><small>{r.editor.designation || "Editor"}</small></div>
+                      <div className="who"><b>{r.editor.name}<PositionMark designation={r.editor.designation} /></b><small>{r.editor.designation || "Editor"}</small></div>
                     </div>
-                    <div className="lb-cell num lb-hidesm">{r.completed}</div>
-                    <div className="lb-cell lb-hidesm"><GoalCell points={r.points} goal={r.goal} /></div>
-                    <div className="lb-points">{r.points.toFixed(1)}</div>
+                    <div className="lb-cell lb-c-num lb-hidesm lb-hidemd">{r.completed}</div>
+                    <div className="lb-cell lb-c-hours lb-hidesm"><HoursCell r={r} soFar={houseData?.soFar ?? null} cap={houseData?.hoursCap ?? 100} scoreMax={scoreMax} /></div>
+                    <div className="lb-cell lb-c-num lb-hidesm lb-hidemd2" title={onTimeWords(r)}>
+                      {r.keptPct == null ? "—" : `${Math.round(r.keptPct)}%`}
+                      {(r.lateJobs > 0 || r.reworkJobs > 0) && <small className="lb-ontime-why">{[r.lateJobs > 0 ? `${r.lateJobs} late` : "", r.reworkJobs > 0 ? `${r.reworkJobs} redone` : ""].filter(Boolean).join(" · ")}</small>}
+                    </div>
+                    <div className="lb-points lb-c-score" aria-label={r.score == null ? "No score yet" : `Score ${r.score} out of ${scoreMax}`}>{r.score == null ? "—" : r.score}</div>
                   </div>
                 ))}
                 {houseUnranked.map((r) => (
@@ -548,13 +641,18 @@ export function LeaderboardPage() {
                     <div className="lb-rankcell"><span className="lb-rnum">—</span></div>
                     <div className="lb-player">
                       <Avatar editor={r.editor} />
-                      <div className="who"><b>{r.editor.name}</b><small>{r.editor.designation || "Editor"}</small></div>
+                      <div className="who"><b>{r.editor.name}<PositionMark designation={r.editor.designation} /></b><small>{r.editor.designation || "Editor"}</small></div>
                     </div>
-                    <div className="lb-cell lb-hidesm" style={{ gridColumn: "3 / span 3" }}>No tasks completed this month</div>
+                    <div className="lb-cell lb-hidesm" style={{ gridColumn: "3 / span 4" }}>No tasks completed this month</div>
                   </div>
                 ))}
               </div>
             </div>
+            {notScored.length > 0 && (
+              <div className="hint" style={{ marginTop: 10 }}>
+                Exempt from task scoring: {notScored.map((e) => e.name).join(", ")}. A Super Admin can change this on Team › Roster.
+              </div>
+            )}
             {houseTeamGoal > 0 && (
               <div className="lb-teamgoal">Team Goal · <b>{Math.round(houseTeamGoal).toLocaleString()}</b> pts this month</div>
             )}
@@ -565,7 +663,7 @@ export function LeaderboardPage() {
               </div>
             )}
           </div>
-          <FeaturedHouse champion={houseRanked[0]} />
+          <FeaturedHouse champion={houseRanked[0]} scoreMax={scoreMax} />
         </div>
       )}
     </section>
@@ -609,7 +707,7 @@ function FeaturedSocial({ champion, period }: { champion?: Row; period: Period }
       <Rings />
       <div className="fx-cap">🏆 Top Editor · {period === "month" ? "This month" : "All time"}</div>
       <FeaturedFrame editor={editor} medal="🥇" />
-      <div className="fx-name">{editor.name}</div>
+      <div className="fx-name">{editor.name}<PositionMark designation={editor.designation} /></div>
       <div className="fx-role">{editor.designation || "Editor"}</div>
       <div className="fx-stats">
         <div className="fx-stat"><b>{champion.points.toLocaleString()}</b><span>Points</span></div>
@@ -620,7 +718,7 @@ function FeaturedSocial({ champion, period }: { champion?: Row; period: Period }
   );
 }
 
-function FeaturedHouse({ champion }: { champion?: HouseRow }) {
+function FeaturedHouse({ champion, scoreMax }: { champion?: HouseRow; scoreMax: number }) {
   if (!champion) {
     return <aside className="lb-featured empty">No #1 yet — assign tasks to your team.</aside>;
   }
@@ -630,10 +728,11 @@ function FeaturedHouse({ champion }: { champion?: HouseRow }) {
       <Rings />
       <div className="fx-cap">🏆 Top Performer · Work</div>
       <FeaturedFrame editor={editor} medal="🥇" />
-      <div className="fx-name">{editor.name}</div>
+      <div className="fx-name">{editor.name}<PositionMark designation={editor.designation} /></div>
       <div className="fx-role">{editor.designation || "Editor"}</div>
       <div className="fx-stats">
-        <div className="fx-stat"><b>{champion.points.toFixed(1)}</b><span>Points</span></div>
+        {champion.score != null && <div className="fx-stat" title={`Out of ${scoreMax}`}><b>{champion.score}</b><span>Score</span></div>}
+        {champion.hours?.pct != null && <div className="fx-stat"><b>{Math.round(champion.hours.pct)}%</b><span>Hours filled</span></div>}
         <div className="fx-stat"><b>{champion.completed}</b><span>Completed</span></div>
       </div>
     </aside>

@@ -1,4 +1,5 @@
 import type { SodPlan, SodTask } from "@/lib/use-eod";
+import { clockTime } from "@/lib/time-format";
 
 // The three parts of a Start of Day, in reading order.
 export const SOD_GROUPS: SodTask["group"][] = ["added", "today", "later"];
@@ -12,7 +13,7 @@ export const SOD_GROUP_LABEL: Record<SodTask["group"], string> = {
 export const plannedTasks = (plan: SodPlan) => plan.tasks.filter((t) => t.group !== "skipped");
 
 function fmtTime(iso: string): string {
-  return new Date(iso).toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" });
+  return clockTime(iso);
 }
 function fmtDay(date: string): string {
   return new Date(date + "T00:00:00").toLocaleDateString(undefined, { weekday: "long", day: "numeric", month: "long", year: "numeric" });

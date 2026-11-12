@@ -1,6 +1,7 @@
 import bcrypt from "bcryptjs";
 import { pool } from "./db.js";
 import { config } from "./config.js";
+import { hasColumn } from "./schema-flags.js";
 
 const DEFAULT_PILLARS = [
   "Diabetes", "Obesity", "Kids", "Nutrition Myths", "Longevity",
@@ -20,7 +21,9 @@ const DEFAULT_SCORING_WEIGHTS = {
 // new channel is immediately usable and consistent with the rest; otherwise it
 // seeds the built-in defaults. Runs inside the caller's transaction.
 export async function createWorkspace(client, name, ownerId, opts = {}) {
-  const { orgId = null, sourceWorkspaceId = null } = opts;
+  // ownerRole: the maker's role in it — admin, unless they make channels through
+  // the Channels grant (an admin of any channel is an admin of the whole org).
+  const { orgId = null, sourceWorkspaceId = null, ownerRole = "admin" } = opts;
   const { rows } = await client.query(
     "insert into workspace (name, org_id) values ($1, $2) returning id, name, logo_url, brand_colors",
     [name, orgId],
@@ -29,9 +32,9 @@ export async function createWorkspace(client, name, ownerId, opts = {}) {
 
   await client.query(
     `insert into membership (workspace_id, user_id, role)
-     values ($1, $2, 'admin')
+     values ($1, $2, $3)
      on conflict (workspace_id, user_id) do nothing`,
-    [workspace.id, ownerId],
+    [workspace.id, ownerId, ownerRole === "admin" ? "admin" : "editor"],
   );
 
   for (const [postType, weights] of Object.entries(DEFAULT_SCORING_WEIGHTS)) {
@@ -124,7 +127,13 @@ export async function ensureBootstrapped() {
   try {
     await client.query("BEGIN");
 
-    const hash = await bcrypt.hash(config.ADMIN_PASSWORD, 10);
+    // Written only when ADMIN_PASSWORD differs from the saved one. A fresh hash
+    // on every start ended this login's sessions each time the server
+    // restarted (a session carries a fingerprint of the hash it signed in
+    // with, auth.js), so every deploy signed the Super Admin out.
+    const { rows: saved } = await client.query("select password_hash from app_user where id = $1", [config.ADMIN_USER_ID]);
+    const same = !!saved[0]?.password_hash && (await bcrypt.compare(config.ADMIN_PASSWORD, saved[0].password_hash).catch(() => false));
+    const hash = same ? saved[0].password_hash : await bcrypt.hash(config.ADMIN_PASSWORD, 10);
     await client.query(
       `insert into app_user (id, email, name, password_hash, active)
        values ($1, $2, 'Admin', $3, true)
@@ -134,6 +143,10 @@ export async function ensureBootstrapped() {
              active = true`,
       [config.ADMIN_USER_ID, config.ADMIN_EMAIL, hash],
     );
+    // ...and always a Super Admin (once the database has that column).
+    if (await hasColumn("app_user", "is_super_admin")) {
+      await client.query("update app_user set is_super_admin = true where id = $1", [config.ADMIN_USER_ID]);
+    }
 
     const { rows } = await client.query(
       "select id from workspace order by created_at asc limit 1",

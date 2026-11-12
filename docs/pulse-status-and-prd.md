@@ -1,6 +1,6 @@
-# Pulse — Status & Product Requirements (PRD)
+# Echo — Status & Product Requirements (PRD)
 
-**Product:** Pulse — a content-analytics + team-operations platform for **Media House** (the DF Foods / Doctor Farmer marketing team).
+**Product:** Echo — a content-analytics + team-operations platform for **Media House** (the DF Foods / Doctor Farmer marketing team).
 **As of:** 2026-09-02 · **Live commit:** `8d2707f` (== `origin/main`) · **Repo:** github.com/10xMarketingMHS/IG-analytics
 **Deploy:** single Render web service, auto-deploys from `main`.
 
@@ -10,7 +10,7 @@
 
 ## 1. Product overview
 
-Pulse runs the Media House content operation end to end in one internal app:
+Echo runs the Media House content operation end to end in one internal app:
 
 1. **Track** content across brand channels and platforms (Instagram / Facebook / YouTube).
 2. **Analyze** performance — dashboards, insights, trends, per-platform best content, format analytics.

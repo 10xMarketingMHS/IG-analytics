@@ -44,15 +44,20 @@ export function rates(m: Metrics): Rates {
   };
 }
 
+// The five weights, in one place: the score below and Settings › Scoring both
+// read them.
+export const SCORE_WEIGHTS = { view: 20, like: 10, comment: 15, share: 30, save: 25 } as const;
+
 export function performanceScore(m: Metrics): number {
   if (!m.reach || m.reach <= 0) return 0;
   const r = rates(m);
+  const w = SCORE_WEIGHTS;
   return (
-    r.viewRate * 20 +
-    r.likeRate * 10 +
-    r.commentRate * 15 +
-    r.shareRate * 30 +
-    r.saveRate * 25
+    r.viewRate * w.view +
+    r.likeRate * w.like +
+    r.commentRate * w.comment +
+    r.shareRate * w.share +
+    r.saveRate * w.save
   );
 }
 

@@ -4,6 +4,7 @@ import { useEditors } from "@/lib/use-editors";
 import { useTasks } from "@/lib/use-tasks";
 import { ymd, topEditorsInRange } from "@/lib/task-points";
 import { Avatar, ringColorOf } from "@/lib/editor-visuals";
+import { PositionMark } from "@/components/position-mark";
 
 // Top Performer of the Month — a full-width, continuously-scrolling ticker at the
 // top of My Day celebrating the month's leading editors. It reuses the exact
@@ -89,7 +90,7 @@ export function TopPerformerTicker() {
         <span className="tpf-rank">{RANK_MEDAL[rank] ?? `#${rank}`}</span>
         <span className="tpf-ava"><Avatar editor={l.editor} /></span>
         <span className="tpf-meta">
-          <span className="tpf-name">{l.editor.name}</span>
+          <span className="tpf-name">{l.editor.name}<PositionMark designation={l.editor.designation} /></span>
           <span className="tpf-pts">{Math.round(l.row.points).toLocaleString()} pts</span>
         </span>
       </Link>

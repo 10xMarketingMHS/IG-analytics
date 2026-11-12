@@ -1,0 +1,21 @@
+/* Super Admin "view as" — the window that asks for an employee code, and the
+   bar that stays in view while you look at Echo as someone else. */
+.va-form{display:flex;flex-direction:column;gap:8px;min-width:min(380px,80vw)}
+.va-code{font-family:'Geist Mono',ui-monospace,monospace;text-transform:uppercase;letter-spacing:.04em}
+.va-code::placeholder{text-transform:none;letter-spacing:0}
+.va-acts{display:flex;justify-content:flex-end;gap:8px;margin-top:6px}
+
+.va-bar{position:fixed;left:50%;bottom:18px;transform:translateX(-50%);z-index:300;display:flex;align-items:center;gap:10px;max-width:calc(100vw - 32px);
+  padding:8px 8px 8px 14px;border-radius:999px;background:oklch(0.3 0.12 var(--acH));color:#fff;font:600 13px 'Plus Jakarta Sans',sans-serif;
+  box-shadow:0 14px 34px -10px rgba(0,0,0,.5)}
+.va-bar svg{flex:none;opacity:.85}
+.va-bar>span{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.va-bar b{font-weight:800}
+.va-bar button{flex:none;height:30px;padding:0 13px;border:0;border-radius:999px;background:#fff;color:oklch(0.3 0.12 var(--acH));font:700 12.5px 'Plus Jakarta Sans',sans-serif;cursor:pointer}
+.va-bar button:disabled{opacity:.7;cursor:default}
+@media (max-width:768px){.va-bar{bottom:calc(var(--m-tab,74px) + 12px)}}
+
+/* the sidebar logo opens it, for a Super Admin */
+.sb2 .brand button.logo{border:0;padding:0;cursor:pointer;font:inherit}
+.sb2 .brand button.logo:hover{filter:brightness(1.08)}
+.sb2 .brand button.logo:focus-visible{outline:2px solid #fff;outline-offset:2px}

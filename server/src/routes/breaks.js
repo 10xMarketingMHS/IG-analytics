@@ -1,6 +1,9 @@
 import { Router } from "express";
 import { pool } from "../db.js";
 
+// Today's date on India time: the break allowance is per office day.
+const istToday = () => new Date(Date.now() + 330 * 60_000).toISOString().slice(0, 10);
+
 export const breaksRouter = Router();
 
 // Office breaks: lunch (45m) + two tea breaks (15m each) = 75m/day, shared
@@ -28,7 +31,7 @@ async function loadBreakState(editorId) {
   );
   const row = rows[0];
   if (!row) return null;
-  const today = new Date().toISOString().slice(0, 10);
+  const today = istToday();
   const isToday = row.break_date && new Date(row.break_date).toISOString().slice(0, 10) === today;
   const usedSeconds = isToday ? row.break_used_seconds : 0;
   const startedAt = isToday ? row.break_started_at : null;
@@ -50,7 +53,7 @@ async function loadBreakState(editorId) {
 // call whenever any request notices the break has run out).
 async function resolveBreak(editorId, state) {
   if (state?.autoExpired) {
-    const today = new Date().toISOString().slice(0, 10);
+    const today = istToday();
     await pool.query(
       "update editor set break_started_at = null, break_used_seconds = $1, break_date = $2 where id = $3",
       [DAILY_CAP_SECONDS, today, editorId],
@@ -80,7 +83,7 @@ breaksRouter.post("/break/start", async (req, res, next) => {
     if (state.remainingSeconds <= 0) {
       return res.status(409).json({ error: "No break time left today." });
     }
-    const today = new Date().toISOString().slice(0, 10);
+    const today = istToday();
     await pool.query(
       "update editor set break_started_at = now(), break_used_seconds = $1, break_date = $2 where id = $3",
       [state.usedSeconds, today, editorId],
@@ -104,7 +107,7 @@ breaksRouter.post("/break/end", async (req, res, next) => {
     const elapsed = (Date.now() - new Date(state.startedAt).getTime()) / 1000;
     // A break can be ended at any time — no minimum duration.
     const usedSeconds = Math.min(DAILY_CAP_SECONDS, state.usedSeconds + elapsed);
-    const today = new Date().toISOString().slice(0, 10);
+    const today = istToday();
     await pool.query(
       "update editor set break_started_at = null, break_used_seconds = $1, break_date = $2 where id = $3",
       [Math.round(usedSeconds), today, editorId],

@@ -1,7 +1,7 @@
 import { toast } from "sonner";
 import { Modal } from "@/components/modal";
 import { fmtDuration, type EodSummary } from "@/lib/use-eod";
-import { AUTO_CLOSED, buildReport, dueTodayLine, eodStatusLabel, eodTaskMeta, eodTime, workedLine } from "@/lib/eod-report";
+import { AUTO_CLOSED, buildReport, dueTodayLine, eodStatusLabel, eodTaskMeta, eodTime, schedulingLines, workedLine } from "@/lib/eod-report";
 
 // The day's summary after End Work (and for the admin, from Work Day): hours,
 // the Start of Day line, every task of the day with its status and note, and
@@ -39,6 +39,11 @@ export function EodSummaryCard({ name, summary, onClose }: { name: string; summa
           </div>
         </div>
         {summary.autoClosed && <div className="eod-sum-auto">⚠️ {AUTO_CLOSED}</div>}
+        {summary.scheduling && (
+          <div className="eod-sum-plan eod-sum-sched">
+            {schedulingLines(summary).map((l, i) => <div key={i} className={i === 0 ? "eod-sum-plan-head" : undefined}>{i === 0 ? "🗓️ " : ""}{l}</div>)}
+          </div>
+        )}
         {summary.plan && (
           <div className="eod-sum-plan">
             <div className="eod-sum-plan-head">

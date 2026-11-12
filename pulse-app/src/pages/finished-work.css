@@ -1,0 +1,10 @@
+/* Add finished work (finished-work.tsx): the hours stepper, − 30m +, like
+   Settings › Tasks & time's, as wide as the field beside it */
+.fw-step{display:flex;align-items:stretch;height:39px;box-sizing:border-box;border:1px solid var(--border);border-radius:10px;background:var(--panel2);overflow:hidden}
+.fw-step>button{flex:none;width:42px;border:0;background:transparent;color:var(--muted);font-size:18px;line-height:1;cursor:pointer;display:grid;place-items:center}
+.fw-step>button:hover:not(:disabled){background:var(--accent-weak);color:var(--accent-ink)}
+.fw-step>button:disabled{opacity:.35;cursor:not-allowed}
+.fw-step>b{flex:1;min-width:0;padding:0 4px;align-self:center;text-align:center;font:600 13.5px/normal 'Geist Mono',ui-monospace,monospace;color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.fw-step>b.def{font:500 12.5px 'Plus Jakarta Sans',sans-serif;color:var(--muted)}
+.fw-reset{margin-left:6px;padding:0;border:0;background:none;font:600 11.5px 'Plus Jakarta Sans',sans-serif;color:var(--accent-ink);cursor:pointer}
+.fw-reset:hover{text-decoration:underline}

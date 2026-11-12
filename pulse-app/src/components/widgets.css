@@ -1,0 +1,120 @@
+/* Widgets: the bottom bar (widget-bar.tsx), the widgets (widget-panels.tsx), the
+   page (pages/widgets.tsx), and their row on the break screen (break-overlay.tsx). */
+
+/* ---- The layer along the bottom: the top bar's look, at the other end ---- */
+.wbar{position:sticky;bottom:var(--m-tab,0px);z-index:20;margin-top:auto;display:flex;align-items:center;gap:8px 18px;flex-wrap:wrap;
+  padding:10px 26px;background:color-mix(in srgb,var(--bg) 80%,transparent);backdrop-filter:blur(10px);border-top:1px solid var(--border)}
+.wbar-line{position:absolute;left:0;top:-1px;height:2px;background:var(--accent);transition:width 1s linear}
+.wbar-item{display:flex;align-items:center;gap:8px;font-size:13px;color:var(--text);white-space:nowrap}
+.wbar-item+.wbar-item{padding-left:18px;border-left:1px solid var(--border)}
+.wbar-name{color:var(--muted);font-weight:600}
+.wbar-time{font-family:'Geist Mono',monospace;font-size:15px;font-weight:700;font-variant-numeric:tabular-nums}
+.wbar-go{margin-left:auto;font-size:12.5px;font-weight:700;color:var(--accent-ink);text-decoration:none;white-space:nowrap}
+.wbar-go:hover{text-decoration:underline}
+
+/* ---- The pieces ---- */
+.wg-btn{height:30px;padding:0 12px;border:1px solid var(--border);border-radius:9px;background:transparent;color:var(--text);
+  font-family:inherit;font-size:12.5px;font-weight:650;white-space:nowrap;cursor:pointer}
+.wg-btn:hover:not(:disabled){border-color:var(--accent);color:var(--accent-ink)}
+.wg-btn:disabled{opacity:.45;cursor:not-allowed}
+.wg-btn.pri{background:var(--accent);border-color:var(--accent);color:#fff}
+.wg-btn.pri:hover:not(:disabled){color:#fff;filter:brightness(1.08)}
+.wg-btn.ic{width:30px;padding:0}
+.wg-row{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.wg-stack{display:flex;flex-direction:column;gap:10px}
+.wg-stack p{margin:0;font-size:13px;line-height:1.45;color:var(--muted)}
+.wg-center{align-items:center;text-align:center}
+.wg-note{font-size:11.5px;line-height:1.4;color:var(--faint)}
+.wg-big{font-size:20px;font-weight:800;color:var(--text);margin-right:auto}
+.wg-big small{font-size:12px;font-weight:600;color:var(--muted)}
+.wg-bigicon{font-size:32px;line-height:1}
+.wg-nums{display:flex;gap:10px 16px;flex-wrap:wrap}
+.wg-num{display:flex;flex-direction:column;gap:4px;min-width:0}
+.wg-num>span{font-size:11.5px;font-weight:600;color:var(--muted)}
+.wg-numbox{display:inline-flex;align-items:center;border:1px solid var(--border);border-radius:9px;overflow:hidden}
+.wg-numbox button{width:26px;height:28px;border:0;background:transparent;color:var(--muted);font-size:15px;cursor:pointer}
+.wg-numbox button:disabled{opacity:.35;cursor:not-allowed}
+.wg-numbox b{min-width:38px;text-align:center;font-family:'Geist Mono',monospace;font-size:12.5px;font-weight:600;color:var(--text)}
+.wg-select{height:30px;padding:0 8px;border:1px solid var(--border);border-radius:9px;background:var(--panel);color:var(--text);font-family:inherit;font-size:12.5px}
+.wg-text{width:100%;box-sizing:border-box;padding:9px 11px;border:1px solid var(--border);border-radius:10px;background:var(--panel2);color:var(--text);font-family:inherit;font-size:13px;line-height:1.45;resize:vertical}
+.wg-text:focus{outline:none;border-color:var(--accent)}
+.wg-track{display:block;height:5px;border-radius:5px;background:var(--border);overflow:hidden}
+.wg-track>i{display:block;height:100%;background:var(--accent);transition:width 1s linear}
+.wg-switch{display:flex;align-items:flex-start;gap:9px;padding:0;border:0;background:transparent;color:var(--text);font-family:inherit;font-size:12.5px;font-weight:650;text-align:left;cursor:pointer}
+.wg-switch>i{flex:none;position:relative;display:block;width:32px;height:18px;margin-top:1px;border-radius:18px;background:var(--border);transition:background .15s ease}
+.wg-switch>i>i{position:absolute;left:2px;top:2px;width:14px;height:14px;border-radius:50%;background:#fff;transition:transform .15s ease}
+.wg-switch.on>i{background:var(--accent)}
+.wg-switch.on>i>i{transform:translateX(14px)}
+.wg-switch small{display:block;margin-top:1px;font-size:11.5px;font-weight:500;line-height:1.35;color:var(--faint)}
+
+/* Pomodoro */
+.wg-pomo{display:grid;grid-template-columns:minmax(240px,1fr) minmax(0,1.3fr);gap:18px 32px;align-items:start}
+.wg-pomo-left,.wg-pomo-right{display:flex;flex-direction:column;gap:12px;min-width:0}
+.wg-pomo-left>small:first-child{font-size:12.5px;font-weight:700;color:var(--muted)}
+.wg-pomo-time{font-family:'Geist Mono',monospace;font-size:44px;line-height:1;font-weight:700;font-variant-numeric:tabular-nums;color:var(--text)}
+
+/* Water */
+.wg-glasses{display:flex;flex-wrap:wrap;gap:2px}
+.wg-glass{width:28px;height:28px;padding:0;border:0;background:transparent;font-size:17px;line-height:1;cursor:pointer;filter:grayscale(1);opacity:.32;transition:opacity .15s ease}
+.wg-glass.on{filter:none;opacity:1}
+.wg-glass:hover{opacity:.8}
+
+/* Stretch */
+.wg-dots{display:flex;gap:5px}
+.wg-dots i{width:7px;height:7px;border-radius:50%;background:var(--border)}
+.wg-dots i.on{background:var(--accent)}
+
+/* Memory game */
+.wg-cards{display:grid;grid-template-columns:repeat(4,minmax(0,52px));gap:6px;justify-content:center}
+.wg-mcard{aspect-ratio:1;padding:0;border:1px solid var(--border);border-radius:10px;background:var(--accent-weak);font-size:21px;line-height:1;cursor:pointer}
+.wg-mcard:hover{border-color:var(--accent)}
+.wg-mcard.up{background:var(--panel2);cursor:default}
+
+/* ---- The page ---- */
+.wg-page{display:flex;flex-direction:column;gap:16px}
+.wg-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:16px}
+.wg-card{display:flex;flex-direction:column;gap:14px;padding:18px;border:1px solid var(--border);border-radius:var(--radius);background:var(--panel)}
+.wg-head{display:flex;align-items:flex-start;gap:12px}
+.wg-head>span:last-child{min-width:0}
+.wg-head b{display:block;font-size:14.5px;font-weight:750;color:var(--text)}
+.wg-head small{display:block;margin-top:2px;font-size:12px;line-height:1.4;color:var(--muted)}
+.wg-ic{flex:none;display:grid;place-items:center;width:38px;height:38px;border-radius:11px;background:var(--accent-weak);font-size:19px}
+.wg-body{flex:1}
+.wg-foot{padding-top:12px;border-top:1px solid var(--border2)}
+
+/* ---- The break screen: a row along the bottom of the card; a widget opens where the cup is ---- */
+.brk-widgets{grid-column:1/-1;position:relative;display:flex;flex-wrap:wrap;justify-content:center;gap:6px;margin-top:18px;padding-top:14px;border-top:1px solid rgba(168,85,247,.28)}
+.brk-tile{display:flex;align-items:center;gap:6px;min-height:42px;padding:5px 9px;border:1px solid rgba(196,181,253,.25);border-radius:12px;background:rgba(255,255,255,.05);
+  color:#e9e3ff;font-family:inherit;font-size:12.5px;font-weight:650;line-height:1.2;text-align:left;cursor:pointer;transition:border-color .15s ease,background .15s ease}
+.brk-tile:hover{border-color:#a855f7}
+.brk-tile.on{border-color:#a855f7;background:rgba(168,85,247,.22)}
+.brk-tile small{display:block;font-size:11px;font-weight:500;color:#a99cd0}
+.brk-tile.add{border-style:dashed;color:#c4b5fd}
+.brk-tile.add.small{min-width:42px;justify-content:center;font-size:17px}
+.brk-panel{--text:#f3eeff;--muted:#b3a7d4;--faint:#8a7fb0;--border:rgba(196,181,253,.25);--border2:rgba(196,181,253,.14);--panel:#2a2140;--panel2:rgba(255,255,255,.05);
+  --accent:#a855f7;--accent-ink:#d8b4fe;--accent-weak:rgba(168,85,247,.22);
+  position:relative;z-index:3;display:flex;flex-direction:column;gap:10px;min-height:240px;text-align:left}
+.brk-panel-head{display:flex;align-items:center;gap:8px;font-size:13.5px;font-weight:750;color:#f3eeff}
+.brk-panel-head button{margin-left:auto}
+.brk-panel-body{flex:1;display:flex;flex-direction:column;justify-content:center}
+.brk-picks{display:flex;flex-direction:column;gap:9px}
+
+/* A short window: the break screen's row and widget tighten with the rest of the card */
+@media screen and (max-height:540px){
+  .brk-widgets{margin-top:10px;padding-top:10px}
+  .brk-tile{min-height:36px;padding:3px 10px}
+  .brk-tile small{display:none}
+  .brk-panel{min-height:150px}
+}
+/* Phones: the bar is above the tab bar; it scrolls sideways instead of stacking up */
+@media screen and (max-width:768px){
+  .wbar{padding:8px 12px;flex-wrap:nowrap;overflow-x:auto;scrollbar-width:none}
+  .wg-pomo{grid-template-columns:minmax(0,1fr)}
+  .wg-card{padding:15px}
+}
+@media screen and (max-width:700px){
+  .brk-scrim{padding-bottom:calc(var(--m-tab,0px) + 12px)}
+  .brk-ring{width:170px;height:170px}.brk-cup-stage{transform:scale(.82)}
+  .brk-widgets{order:3;align-self:stretch}
+  .brk-panel{align-self:stretch}
+}
