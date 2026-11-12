@@ -78,7 +78,7 @@ export const NAV_ITEMS: NavItem[] = [
   { title: "Knowledge Hub", href: "/knowledge", icon: "📚", section: "Manage" },
   // Widgets — small helpers for whoever wants them (pages/widgets.tsx): the sidebar's last item.
   { title: "Widgets", href: "/widgets", icon: "🧩", section: "Manage" },
-  { title: "Posts", href: "/posts", icon: "🗂️", section: "Manage", showBadge: true },
+  { title: "Library", href: "/posts", icon: "🗂️", section: "Manage", showBadge: true },
   // Task Settings, Channels, and Teams are tabs inside Settings now, not
   // separate sidebar links — one place for all admin configuration.
   { title: "Settings", href: "/settings", icon: "⚙️", section: "Manage" },
@@ -103,7 +103,7 @@ export const PAGE_META: Record<string, [string, string]> = {
   "/leaderboard": ["Editor Leaderboard", "Editor performance & rankings from published posts"],
   "/reports": ["Reports", "Export and share performance summaries"],
   "/posts/new": ["Add Post", "Create the post record now — log its metrics after you publish"],
-  "/posts": ["Posts", "Your content database — replaces the Manual Entry sheet"],
+  "/posts": ["Library", "Every post, planned and published, with its numbers — replaces the Manual Entry sheet"],
   "/knowledge": ["Knowledge Hub", "SOPs, brand guidelines and training"],
   "/widgets": ["Widgets", "Small helpers for your day. Use the ones you need"],
   "/goals-board": ["Goals", "This month's goals by content type, and how far along they are"],

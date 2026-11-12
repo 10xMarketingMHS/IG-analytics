@@ -4,6 +4,8 @@ import { Loader } from "@/components/loader";
 import { Icon } from "@/components/icon";
 import { useEditors } from "@/lib/use-editors";
 import { useWorkspaces } from "@/lib/workspaces-context";
+import { useContentFormats } from "@/lib/use-content-formats";
+import { matchesType, typeOptions, typePickIn } from "@/lib/type-filter";
 import { gradFor, initialsOf } from "@/lib/editor-visuals";
 import { STAGE_WORDS, clockWords, dayWords, leftTone, leftWords, linksDueAt, scheduleStage, useNow, type SchedStage } from "@/lib/schedule";
 import { TaskPanel } from "@/pages/tasks";
@@ -22,10 +24,11 @@ import "./scheduling.css";
 // everyone's for the Managers and Team Leads, else your own
 type Today = { editorId: string; name: string; total: number; brands: { brandId: string | null; brand: string; n: number }[] };
 type Data = { tasks: Task[]; me: string | null; lead: boolean; scheduler: boolean; today?: Today[] };
-// the Brand filter is each viewer's own, kept in this browser
+// the Brand and Type filters are each viewer's own, kept in this browser
 const BRAND_KEY = "echo.scheduling.brand";
-const readBrand = () => { try { return localStorage.getItem(BRAND_KEY) ?? ""; } catch { return ""; } };
-const keepBrand = (v: string) => { try { if (v) localStorage.setItem(BRAND_KEY, v); else localStorage.removeItem(BRAND_KEY); } catch { /* private window */ } };
+const TYPE_KEY = "echo.scheduling.type";
+const readKey = (k: string) => { try { return localStorage.getItem(k) ?? ""; } catch { return ""; } };
+const keepKey = (k: string, v: string) => { try { if (v) localStorage.setItem(k, v); else localStorage.removeItem(k); } catch { /* private window */ } };
 const TABS: { key: SchedStage; color: string; empty: string }[] = [
   { key: "to_schedule", color: "oklch(0.72 0.15 65)", empty: "Nothing waiting. Approved reels, carousels and posts arrive here." },
   { key: "scheduled", color: "oklch(0.62 0.13 230)", empty: "Nothing scheduled ahead. Set a post date on one waiting to be scheduled." },
@@ -42,8 +45,12 @@ export function SchedulingPage() {
   const [error, setError] = useState<string | null>(null);
   const [tab, setTab] = useState<SchedStage>("to_schedule");
   const [openId, setOpenId] = useState<string | null>(null);
-  const [brand, setBrandState] = useState(readBrand);
-  const setBrand = (v: string) => { setBrandState(v); keepBrand(v); };
+  const [brand, setBrandState] = useState(() => readKey(BRAND_KEY));
+  const setBrand = (v: string) => { setBrandState(v); keepKey(BRAND_KEY, v); };
+  const [type, setTypeState] = useState(() => readKey(TYPE_KEY));
+  const setType = (v: string) => { setTypeState(v); keepKey(TYPE_KEY, v); };
+  // a sub-type sits under its main type (Video Carousel under Carousel): the main type picks them all
+  const { contentFormats } = useContentFormats();
   const load = useCallback(async () => {
     try {
       setData(await api<Data>("/scheduling"));
@@ -61,8 +68,13 @@ export function SchedulingPage() {
     return [...m].map(([id, name]) => ({ id, name })).sort((a, b) => a.name.localeCompare(b.name));
   }, [data]);
   const brandOn = brand && brands.some((b) => b.id === brand) ? brand : "";
-  const staged = useMemo(() => (data?.tasks ?? []).filter((t) => !brandOn || t.channel_id === brandOn)
-    .map((t) => ({ t, stage: scheduleStage(t) ?? "to_schedule" })), [data, brandOn]);
+  // the types in the list, for the Type filter (lib/type-filter.ts); a type no longer in it shows everything
+  const types = useMemo(() => typeOptions(data?.tasks ?? [], contentFormats), [data, contentFormats]);
+  const typeOn = typePickIn(type, types);
+  const staged = useMemo(() => (data?.tasks ?? [])
+    .filter((t) => !brandOn || t.channel_id === brandOn)
+    .filter((t) => matchesType(t, typeOn, contentFormats))
+    .map((t) => ({ t, stage: scheduleStage(t) ?? "to_schedule" })), [data, brandOn, typeOn, contentFormats]);
   const count = (k: SchedStage) => staged.filter((x) => x.stage === k).length;
   const rows = staged.filter((x) => x.stage === tab).map((x) => x.t);
   const edOf = (id: string | null) => (editors ?? []).find((e) => e.id === id) ?? null;
@@ -84,6 +96,18 @@ export function SchedulingPage() {
           <span>{data.lead && !data.scheduler ? "Everyone's scheduling, for the Managers and Team Leads." : "Set a post date to take one. Once it's up, paste its links in the task."}</span>
         </div>
         <span className="pp-grow" />
+        {types.length > 0 && (
+          <label className="pp-select">
+            <select value={typeOn} onChange={(e) => setType(e.target.value)} aria-label="Type">
+              <option value="">All types</option>
+              {types.map((m) => [
+                <option key={m.id} value={m.id}>{m.subs.length ? `${m.name} (all)` : m.name}</option>,
+                ...m.subs.map((s) => <option key={s.id} value={s.id}>{"  · "}{s.name}</option>),
+              ])}
+            </select>
+            <Icon name="expand_more" size={18} />
+          </label>
+        )}
         {brands.length > 1 && (
           <label className="pp-select">
             <select value={brandOn} onChange={(e) => setBrand(e.target.value)} aria-label="Brand">

@@ -60,7 +60,7 @@ export function ScheduleBlock({ task, onChanged }: { task: Task; editors?: Edito
             </div>
           ))}
           {data.canAddPost && open.length > 0 && (
-            <LinkForm task={task} open={open} defaults={data.defaults ?? null} endpoint={`/tasks/${task.id}/post`} prefill={prefill}
+            <LinkForm task={task} open={open} defaults={data.defaults ?? null} given={!!data.defaultsGiven} endpoint={`/tasks/${task.id}/post`} prefill={prefill}
               onDone={async () => { await refetch(); onChanged(); }} />
           )}
         </div>
@@ -160,7 +160,7 @@ export function ScheduleBlock({ task, onChanged }: { task: Task; editors?: Edito
             </div>
           ))}
           {s.canSchedule && !!s.postOn && open.length > 0 && (
-            <LinkForm task={task} open={open} defaults={s.defaults ?? null}
+            <LinkForm task={task} open={open} defaults={s.defaults ?? null} given={!!s.defaultsGiven}
               onDone={async () => { await refetch(); onChanged(); }} />
           )}
         </div>
@@ -202,10 +202,12 @@ function PickBrand({ taskId, onDone }: { taskId: string; onDone: () => Promise<v
 }
 
 // A link box per platform still to post on, then the post's details (once a link is in) and Add.
-function LinkForm({ task, open, defaults, onDone, endpoint, prefill }: {
+function LinkForm({ task, open, defaults, given = false, onDone, endpoint, prefill }: {
   task: Task;
   open: NonNullable<TaskSchedule["platforms"]>;
   defaults: TaskSchedule["defaults"];
+  // the details are the ones its lead gave the job (else the last post's)
+  given?: boolean;
   onDone: () => Promise<void>;
   // where the links go: Scheduling's (the default), or a finished task's post (/tasks/:id/post)
   endpoint?: string;
@@ -248,7 +250,7 @@ function LinkForm({ task, open, defaults, onDone, endpoint, prefill }: {
       ))}
       {pasted.length > 0 && (
         <div className="sch-details">
-          <span className="sch-details-h">The post's details <small>for Analytics, as on Add Post</small></span>
+          <span className="sch-details-h">The post's details <small>{given ? "as its lead set them on the job · change any that's wrong" : "for Analytics, as on Add Post"}</small></span>
           <div className="sch-grid">
             <label>Pillar
               <select value={d.pillarId} onChange={(e) => setD({ ...d, pillarId: e.target.value, contentTypeId: "" })}>

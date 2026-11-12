@@ -33,6 +33,12 @@ html[data-theme="dark"] .pp{--pp-text:#ededf0;--pp-text2:#b4b4bc;--pp-text3:#8b8
 .pp-total>b{font-size:46px;font-weight:800;letter-spacing:-.04em;line-height:.9}
 .pp-total>span{display:flex;flex-direction:column;gap:3px;padding-bottom:2px}
 .pp-total-l{font-weight:700}
+/* under the tabs: the stage picked, by type (metrics.tsx mix) */
+.pp-mix{flex:0 1 auto;min-width:0;display:flex;align-items:center;flex-wrap:wrap;gap:6px;font-size:12.5px;align-self:center}
+.pp-mix>b{display:inline-flex;align-items:center;gap:7px;margin-right:4px;font-weight:800;color:var(--pp-text)}
+.pp-mix>b i{width:9px;height:9px;border-radius:50%}
+.pp-mixchip{display:inline-flex;align-items:center;gap:6px;height:26px;padding:0 10px;border:1px solid var(--pp-line);border-radius:999px;background:var(--pp-panel);color:var(--pp-text2);font-weight:600;white-space:nowrap}
+.pp-mixchip em{font-style:normal;font-weight:800;color:var(--pp-text)}
 .pp-split{display:flex;gap:10px;font-size:12px;color:var(--pp-text2)}
 .pp-split span{display:inline-flex;align-items:center;gap:5px}
 .pp-split i{width:8px;height:8px;border-radius:2px}
@@ -41,14 +47,15 @@ html[data-theme="dark"] .pp{--pp-text:#ededf0;--pp-text2:#b4b4bc;--pp-text3:#8b8
 .pp-bar{display:flex;height:14px;border-radius:7px;overflow:hidden;gap:3px;background:var(--pp-sunk)}
 .pp-bar span{transition:flex .4s,opacity .2s}
 .pp-hint{font-size:11.5px;color:var(--pp-text3)}
-.pp-stages{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px}
-.pp-stage{display:flex;flex-direction:column;gap:10px;padding:14px;border:1.5px solid var(--pp-line);border-radius:14px;background:var(--pp-panel);color:var(--pp-text);
+/* every stage on one line, in the order work moves (metrics.tsx STAGES); a narrow screen scrolls them sideways */
+.pp-stages{display:grid;grid-template-columns:repeat(var(--n,9),minmax(108px,1fr));gap:8px;overflow-x:auto;padding:4px;margin:-4px;scrollbar-width:thin}
+.pp-stage{min-width:0;display:flex;flex-direction:column;gap:9px;padding:12px 11px;border:1.5px solid var(--pp-line);border-radius:14px;background:var(--pp-panel);color:var(--pp-text);
   font:inherit;text-align:left;cursor:pointer;transition:border-color .15s}
 .pp-stage:hover{border-color:var(--pp-text3)}
 .pp-stage.on{border-color:var(--c);background:color-mix(in srgb,var(--c) 10%,var(--pp-panel));box-shadow:0 0 0 4px color-mix(in srgb,var(--c) 15%,transparent)}
-.pp-stage-top{display:flex;align-items:center;gap:8px}
-.pp-stage-ic{width:30px;height:30px;border-radius:9px;display:grid;place-items:center;background:color-mix(in srgb,var(--c) 18%,transparent);color:var(--c)}
-.pp-stage-l{font-size:12px;font-weight:700;color:var(--pp-text2);white-space:nowrap}
+.pp-stage-top{display:flex;align-items:center;gap:7px;min-height:30px}
+.pp-stage-ic{flex:none;width:28px;height:28px;border-radius:9px;display:grid;place-items:center;background:color-mix(in srgb,var(--c) 18%,transparent);color:var(--c)}
+.pp-stage-l{min-width:0;font-size:12px;font-weight:700;line-height:1.2;color:var(--pp-text2)}
 .pp-stage-n{display:flex;align-items:flex-end;gap:8px}
 .pp-stage-n b{font-size:28px;font-weight:800;letter-spacing:-.03em;line-height:1}
 .pp-stage-n em{font-style:normal;font-size:11.5px;font-weight:700;color:var(--pp-text3);padding-bottom:3px;white-space:nowrap}
@@ -124,6 +131,9 @@ html[data-theme="dark"] .pp{--pp-text:#ededf0;--pp-text2:#b4b4bc;--pp-text3:#8b8
 .pp-acct-l b{font-weight:800;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .pp-acct-l em{font-style:normal;font-size:11.5px;color:var(--pp-text3)}
 .pp-mini{display:flex;height:8px;width:90px;border-radius:4px;overflow:hidden;gap:2px;background:var(--pp-sunk)}
+/* a card shows about ten rows (metrics.tsx ACCT_ROWS); the rest scroll inside it */
+.pp-arows{max-height:calc(10 * 57px);overflow-y:auto;overscroll-behavior:contain;scrollbar-width:thin}
+.pp-acct-more{padding:7px 16px;border-top:1px solid var(--pp-line2);font-size:11.5px;font-weight:600;color:var(--pp-text3);text-align:center;background:var(--pp-sunk)}
 .pp-arow{display:grid;grid-template-columns:30px minmax(0,1fr) auto;gap:10px;align-items:center;padding:10px 16px;border-bottom:1px solid var(--pp-line2);cursor:pointer}
 .pp-arow:last-child{border-bottom:0}
 .pp-arow:hover{background:var(--pp-sunk)}

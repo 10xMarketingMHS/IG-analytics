@@ -213,6 +213,8 @@ const UpdateSchema = z.object({
   superAdmin: z.boolean().optional(),
   active: z.boolean().optional(),
   name: z.string().trim().optional(),
+  // The email they sign in with (their password stays the same)
+  email: z.string().trim().email().max(254).optional(),
   password: z.string().min(6).optional(),
   // Which team-member (editor) record this login is — powers "My Tasks".
   editorId: z.string().uuid().nullable().optional(),
@@ -316,7 +318,9 @@ usersRouter.patch("/users/me", async (req, res, next) => {
 // password reset. Protects against locking out the last admin / yourself.
 usersRouter.patch("/users/:id", requireAdmin, async (req, res, next) => {
   const parsed = UpdateSchema.safeParse(req.body);
-  if (!parsed.success) return res.status(400).json({ error: "Invalid update." });
+  if (!parsed.success) {
+    return res.status(400).json({ error: parsed.error.issues.some((i) => i.path[0] === "email") ? "Enter a valid email." : "Invalid update." });
+  }
   const { active, name, password, editorId, superAdmin } = parsed.data;
   // Super Admin is an admin: making someone one makes them admin too.
   const role = superAdmin === true ? "admin" : parsed.data.role;
@@ -324,6 +328,21 @@ usersRouter.patch("/users/:id", requireAdmin, async (req, res, next) => {
   const isSelf = targetId === req.user.sub;
 
   try {
+    // A new sign-in email: one nobody else signs in with. The server's own
+    // Super Admin login keeps the email set in the server's settings (it's
+    // written back on every start, ../bootstrap.js).
+    let email;
+    if (parsed.data.email !== undefined) {
+      const { rows: [cur] } = await pool.query("select email from app_user where id = $1", [targetId]);
+      if (cur && cur.email !== parsed.data.email) {
+        if (targetId === config.ADMIN_USER_ID) {
+          return res.status(409).json({ error: "This is the main Super Admin login: its email is set in the server's settings, not here." });
+        }
+        const { rows: taken } = await pool.query("select 1 from app_user where lower(email) = lower($1) and id <> $2", [parsed.data.email, targetId]);
+        if (taken.length) return res.status(409).json({ error: "Someone else already signs in with that email." });
+        email = parsed.data.email;
+      }
+    }
     if (editorId) {
       const { rows: erows } = await pool.query(
         "select 1 from editor where id = $1 and org_id = $2",
@@ -365,7 +384,7 @@ usersRouter.patch("/users/:id", requireAdmin, async (req, res, next) => {
     const targetAdmin = currentRole === "admin" || targetSuper || (await adminLogin(req.orgId, targetId));
     const touchesAdmin = (role === "admin" && currentRole !== "admin") || superAdmin === true || (superAdmin === false && targetSuper)
       || (targetAdmin && !isSelf && (role !== undefined || active !== undefined || password !== undefined
-        || name !== undefined || editorId !== undefined))
+        || name !== undefined || editorId !== undefined || email !== undefined))
       // your own login's team member decides your position (your rank): not yours to change
       || (isSelf && targetAdmin && editorId !== undefined);
     if (touchesAdmin && !(await isSuperUser(req.user.sub, st))) {
@@ -387,6 +406,7 @@ usersRouter.patch("/users/:id", requireAdmin, async (req, res, next) => {
     const vals = [];
     if (active !== undefined) { vals.push(active); sets.push(`active = $${vals.length}`); }
     if (name !== undefined) { vals.push(name); sets.push(`name = $${vals.length}`); }
+    if (email !== undefined) { vals.push(email); sets.push(`email = $${vals.length}`); }
     const newHash = password ? await bcrypt.hash(password, 10) : null;
     if (newHash) { vals.push(newHash); sets.push(`password_hash = $${vals.length}`); }
     if (editorId !== undefined) { vals.push(editorId || null); sets.push(`editor_id = $${vals.length}`); }

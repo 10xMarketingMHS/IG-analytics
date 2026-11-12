@@ -17,6 +17,8 @@ import type { Editor, Task } from "@/lib/types";
 import { scheduleStage, type SchedStage } from "@/lib/schedule";
 import { adStage, type AdStage } from "@/lib/ad-upload";
 import { placeOf } from "@/lib/ad-teams";
+import { useContentFormats } from "@/lib/use-content-formats";
+import { matchesType, typeOptions, typePickIn } from "@/lib/type-filter";
 import "./pipeline.css";
 import { PositionMark } from "@/components/position-mark";
 
@@ -38,24 +40,27 @@ function pipelineBucket(t: Task): "social" | "ad" | null {
 }
 
 // Approved social work then goes through scheduling (lib/schedule.ts): to schedule → scheduled → waiting for links → live;
-// approved Ad work through Ad uploads (lib/ad-upload.ts): to upload → uploaded.
+// approved Ad work through Ad uploads (lib/ad-upload.ts): to upload → uploaded. Completed is the rest of the
+// finished work — a type with no next step, or done before it had one — so it comes last, the stages in the order work moves.
 type Stage = "pending_accept" | "not_started" | "in_progress" | "in_review" | "completed" | SchedStage | AdStage;
 const STAGES: { key: Stage; label: string; color: string; icon: string }[] = [
   { key: "pending_accept", label: "Pending Accept", color: "oklch(0.64 0.2 350)", icon: "hourglass_top" },
   { key: "not_started", label: "Not Started", color: "#a1a1aa", icon: "radio_button_unchecked" },
   { key: "in_progress", label: "In Progress", color: "oklch(0.72 0.15 70)", icon: "autorenew" },
   { key: "in_review", label: "In Review", color: "oklch(0.6 0.15 250)", icon: "rate_review" },
-  { key: "completed", label: "Completed", color: "oklch(0.6 0.14 155)", icon: "check_circle" },
   { key: "to_schedule", label: "To Schedule", color: "oklch(0.72 0.15 65)", icon: "edit_calendar" },
   { key: "scheduled", label: "Scheduled", color: "oklch(0.62 0.13 230)", icon: "event" },
   { key: "links_due", label: "Waiting for Links", color: "oklch(0.62 0.19 25)", icon: "add_link" },
   { key: "live", label: "Live", color: "oklch(0.58 0.12 185)", icon: "public" },
   { key: "to_upload", label: "To Upload", color: "oklch(0.72 0.15 65)", icon: "upload" },
   { key: "uploaded", label: "Uploaded", color: "oklch(0.58 0.12 185)", icon: "campaign" },
+  { key: "completed", label: "Completed", color: "oklch(0.6 0.14 155)", icon: "check_circle" },
 ];
+// each stage's place in that order (the table sorts by it), and its look by key
 const STAGE_INDEX: Record<Stage, number> = {
-  pending_accept: 0, not_started: 1, in_progress: 2, in_review: 3, completed: 4, to_schedule: 5, scheduled: 6, links_due: 7, live: 8, to_upload: 5, uploaded: 8,
+  pending_accept: 0, not_started: 1, in_progress: 2, in_review: 3, to_schedule: 4, scheduled: 5, links_due: 6, live: 7, to_upload: 4, uploaded: 7, completed: 8,
 };
+const STAGE_OF = Object.fromEntries(STAGES.map((s) => [s.key, s])) as Record<Stage, (typeof STAGES)[number]>;
 function stageOf(t: Task): Stage {
   if (t.status === "done") return (t.task_type === "ad" ? adStage(t) : scheduleStage(t)) ?? "completed";
   if (t.status === "review") return "in_review";
@@ -113,6 +118,10 @@ function relTime(iso: string | null) {
   return `${Math.round(h / 24)}d ago`;
 }
 const refOf = (t: Task) => (t.task_type === "ad" ? t.ad_id : t.sid) ?? null;
+// By account: how many rows each card shows before its list scrolls (pipeline.css .pp-arows)
+const ACCT_ROWS = 10;
+// the by-type line under the tabs: this many types, the rest as "+N more" (their counts on hover)
+const MIX_SHOWN = 8;
 // a social task that made a post (scheduling's links), or was made from one
 const hasPost = (t: Task) => (t.linked_posts ?? 0) > 0 || !!t.post_id;
 const lastTouch = (t: Task) => t.completed_at ?? t.review_started_at ?? t.budget_started_at ?? t.created_at;
@@ -142,8 +151,12 @@ export function MetricsPage() {
     : typeFilter === "social" ? !["to_upload", "uploaded"].includes(s.key) : true));
   const [editorFilter, setEditorFilter] = useState(""); // "" all, "none" unclaimed, else an editor id
   const [stageFilter, setStageFilter] = useState<"" | Stage>("");
-  // moving between the Social and Ads tabs starts the stage filter afresh
-  useEffect(() => { setStageFilter(""); }, [params]);
+  // Type (Carousel picks its sub-types too, lib/type-filter.ts) and Brand (an Ad's is its Ads team)
+  const { contentFormats } = useContentFormats();
+  const [typePick, setTypePick] = useState("");
+  const [brandPick, setBrandPick] = useState("");
+  // moving between the Social and Ads tabs starts the stage, type and brand filters afresh
+  useEffect(() => { setStageFilter(""); setTypePick(""); setBrandPick(""); }, [params]);
   const [q, setQ] = useState("");
   const [openId, setOpenId] = useState<string | null>(null);
   const [claiming, setClaiming] = useState<string | null>(null);
@@ -155,20 +168,38 @@ export function MetricsPage() {
   const today = todayStr();
   const edOf = (id: string | null) => (id ? (editors ?? []).find((e) => e.id === id) ?? null : null);
 
-  // Type, editor and search shape the totals, the bar and the stage cards;
+  // the types and brands in this tab's work, for their filters (a pick no longer in it shows everything)
+  const inTab = useMemo(() => pipelineTasks.filter((t) => typeFilter === "all" || pipelineBucket(t) === typeFilter), [pipelineTasks, typeFilter]);
+  const types = useMemo(() => typeOptions(inTab, contentFormats), [inTab, contentFormats]);
+  const typeOn = typePickIn(typePick, types);
+  const placeKey = (t: Task) => t.ad_team_id ?? t.channel_id ?? null;
+  const brands = useMemo(() => {
+    const m = new Map<string, string>();
+    for (const t of inTab) { const k = placeKey(t); if (k) m.set(k, placeOf(t) ?? "—"); }
+    return [...m].map(([id, name]) => ({ id, name })).sort((a, b) => a.name.localeCompare(b.name));
+  }, [inTab]);
+  const brandOn = brandPick && brands.some((b) => b.id === brandPick) ? brandPick : "";
+  // Type, brand, editor and search shape the totals, the bar and the stage cards;
   // the stage filter then narrows the list.
   const pre = useMemo(() => {
     const needle = q.trim().toLowerCase();
-    return pipelineTasks.filter((t) =>
-      (typeFilter === "all" || pipelineBucket(t) === typeFilter)
+    return inTab.filter((t) =>
+      matchesType(t, typeOn, contentFormats)
+      && (!brandOn || placeKey(t) === brandOn)
       && (!editorFilter || (editorFilter === "none" ? !t.editor_id : t.editor_id === editorFilter))
       && (!needle || t.title.toLowerCase().includes(needle) || (refOf(t) ?? "").toLowerCase().includes(needle)));
-  }, [pipelineTasks, typeFilter, editorFilter, q]);
+  }, [inTab, typeOn, brandOn, contentFormats, editorFilter, q]);
   const rows = useMemo(() => pre
     .filter((t) => !stageFilter || stageOf(t) === stageFilter)
     .sort((a, b) => STAGE_INDEX[stageOf(a)] - STAGE_INDEX[stageOf(b)]
       || Number(!!b.due_date && b.due_date < today && b.status !== "done") - Number(!!a.due_date && a.due_date < today && a.status !== "done")
       || (a.due_date ?? "9999").localeCompare(b.due_date ?? "9999")), [pre, stageFilter, today]);
+  // What the list holds, by type: the stage picked (or every stage), as "Reels 2 · Video Carousel 1"
+  const mix = useMemo(() => {
+    const m = new Map<string, number>();
+    for (const t of rows) { const k = t.content_format_name ?? "No type"; m.set(k, (m.get(k) ?? 0) + 1); }
+    return [...m].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]));
+  }, [rows]);
   const byStage = useMemo(() => {
     const m = new Map<Stage, Task[]>(STAGES.map((s) => [s.key, []]));
     for (const t of pre) m.get(stageOf(t))!.push(t);
@@ -177,7 +208,7 @@ export function MetricsPage() {
   const overdue = pre.filter((t) => t.status !== "done" && t.due_date && t.due_date < today).length;
   const social = pre.filter((t) => pipelineBucket(t) === "social").length;
   const ads = pre.filter((t) => pipelineBucket(t) === "ad").length;
-  const filtered = (!lockedType && typeFilter !== "all") || !!editorFilter || !!stageFilter || !!q.trim();
+  const filtered = (!lockedType && typeFilter !== "all") || !!typeOn || !!brandOn || !!editorFilter || !!stageFilter || !!q.trim();
   const accounts = useMemo(() => {
     const m = new Map<string, { key: string; brand: string; plat: keyof typeof PLATFORM; tasks: Task[] }>();
     for (const t of rows) {
@@ -238,6 +269,18 @@ export function MetricsPage() {
     <section className="screen pp">
       {/* The title and description are in the top bar (lib/nav.ts PAGE_META). */}
       <div className="pp-top">
+        {/* the stage picked (a stage card, or All stages), by type */}
+        <div className="pp-mix" aria-live="polite">
+          <b>
+            <i style={{ background: stageFilter ? STAGE_OF[stageFilter].color : "var(--pp-text3)" }} />
+            {stageFilter ? STAGE_OF[stageFilter].label : "All stages"}
+          </b>
+          {mix.length === 0 ? <span className="pp-faint">Nothing here</span>
+            : mix.slice(0, MIX_SHOWN).map(([name, n]) => <span key={name} className="pp-mixchip">{name}<em>{n}</em></span>)}
+          {mix.length > MIX_SHOWN && (
+            <span className="pp-faint" title={mix.slice(MIX_SHOWN).map(([name, n]) => `${name} ${n}`).join(" · ")}>+{mix.length - MIX_SHOWN} more</span>
+          )}
+        </div>
         <span className="pp-grow" />
         <div className="pp-seg" role="group" aria-label="View">
           {([["stage", "By stage", "view_list", rows.length], ["account", "By account", "account_tree", accounts.length]] as const).map(([k, l, ic, n]) => (
@@ -256,8 +299,9 @@ export function MetricsPage() {
             <span>
               <span className="pp-total-l">pieces in the pipeline</span>
               <span className="pp-split">
-                <span><i style={{ background: TYPE_COLOR.social }} /><b>{social}</b> social</span>
-                <span><i style={{ background: TYPE_COLOR.ad }} /><b>{ads}</b> ads</span>
+                {/* Social's tab is Social work only, Ads' tab Ads only: each counts just its own */}
+                {typeFilter !== "ad" && <span><i style={{ background: TYPE_COLOR.social }} /><b>{social}</b> social</span>}
+                {typeFilter !== "social" && <span><i style={{ background: TYPE_COLOR.ad }} /><b>{ads}</b> ads</span>}
                 {overdue > 0 && <span className="bad"><b>{overdue}</b> overdue</span>}
               </span>
             </span>
@@ -272,7 +316,7 @@ export function MetricsPage() {
             <span className="pp-hint">Click a stage to filter · click again to clear</span>
           </div>
         </div>
-        <div className="pp-stages">
+        <div className="pp-stages" style={{ ["--n" as string]: shownStages.length }}>
           {shownStages.map((s) => {
             const list = byStage.get(s.key)!;
             const late = list.filter((t) => t.status !== "done" && t.due_date && t.due_date < today).length;
@@ -305,6 +349,27 @@ export function MetricsPage() {
             </button>
           ))}
         </div>}
+        {types.length > 0 && (
+          <label className="pp-select">
+            <select value={typeOn} onChange={(e) => setTypePick(e.target.value)} aria-label="Type">
+              <option value="">All types</option>
+              {types.map((m) => [
+                <option key={m.id} value={m.id}>{m.subs.length ? `${m.name} (all)` : m.name}</option>,
+                ...m.subs.map((s) => <option key={s.id} value={s.id}>{"  · "}{s.name}</option>),
+              ])}
+            </select>
+            <Icon name="expand_more" size={18} />
+          </label>
+        )}
+        {brands.length > 1 && (
+          <label className="pp-select">
+            <select value={brandOn} onChange={(e) => setBrandPick(e.target.value)} aria-label="Brand">
+              <option value="">{typeFilter === "ad" ? "All teams" : typeFilter === "social" ? "All brands" : "All brands and teams"}</option>
+              {brands.map((b) => <option key={b.id} value={b.id}>{b.name}</option>)}
+            </select>
+            <Icon name="expand_more" size={18} />
+          </label>
+        )}
         <label className="pp-select">
           <select value={editorFilter} onChange={(e) => setEditorFilter(e.target.value)} aria-label="Editor">
             <option value="">All editors</option>
@@ -325,7 +390,7 @@ export function MetricsPage() {
           <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search title, SID or AID…" aria-label="Search" />
         </label>
         {filtered && (
-          <button type="button" className="pp-clear" onClick={() => { setTypeFilter("all"); setEditorFilter(""); setStageFilter(""); setQ(""); }}>Clear filters</button>
+          <button type="button" className="pp-clear" onClick={() => { setTypeFilter("all"); setTypePick(""); setBrandPick(""); setEditorFilter(""); setStageFilter(""); setQ(""); }}>Clear filters</button>
         )}
         <span className="pp-grow" />
         <span className="pp-showing">Showing <b>{rows.length}</b> task{rows.length === 1 ? "" : "s"}</span>
@@ -337,7 +402,7 @@ export function MetricsPage() {
             <div className="pp-grid">
               <div className={"pp-th" + (isSuper ? " del" : "")}><span>Title</span><span>ID</span><span>Channel</span><span>Editor</span><span>Stage</span><span>Due date</span><span className="r">Updated</span>{isSuper && <span />}</div>
               {rows.map((t) => {
-                const s = STAGES[STAGE_INDEX[stageOf(t)]];
+                const s = STAGE_OF[stageOf(t)];
                 const bucket = pipelineBucket(t)!;
                 const plat = PLATFORM[platformOf(t) ?? "none"];
                 const ed = edOf(t.editor_id);
@@ -391,8 +456,10 @@ export function MetricsPage() {
                     })}
                   </span>
                 </div>
+                {/* about ten rows show; the rest scroll inside the card (pipeline.css .pp-arows) */}
+                <div className="pp-arows">
                 {g.tasks.map((t) => {
-                  const s = STAGES[STAGE_INDEX[stageOf(t)]];
+                  const s = STAGE_OF[stageOf(t)];
                   const ed = edOf(t.editor_id);
                   const due = dueOf(t, today);
                   return (
@@ -410,6 +477,8 @@ export function MetricsPage() {
                     </div>
                   );
                 })}
+                </div>
+                {g.tasks.length > ACCT_ROWS && <div className="pp-acct-more">Scroll for {g.tasks.length - ACCT_ROWS} more</div>}
               </section>
             );
           })}

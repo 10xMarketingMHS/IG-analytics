@@ -217,7 +217,7 @@ authRouter.get("/me", async (req, res) => {
     const withPrefs = await hasColumn("app_user", "notify_prefs");
     const withSuper = await hasColumn("app_user", "is_super_admin");
     const { rows } = await pool.query(
-      `select editor_id, name, image_url, color${withPrefs ? ", notify_prefs" : ""}${withSuper ? ", is_super_admin" : ""} from app_user where id = $1`,
+      `select email, editor_id, name, image_url, color${withPrefs ? ", notify_prefs" : ""}${withSuper ? ", is_super_admin" : ""} from app_user where id = $1`,
       [payload.sub],
     );
     const u = rows[0];
@@ -231,7 +231,8 @@ authRouter.get("/me", async (req, res) => {
       : null;
     res.json({
       user: {
-        id: payload.sub, email: payload.email, editorId: u?.editor_id ?? null, name: u?.name ?? null, imageUrl: u?.image_url ?? null, color: u?.color ?? null,
+        // the email as it is now: an admin may have changed it since they signed in
+        id: payload.sub, email: u?.email ?? payload.email, editorId: u?.editor_id ?? null, name: u?.name ?? null, imageUrl: u?.image_url ?? null, color: u?.color ?? null,
         // Which in-app alerts they get (Settings › Notifications); a missing key is on.
         notifyPrefs: u?.notify_prefs ?? {},
         isSuperAdmin: !!u?.is_super_admin,

@@ -148,6 +148,10 @@ export type TaskMeta = {
   pieceOf?: string;
   piece?: number;
   pieces?: number;
+  // put in the Job bucket by a lead, for any editor to pick up
+  bucket?: boolean;
+  // a Social job's post details, given by its lead (components/post-details.tsx)
+  post?: { pillarId?: string | null; contentTypeId?: string | null; formatId?: string | null; avatarId?: string | null };
   platform?: string;
   caption?: string;
   assetLinks?: string;
@@ -369,7 +373,9 @@ export type ActivityVerb =
   | "leave_asked" | "leave_approved" | "leave_declined" | "leave_cancelled" | "leave_topped_up" | "leave_allowance_set"
   | "leave_counting_started" | "leave_rules_changed" | "attendance_leave_worked"
   // Scheduling approved social work (components/schedule-block.tsx)
-  | "schedule_ready" | "schedule_set" | "schedule_linked" | "ad_recorded" | "ad_unrecorded";
+  | "schedule_ready" | "schedule_set" | "schedule_linked" | "ad_recorded" | "ad_unrecorded"
+  // The Job bucket: a job put there for any editor to pick up, and one picked up (pages/tasks.tsx)
+  | "bucket_added" | "bucket_picked";
 
 export type Activity = {
   id: string;

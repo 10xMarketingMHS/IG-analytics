@@ -63,6 +63,18 @@ html[data-theme="dark"] .tb,html[data-theme="dark"] .tp2{
 .tb-chip.on svg{color:var(--tb-acText)}
 .tb-chip-n{font:600 10.5px 'Geist Mono',ui-monospace,monospace;color:var(--tb-text3)}
 .tb-chip.over .tb-chip-n{color:var(--tb-bad)}
+/* a Social job's post details (components/post-details.tsx) */
+.tp2-sec h3 .tp2-req.pd-opt{color:var(--tb-text3);font-weight:600}
+.pd-faint{font-weight:500;color:var(--tb-text3)}
+.pd-ptype{display:flex;align-items:center;height:38px;padding:0 10px;border:1.5px dashed var(--tb-line);border-radius:10px;font-size:13px;color:var(--tb-text)}
+.pd-ptype.pd-none,.pd-read .pd-none{color:var(--tb-text3)}
+.pd-block .tp2-ngrid{grid-template-columns:repeat(2,minmax(0,1fr))}
+.pd-read{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px 14px;margin:0}
+.pd-read div{min-width:0}
+.pd-read dt{font-size:11px;font-weight:700;color:var(--tb-text3)}
+.pd-read dd{margin:2px 0 0;font-size:13px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+/* a day chip that isn't picked: its icon (and count) only */
+.tb-chip.ico{padding:0 11px;gap:4px}
 /* the counts, in one strip beside New task: what's shown, then the open totals */
 .tb-strip{display:inline-flex;align-items:center;height:36px;border:1px solid var(--tb-line);border-radius:11px;background:var(--tb-panel);font-size:12px;color:var(--tb-text2);white-space:nowrap;overflow:hidden}
 .tb-strip span{display:inline-flex;align-items:center;gap:5px;height:100%;padding:0 11px}

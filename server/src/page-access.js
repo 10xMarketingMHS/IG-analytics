@@ -60,7 +60,7 @@ export const PAGES = [
   { key: "myTeam", group: "Tasks", label: "My Team", see: true, change: false, def: { see: NONE } },
   { key: "socialPipeline", group: "Social", label: "Pipeline", see: true, change: false, def: { see: ALL } },
   { key: "scheduling", group: "Social", label: "Scheduling", see: true, change: true, does: "date, link, assign", def: { see: LEADS, change: LEADS } },
-  { key: "posts", group: "Social", label: "Posts", see: true, change: true, does: "add and edit posts", def: { see: ALL, change: WORKERS } },
+  { key: "posts", group: "Social", label: "Library", see: true, change: true, does: "add and edit posts", def: { see: ALL, change: WORKERS } },
   { key: "adsPipeline", group: "Ads", label: "Pipeline", see: true, change: false, def: { see: ALL } },
   { key: "uploads", group: "Ads", label: "Uploads", see: true, change: true, does: "record ad numbers", def: { see: LEADS, change: LEADS } },
   { key: "adsPerformance", group: "Ads", label: "Performance", see: true, change: true, does: "fill in results", def: { see: ALL, change: LEADS } },

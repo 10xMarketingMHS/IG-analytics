@@ -30,6 +30,7 @@ import { scheduleTypeIds } from "@/lib/schedule-types";
 import "./tasks-board.css";
 import { HandoverBlock, HandoverInbox, HandoverPill, useHandovers } from "@/components/handover";
 import { ScheduleBlock } from "@/components/schedule-block";
+import { PostDetailsFields, PostDetailsSaved, hasPostDetails, type PostDetails } from "@/components/post-details";
 import { DeskBlock } from "@/components/desk-block";
 import { AdUploadBlock } from "@/components/ad-upload-block";
 import { RndUseBlock } from "@/components/rnd-use-block";
@@ -176,15 +177,23 @@ function weekRange(now: Date) {
 
 // Every board filter except the due window — shared by the board itself and
 // the counts on the due chips, so the two always agree.
-type BoardFilters = { mine: boolean; review: boolean; editorId: string | null; editor: string; type: TaskType | ""; format: string; q: string };
+type BoardFilters = { mine: boolean; review: boolean; bucket: boolean; editorId: string | null; editor: string; type: TaskType | ""; format: string; q: string };
 // My tasks: your own, and anyone's waiting for your review (a task you
 // assigned comes back to you to review).
 const forMyReview = (t: Task) => t.status === "review" && !!t.can_review;
+// The Job bucket: open work with nobody on it yet, that any editor can pick up
+// (a Manager, Asst. Manager or Team Lead puts it there from New task).
+const inBucket = (t: Task) => !t.editor_id && t.status !== "done" && t.task_type !== "admin";
 function passesFilters(t: Task, f: BoardFilters) {
-  if (f.mine && !forMyReview(t) && (!f.editorId || t.editor_id !== f.editorId)) return false;
-  // To review: only what waits for your review
-  if (f.review && !forMyReview(t)) return false;
-  if (f.editor && t.editor_id !== f.editor) return false;
+  if (f.bucket) {
+    // the Job bucket shows only its jobs, whoever's view it is
+    if (!inBucket(t)) return false;
+  } else {
+    if (f.mine && !forMyReview(t) && (!f.editorId || t.editor_id !== f.editorId)) return false;
+    // To review: only what waits for your review
+    if (f.review && !forMyReview(t)) return false;
+    if (f.editor && t.editor_id !== f.editor) return false;
+  }
   if (f.type && t.task_type !== f.type) return false;
   if (f.format && t.content_format_id !== f.format) return false;
   if (f.q) {
@@ -221,19 +230,23 @@ const VIEW_KEY_PREFIX = "pulse-tasks-view:";
 // A future budget_started_at (deferred acceptance, see § Accept) shows as
 // "starts at …" instead of counting down. The assignee's break time (if any)
 // pushes the deadline out — a break pauses every task they have running.
+// On hold: its clock is stopped with its time banked (server: PATCH onHold),
+// and Resume carries on from there — the same day or another.
+const isHeldStopped = (t: Task) => t.status === "in_progress" && t.on_hold && t.budget_hours != null && !t.budget_started_at;
 function budgetInfo(t: Task, nowMs: number) {
-  // The day is closed: the clock waits with what it had used.
-  if (isDayPaused(t)) {
+  // The day is closed, or it's on hold: the clock waits with what it had used.
+  const held = isHeldStopped(t);
+  if (isDayPaused(t) || held) {
     const remainingMs = Number(t.budget_hours) * 3_600_000 - bankedMs(t);
     const absMs = Math.abs(remainingMs);
     const h = Math.floor(absMs / 3_600_000);
     const m = Math.floor((absMs % 3_600_000) / 60_000);
-    return { scheduled: false, over: remainingMs < 0, paused: true, dayPaused: true, label: h > 0 ? `${h}h ${m}m` : m > 0 ? `${m}m` : "<1m" };
+    return { scheduled: false, over: remainingMs < 0, paused: true, dayPaused: !held, held, label: h > 0 ? `${h}h ${m}m` : m > 0 ? `${m}m` : "<1m" };
   }
   if (t.budget_hours == null || !t.budget_started_at || t.status === "done") return null;
   const startMs = new Date(t.budget_started_at).getTime();
   if (startMs > nowMs) {
-    return { scheduled: true, over: false, paused: false, dayPaused: false, label: `Starts ${new Date(startMs).toLocaleDateString([], { weekday: "short" })} ${clockTime(startMs)}` };
+    return { scheduled: true, over: false, paused: false, dayPaused: false, held: false, label: `Starts ${new Date(startMs).toLocaleDateString([], { weekday: "short" })} ${clockTime(startMs)}` };
   }
   const deadlineMs = startMs + t.budget_hours * 3_600_000 + breakOffsetMs(t, nowMs);
   const remainingMs = deadlineMs - nowMs;
@@ -245,7 +258,7 @@ function budgetInfo(t: Task, nowMs: number) {
   const absMs = Math.abs(remainingMs);
   const h = Math.floor(absMs / 3_600_000);
   const m = Math.floor((absMs % 3_600_000) / 60_000);
-  return { scheduled: false, over, paused, dayPaused, label: h > 0 ? `${h}h ${m}m` : m > 0 ? `${m}m` : "<1m" };
+  return { scheduled: false, over, paused, dayPaused, held: false, label: h > 0 ? `${h}h ${m}m` : m > 0 ? `${m}m` : "<1m" };
 }
 
 // Office hours the acceptance dual-confirmation checks against.
@@ -312,6 +325,11 @@ const TB_ICON = {
   team: tbSvg(<><circle cx="9" cy="8" r="3.5" /><path d="M2.5 20a6.5 6.5 0 0 1 13 0M16 4.5a3.5 3.5 0 0 1 0 7M18 14.5a6.5 6.5 0 0 1 3.5 5.5" /></>),
   overdue: tbSvg(<><circle cx="12" cy="12" r="9" /><path d="M12 7v5M12 16h.01" /></>),
   due: tbSvg(<><rect x="3" y="5" width="18" height="16" rx="2" /><path d="M16 3v4M8 3v4M3 10h18" /></>, 14),
+  // the day chips each have their own, so they still read apart as icons alone:
+  // one day marked, an arrow to the next day, the whole week's row
+  today: tbSvg(<><rect x="3" y="5" width="18" height="16" rx="2" /><path d="M16 3v4M8 3v4M3 10h18" /><rect x="7" y="13" width="4.5" height="4.5" rx="1" fill="currentColor" stroke="none" /></>, 14),
+  tomorrow: tbSvg(<><rect x="3" y="5" width="18" height="16" rx="2" /><path d="M16 3v4M8 3v4M3 10h18M7.5 15.5h8M13 13l2.5 2.5L13 18" /></>, 14),
+  week: tbSvg(<><rect x="3" y="5" width="18" height="16" rx="2" /><path d="M16 3v4M8 3v4M3 10h18" /><rect x="6.5" y="13.5" width="11" height="4" rx="1" fill="currentColor" stroke="none" /></>, 14),
   search: tbSvg(<><circle cx="11" cy="11" r="7" /><path d="m20 20-3.5-3.5" /></>),
   plus: tbSvg(<path d="M12 5v14M5 12h14" />, 16),
   hold: tbSvg(<path d="M9 5v14M15 5v14" />, 12),
@@ -376,7 +394,7 @@ function dueText(due: string) {
 
 // How much of a running task's time budget is used, 0–1 (break time doesn't count).
 function budgetFrac(t: Task, nowMs: number) {
-  if (isDayPaused(t)) return Math.max(0, Math.min(1, bankedMs(t) / (Number(t.budget_hours) * 3_600_000)));
+  if (isDayPaused(t) || isHeldStopped(t)) return Math.max(0, Math.min(1, bankedMs(t) / (Number(t.budget_hours) * 3_600_000)));
   if (t.budget_hours == null || !t.budget_started_at) return 0;
   const used = nowMs - new Date(t.budget_started_at).getTime() - breakOffsetMs(t, nowMs);
   return Math.max(0, Math.min(1, used / (Number(t.budget_hours) * 3_600_000)));
@@ -403,6 +421,8 @@ function TaskClock({ t, nowMs }: { t: Task; nowMs: number }) {
   const cls = b.over ? " over" : b.paused ? " paused" : b.scheduled ? "" : " running";
   const title = b.scheduled
     ? "Timer hasn't started yet"
+    : b.held
+      ? `Paused: on hold. Resume carries on from ${b.over ? "here" : `${b.label} left`}, today or another day.`
     : b.over
       ? "Ran past its allotted time — needs follow-up"
       : b.dayPaused
@@ -594,8 +614,11 @@ export function TasksPage() {
     if (stored === "mine" || stored === "team") return stored;
     return role === "editor" ? "mine" : "team";
   });
+  // The Job bucket's view: only its jobs; picking My tasks, Team or To review leaves it
+  const [bucket, setBucket] = useState(false);
   function setScopeAndPersist(next: "mine" | "team" | "review") {
     setScope(next);
+    setBucket(false);
     // To review is for now: the board opens on My tasks or Team as before
     if (viewKey && next !== "review") window.localStorage.setItem(viewKey, next);
     // A member filter left over from Team scope makes "My Tasks" look broken
@@ -617,7 +640,7 @@ export function TasksPage() {
     return () => document.removeEventListener("mousedown", onDocClick);
   }, [teamMenuOpen]);
   function onTeamClick() {
-    if (scope === "team") { setTeamMenuOpen((o) => !o); return; }
+    if (scope === "team" && !bucket) { setTeamMenuOpen((o) => !o); return; }
     setScopeAndPersist("team");
   }
   const filteredEditorName = filterEditor ? (editors ?? []).find((e) => e.id === filterEditor)?.name : null;
@@ -638,7 +661,7 @@ export function TasksPage() {
   );
   const filtered = useMemo(
     () => {
-      const f: BoardFilters = { mine: scope === "mine", review: scope === "review", editorId: user?.editorId ?? null, editor: filterEditor, type: filterType, format: filterFormat, q: search.trim().toLowerCase() };
+      const f: BoardFilters = { mine: scope === "mine", review: scope === "review", bucket, editorId: user?.editorId ?? null, editor: filterEditor, type: filterType, format: filterFormat, q: search.trim().toLowerCase() };
       const list = effective.filter((t) => passesFilters(t, f) && matchesDueTab(t, dueTab, now));
       // Sort only matters for List view — Board/Calendar group by column/day
       // instead, so this is a no-op there but harmless to always apply.
@@ -650,7 +673,7 @@ export function TasksPage() {
       };
       return [...list].sort(cmp[sortBy] ?? cmp.due);
     },
-    [effective, scope, user?.editorId, filterEditor, filterType, filterFormat, dueTab, now, search, sortBy],
+    [effective, scope, bucket, user?.editorId, filterEditor, filterType, filterFormat, dueTab, now, search, sortBy],
   );
 
   const byStatus = (s: TaskStatus) => filtered.filter((t) => t.status === s);
@@ -720,12 +743,17 @@ export function TasksPage() {
   }, [boardShown]);
   // The number on each due chip: open work in that window, under every other filter.
   const dueCounts = useMemo(() => {
-    const f: BoardFilters = { mine: scope === "mine", review: scope === "review", editorId: user?.editorId ?? null, editor: filterEditor, type: filterType, format: filterFormat, q: search.trim().toLowerCase() };
+    const f: BoardFilters = { mine: scope === "mine", review: scope === "review", bucket, editorId: user?.editorId ?? null, editor: filterEditor, type: filterType, format: filterFormat, q: search.trim().toLowerCase() };
     const base = effective.filter((t) => t.status !== "done" && passesFilters(t, f));
     const out: Partial<Record<DueTab, number>> = {};
     for (const d of DUE_TABS) out[d.key] = base.filter((t) => matchesDueTab(t, d.key, now)).length;
     return out;
-  }, [effective, scope, user?.editorId, filterEditor, filterType, filterFormat, now, search]);
+  }, [effective, scope, bucket, user?.editorId, filterEditor, filterType, filterFormat, now, search]);
+  // the Job bucket chip's number: its jobs, under the type, format and search filters
+  const bucketCount = useMemo(() => {
+    const f: BoardFilters = { mine: false, review: false, bucket: true, editorId: null, editor: "", type: filterType, format: filterFormat, q: search.trim().toLowerCase() };
+    return effective.filter((t) => passesFilters(t, f)).length;
+  }, [effective, filterType, filterFormat, search]);
   const filtersOn = !!search.trim() || dueTab !== "all" || !!filterType || !!filterFormat;
   // The toolbar's second row (search, type, format, counts) folds away so the
   // toolbar is one row; Filters opens it, remembered on this device. The
@@ -822,6 +850,20 @@ export function TasksPage() {
       toast.error(err instanceof ApiError ? err.message : "Could not update task.");
     } finally {
       setPending((p) => { const n = { ...p }; delete n[t.id]; return n; });
+    }
+  }
+
+  // Picking up a Job bucket job: it becomes yours (accepted, in your To Do);
+  // whoever put it in the bucket reviews it. Someone quicker gets it first.
+  async function pickUp(t: Task) {
+    if (!user?.editorId) return;
+    try {
+      await api(`/tasks/${t.id}`, { method: "PATCH", body: JSON.stringify({ editorId: user.editorId }) });
+      await refetch();
+      toast.success(`Picked up “${t.title}”. It's in your To Do: press ▶ Start when you begin.`);
+    } catch (err) {
+      toast.error(err instanceof ApiError ? err.message : "Could not pick it up.");
+      await refetch();
     }
   }
 
@@ -1028,11 +1070,11 @@ export function TasksPage() {
           <button className={view === "calendar" ? "on" : ""} title="Calendar" onClick={() => setView("calendar")}>{TB_ICON.calendar} Calendar</button>
         </div>
         <div className="seg tb-scope">
-          <button className={scope === "mine" ? "on" : ""} onClick={() => setScopeAndPersist("mine")}>{TB_ICON.me} My tasks</button>
+          <button className={scope === "mine" && !bucket ? "on" : ""} onClick={() => setScopeAndPersist("mine")}>{TB_ICON.me} My tasks</button>
           <div className="team-btn-wrap" ref={teamMenuRef}>
-            <button className={"team-btn" + (scope === "team" ? " on" : "")} onClick={onTeamClick}>
+            <button className={"team-btn" + (scope === "team" && !bucket ? " on" : "")} onClick={onTeamClick}>
               {TB_ICON.team} {filteredEditorName ?? "Team"}
-              {scope === "team" && <span className="team-btn-caret">▾</span>}
+              {scope === "team" && !bucket && <span className="team-btn-caret">▾</span>}
             </button>
             {teamMenuOpen && (
               <div className="team-menu">
@@ -1057,7 +1099,7 @@ export function TasksPage() {
             )}
           </div>
           {(toReview > 0 || scope === "review") && (
-            <button className={"tb-review" + (scope === "review" ? " on" : "")} onClick={() => setScopeAndPersist(scope === "review" ? "mine" : "review")}
+            <button className={"tb-review" + (scope === "review" && !bucket ? " on" : "")} onClick={() => setScopeAndPersist(scope === "review" && !bucket ? "mine" : "review")}
               title="Tasks waiting for your review">
               {TB_ICON.hourglass} To review<span className="tb-chip-n">{toReview}</span>
             </button>
@@ -1066,14 +1108,27 @@ export function TasksPage() {
         <div className="tb-chips" role="group" aria-label="Due">
           {DUE_TABS.map((d) => {
             const n = dueCounts[d.key] ?? 0;
+            // Today, Tomorrow, This week: just their icon (the name shows on
+            // hover), until one is picked: then that one shows its name
+            const isDay = d.key === "today" || d.key === "tomorrow" || d.key === "week";
+            const iconOnly = isDay && dueTab !== d.key;
+            const icon = d.key === "overdue" ? TB_ICON.overdue : isDay ? TB_ICON[d.key as "today" | "tomorrow" | "week"] : null;
             return (
               <button key={d.key} type="button" aria-pressed={dueTab === d.key}
-                className={"tb-chip" + (dueTab === d.key ? " on" : "") + (d.key === "overdue" ? " over" : "")} onClick={() => setDueTab(d.key)}>
-                {d.key === "overdue" ? TB_ICON.overdue : d.key === "all" ? null : TB_ICON.due} {d.label}
+                aria-label={iconOnly ? `${d.label}${n > 0 ? `, ${n}` : ""}` : undefined} title={iconOnly ? d.label : undefined}
+                className={"tb-chip" + (dueTab === d.key ? " on" : "") + (d.key === "overdue" ? " over" : "") + (iconOnly ? " ico" : "")} onClick={() => setDueTab(d.key)}>
+                {icon}
+                {!iconOnly && <span>{d.label}</span>}
                 {d.key !== "all" && n > 0 && <span className="tb-chip-n">{n}</span>}
               </button>
             );
           })}
+          {/* the Job bucket: jobs with nobody on them yet, for any editor to pick up */}
+          <button type="button" aria-pressed={bucket} className={"tb-chip tb-bucket" + (bucket ? " on" : "")}
+            title="Jobs a lead put in the bucket. Pick one up and it's yours." onClick={() => setBucket((v) => !v)}>
+            <span aria-hidden="true">🧺</span> Job bucket
+            {bucketCount > 0 && <span className="tb-chip-n">{bucketCount}</span>}
+          </button>
         </div>
         <span className="tb-grow" />
         <button type="button" className={"tb-fold" + (barOpen ? " open" : "")} onClick={toggleBar}
@@ -1224,7 +1279,17 @@ export function TasksPage() {
                   const mineOnly = scope === "mine" && t.editor_id === user?.editorId;
                   // Waiting on the assignee to accept: their Accept button, or a
                   // note for everyone else. Otherwise the card shows its clock.
-                  const acceptSlot = t.editor_id && !t.accepted ? (
+                  // a Job bucket job: anyone on the team roster picks it up, and it's theirs (in their To Do)
+                  const acceptSlot = inBucket(t) ? (
+                    user?.editorId ? (
+                      <button type="button" className="tb-act pri" title="Take this job: it goes to your To Do, and whoever put it here reviews it"
+                        onClick={(e) => { e.stopPropagation(); pickUp(t); }}>
+                        🙋 Pick up
+                      </button>
+                    ) : (
+                      <span className="tb-act pill" title="Waiting for an editor to pick it up">🧺 In the Job bucket</span>
+                    )
+                  ) : t.editor_id && !t.accepted ? (
                     user?.editorId === t.editor_id ? (
                       <button
                         type="button"
@@ -2449,6 +2514,15 @@ export function TaskPanel({ mode, task, canWrite, editors, channels: yourBrands,
   // one task, scored once; each other brand gets its posting step after approval.
   const multiBrand = activeCategory === "social" && !adByTeam && !!selectedFormat?.to_scheduling && channels.length > 1;
   const [alsoBrands, setAlsoBrands] = useState<string[]>([]);
+  // A Social job's post details (pillar, content type, format, avatar): a Manager,
+  // Asst. Manager or Team Lead gives them (editors don't know them); they start
+  // its post's details in Scheduling (components/post-details.tsx). Not for the
+  // schedule types (Schedule, Reels schedule…): those are the scheduler's day, not a post.
+  const leadsWork = homeRoleOf(editors.find((e) => e.id === user?.editorId)?.designation, isAdmin) !== "editor";
+  const postKind = activeCategory === "social" && !(selectedFormat && scheduleTypeIds(contentFormats ?? []).has(selectedFormat.id));
+  const [postDetails, setPostDetails] = useState<PostDetails>({});
+  // the lists are the brand's own: another brand starts them over
+  useEffect(() => { if (creating) setPostDetails({}); }, [creating, draft.channel_id]);
   // Bulk work (lib/job-count.ts): Social, Ads and Service work of a type, several in one task
   const [jobs, setJobs] = useState(1);
   // a due date is today or later (a project's, not before its start either)
@@ -2581,28 +2655,31 @@ export function TaskPanel({ mode, task, canWrite, editors, channels: yourBrands,
   const needsType = creating && !!category && category !== "admin" && typeChoices.length > 0 && !draft.content_format_id && !otherPick;
   const canCreate = Boolean(title.trim() && category && !adminNeedsRoster && (category === "admin" || (adByTeam ? draft.ad_team_id : draft.channel_id)) && (category !== "project" || draft.content_format_id)
     && (!limitTypes || category === "admin" || !!draft.content_format_id)) && !(creating && dayLocked) && !elseNeedsBrief && !needsType && !pastDue;
-  async function create() {
+  // toBucket: into the Job bucket, with nobody on it, for any editor to pick up (a lead's choice)
+  async function create(opts?: { toBucket?: boolean }) {
     if (!canCreate || busy) return;
+    const toBucket = !!opts?.toBucket;
     setBusy(true);
     try {
       const r = await api<{ task: Task }>("/tasks", { method: "POST", body: JSON.stringify({
         // Every new task starts in To Do, regardless of where it was opened from.
         title: title.trim(), description, taskType: category, status: "todo",
-        channelId: adByTeam ? null : draft.channel_id, editorId: draft.editor_id, dueDate: draft.due_date,
+        channelId: adByTeam ? null : draft.channel_id, editorId: toBucket ? null : draft.editor_id, dueDate: draft.due_date,
         ...(adByTeam ? { adTeamId: draft.ad_team_id } : {}),
         startDate: category === "project" ? draft.start_date : undefined,
         priority: draft.priority, contentFormatId: draft.content_format_id,
         ...(multiBrand && alsoBrands.some((b) => b !== draft.channel_id) ? { alsoBrands: alsoBrands.filter((b) => b !== draft.channel_id) } : {}),
         ...(canAssign && linkOverride != null ? { reviewLinkRequired: linkOverride } : {}),
         ...(jobsN > 1 ? { count: jobsN } : {}),
+        ...(leadsWork && postKind && !!draft.channel_id && hasPostDetails(postDetails) ? { postDetails } : {}),
         // given to someone: which team asked, and how long it should take
-        ...(draft.editor_id && draft.editor_id !== user?.editorId ? {
+        ...(!toBucket && draft.editor_id && draft.editor_id !== user?.editorId ? {
           requestedBy: draft.requested_by.trim() || undefined,
           budgetHours: draft.budget_hours ?? undefined,
         } : {}),
         attachments: draft.attachments,
       }) });
-      toast.success("Task created.");
+      toast.success(toBucket ? `Put “${title.trim()}” in the Job bucket: any editor can pick it up.` : "Task created.");
       onCreated(r.task.id);
     } catch (e) { toast.error(e instanceof ApiError ? e.message : "Could not create task."); setBusy(false); }
   }
@@ -3253,6 +3330,17 @@ export function TaskPanel({ mode, task, canWrite, editors, channels: yourBrands,
                   </label>
                 )}
               </section>
+
+              {/* a lead's: the post's details, for the Library and Analytics, so whoever schedules it doesn't have to know them */}
+              {leadsWork && postKind && (
+                <section className="tp2-sec">
+                  <h3><span>4</span>Post details<em className="tp2-req pd-opt">For the Library · fill what you know</em></h3>
+                  {cur.channel_id
+                    ? <PostDetailsFields channelId={cur.channel_id} value={postDetails} onChange={setPostDetails} />
+                    : <div className="pd-ptype pd-none">Pick the brand in Details first: these come from its own lists.</div>}
+                  <small className="tp2-faint">When it's scheduled, its post starts with these, so whoever posts it doesn't have to look them up.{alsoBrands.some((b) => b !== draft.channel_id) ? " The other brands get the ones with the same names." : ""}</small>
+                </section>
+              )}
             </div>
 
             <aside className="tp2-score" aria-live="polite">
@@ -3277,8 +3365,15 @@ export function TaskPanel({ mode, task, canWrite, editors, channels: yourBrands,
           </div>
           <div className="tp2-foot">
             <span className={"tp2-foot-hint" + (canCreate ? " ok" : "")}>{canCreate ? TB_ICON.check : TB_ICON.info}<span>{hint}</span></span>
+            {/* a lead puts it in the Job bucket instead: nobody on it yet, any editor picks it up (the server holds the same) */}
+            {makesGeneral && category !== "admin" && (
+              <button type="button" className="tp2-btn tp2-bucket" disabled={busy || !canCreate} onClick={() => create({ toBucket: true })}
+                title="Put it in the Job bucket instead of giving it to someone: any editor can pick it up from the Task Board">
+                🧺 Job bucket
+              </button>
+            )}
             <button type="button" className="tp2-btn" onClick={close}>Cancel</button>
-            <button type="button" className="tp2-btn pri" disabled={busy || !canCreate} onClick={create}>{TB_ICON.plus} {busy ? "Creating…" : "Create task"}</button>
+            <button type="button" className="tp2-btn pri" disabled={busy || !canCreate} onClick={() => create()}>{TB_ICON.plus} {busy ? "Creating…" : "Create task"}</button>
           </div>
         </div>
       </div>
@@ -3378,6 +3473,14 @@ export function TaskPanel({ mode, task, canWrite, editors, channels: yourBrands,
             {pointsRow}
           </div>
           {t.budget_hours != null && <TimerCard t={t} />}
+          {/* a Social job's post details: its lead fills them in or changes them; everyone else sees them */}
+          {postKind && !!t.channel_id && !t.post_id && !t.meta?.postsFor && (leadsWork ? !ro : hasPostDetails(t.meta?.post)) && (
+            <div className="tp-section pd-block">
+              <div className="tp-sechead">Post details</div>
+              <PostDetailsSaved channelId={t.channel_id!} saved={t.meta?.post} canEdit={leadsWork && !ro}
+                onSave={(next) => patch({ postDetails: next })} />
+            </div>
+          )}
           {!adminEdit && (
             <Attachments links={cur.attachments} readOnly={!canEditWork} onChange={(next) => set("attachments", "attachments", next)} />
           )}

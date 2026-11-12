@@ -175,6 +175,12 @@ export function scoreMonth({ goals, jobs, leaveDays = 0, workingDays = 0, hoursP
 // approved leave and working days, scored. Rule 3 needs the whole team, so
 // goals and jobs are always read for everyone.
 export async function scoreMonthAll(orgId, monthFirst, editorId = null) {
+  return scoreLoaded(await loadMonth(orgId, monthFirst, editorId));
+}
+
+// The month's goals, finished work, leave, working days and times, read once
+// (scoreLoaded scores them; Progress Path scores them as each day closed).
+export async function loadMonth(orgId, monthFirst, editorId = null) {
   const one = editorId ? " and editor_id = $3" : "";
   const P = editorId ? [orgId, monthFirst, editorId] : [orgId, monthFirst];
   const covered = (await hasColumn("task", "covered_from_editor_id")) ? "t.covered_from_editor_id" : "null::uuid";
@@ -226,6 +232,15 @@ export async function scoreMonthAll(orgId, monthFirst, editorId = null) {
     // each type's time per job (Settings › Tasks & time): a person's own, else the org's
     pool.query("select content_format_id, editor_id, hours::float as hours from task_time_rule where org_id = $1", [orgId]),
   ]);
+  const { cal } = await readSettings(orgId);
+  return { editorId, goalRes, jobRes, leaveRes, capRes, orgCap, ruleRes, cal };
+}
+
+// A loaded month (loadMonth), scored. until (a Date): only work finished
+// before it counts, and leave as it stood (Progress Path, as each day closed).
+export function scoreLoaded(data, { until = null } = {}) {
+  const { editorId, goalRes, leaveRes, capRes, orgCap, ruleRes, cal } = data;
+  const jobRes = until ? { rows: data.jobRes.rows.filter((t) => new Date(t.completed_at) < until) } : data.jobRes;
   const fallbackDays = Number(orgCap.working_days) || 0;
   const fallbackHours = Number(orgCap.hours_per_day) || 8;
 
@@ -260,11 +275,15 @@ export async function scoreMonthAll(orgId, monthFirst, editorId = null) {
   };
 
   // Leave shrinks the goal only on working days (not a Sunday, a Saturday off or a holiday).
-  const { cal } = await readSettings(orgId);
   const leave = new Map();
+  // and which days (Media House Leaders counts the leave taken so far, ./hours-score.js)
+  const leaveDays = new Map();
   for (const r of leaveRes.rows) {
     if (!openingFor(cal, r.day)) continue;
-    leave.set(r.editor_id, (leave.get(r.editor_id) ?? 0) + (r.status === "leave" ? 1 : 0.5));
+    const n = r.status === "leave" ? 1 : 0.5;
+    leave.set(r.editor_id, (leave.get(r.editor_id) ?? 0) + n);
+    if (!leaveDays.has(r.editor_id)) leaveDays.set(r.editor_id, []);
+    leaveDays.get(r.editor_id).push({ day: r.day, days: n });
   }
   const days = new Map(capRes.rows.map((r) => [r.editor_id, Number(r.working_days)]));
   const dayHours = new Map(capRes.rows.map((r) => [r.editor_id, Number(r.hours_per_day)]));
@@ -277,14 +296,15 @@ export async function scoreMonthAll(orgId, monthFirst, editorId = null) {
     const jobHours = {};
     for (const g of goals.get(id) ?? []) jobHours[g.contentFormatId] = timeFor(id, g.contentFormatId, hpd, g.jph);
     for (const f of Object.keys(mine)) jobHours[f] ??= timeFor(id, f, hpd, 0);
-    out.set(id, {
-      ...scoreMonth({
-        goals: goals.get(id) ?? [], jobs: jobs.get(id) ?? [],
-        leaveDays: leave.get(id) ?? 0, workingDays: days.get(id) ?? fallbackDays,
-        hoursPerDay: hpd, teamTypes, credit: mine, jobHours,
-      }),
-      team,
+    const s = scoreMonth({
+      goals: goals.get(id) ?? [], jobs: jobs.get(id) ?? [],
+      leaveDays: leave.get(id) ?? 0, workingDays: days.get(id) ?? fallbackDays,
+      hoursPerDay: hpd, teamTypes, credit: mine, jobHours,
     });
+    // covered work, at its type's time (Media House Leaders, ./hours-score.js)
+    const coveredHours = Object.entries(s.coveredByType ?? {})
+      .reduce((n, [f, c]) => n + c * (jobHours[f] ?? timeFor(id, f, hpd, 0)), 0);
+    out.set(id, { ...s, coveredHours, leaveList: leaveDays.get(id) ?? [], team });
   }
   return out;
 }

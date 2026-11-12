@@ -1191,7 +1191,9 @@ select.mini{font-family:inherit;font-size:12.5px;font-weight:700;color:var(--tex
 /* Progress path (bump chart) */
 .pp-wrap{overflow-x:auto;margin-top:14px;padding-bottom:4px}
 .pp-svg{width:100%;min-width:820px;height:auto;display:block}
-.pp-grid{stroke:var(--border);stroke-dasharray:2 6}
+/* the chart's own grid lines only: the Pipeline, Scheduling and Ad uploads tables are .pp-grid too, and
+   a dash set on them reaches every icon inside (the editor's position mark came out dotted) */
+.pp-svg .pp-grid{stroke:var(--border);stroke-dasharray:2 6}
 .pp-rank{fill:var(--muted);font-size:13px;font-weight:800}
 .pp-date{fill:var(--muted);font-size:9.5px;font-weight:600;opacity:.75}
 .pp-name{fill:var(--text);font-size:12.5px;font-weight:800}
@@ -1201,12 +1203,62 @@ select.mini{font-family:inherit;font-size:12.5px;font-weight:700;color:var(--tex
 .pp-note{font-size:12px;font-weight:600;color:var(--amber-ink,#b45309);background:var(--amber-weak,rgba(245,158,11,.12));border:1px solid var(--amber-weak,rgba(245,158,11,.25));border-radius:8px;padding:6px 11px;margin:8px 0 0;display:inline-block}
 /* Media House Leaders' own columns: a wide Goal column (as .lb-head.x, .lb-row.x
    so the general .lb-head/.lb-row columns further down don't win) */
-.lb-head.lb-head-house,.lb-row.lb-row-house{grid-template-columns:110px 1fr 100px 170px 104px}
+.lb-head.lb-head-house,.lb-row.lb-row-house{grid-template-columns:100px 1fr 92px 200px 96px 104px}
+/* Hours filled (server/src/hours-score.js): the % in its band's colour, a faint
+   85–95% target band on the bar, and the kinds of work under it */
+.lb-hrs{font-size:11.5px;font-weight:600;color:var(--muted);font-variant-numeric:tabular-nums;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.lb-hpct{font-size:14px;font-weight:800;font-variant-numeric:tabular-nums}
+.lb-hpct.low{color:var(--h-low)}
+.lb-hpct.near{color:var(--h-near)}
+.lb-hpct.target{color:var(--h-target)}
+.lb-hpct.over{color:var(--h-over)}
+.lb-hbar{position:relative}
+.lb-hbar::after{content:"";position:absolute;top:0;bottom:0;left:85%;width:10%;background:color-mix(in oklab,var(--h-target) 22%,transparent);pointer-events:none}
+.lb-hbar.full::after{display:none}
+.lb-head .lb-of{font-weight:600;opacity:.75;text-transform:none}
+/* Media House columns: a heading and its column share one class, and the
+   heading row has no side padding (the rows have none), so they line up */
+.lb-table-wrap .lb-head.lb-head-house{padding-left:0;padding-right:0}
+.lb-c-pos{text-align:center}
+.lb-c-who{padding-left:4px}
+.lb-c-num{text-align:right;padding-right:18px;font-variant-numeric:tabular-nums}
+.lb-cell.lb-c-num{color:var(--text)}
+.lb-c-hours{padding-left:18px;min-width:0}
+.lb-c-score{text-align:right;padding-right:22px;white-space:nowrap}
+.lb-ontime-why{display:block;margin-top:2px;font-size:10.5px;font-weight:700;color:oklch(0.55 0.19 25)}
+html[data-theme="dark"] .lb-ontime-why{color:oklch(0.72 0.16 25)}
+.lb-faint{color:var(--muted);font-size:11.5px}
+/* the line under Work performance, the kinds of work, and How it's scored (a small card) */
+.lb-sub{margin:0;font-size:12.5px;color:var(--muted)}
+.lb-how{position:relative;margin-left:auto}
+.lb-how summary{cursor:pointer;list-style:none;color:var(--accent-ink,var(--accent));font-weight:700}
+.lb-how summary::-webkit-details-marker{display:none}
+.lb-how summary::before{content:"ⓘ "}
+.lb-how-body{position:absolute;right:0;top:calc(100% + 8px);z-index:30;width:min(380px,80vw);padding:12px 14px;border:1px solid var(--border);border-radius:12px;background:var(--panel);box-shadow:0 12px 32px rgba(0,0,0,.16);color:var(--text);font-weight:500;font-size:12.5px;line-height:1.45}
+.lb-how-body p{margin:0}
+.lb-how-body p+p{margin-top:8px}
+.lb-statbar-txt{display:flex;flex-direction:column;min-width:0;flex:1}
+/* a mid-size window, with the top performer card beside the board: no Completed column */
+@media screen and (min-width:993px) and (max-width:1320px){
+  .lb-head.lb-head-house,.lb-row.lb-row-house{grid-template-columns:72px minmax(0,1fr) 180px 80px 92px}
+  .lb-hidemd{display:none}
+}
+/* narrower still: Points kept goes to the hover card too */
+@media screen and (min-width:993px) and (max-width:1180px){
+  .lb-head.lb-head-house,.lb-row.lb-row-house{grid-template-columns:56px minmax(0,1fr) 168px 84px}
+  .lb-hidemd2{display:none}
+}
+.lb-hlegend{display:flex;flex-wrap:wrap;gap:12px;margin-top:6px;font-size:11.5px;font-weight:600;color:var(--muted)}
+.lb-hlegend span{display:inline-flex;align-items:center;gap:5px}
+.lb-statbar .lb-hlegend{--g-own:oklch(0.55 0.14 155);--g-team:oklch(0.56 0.16 250);--g-co:oklch(0.55 0.2 305);--g-cov:oklch(0.66 0.15 70)}
+html[data-theme="dark"] .lb-statbar .lb-hlegend{--g-own:oklch(0.74 0.14 155);--g-team:oklch(0.72 0.13 250);--g-co:oklch(0.74 0.15 305);--g-cov:oklch(0.8 0.13 75)}
 /* Media House Leaders — Goal column: target number + %, a bar of what it's made
    of (own goal work green, team goal blue, company tasks purple, covered amber,
    as Goals colours them), and one line of the extras. */
-.lb-goal,.lb-gcard{--g-own:oklch(0.55 0.14 155);--g-team:oklch(0.56 0.16 250);--g-co:oklch(0.55 0.2 305);--g-cov:oklch(0.66 0.15 70)}
-html[data-theme="dark"] :is(.lb-goal,.lb-gcard){--g-own:oklch(0.74 0.14 155);--g-team:oklch(0.72 0.13 250);--g-co:oklch(0.74 0.15 305);--g-cov:oklch(0.8 0.13 75)}
+.lb-goal,.lb-gcard{--g-own:oklch(0.55 0.14 155);--g-team:oklch(0.56 0.16 250);--g-co:oklch(0.55 0.2 305);--g-cov:oklch(0.66 0.15 70);
+  --h-low:oklch(0.55 0.19 25);--h-near:oklch(0.62 0.15 65);--h-target:oklch(0.55 0.14 155);--h-over:oklch(0.6 0.13 85)}
+html[data-theme="dark"] :is(.lb-goal,.lb-gcard){--g-own:oklch(0.74 0.14 155);--g-team:oklch(0.72 0.13 250);--g-co:oklch(0.74 0.15 305);--g-cov:oklch(0.8 0.13 75);
+  --h-low:oklch(0.72 0.16 25);--h-near:oklch(0.8 0.13 70);--h-target:oklch(0.76 0.14 155);--h-over:oklch(0.84 0.13 90)}
 .lb-goal{display:flex;flex-direction:column;gap:5px;padding-right:14px;min-width:0;border-radius:8px;outline:none;cursor:default}
 .lb-goal:focus-visible{box-shadow:0 0 0 2px var(--accent)}
 .lb-goal-top{display:flex;align-items:baseline;justify-content:space-between;gap:8px;font-variant-numeric:tabular-nums}

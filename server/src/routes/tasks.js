@@ -20,6 +20,7 @@ import { parentTypeOf, taskTypeError } from "../type-tree.js";
 import { isSuperHere } from "../super-admin.js";
 import { isHoliday, normalizeCalendar } from "../work-calendar.js";
 import { fillTypeChecklist, openChecklist, swapTypeChecklist, typeChecklistReady } from "../type-checklist.js";
+import { PostDetailsSchema, checkPostDetails } from "../post-details.js";
 
 export const tasksRouter = Router();
 
@@ -107,6 +108,8 @@ const TaskSchema = z.object({
   // the reviewer explicitly confirms it (the app asks first).
   approveWithoutWork: z.boolean().optional(),
   meta: MetaSchema.optional(),
+  // A Social job's post details, from its brand's lists (kept in meta.post; ../post-details.js)
+  postDetails: PostDetailsSchema.optional(),
   // Other work (../goal-score.js): which team asked for a task given to someone
   // (kept in meta.requestedBy), and how long it should take — its time budget,
   // which caps the time it takes off that person's goal when it's outside them.
@@ -264,6 +267,13 @@ export async function canAssignTasks(req) {
 // Someone else's task is in an assigner's hands only when they set it up: they
 // assigned it, or they made it and it's still unassigned. Assign tasks doesn't
 // reach work another person assigned.
+// Setting work up for the team: a Manager, Asst. Manager or Team Lead, an admin,
+// or an assign_tasks grantee. They put jobs in the Job bucket and give Social
+// jobs their post details (../post-details.js), which editors don't know.
+export async function mayBrief(req) {
+  const { role } = await callerScope(req);
+  return role === "manager" || role === "lead" || req.role === "admin" || (await canAssignTasks(req));
+}
 export function setUpBy(task, userId) {
   return task.assigned_by === userId || (!task.editor_id && task.created_by === userId);
 }
@@ -581,6 +591,22 @@ tasksRouter.post("/tasks", requireEditor, requireActiveEod, async (req, res, nex
       if (limit) return res.status(403).json({ error: limit });
     }
     const assigneeId = isAdminTask ? callerEid : (d.editorId ?? null);
+    // The Job bucket: work with nobody on it yet, for any editor to pick up
+    // (the Task Board's Job bucket). A Manager, Asst. Manager or Team Lead
+    // puts it there — or an admin, or someone with Assign tasks.
+    const toBucket = !isAdminTask && !assigneeId;
+    if (toBucket && !(await mayBrief(req))) {
+      return res.status(403).json({ error: "Only a Manager, Asst. Manager or Team Lead can put a job in the Job bucket." });
+    }
+    // A Social job's post details (pillar, content type, format, avatar): its lead's to give
+    let postDetails = null;
+    if (d.postDetails && Object.values(d.postDetails).some(Boolean)) {
+      if (taskType !== "social") return res.status(400).json({ error: "Post details are for Social work." });
+      if (!(await mayBrief(req))) return res.status(403).json({ error: "Only a Manager, Asst. Manager or Team Lead can fill in the post's details." });
+      const checked = await checkPostDetails(d.channelId ?? null, d.postDetails);
+      if (checked.error) return res.status(400).json({ error: checked.error });
+      postDetails = checked.post;
+    }
     // Every new task starts in To Do — nothing is auto-started (not even admin
     // tasks, which used to open In Progress). A task moves to In Progress only
     // when the assignee clicks Start on the board (todo -> in_progress).
@@ -693,7 +719,7 @@ tasksRouter.post("/tasks", requireEditor, requireActiveEod, async (req, res, nex
         sid,
         adId,
         svid,
-        JSON.stringify({ ...(d.meta ?? {}), ...(d.requestedBy ? { requestedBy: d.requestedBy } : {}), ...(also.list.length ? { alsoBrands: also.list } : {}), ...(jobs > 1 ? { count: jobs } : {}) }),
+        JSON.stringify({ ...(d.meta ?? {}), ...(d.requestedBy ? { requestedBy: d.requestedBy } : {}), ...(also.list.length ? { alsoBrands: also.list } : {}), ...(jobs > 1 ? { count: jobs } : {}), ...(toBucket ? { bucket: true } : {}), ...(postDetails ? { post: postDetails } : {}) }),
         d.contentType ?? null,
         d.platforms ?? [],
         JSON.stringify(d.attachments ?? []),
@@ -725,6 +751,17 @@ tasksRouter.post("/tasks", requireEditor, requireActiveEod, async (req, res, nex
         : `Created task “${full[0].title}” for themselves`,
       meta: { toEditorId: full[0].editor_id ?? null },
     });
+    // In the Job bucket: the editors are told there's a job to pick up
+    if (toBucket) {
+      const ranks = await editorRanks(req.orgId);
+      const { rows: eds } = await pool.query("select id from editor where org_id = $1 and active", [req.orgId]);
+      await logActivity({
+        orgId: req.orgId, actorId: req.user.sub, verb: "bucket_added",
+        entityType: "task", entityId: full[0].id, channelId: full[0].channel_id,
+        summary: `Put “${full[0].title}” in the Job bucket: anyone can pick it up`,
+        meta: { notifyEditorIds: eds.map((e) => e.id).filter((id) => id !== creatorEid && (ranks.get(id) ?? 3) === 3) },
+      });
+    }
     res.status(201).json({ task: full[0] });
   } catch (err) {
     next(err);
@@ -1377,33 +1414,51 @@ tasksRouter.patch("/tasks/:id", requireEditor, requireActiveEod, async (req, res
       }
       push("review_link_required", d.reviewLinkRequired);
     }
+    // A Social job's post details (../post-details.js): its lead's to give or
+    // change, finished or not (they start its post's details in Scheduling)
+    let postNext;
+    if (d.postDetails !== undefined && JSON.stringify(d.postDetails ?? null) !== JSON.stringify(prior.meta?.post ?? null)) {
+      if ((d.taskType ?? prior.task_type) !== "social") return res.status(400).json({ error: "Post details are for Social work." });
+      if (!(await mayBrief(req))) return res.status(403).json({ error: "Only a Manager, Asst. Manager or Team Lead can fill in the post's details." });
+      const checked = await checkPostDetails(d.channelId !== undefined ? (d.channelId ?? null) : prior.channel_id, d.postDetails);
+      if (checked.error) return res.status(400).json({ error: checked.error });
+      postNext = checked.post;
+    }
     // Requested by lives in meta but is its own field: a meta edit keeps it
-    if (d.meta !== undefined || d.requestedBy !== undefined || alsoNext !== undefined || countNext !== undefined) {
+    if (d.meta !== undefined || d.requestedBy !== undefined || alsoNext !== undefined || countNext !== undefined || postNext !== undefined) {
       const next = { ...(d.meta !== undefined ? d.meta : prior.meta ?? {}) };
       const asked = d.requestedBy !== undefined ? d.requestedBy || null : prior.meta?.requestedBy ?? null;
       if (asked) next.requestedBy = asked; else delete next.requestedBy;
       // what R&D work became, what a follow-up was made from (POST /tasks/:id/use),
       // and a posting copy's original stay; so do the other brands, unless changed here,
       // and bulk work's count and a piece's place in it
-      for (const k of ["use", "fromTask", "postsFor", "postsForRef", "alsoBrands", "desk", "count", "pieceOf", "piece", "pieces"]) {
+      // and bulk work's count and a piece's place in it, where a job came from (the
+      // Job bucket) and its post details, unless changed here
+      for (const k of ["use", "fromTask", "postsFor", "postsForRef", "alsoBrands", "desk", "count", "pieceOf", "piece", "pieces", "bucket", "post"]) {
         if (prior.meta?.[k] !== undefined) next[k] = prior.meta[k]; else delete next[k];
       }
       if (alsoNext !== undefined) { if (alsoNext.length) next.alsoBrands = alsoNext; else delete next.alsoBrands; }
       if (countNext !== undefined) { if (countNext > 1) next.count = countNext; else delete next.count; }
+      if (postNext !== undefined) { if (postNext) next.post = postNext; else delete next.post; }
       push("meta", JSON.stringify(next));
     }
 
     // Reassigning — resets acceptance unless it's a no-op (same editor) or a
     // self-assign (claiming, or a manager assigning their own work to themselves).
     let accepted = prior.accepted;
+    // picked up from the Job bucket (or any task with nobody on it): its own person takes it
+    let pickedUp = false;
     if (d.editorId !== undefined) {
       const nextEditorId = d.editorId ?? null;
       push("editor_id", nextEditorId);
       if (nextEditorId !== prior.editor_id) {
         const toSelf = (await callerEditorId(req)) === nextEditorId;
+        pickedUp = !prior.editor_id && !!nextEditorId && toSelf;
         accepted = !nextEditorId || toSelf;
         push("accepted", accepted);
-        push("assigned_by", nextEditorId && !toSelf ? req.user.sub : null);
+        // Picked up: whoever put it there gave it, so they review it and its brief stays theirs.
+        push("assigned_by", nextEditorId && !toSelf ? req.user.sub
+          : pickedUp && prior.created_by && prior.created_by !== req.user.sub ? prior.created_by : null);
         // Covered work: a task its person had accepted, now someone else's
         // (server/src/goal-score.js). Fixing an assignment nobody had taken on
         // yet isn't cover; going back to its first person ends it.
@@ -1481,10 +1536,12 @@ tasksRouter.patch("/tasks/:id", requireEditor, requireActiveEod, async (req, res
     // (no second next repeat, no "approved" over a send-back).
     const moving = d.status !== undefined && d.status !== prior.status;
     if (moving) params.push(prior.status);
+    // Two people picking up the same job at once: the first one gets it.
     const { rows } = await pool.query(
-      `update task set ${sets.join(", ")} where id = $1 and org_id = $2${moving ? ` and status = $${params.length}` : ""} returning id`,
+      `update task set ${sets.join(", ")} where id = $1 and org_id = $2${moving ? ` and status = $${params.length}` : ""}${pickedUp ? " and editor_id is null" : ""} returning id`,
       params,
     );
+    if (!rows.length && pickedUp) return res.status(409).json({ error: "Someone else just picked this up. It's theirs now." });
     if (!rows.length && moving) return res.status(409).json({ error: "Someone else just changed this task. Reload it and try again." });
     if (!rows.length) return res.status(404).json({ error: "Task not found" });
     // A new type before the work is handed in: its checklist comes with it, in
@@ -1549,8 +1606,18 @@ tasksRouter.patch("/tasks/:id", requireEditor, requireActiveEod, async (req, res
         meta: { notifyEditorIds: await schedulerIds(req.orgId) },
       });
     }
+    // Picked up from the Job bucket: whoever put it there is told who took it.
+    if (pickedUp) {
+      const { rows: [by] } = await pool.query("select editor_id from app_user where id = $1", [prior.created_by]);
+      await logActivity({
+        orgId: req.orgId, actorId: req.user.sub, verb: "bucket_picked",
+        entityType: "task", entityId: full[0].id, channelId: full[0].channel_id,
+        summary: `Picked up “${full[0].title}” from the Job bucket`,
+        meta: { notifyEditorIds: by?.editor_id ? [by.editor_id] : [] },
+      });
+    }
     // Handed to someone else — the new assignee needs to know.
-    if (d.editorId && d.editorId !== prior.editor_id) {
+    if (d.editorId && d.editorId !== prior.editor_id && !pickedUp) {
       await logActivity({
         orgId: req.orgId, actorId: req.user.sub, verb: "assigned",
         entityType: "task", entityId: full[0].id, channelId: full[0].channel_id,

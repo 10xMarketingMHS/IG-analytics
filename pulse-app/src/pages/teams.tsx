@@ -73,6 +73,9 @@ export function TeamMemberModal({ row, onClose, onSaved, existingEmails, startWi
     return k && k !== "none" ? k : "editor";
   });
   const wasRole = user ? roleKeyOf(user) : null;
+  // the email they sign in with can be changed; an admin's is a Super Admin's to change
+  const emailLocked = !!user && !canManageAdmins && (wasRole === "admin" || wasRole === "super");
+  const emailChanged = !!user && email.trim() !== user.email;
 
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -94,6 +97,13 @@ export function TeamMemberModal({ row, onClose, onSaved, existingEmails, startWi
       return;
     }
     if (giveLogin && !user && password.length < 6) { setError("Set a temporary password (6+ characters)."); return; }
+    if (emailChanged) {
+      if (!/^\S+@\S+\.\S+$/.test(email.trim())) { setError("Enter a valid email."); return; }
+      if (email.trim().toLowerCase() !== user!.email.toLowerCase() && existingEmails.includes(email.trim().toLowerCase())) {
+        setError("Someone else already signs in with that email.");
+        return;
+      }
+    }
     setSaving(true);
     setError(null);
     try {
@@ -121,10 +131,11 @@ export function TeamMemberModal({ row, onClose, onSaved, existingEmails, startWi
           method: "POST",
           body: JSON.stringify({ email: email.trim(), name: name.trim(), password, role: role === "super" ? "admin" : role, superAdmin: role === "super", editorId }),
         });
-      } else if (giveLogin && user && (role !== wasRole || user.editor_id !== editorId)) {
+      } else if (giveLogin && user && (role !== wasRole || user.editor_id !== editorId || emailChanged)) {
         // Link the login to its roster record whenever they differ — including a
         // login that was not on the roster yet, whose record was just created above.
         const patch: Record<string, unknown> = {};
+        if (emailChanged) patch.email = email.trim();
         if (role !== wasRole) {
           if (role === "super") patch.superAdmin = true;
           else { patch.role = role; if (user.isSuperAdmin) patch.superAdmin = false; }
@@ -204,7 +215,11 @@ export function TeamMemberModal({ row, onClose, onSaved, existingEmails, startWi
               <div style={{ marginTop: 10, paddingLeft: 2 }}>
                 <div className="field">
                   <label className="f">Email {!user && <span className="req">*</span>}</label>
-                  <input className="t" type="email" value={email} onChange={(e) => setEmail(e.target.value)} disabled={Boolean(user)} title={user ? "Email can't be changed after creation." : undefined} />
+                  <input className="t" type="email" value={email} onChange={(e) => setEmail(e.target.value)} disabled={emailLocked}
+                    title={emailLocked ? "Only a Super Admin can change an admin's email" : undefined} />
+                  {user && email.trim() !== user.email && (
+                    <div className="hint" style={{ marginTop: 5 }}>From now on they sign in with this email. Their password stays the same.</div>
+                  )}
                 </div>
                 {!user && (
                   <div className="field">

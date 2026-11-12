@@ -1,6 +1,6 @@
 // Social and Ads: the sidebar's two places for the work after the Task Board,
 // each a row of tabs in the order the work moves (components/section-tabs.tsx).
-//   Social — Pipeline (Social work) → Scheduling → Posts
+//   Social — Pipeline (Social work) → Scheduling → Library (the posts, /posts)
 //   Ads    — Pipeline (Ads work)    → Uploads    → Performance
 // The pages keep their own addresses, so old links still open the right tab;
 // the Pipeline is one page, told which work to show by ?type=.
@@ -22,7 +22,7 @@ export const SECTIONS: Record<SectionKey, { title: string; tabs: SectionTab[] }>
     tabs: [
       { key: "pipeline", label: "Pipeline", to: "/metrics?type=social", page: "socialPipeline", desc: "Every reel, carousel and post in production. Stages are read-only here — move work on the Task Board." },
       { key: "scheduling", label: "Scheduling", to: "/scheduling", page: "scheduling", access: "scheduler", desc: "Approved reels, carousels and posts: set the post date, then paste each link" },
-      { key: "posts", label: "Posts", to: "/posts", page: "posts", desc: "Your content database — replaces the Manual Entry sheet" },
+      { key: "posts", label: "Library", to: "/posts", page: "posts", desc: "Every post, planned and published, with its numbers — replaces the Manual Entry sheet" },
     ],
   },
   ads: {

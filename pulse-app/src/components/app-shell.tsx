@@ -742,15 +742,8 @@ function AppShellInner() {
             )}
           </div>
           <AccentPicker />
-          {(isAdmin || hasPermission("create_post")) && (
-            <button
-              className="btn btn-primary add-post-btn"
-              onClick={() => navigate("/posts/new", { state: { backgroundLocation: location } })}
-            >
-              <span className="ap-plus">＋</span>
-              <span className="ap-text"> Add Post</span>
-            </button>
-          )}
+          {/* no Add Post button here: posts come from the work (Scheduling adds each
+              one from its link); Add Post stays in Search (Ctrl K) for whoever may use it */}
         </div>
         <div className="content">
           {/* a page that breaks says so (the sidebar stays); another page starts afresh */}

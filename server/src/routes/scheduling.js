@@ -9,6 +9,7 @@ import { logActivity } from "../activity.js";
 import { hasColumn } from "../schema-flags.js";
 import { validYmd } from "../leave-math.js";
 import { callerEditorId, nextBrandTaskRef, nextTaskRef, taskSelect } from "./tasks.js";
+import { taskPostDetails } from "../post-details.js";
 import {
   LINK_AFTER_DAYS, NEEDS_SCHED_DB, addDaysYmd, scheduleCreditType, isScheduler, linksDueAt, sameLink, scheduleFormat, scheduleStage, schedulerIds, schedulingReady, scheduledOn,
 } from "../scheduling.js";
@@ -93,8 +94,11 @@ async function scheduleView(req, t, w) {
   ]);
   const canSchedule = canAct(t, w);
   const addPost = canAddPost(req, t, w);
-  // the details the last post took, to start the link form from: yours on this brand first, else its latest
-  const defaults = (canSchedule || addPost) && t.channel_id ? (await pool.query(
+  // the details to start the link form from: the ones its lead gave the job
+  // (../post-details.js), else the last post's: yours on this brand first, else its latest
+  const given = (canSchedule || addPost) && t.channel_id ? await taskPostDetails(t.id) : null;
+  const defaults = given ? { pillarId: "", contentTypeId: "", formatId: "", avatarId: "", ...Object.fromEntries(Object.entries(given).filter(([, v]) => v)) }
+    : (canSchedule || addPost) && t.channel_id ? (await pool.query(
     `select pillar_id as "pillarId", content_type_id as "contentTypeId", format_id as "formatId", avatar_id as "avatarId"
        from post where workspace_id = $1 and deleted_at is null and not is_collab_mirror
       order by (created_by = $2) desc, created_at desc limit 1`,
@@ -111,7 +115,7 @@ async function scheduleView(req, t, w) {
     linksDueAt: t.post_on ? linksDueAt(t.post_on) : null,
     linksLate: !!t.post_on && !posts.rows.length && Date.now() > Date.parse(linksDueAt(t.post_on)),
     canSchedule, canChangeScheduler: !!t.schedule_from && t.status === "done" && w.lead, canAddPost: addPost,
-    schedulers, platforms: platforms.rows, posts: posts.rows, defaults,
+    schedulers, platforms: platforms.rows, posts: posts.rows, defaults, defaultsGiven: !!given,
     // no brand: nowhere to post until it has one (canSchedule picks it, PATCH channelId)
     hasBrand: !!t.channel_id,
   };

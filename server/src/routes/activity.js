@@ -49,6 +49,7 @@ activityRouter.get("/activity", async (req, res, next) => {
         or (a.verb = 'assigned' and a.meta->>'fromEditorId' = $${eid}::text)
         or (a.verb like 'handover_%' and coalesce(a.meta->'notifyEditorIds', '[]'::jsonb) ? ($${eid}::uuid)::text)
         or (a.verb like 'schedule_%' and coalesce(a.meta->'notifyEditorIds', '[]'::jsonb) ? ($${eid}::uuid)::text)
+        or (a.verb like 'bucket_%' and coalesce(a.meta->'notifyEditorIds', '[]'::jsonb) ? ($${eid}::uuid)::text)
         or (a.entity_type = 'task' and exists (
               select 1 from task t where t.id = a.entity_id and t.editor_id = $${eid}::uuid))
         or (a.verb in ('review_requested', 'review_copied') and (
