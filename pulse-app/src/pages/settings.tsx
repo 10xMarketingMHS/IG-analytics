@@ -12,6 +12,8 @@ import { homeRoleOf } from "@/lib/home-role";
 import { useReviewAccess } from "@/lib/use-review-access";
 import { setWeekStart } from "@/lib/date-range";
 import { notifyOn, type NotifyKey } from "@/lib/notify-prefs";
+import { askDesktop, desktopState, type DesktopState } from "@/lib/chat-alerts";
+import { chatPing } from "@/lib/widget-audio";
 import { CALENDAR_DEFAULTS, LUNCH_MIN, TEA_MIN, capacityFor, storedCapacity, type WorkCalendar } from "@/lib/work-calendar";
 import { ACCENTS, useTheme } from "@/components/theme-provider";
 import { SCORE_WEIGHTS } from "@/lib/score";
@@ -402,8 +404,50 @@ function NotificationsSection() {
     ["budget", "A task passes its time budget", "Any task on the team runs past its time", isAdmin],
   ];
   const rows = ROWS.filter((r) => r[3]);
+  // Team chat's ping and desktop pop-ups (lib/chat-alerts.ts). A desktop pop-up
+  // also needs this browser's say-so, asked the first time it's switched on.
+  const [perm, setPerm] = useState<DesktopState>(() => desktopState());
+  const desktopOn = on("chatDesktop") && perm === "granted";
+  async function setDesktop(v: boolean) {
+    if (!v) { set("chatDesktop", false); return; }
+    let p = desktopState();
+    if (p === "default") p = await askDesktop();
+    setPerm(p);
+    if (p === "granted") {
+      await set("chatDesktop", true);
+      try { new Notification("Echo", { body: "Desktop pop-ups are on for team chat.", icon: "/app-icon.svg", silent: true }); } catch { /* fine */ }
+    } else if (p === "denied") {
+      toast.error("This browser blocked Echo's notifications. Allow them in Site settings (the icon left of the address, or the app's ⋮ menu › App info), then switch this on again.");
+    } else {
+      toast.error("This browser can't show desktop pop-ups.");
+    }
+  }
   return (
     <>
+      <section className="st-card">
+        <div className="st-row st-colhead" style={{ borderTop: 0 }}>
+          <span className="st-label"><small>Team chat</small></span>
+        </div>
+        <div className="st-row">
+          <span className="st-label"><b>Sound for new messages</b><small>A short ping when someone writes, unless you're looking at that conversation</small></span>
+          <button type="button" className="st-btn sm" onClick={() => chatPing(true)} title="Hear it">▶ Play</button>
+          <Toggle on={on("chatSound")} onChange={(v) => set("chatSound", v)} label="Sound for new messages" />
+        </div>
+        <div className="st-row">
+          <span className="st-label"><b>Desktop pop-up</b><small>{
+            perm === "denied" ? "Blocked in this browser: allow Echo's notifications in Site settings, then switch it on"
+              : perm === "unsupported" ? "This browser can't show them"
+              : "On your computer, when Echo is minimized or behind another window"}</small></span>
+          <Toggle on={desktopOn} onChange={setDesktop} label="Desktop pop-up" />
+        </div>
+        {(on("chatSound") || desktopOn) && (
+          <div className="st-row">
+            <span className="st-label"><b>For which messages</b><small>Muted conversations stay quiet, except a mention of you by name</small></span>
+            <Seg label="For which messages" value={on("chatAll") ? "all" : "me"} onChange={(v) => set("chatAll", v === "all")}
+              options={[["all", "Every message"], ["me", "Only ones for me"]]} />
+          </div>
+        )}
+      </section>
       <section className="st-card">
         <div className="st-row st-colhead" style={{ borderTop: 0 }}>
           <span className="st-label"><small>Notify me when</small></span>
@@ -425,7 +469,8 @@ function NotificationsSection() {
         </div>
       </section>
       <span className="st-note">
-        These are pop-ups inside Echo while it's open. Email alerts and a daily digest email need an email service, which Echo doesn't have yet.
+        These work while Echo is open: the installed app or a tab, minimized is fine. "Only ones for me" means DMs, mentions and replies in your threads.
+        Focus Mode and quiet hours hold chat's sound and pop-ups too. Email alerts and a daily digest email need an email service, which Echo doesn't have yet.
       </span>
     </>
   );

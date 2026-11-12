@@ -665,8 +665,13 @@ async function anyWorkspace(orgId) {
 // Push a message (new or changed) to everyone it concerns — each with only the
 // task cards they may open.
 async function broadcastMessage(orgId, row, { isNew = false, extra = [] } = {}) {
-  const { messages, tasks } = await hydrate(orgId, [row]);
-  const event = { type: "message", isNew, message: messages[0], tasks };
+  const [{ messages, tasks }, { rows: [chan] }] = await Promise.all([
+    hydrate(orgId, [row]),
+    pool.query("select kind, name from chat_channel where id = $1", [row.channel_id]),
+  ]);
+  // which kind of conversation it's in, for someone whose app doesn't know it
+  // yet (a first DM): its notice, ping and desktop pop-up (pulse-app/src/lib/chat.tsx)
+  const event = { type: "message", isNew, message: messages[0], tasks, channel: chan ? { kind: chan.kind, name: chan.name } : null };
   if (isNew && row.parent_id) {
     // Everyone in the thread so far, so a reply can be announced to them.
     const { rows } = await pool.query(

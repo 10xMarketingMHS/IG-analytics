@@ -27,4 +27,6 @@ export function popup(show: () => void) {
 }
 
 export const useQuiet = () => useSyncExternalStore(subscribe, () => quiet);
+// Focus Mode on right now (chat's sound and desktop pop-ups wait too)
+export const isQuiet = () => quiet;
 export const useHeld = () => useSyncExternalStore(subscribe, () => held);

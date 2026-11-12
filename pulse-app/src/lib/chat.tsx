@@ -1,7 +1,10 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useNavigate } from "react-router-dom";
 import { toast } from "sonner";
-import { popup } from "@/lib/quiet-popups";
+import { isQuiet, popup } from "@/lib/quiet-popups";
+import { chatAlertPrefs, primeChatSound, ringChat } from "@/lib/chat-alerts";
+import { useAuth } from "@/lib/auth-context";
+import { useAlertGate } from "@/lib/notify-prefs";
 import { api, API_BASE, ApiError } from "@/lib/api";
 import { gradFor } from "@/lib/editor-visuals";
 import type { TaskStatus, TaskType } from "@/lib/types";
@@ -88,7 +91,9 @@ export type ChatTask = {
 };
 
 export type ChatEvent =
-  | { type: "message"; isNew: boolean; message: ChatMessage; tasks: Record<string, ChatTask>; threadUserIds?: string[] }
+  | { type: "message"; isNew: boolean; message: ChatMessage; tasks: Record<string, ChatTask>; threadUserIds?: string[];
+      // the conversation's kind and name (for one the app doesn't know yet, a first DM)
+      channel?: { kind: "channel" | "dm"; name: string | null } | null }
   | { type: "channels" }
   | { type: "read"; channelId: string }
   | { type: "presence"; userId: string; online: boolean }
@@ -205,6 +210,12 @@ export function PersonAvatar({ person, name, size = 32, online }: { person?: Cha
 
 export function ChatProvider({ children }: { children: ReactNode }) {
   const navigate = useNavigate();
+  // the ping and desktop pop-ups follow Settings › Notifications and quiet hours
+  const { user } = useAuth();
+  const prefsRef = useRef(user?.notifyPrefs);
+  prefsRef.current = user?.notifyPrefs;
+  const gate = useAlertGate();
+  useEffect(() => { primeChatSound(); }, []);
   const [state, setState] = useState<ChatState | null>(null);
   const [available, setAvailable] = useState(true);
   const [online, setOnline] = useState<Set<string>>(new Set());
@@ -290,24 +301,43 @@ export function ChatProvider({ children }: { children: ReactNode }) {
         }));
       }
       const inMyThread = !!m.parentId && (e.threadUserIds ?? []).includes(s.me);
-      const isDm = ch?.kind === "dm";
+      // a first DM isn't in the list yet: the event says what it is
+      const isDm = (ch?.kind ?? e.channel?.kind) === "dm";
       const worthSaying = mentionsMe || (!ch?.muted && ((isDm && !m.parentId) || inMyThread));
       const alreadyThere = m.parentId ? seeingThread : seeingChannel;
+      const author = peopleRef.current.get(m.authorId ?? "");
+      const who = author?.name ?? "Someone";
+      const where = m.parentId ? "replied in a thread" : isDm ? "" : `in #${ch?.name ?? e.channel?.name ?? "a channel"}`;
+      const text = toPlain(m.body, peopleRef.current, e.tasks);
+      const openIt = () => navigate(`/chat?c=${m.channelId}${m.parentId ? `&t=${m.parentId}` : ""}`);
+      // the ping and the desktop pop-up (lib/chat-alerts.ts, Settings ›
+      // Notifications): a message meant for you, or (unless switched to only
+      // those) any message in a conversation you're in that isn't muted; not
+      // one you're looking at with Echo in front, nor in Focus Mode or quiet hours
+      const prefs = chatAlertPrefs(prefsRef.current);
+      const front = visible && document.hasFocus();
+      const lookingAtIt = front && (m.parentId ? viewing.current.threadId === m.parentId : viewing.current.channelId === m.channelId);
+      const counts = worthSaying || (prefs.all && !!ch?.joined && !ch.muted && !m.parentId);
+      if (counts && !lookingAtIt && !isQuiet() && !gate.held() && (prefs.sound || prefs.desktop)) {
+        ringChat({
+          id: m.id, forYou: worthSaying, sound: prefs.sound,
+          desktop: prefs.desktop && !front
+            ? { title: `💬 ${who}${where ? " " + where : ""}`, body: text.length > 140 ? text.slice(0, 140) + "…" : text, tag: `echo-chat-${m.channelId}`, icon: author?.image_url, onOpen: openIt }
+            : null,
+        });
+      }
       if (worthSaying && !alreadyThere) {
-        const who = peopleRef.current.get(m.authorId ?? "")?.name ?? "Someone";
-        const where = m.parentId ? "replied in a thread" : isDm ? "" : `in #${ch?.name ?? "a channel"}`;
-        const text = toPlain(m.body, peopleRef.current, e.tasks);
         popup(() => toast(`💬 ${who}${where ? " " + where : ""}`, {
           description: text.length > 140 ? text.slice(0, 140) + "…" : text,
           action: {
             label: "Open",
-            onClick: () => navigate(`/chat?c=${m.channelId}${m.parentId ? `&t=${m.parentId}` : ""}`),
+            onClick: openIt,
           },
         }));
       }
     }
     listeners.current.forEach((fn) => fn(e));
-  }, [navigate, patchChannel, refreshSoon]);
+  }, [navigate, patchChannel, refreshSoon, gate]);
 
   useEffect(() => {
     refresh();

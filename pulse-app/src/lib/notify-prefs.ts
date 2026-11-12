@@ -5,7 +5,9 @@ import { CALENDAR_DEFAULTS, isWorkingNow } from "@/lib/work-calendar";
 
 // Settings › Notifications: which in-app alerts a person gets. Saved on their
 // login (notify_prefs); a key that isn't saved counts as on.
-export type NotifyKey = "assigned" | "review" | "overdue" | "budget" | "quiet";
+export type NotifyKey = "assigned" | "review" | "overdue" | "budget" | "quiet"
+  // team chat's sound and desktop pop-ups (lib/chat-alerts.ts)
+  | "chatSound" | "chatAll" | "chatDesktop";
 export const notifyOn = (prefs: Record<string, boolean> | undefined | null, k: NotifyKey) => prefs?.[k] !== false;
 
 // For the polling alert hooks: should this alert show right now? Off in the

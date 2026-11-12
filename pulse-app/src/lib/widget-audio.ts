@@ -45,6 +45,32 @@ export function chimeAt(inSeconds = 0): () => void {
   };
 }
 
+// Team chat's ping (lib/chat-alerts.ts): two quick soft notes for a message,
+// three brighter ones for one meant for you (a DM, a mention, a reply to you).
+export function chatPing(forYou = false) {
+  const c = audio();
+  if (!c) return;
+  const play = () => {
+    const notes = forYou ? [987.77, 1318.51, 1567.98] : [880, 1174.66];
+    const from = c.currentTime + 0.02;
+    notes.forEach((hz, i) => {
+      const t = from + i * 0.09;
+      const o = c.createOscillator();
+      const g = c.createGain();
+      o.type = "sine";
+      o.frequency.value = hz;
+      g.gain.setValueAtTime(0.0001, t);
+      g.gain.exponentialRampToValueAtTime(forYou ? 0.2 : 0.16, t + 0.015);
+      g.gain.exponentialRampToValueAtTime(0.0001, t + 0.38);
+      o.connect(g).connect(c.destination);
+      o.start(t);
+      o.stop(t + 0.4);
+    });
+  };
+  // the browser holds sound back until the first click or key press in Echo
+  if (c.state === "running") play(); else c.resume().then(play).catch(() => {});
+}
+
 export type SoundKind = "rain" | "waves" | "soft";
 export const SOUNDS: { key: SoundKind; label: string; icon: string }[] = [
   { key: "rain", label: "Rain", icon: "🌧️" },
