@@ -1,5 +1,6 @@
 import { Router } from "express";
 import { pool } from "../db.js";
+import { hasColumn } from "../schema-flags.js";
 
 // Today's date on India time: the break allowance is per office day.
 const istToday = () => new Date(Date.now() + 330 * 60_000).toISOString().slice(0, 10);
@@ -14,6 +15,19 @@ export const breaksRouter = Router();
 // live timer anywhere (see resolveBreak below).
 const DAILY_CAP_SECONDS = 75 * 60;
 const MIN_BREAK_SECONDS = 0;
+
+// The day's break on its attendance row (Team tracker's history, once the
+// database has the columns): the time taken so far, and one more break when
+// one starts. A day nobody started has no row: nothing to keep.
+async function keepBreakDay(editorId, day, { seconds = null, started = false } = {}) {
+  if (!(await hasColumn("attendance", "break_seconds"))) return;
+  const vals = [editorId, day];
+  const sets = [];
+  if (seconds != null) { vals.push(Math.round(Math.min(DAILY_CAP_SECONDS, seconds))); sets.push(`break_seconds = $${vals.length}`); }
+  if (started) sets.push("break_count = break_count + 1");
+  if (!sets.length) return;
+  await pool.query(`update attendance set ${sets.join(", ")} where editor_id = $1 and date = $2::date`, vals);
+}
 
 async function callerEditorId(req) {
   const { rows } = await pool.query("select editor_id from app_user where id = $1", [req.user.sub]);
@@ -32,12 +46,16 @@ async function loadBreakState(editorId) {
   const row = rows[0];
   if (!row) return null;
   const today = istToday();
-  const isToday = row.break_date && new Date(row.break_date).toISOString().slice(0, 10) === today;
+  const breakDay = row.break_date ? new Date(row.break_date).toISOString().slice(0, 10) : null;
+  const isToday = breakDay === today;
   const usedSeconds = isToday ? row.break_used_seconds : 0;
   const startedAt = isToday ? row.break_started_at : null;
+  // a break left running on an earlier day ran to that day's full allowance
+  // (it stops itself there): kept on that day's attendance row (resolveBreak)
+  const staleDay = !isToday && row.break_started_at && breakDay ? breakDay : null;
 
   if (!startedAt) {
-    return { onBreak: false, usedSeconds, remainingSeconds: Math.max(0, DAILY_CAP_SECONDS - usedSeconds) };
+    return { onBreak: false, usedSeconds, remainingSeconds: Math.max(0, DAILY_CAP_SECONDS - usedSeconds), ...(staleDay ? { staleDay } : {}) };
   }
   const elapsed = Math.max(0, (Date.now() - new Date(startedAt).getTime()) / 1000);
   const remainingCap = Math.max(0, DAILY_CAP_SECONDS - usedSeconds);
@@ -52,12 +70,17 @@ async function loadBreakState(editorId) {
 // Persist an auto-expired break so the DB reflects it (idempotent — safe to
 // call whenever any request notices the break has run out).
 async function resolveBreak(editorId, state) {
+  if (state?.staleDay) {
+    await pool.query("update editor set break_started_at = null where id = $1", [editorId]);
+    await keepBreakDay(editorId, state.staleDay, { seconds: DAILY_CAP_SECONDS });
+  }
   if (state?.autoExpired) {
     const today = istToday();
     await pool.query(
       "update editor set break_started_at = null, break_used_seconds = $1, break_date = $2 where id = $3",
       [DAILY_CAP_SECONDS, today, editorId],
     );
+    await keepBreakDay(editorId, today, { seconds: DAILY_CAP_SECONDS });
   }
 }
 
@@ -88,6 +111,7 @@ breaksRouter.post("/break/start", async (req, res, next) => {
       "update editor set break_started_at = now(), break_used_seconds = $1, break_date = $2 where id = $3",
       [state.usedSeconds, today, editorId],
     );
+    await keepBreakDay(editorId, today, { started: true });
     const updated = await loadBreakState(editorId);
     res.json({ ...updated, dailyCapSeconds: DAILY_CAP_SECONDS, minBreakSeconds: MIN_BREAK_SECONDS });
   } catch (err) {
@@ -112,6 +136,7 @@ breaksRouter.post("/break/end", async (req, res, next) => {
       "update editor set break_started_at = null, break_used_seconds = $1, break_date = $2 where id = $3",
       [Math.round(usedSeconds), today, editorId],
     );
+    await keepBreakDay(editorId, today, { seconds: usedSeconds });
     const updated = await loadBreakState(editorId);
     res.json({ ...updated, dailyCapSeconds: DAILY_CAP_SECONDS, minBreakSeconds: MIN_BREAK_SECONDS });
   } catch (err) {

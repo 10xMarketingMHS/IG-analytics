@@ -48,7 +48,13 @@ import { WidgetsPage } from "@/pages/widgets";
 import { FormatAnalyticsPage } from "@/pages/format-analytics";
 import { LeaderboardPage } from "@/pages/leaderboard";
 import { MyTeamPage } from "@/pages/my-team";
-import { TeamTrackerPage } from "@/pages/team-tracker";
+// Team tracker moved into My Team (its Tracker tab): /team-tracker keeps working
+function TrackerMoved() {
+  const { search } = useLocation();
+  const q = new URLSearchParams(search);
+  q.set("tab", "tracker");
+  return <Navigate to={`/my-team?${q.toString()}`} replace />;
+}
 
 // Adding posts is for admins and anyone given Add Post access — everyone else
 // who opens the address gets a short explanation instead of an empty page.
@@ -133,7 +139,8 @@ function AppRoutes() {
             <Route path="/integrations" element={<Navigate to="/channels" replace />} />
             <Route path="/tasks" element={<TasksPage />} />
             <Route path="/my-team" element={<MyTeamPage />} />
-            <Route path="/team-tracker" element={<TeamTrackerPage />} />
+            {/* Team tracker is My Team's Tracker tab now: an old link lands there, with its person and dates */}
+            <Route path="/team-tracker" element={<TrackerMoved />} />
             <Route path="/task-rules" element={<SettingsPage />} />
             <Route path="/social-media" element={<SocialMediaPage />} />
             <Route path="/activity" element={<ActivityPage />} />

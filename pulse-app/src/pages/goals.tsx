@@ -362,7 +362,7 @@ function TeamGoals({ month, isCurrent, focusId, selfOnly }: { month: string; isC
                       <Face editor={sel.editor} size="lg" />
                       <span className="gl-dwho"><b>{sel.editor.name}<PositionMark designation={sel.editor.designation} size={15} /></b><span>{sel.editor.designation || "Team member"} · {label}</span></span>
                       <span className="gl-grow" />
-                      {isAdmin && <button type="button" className="gl-btn sm" onClick={() => navigate("/my-team", { state: { editorId: sel.editor.id } })}>{IC.group}View in Team</button>}
+                      {isAdmin && <button type="button" className="gl-btn sm" onClick={() => navigate(`/my-team?tab=tracker&p=${sel.editor.id}`)}>{IC.group}View in Team</button>}
                       <span className="gl-dpct"><b className={b.tone}>{pctText(sel.x)}</b><em>{adjusted ? "Goal card · " : ""}{sel.done} of {sel.target} jobs done</em></span>
                       {adjusted && adjPct != null && (
                         <>

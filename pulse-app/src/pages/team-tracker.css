@@ -84,7 +84,7 @@ html[data-theme="dark"] .trk{--trk-text:#ededf0;--trk-text2:#b4b4bc;--trk-text3:
 .trk-chip{display:inline-flex;align-items:center;gap:6px;height:26px;padding:0 10px;border-radius:999px;background:var(--trk-sunk);font-size:12px;font-weight:600;color:var(--trk-text2)}
 .trk-chip b{color:var(--trk-text);font-variant-numeric:tabular-nums}
 .trk-chip.on_time{background:color-mix(in srgb,var(--trk-good) 12%,transparent)}
-.trk-chip.late,.trk-chip.half_day{background:color-mix(in srgb,var(--trk-warn) 13%,transparent)}
+.trk-chip.late,.trk-chip.half_day,.trk-chip.half_absent{background:color-mix(in srgb,var(--trk-warn) 13%,transparent)}
 .trk-chip.absent,.trk-chip.no_sod{background:color-mix(in srgb,var(--trk-bad) 11%,transparent)}
 
 /* the task history */
@@ -151,4 +151,38 @@ html[data-theme="dark"] .trk{--trk-text:#ededf0;--trk-text2:#b4b4bc;--trk-text3:
 @media (max-width:1280px){
   .trk-trow,.trk-thead{grid-template-columns:minmax(0,1fr) 92px 150px 96px}
   .trk-ttime,.trk-thead span:nth-child(4){display:none}
+}
+
+/* break today in the list (☕ 45m, or On break) */
+.trk-brk{display:inline-block;margin-left:6px;padding:1px 7px;border-radius:999px;background:var(--trk-sunk);font-style:normal;font-size:11px;font-weight:700;color:var(--trk-text2);vertical-align:1px;white-space:nowrap}
+.trk-brk.on{background:color-mix(in srgb,var(--trk-warn) 16%,transparent);color:var(--trk-warn)}
+.trk-pnums .trk-brk{margin:2px 0 0}
+/* Today: attendance, started, ended, worked, break, what they're working on */
+.trk-today{display:flex;flex-direction:column;gap:12px;padding:14px 18px}
+.trk-today-head{display:flex;align-items:center;gap:10px}
+.trk-today-state{margin-left:auto;padding:3px 10px;border-radius:999px;background:var(--trk-sunk);font-style:normal;font-size:12px;font-weight:700;color:var(--trk-text2)}
+.trk-today-state.on{background:color-mix(in srgb,var(--trk-good) 14%,transparent);color:var(--trk-good)}
+.trk-today-state.brk{background:color-mix(in srgb,var(--trk-warn) 15%,transparent);color:var(--trk-warn)}
+.trk-today-grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr)) minmax(0,1.6fr);gap:12px}
+.trk-today-grid>div{display:flex;flex-direction:column;gap:3px;min-width:0}
+.trk-today-grid small,.trk-today-now small{font-size:11px;font-weight:700;letter-spacing:.03em;text-transform:uppercase;color:var(--trk-text3)}
+.trk-today-grid b{font-size:16px;font-weight:800;font-variant-numeric:tabular-nums}
+.trk-today-grid b span{font-size:12px;font-weight:600;color:var(--trk-text3)}
+.trk-today-grid span{font-size:12px;color:var(--trk-text3)}
+.trk-today-grid span.low{color:var(--trk-bad);font-weight:700}
+.trk-today-brk .trk-bar{height:6px;margin:2px 0}
+.trk-today-now{display:flex;flex-wrap:wrap;align-items:center;gap:6px 14px;padding-top:10px;border-top:1px solid var(--trk-line2);font-size:13px}
+/* Day by day */
+.trk-days{display:flex;flex-direction:column;padding:6px 0 8px}
+.trk-drows{display:flex;flex-direction:column}
+.trk-dhead,.trk-drow{display:grid;grid-template-columns:120px minmax(0,1.2fr) repeat(4,minmax(0,1fr));align-items:center;gap:12px;padding:8px 16px}
+.trk-dhead{font-size:11px;font-weight:700;letter-spacing:.04em;text-transform:uppercase;color:var(--trk-text3)}
+.trk-drow{border-top:1px solid var(--trk-line2);font-size:13px;color:var(--trk-text2);font-variant-numeric:tabular-nums}
+.trk-drow b{font-size:13px;color:var(--trk-text)}
+.trk-more{align-self:center;margin-top:6px;height:30px;padding:0 14px;border:1px solid var(--trk-line);border-radius:999px;background:transparent;color:var(--trk-text2);font:700 12px 'Plus Jakarta Sans',sans-serif;cursor:pointer}
+@media (max-width:900px){
+  .trk-today-grid{grid-template-columns:repeat(2,minmax(0,1fr))}
+  .trk-today-brk{grid-column:1 / -1}
+  .trk-dhead,.trk-drow{grid-template-columns:96px minmax(0,1fr) repeat(3,minmax(0,1fr))}
+  .trk-dhead span:nth-child(4),.trk-drow>span:nth-child(4){display:none}
 }

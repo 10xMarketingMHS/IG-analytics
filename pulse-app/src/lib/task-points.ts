@@ -9,7 +9,7 @@ export const isScorableTask = (t: Task): boolean => t.task_type !== "admin";
 // Admin switches them out on Team › Roster (editor.in_task_score = false) —
 // say a Manager or Team Lead — and they can be switched back in any time.
 // People left out keep their tasks; they just aren't ranked. Applied at every
-// ranking: here, in leaderboard.tsx and in team-panel.tsx.
+// ranking: here and in leaderboard.tsx.
 export const countsInTaskScore = (e: Pick<Editor, "in_task_score">): boolean => e.in_task_score !== false;
 
 // ---- Points Formula (locked spec) ----

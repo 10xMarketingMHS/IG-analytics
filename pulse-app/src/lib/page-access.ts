@@ -37,6 +37,10 @@ export function pagesAt(pathname: string, search: string): PageKey[] | null {
     return t === "ad" ? ["adsPipeline"] : t === "social" ? ["socialPipeline"] : ["socialPipeline", "adsPipeline"];
   }
   if (pathname === "/teams") return ["myTeam"];
+  // My Team decides its own tabs (pages/my-team.tsx): Attendance by the Page
+  // access row, the Tracker tab by position (the people
+  // who lead others), so the page itself turns away anyone with no tab there
+  if (pathname === "/my-team") return null;
   if (pathname.startsWith("/analytics/")) return ["analytics"];
   if (/^\/posts\/(?!new$)[^/]+/.test(pathname)) return ["posts"];
   const k = NAV_PAGE[pathname];

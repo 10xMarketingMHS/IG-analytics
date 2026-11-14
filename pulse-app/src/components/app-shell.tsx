@@ -56,7 +56,7 @@ import { PositionMark } from "@/components/position-mark";
 // that isn't placed here lands at the end of Operations.
 const SIDEBAR_GROUPS: { label: string; hrefs: string[] }[] = [
   { label: "Workspace", hrefs: ["/home", "/inbox", "/chat", "/tasks", "/analytics"] },
-  { label: "Operations", hrefs: ["/social", "/ads", "/leaderboard", "/goals-board", "/my-team", "/team-tracker", "/knowledge", "/widgets"] },
+  { label: "Operations", hrefs: ["/social", "/ads", "/leaderboard", "/goals-board", "/my-team", "/knowledge", "/widgets"] },
 ];
 // Social and Ads stand for these, as tabs (lib/sections.ts); they stay reachable by address and search
 const OFF_SIDEBAR = new Set(["/settings", "/posts/new", "/metrics", "/scheduling", "/posts", "/ad-uploads", "/ads-performance"]);
@@ -426,7 +426,9 @@ function AppShellInner() {
   // (Scheduling and Uploads: the server's answer, which follows Page access too)
   const canSeeTab = (t: SectionTab) => (t.access === "scheduler" ? !!schedAccess?.allowed : t.access === "uploads" ? !!uploadsAccess?.allowed : pageRule(t.page, "see", true));
   const canSee = (i: NavItem) => {
-    const today = (!i.adminOnly || isAdmin || (!!i.permission && hasPermission(i.permission)) || (i.href === "/my-team" && leadsPeople))
+    // My Team: also every Manager, Asst. Manager and Team Lead by position (its Tracker tab)
+    const leadsByPosition = homeRoleOf(myEd?.designation, false) !== "editor";
+    const today = (!i.adminOnly || isAdmin || (!!i.permission && hasPermission(i.permission)) || (i.href === "/my-team" && (leadsPeople || leadsByPosition)))
       && (!i.chatBadge || chatAvailable)
       && (!i.schedulerOnly || !!schedAccess?.allowed)
       && (!i.uploadsOnly || !!uploadsAccess?.allowed)
@@ -435,6 +437,8 @@ function AppShellInner() {
     if (i.area) return today && SECTIONS[i.area].tabs.some(canSeeTab);
     // a saved Page access row decides the pages it covers
     const page = NAV_PAGE[i.href];
+    // (My Team stays for the people who lead others, for its Tracker tab, whatever the row says)
+    if (i.href === "/my-team" && leadsByPosition && today) return true;
     return page && !i.schedulerOnly && !i.uploadsOnly ? pageRule(page, "see", today) : today;
   };
   // A page the caller's saved row doesn't let them open (Scheduling and Uploads by the server's answer)

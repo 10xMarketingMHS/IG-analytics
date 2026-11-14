@@ -22,7 +22,13 @@ type Person = {
   id: string; name: string; designation: string | null; imageUrl: string | null; code: string | null; rank: number; me: boolean;
   done: number; open: number; overdue: number; pct: number | null;
   today: "working" | "ended" | "not_started" | "leave" | "half_day"; startedAt: string | null;
+  // today's break: minutes so far (of 75), on one now, how many (null: not kept yet)
+  breakToday?: { minutes: number; onBreak: boolean; count: number | null };
 };
+// one day of the dates: attendance, start and end, hours, break (null: not kept that day)
+type TrackDay = { day: string; status: string | null; lateMinutes: number; startedAt: string | null; endedAt: string | null; open: boolean; hours: number; breakMinutes: number | null; breaks: number | null };
+type TrackToday = { day: string; status: string | null; lateMinutes: number; startedAt: string | null; endedAt: string | null; working: boolean; hours: number;
+  breakMinutes: number; breakCapMinutes: number; breaks: number | null; onBreak: boolean; current: { ref: string | null; title: string }[] };
 type TrackTask = {
   id: string; ref: string | null; title: string; status: "todo" | "in_progress" | "review" | "done"; taskType: string; onHold: boolean; revision: number;
   due: string | null; completedAt: string | null; createdAt: string; typeName: string | null; typeIcon: string | null; brand: string | null;
@@ -34,8 +40,11 @@ type Detail = {
   profile: { id: string; name: string; designation: string | null; imageUrl: string | null; code: string | null; active: boolean; since: string;
     leadName: string | null; email: string | null; loginOn: boolean | null; brands: string[]; rank: number };
   score: { pct: number | null; goalPoints: number; reached: number; types: { name: string; icon: string | null; goal: number; done: number }[]; otherHours: number; creditHours: number } | null;
-  totals: { done: number; points: number; late: number; onTime: number; sentBack: number; open: number; hoursWorked: number; daysWorked: number; attendance: Record<string, number> };
+  totals: { done: number; points: number; late: number; onTime: number; sentBack: number; open: number; hoursWorked: number; daysWorked: number; attendance: Record<string, number>;
+    breakMinutes?: number; breakAvgMinutes?: number | null };
   tasks: TrackTask[];
+  today?: TrackToday;
+  days?: TrackDay[];
 };
 // what the page shows: a month, or any dates
 type Period = { month: string } | { from: string; to: string };
@@ -50,8 +59,12 @@ const periodWords = (p: Period) => ("month" in p ? monthWords(p.month) : p.from 
 const periodQuery = (p: Period) => ("month" in p ? `month=${p.month}` : `from=${p.from}&to=${p.to}`);
 const TODAY_WORDS: Record<Person["today"], string> = { working: "Working", ended: "Day ended", not_started: "Not started", leave: "On leave", half_day: "Half day" };
 const STATUS_WORDS: Record<TrackTask["status"], string> = { todo: "To do", in_progress: "In progress", review: "In review", done: "Done" };
-const ATT_WORDS: [string, string][] = [["on_time", "On time"], ["late", "Late"], ["half_day", "Half day"], ["leave", "Leave"], ["absent", "Absent"], ["no_sod", "No plan"]];
+// half_absent: started after the half-day time (Settings › Attendance)
+const ATT_WORDS: [string, string][] = [["on_time", "On time"], ["late", "Late"], ["half_absent", "Half-day absent"], ["half_day", "Half day"], ["leave", "Leave"], ["absent", "Absent"], ["no_sod", "No plan"]];
 const pctTone = (p: number | null) => (p == null ? "" : p >= 90 ? "good" : p >= 60 ? "mid" : "low");
+// 45 → "45m", 75 → "1h 15m"
+const mins = (m: number) => (m < 60 ? `${m}m` : `${Math.floor(m / 60)}h${m % 60 ? ` ${m % 60}m` : ""}`);
+const ATT_WORD: Record<string, string> = Object.fromEntries(ATT_WORDS);
 const times = (n: number) => (n === 1 ? "once" : n === 2 ? "twice" : `${n} times`);
 
 function Ava({ name, image, size = 34 }: { name: string; image: string | null; size?: number }) {
@@ -60,7 +73,13 @@ function Ava({ name, image, size = 34 }: { name: string; image: string | null; s
     : <span className="trk-ava" style={{ width: size, height: size, background: gradFor(name), fontSize: size * 0.36 }}>{initialsOf(name)}</span>;
 }
 
+// Team tracker lives in My Team as its Tracker tab (pages/my-team.tsx, embedded:
+// no page wrapper or big heading there); /team-tracker leads to it (App.tsx).
 export function TeamTrackerPage() {
+  return <TeamTracker />;
+}
+
+export function TeamTracker({ embedded = false }: { embedded?: boolean } = {}) {
   const [params, setParams] = useSearchParams();
   const ymdOk = (s: string | null) => !!s && /^\d{4}-\d{2}-\d{2}$/.test(s);
   const period: Period = ymdOk(params.get("from")) && ymdOk(params.get("to")) && params.get("from")! <= params.get("to")!
@@ -94,13 +113,15 @@ export function TeamTrackerPage() {
   const today = istToday();
   const live = "month" in period ? period.month >= thisMonth() : period.to >= today;
 
-  if (error) return <section className="screen trk"><div className="trk-card trk-empty">{error}</div></section>;
-  if (!people) return <section className="screen"><Loader label="Loading your team…" /></section>;
+  const Wrap = embedded ? "div" : "section";
+  const wrapClass = embedded ? "trk trk-in" : "screen trk";
+  if (error) return <Wrap className={wrapClass}><div className="trk-card trk-empty">{error}</div></Wrap>;
+  if (!people) return <Wrap className={embedded ? "trk trk-in" : "screen"}><Loader label="Loading your team…" /></Wrap>;
   return (
-    <section className="screen trk">
+    <Wrap className={wrapClass}>
       <div className="trk-top">
         <div className="trk-head">
-          <h1>Team tracker</h1>
+          {!embedded && <h1>Team tracker</h1>}
           <span>Your team: each person's numbers, profile and task history. Pick a name.</span>
         </div>
         <span className="trk-grow" />
@@ -120,11 +141,18 @@ export function TeamTrackerPage() {
                 <Ava name={p.name} image={p.imageUrl} />
                 <span className="trk-pmain">
                   <b>{p.name}{p.me ? <small> · you</small> : null}</b>
-                  <small>{p.designation || "Team member"}{live ? <> · <i className={"trk-day " + p.today}>{TODAY_WORDS[p.today]}{p.today === "working" && p.startedAt ? ` since ${clockTime(p.startedAt)}` : ""}</i></> : null}</small>
+                  <small>{p.designation || "Team member"}{live ? <> · <i className={"trk-day " + p.today}>{TODAY_WORDS[p.today]}{p.today === "working" && p.startedAt ? ` since ${clockTime(p.startedAt)}` : ""}</i></> : null}
+                  </small>
                 </span>
                 <span className="trk-pnums">
                   <span title="Done in these dates"><b>{p.done}</b> done</span>
                   {live && <span title="Open now" className={p.overdue ? "bad" : ""}>{p.open} open{p.overdue ? ` · ${p.overdue} late` : ""}</span>}
+                  {/* today's break, under the numbers (amber while on one) */}
+                  {live && p.breakToday && (p.breakToday.onBreak || p.breakToday.minutes > 0) && (
+                    <i className={"trk-brk" + (p.breakToday.onBreak ? " on" : "")} title={`Break today: ${mins(p.breakToday.minutes)} of 75m${p.breakToday.count ? `, ${p.breakToday.count} break${p.breakToday.count === 1 ? "" : "s"}` : ""}${p.breakToday.onBreak ? ", on one now" : ""}`}>
+                      ☕ {p.breakToday.onBreak ? `On break · ${mins(p.breakToday.minutes)}` : mins(p.breakToday.minutes)}
+                    </i>
+                  )}
                 </span>
                 <span className={"trk-pct " + pctTone(p.pct)} title="Goal this month">{p.pct == null ? "—" : `${Math.round(p.pct)}%`}</span>
               </button>
@@ -137,7 +165,7 @@ export function TeamTrackerPage() {
             : <div className="trk-card trk-empty trk-pick">Pick a name to see their profile and task history.</div>}
         </div>
       </div>
-    </section>
+    </Wrap>
   );
 }
 
@@ -244,12 +272,15 @@ function PersonView({ id, period }: { id: string; period: Period }) {
         </div>
       </section>
 
+      {d.today && <TodayCard td={d.today} />}
+
       <section className="trk-stats" aria-label={`${words} in numbers`}>
         <div className={"trk-stat " + pctTone(s?.pct ?? null)}><small>Goal{d.dates ? ` · ${monthWords(d.month).split(" ")[0]}` : ""}</small><b>{s?.pct == null ? "—" : `${Math.round(s.pct)}%`}</b><span>{s ? `${s.reached} of ${s.goalPoints} pts` : "No goal set"}</span></div>
         <div className="trk-stat"><small>Done</small><b>{t.done}</b><span>{t.points} pts</span></div>
         <div className={"trk-stat" + (t.late ? " low" : "")}><small>On time</small><b>{t.onTime}</b><span>{t.late ? `${t.late} late` : "none late"}</span></div>
         <div className={"trk-stat" + (t.sentBack ? " mid" : "")}><small>Sent back</small><b>{t.sentBack}</b><span>for rework</span></div>
         <div className="trk-stat"><small>Worked</small><b>{t.hoursWorked}h</b><span>{t.daysWorked} day{t.daysWorked === 1 ? "" : "s"}</span></div>
+        {t.breakMinutes != null && <div className="trk-stat"><small>Break</small><b>{mins(t.breakMinutes)}</b><span>{t.breakAvgMinutes != null ? `${mins(t.breakAvgMinutes)} a day` : "none"}</span></div>}
         {d.live && <div className={"trk-stat" + (d.tasks.some((x) => x.status !== "done" && x.due && x.due < today) ? " low" : "")}><small>Open now</small><b>{t.open}</b><span>on the board</span></div>}
       </section>
 
@@ -281,6 +312,8 @@ function PersonView({ id, period }: { id: string; period: Period }) {
           )}
         </section>
       ) : null}
+
+      {(d.days?.length ?? 0) > 0 && <DaysCard days={d.days!} words={words} />}
 
       <section className="trk-card trk-tasks" aria-label="Task history">
         <div className="trk-tasks-head">
@@ -340,5 +373,68 @@ function PersonView({ id, period }: { id: string; period: Period }) {
         />
       )}
     </>
+  );
+}
+
+// Today, for one person: their attendance, when they started (and how late)
+// and ended, the hours, their break (of the day's 75 minutes, and on one now)
+// and what they're working on.
+function TodayCard({ td }: { td: TrackToday }) {
+  const away = td.status === "leave" || td.status === "half_day";
+  const state = td.onBreak ? "On a break" : td.working ? "Working" : td.endedAt ? "Day ended" : away ? ATT_WORD[td.status!] : "Not started";
+  const breakPct = Math.min(100, (td.breakMinutes / Math.max(1, td.breakCapMinutes)) * 100);
+  return (
+    <section className="trk-card trk-today" aria-label="Today">
+      <div className="trk-today-head">
+        <span className="trk-h">Today · {dayWords(td.day)}</span>
+        <i className={"trk-today-state" + (td.onBreak ? " brk" : td.working ? " on" : "")}>{state}</i>
+      </div>
+      <div className="trk-today-grid">
+        <div><small>Attendance</small><b>{td.status ? ATT_WORD[td.status] ?? td.status : "—"}</b>{td.status === "late" && td.lateMinutes > 0 && <span className="low">{mins(td.lateMinutes)} late</span>}</div>
+        <div><small>Started</small><b>{td.startedAt ? clockTime(td.startedAt) : "—"}</b></div>
+        <div><small>Ended</small><b>{td.endedAt ? clockTime(td.endedAt) : td.working ? "Still working" : "—"}</b></div>
+        <div><small>Worked</small><b>{td.hours > 0 ? `${td.hours}h` : "—"}</b></div>
+        <div className="trk-today-brk">
+          <small>Break</small>
+          <b>{mins(td.breakMinutes)} <span>of {td.breakCapMinutes}m</span></b>
+          <span className="trk-bar"><i style={{ width: `${breakPct}%` }} /></span>
+          <span>{td.breaks != null ? `${td.breaks} break${td.breaks === 1 ? "" : "s"}` : ""}{td.onBreak ? `${td.breaks != null ? " · " : ""}on one now` : ""}</span>
+        </div>
+      </div>
+      {td.current.length > 0 && (
+        <div className="trk-today-now">
+          <small>Working on</small>
+          {td.current.map((c, i) => <span key={i}>{c.ref && <span className="trk-ref">{c.ref}</span>}{c.title}</span>)}
+        </div>
+      )}
+    </section>
+  );
+}
+
+// Day by day, in the dates: attendance, started, ended, the hours and the break
+// (kept from when Echo began keeping breaks; a day before that shows —).
+function DaysCard({ days, words }: { days: TrackDay[]; words: string }) {
+  const [all, setAll] = useState(false);
+  const shown = all ? days : days.slice(0, 7);
+  return (
+    <section className="trk-card trk-days" aria-label="Day by day">
+      <div className="trk-tasks-head"><span className="trk-h">Day by day · {words}</span></div>
+      <div className="trk-drows">
+        <div className="trk-dhead" aria-hidden="true"><span>Day</span><span>Attendance</span><span>Started</span><span>Ended</span><span>Worked</span><span>Break</span></div>
+        {shown.map((x) => (
+          <div key={x.day} className="trk-drow">
+            <b>{new Date(`${x.day}T12:00:00`).toLocaleDateString("en-IN", { weekday: "short", day: "numeric", month: "short" })}</b>
+            <span>{x.status ? <i className={"trk-chip " + x.status}>{ATT_WORD[x.status] ?? x.status}{x.status === "late" && x.lateMinutes > 0 ? ` · ${mins(x.lateMinutes)}` : ""}</i> : "—"}</span>
+            <span>{x.startedAt ? clockTime(x.startedAt) : "—"}</span>
+            <span>{x.endedAt ? clockTime(x.endedAt) : x.open ? "Working" : "—"}</span>
+            <span>{x.hours > 0 ? `${x.hours}h` : "—"}</span>
+            <span>{x.breakMinutes ? `${mins(x.breakMinutes)}${x.breaks ? ` · ${x.breaks}×` : ""}` : "—"}</span>
+          </div>
+        ))}
+      </div>
+      {days.length > 7 && (
+        <button type="button" className="trk-more" onClick={() => setAll((v) => !v)}>{all ? "Show fewer" : `Show all ${days.length} days`}</button>
+      )}
+    </section>
   );
 }

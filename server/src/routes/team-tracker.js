@@ -22,6 +22,15 @@ const REF = "coalesce(t.sid, regexp_replace(t.ad_id, '^AdID', 'AID', 'i'), t.svi
 const IN_DAYS = (col, from, to) => `${col} >= (${from}::date)::timestamp at time zone 'Asia/Kolkata'
   and ${col} < (${to}::date + 1)::timestamp at time zone 'Asia/Kolkata'`;
 const tenth = (n) => Math.round(Number(n || 0) * 10) / 10;
+// Today's break so far for a person (the editor row, `e`, ./breaks.js): what's
+// banked plus the break under way, up to the day's 75 minutes; and on it right now.
+const BREAK_CAP = 75 * 60;
+const BREAK_TODAY = `(case when e.break_date = (now() at time zone 'Asia/Kolkata')::date
+    then least(${BREAK_CAP}, coalesce(e.break_used_seconds, 0)
+      + case when e.break_started_at is not null then greatest(0, extract(epoch from now() - e.break_started_at)) else 0 end)
+    else 0 end)`;
+const ON_BREAK = `(e.break_date = (now() at time zone 'Asia/Kolkata')::date and e.break_started_at is not null
+    and coalesce(e.break_used_seconds, 0) + extract(epoch from now() - e.break_started_at) < ${BREAK_CAP})`;
 const YMD = /^\d{4}-\d{2}-\d{2}$/;
 const lastDay = (first) => { const d = new Date(`${first}T12:00:00Z`); d.setUTCMonth(d.getUTCMonth() + 1, 0); return d.toISOString().slice(0, 10); };
 
@@ -48,10 +57,12 @@ teamTrackerRouter.get("/team-tracker", async (req, res, next) => {
     const { viewer, ok } = await access(req);
     if (!ok) return res.status(403).json({ error: NOT_YOURS });
     const P = periodOf(req.query);
-    const [ranks, people, done, open, day, leave, scores] = await Promise.all([
+    const breakCounts = await hasColumn("attendance", "break_count");
+    const [ranks, people, done, open, day, leave, scores, breaksToday] = await Promise.all([
       editorRanks(req.orgId),
       pool.query(
-        `select e.id, e.name, e.designation, e.image_url as "imageUrl", e.employee_code as code
+        `select e.id, e.name, e.designation, e.image_url as "imageUrl", e.employee_code as code,
+                round(${BREAK_TODAY})::int as "breakSeconds", ${ON_BREAK} as "onBreak"
            from editor e where e.org_id = $1 and e.active order by lower(e.name)`,
         [req.orgId],
       ),
@@ -80,18 +91,25 @@ teamTrackerRouter.get("/team-tracker", async (req, res, next) => {
         ? pool.query("select editor_id as id, status from attendance where org_id = $1 and date = $2::date and status in ('leave', 'half_day')", [req.orgId, P.today])
         : { rows: [] },
       scoreMonthAll(req.orgId, P.month),
+      // how many breaks today (kept on the day's attendance row, ./breaks.js)
+      breakCounts
+        ? pool.query("select editor_id as id, break_count as n from attendance where org_id = $1 and date = $2::date", [req.orgId, P.today])
+        : { rows: [] },
     ]);
+    const breaksOf = new Map(breaksToday.rows.map((r) => [r.id, r.n]));
     const doneOf = new Map(done.rows.map((r) => [r.id, r.n]));
     const openOf = new Map(open.rows.map((r) => [r.id, r]));
     const dayOf = new Map(day.rows.map((r) => [r.id, r]));
     const leaveOf = new Map(leave.rows.map((r) => [r.id, r.status]));
     const list = people.rows
       .filter((p) => (ranks.get(p.id) ?? 3) < 4 && seesEditor(viewer, ranks, p.id))
-      .map((p) => {
+      .map(({ breakSeconds, onBreak, ...p }) => {
         const s = scores.get(p.id);
         const d = dayOf.get(p.id);
         return {
           ...p, rank: ranks.get(p.id) ?? 3, me: p.id === viewer.editorId,
+          // today's break: minutes so far (of 75), on one now, and how many
+          breakToday: { minutes: Math.round((breakSeconds ?? 0) / 60), onBreak: !!onBreak, count: breakCounts ? breaksOf.get(p.id) ?? 0 : null },
           done: doneOf.get(p.id) ?? 0, open: openOf.get(p.id)?.open ?? 0, overdue: openOf.get(p.id)?.overdue ?? 0,
           pct: s?.pct == null ? null : tenth(s.pct),
           today: leaveOf.get(p.id) ?? (d ? (d.working ? "working" : "ended") : "not_started"),
@@ -186,6 +204,51 @@ teamTrackerRouter.get("/team-tracker/:editorId", async (req, res, next) => {
     ]);
     const p = profile.rows[0];
     if (!p) return res.status(404).json({ error: "Not someone on your team." });
+    // Each day of the dates, and today: when they started and ended, the hours,
+    // their attendance and their break (kept on the attendance row, ./breaks.js;
+    // today's from the editor row, as it stands)
+    const hasAtt = await hasColumn("attendance", "id");
+    const breaksKept = hasAtt && (await hasColumn("attendance", "break_seconds"));
+    const SESS = `select date::text as day, min(started_at) as "startedAt", max(ended_at) as "endedAt", bool_or(ended_at is null) as open,
+                         coalesce(sum(extract(epoch from (coalesce(ended_at, now()) - started_at))), 0)::float / 3600 as hours
+                    from eod_session where org_id = $1 and editor_id = $2 and date >= $3::date and date <= $4::date group by 1`;
+    const ATT = `select date::text as day, status, late_minutes as "lateMinutes"${breaksKept ? `, break_seconds as "breakSeconds", break_count as breaks` : ""}
+                   from attendance where org_id = $1 and editor_id = $2 and date >= $3::date and date <= $4::date`;
+    const [sessDays, attDays, sessToday, attToday, breakNow, working] = await Promise.all([
+      pool.query(SESS, [req.orgId, id, P.from, P.to]),
+      hasAtt ? pool.query(ATT, [req.orgId, id, P.from, P.to]) : { rows: [] },
+      pool.query(SESS, [req.orgId, id, P.today, P.today]),
+      hasAtt ? pool.query(ATT, [req.orgId, id, P.today, P.today]) : { rows: [] },
+      pool.query(`select round(${BREAK_TODAY})::int as "breakSeconds", ${ON_BREAK} as "onBreak" from editor e where e.id = $1`, [id]),
+      pool.query(
+        `select ${REF} as ref, t.title from task t
+          where t.org_id = $1 and t.editor_id = $2 and t.status = 'in_progress' and not coalesce(t.on_hold, false)
+          order by t.budget_started_at desc nulls last limit 3`,
+        [req.orgId, id],
+      ),
+    ]);
+    const liveBreak = breakNow.rows[0] ?? { breakSeconds: 0, onBreak: false };
+    const sessOf = new Map(sessDays.rows.map((r) => [r.day, r]));
+    const attOf = new Map(attDays.rows.map((r) => [r.day, r]));
+    const days = [...new Set([...sessOf.keys(), ...attOf.keys()])].filter((d) => d <= P.today).sort().reverse().map((day) => {
+      const sx = sessOf.get(day), ax = attOf.get(day);
+      const brk = day === P.today ? Math.max(liveBreak.breakSeconds ?? 0, ax?.breakSeconds ?? 0) : ax?.breakSeconds ?? null;
+      return {
+        day, status: ax?.status ?? null, lateMinutes: ax?.lateMinutes ?? 0,
+        startedAt: sx?.startedAt ?? null, endedAt: sx && !sx.open ? sx.endedAt : null, open: !!sx?.open, hours: tenth(sx?.hours),
+        breakMinutes: brk == null ? null : Math.round(brk / 60), breaks: ax?.breaks ?? null,
+      };
+    });
+    const st = sessToday.rows[0], at = attToday.rows[0];
+    const today = {
+      day: P.today, status: at?.status ?? null, lateMinutes: at?.lateMinutes ?? 0,
+      startedAt: st?.startedAt ?? null, endedAt: st && !st.open ? st.endedAt : null, working: !!st?.open, hours: tenth(st?.hours),
+      breakMinutes: Math.round(Math.max(liveBreak.breakSeconds ?? 0, at?.breakSeconds ?? 0) / 60), breakCapMinutes: BREAK_CAP / 60,
+      breaks: breaksKept ? at?.breaks ?? 0 : null, onBreak: !!liveBreak.onBreak,
+      current: working.rows,
+    };
+    const breakMinutes = days.reduce((n, d) => n + (d.breakMinutes ?? 0), 0);
+    const daysAtWork = days.filter((d) => d.startedAt).length;
     // in review: who it's waiting for (../review-route.js)
     await withReview(req, tasks.rows);
     const s = scores.get(id);
@@ -208,7 +271,10 @@ teamTrackerRouter.get("/team-tracker/:editorId", async (req, res, next) => {
         open: tasks.rows.filter((t) => t.status !== "done").length,
         hoursWorked: tenth(worked.rows[0]?.hours), daysWorked: worked.rows[0]?.days ?? 0,
         attendance,
+        // the dates' breaks: minutes in all, and a day's on average (the days they worked)
+        breakMinutes, breakAvgMinutes: daysAtWork ? Math.round(breakMinutes / daysAtWork) : null,
       },
+      today, days,
       tasks: tasks.rows.map(({ editor_id, assigned_by, content_format_id, review_started_at, can_review, review_by, ...t }) => ({
         ...t, hoursUsed: tenth(t.hoursUsed), waitingFor: t.status === "review" ? t.review_names ?? review_by ?? null : null,
       })),
