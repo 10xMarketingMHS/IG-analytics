@@ -13,3 +13,12 @@ export const jobsOf = (meta) => {
   const n = Number(meta?.count);
   return Number.isInteger(n) && n > 1 ? Math.min(MAX_JOBS, n) : 1;
 };
+
+// Several in one task (How many) and posting on more brands than its own: Story
+// and Post work only — a type named Story or Post (Stories, Posts), or a
+// sub-type of one. Other work is one job on one brand. (pulse-app/src/lib/job-count.ts)
+const SEVERAL = new Set(["story", "stories", "post", "posts"]);
+export const severalNamed = (name, parentName) =>
+  SEVERAL.has(String(name ?? "").trim().toLowerCase()) || SEVERAL.has(String(parentName ?? "").trim().toLowerCase());
+export const SEVERAL_ONLY = "Only Story and Post work comes several in one task.";
+export const BRANDS_ONLY = "Only Story and Post work can be posted on more than one brand.";

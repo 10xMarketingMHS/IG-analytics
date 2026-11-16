@@ -427,7 +427,7 @@ html[data-theme="dark"] .task-panel-scrim.tp2-scrim{background:rgba(0,0,0,.55)}
 .tp2-kind-ic{font-size:18px;line-height:1}
 .tp2-kind b{font-size:13px;font-weight:800}
 .tp2-kind small{font-size:11px;color:var(--tb-text3);line-height:1.3}
-.tp2-types{display:flex;flex-wrap:wrap;gap:6px}
+.tp2-types{display:flex;flex-wrap:wrap;align-items:center;gap:6px}
 .tp2-type{display:inline-flex;flex-direction:column;align-items:flex-start;gap:1px;padding:7px 11px;border:1.5px solid var(--tb-line);border-radius:10px;background:var(--tb-solid);
   color:var(--tb-text);font-family:inherit;font-size:12.5px;font-weight:700;cursor:pointer}
 .tp2-type:hover{border-color:var(--tb-ac)}
@@ -445,6 +445,14 @@ html[data-theme="dark"] .task-panel-scrim.tp2-scrim{background:rgba(0,0,0,.55)}
 .tp2-segs button{height:30px;padding:0 12px;border:0;border-radius:8px;background:transparent;color:var(--tb-text2);font-family:inherit;font-size:12.5px;font-weight:700;cursor:pointer}
 .tp2-segs button.on{background:var(--tb-solid);color:var(--tb-text);box-shadow:var(--tb-sh1)}
 .tp2-segs button.pri-high.on{color:var(--tb-bad)}
+/* New task › Details: every box the height of Brand's (38px), so a row's boxes
+   line up top and bottom: Brand and Assignee, Due's day buttons and Priority */
+.tp2-ngrid .tp2-person{height:38px}
+.tp2-ngrid .tp2-inline>.tp2-pill{height:38px;padding:0 14px}
+.tp2-ngrid .tp2-segs{height:38px;box-sizing:border-box;align-items:stretch}
+.tp2-ngrid .tp2-segs button{height:auto}
+/* a note under a box wraps inside its column */
+.tp2-ncell>small.tp2-faint,.tp2-sec>.tp2-faint{white-space:normal;line-height:1.45}
 .tp2-step{display:flex;align-items:center;gap:6px;flex-wrap:wrap}
 .tp2-step>button:not(.tp2-pill){width:30px;height:30px;border:1.5px solid var(--tb-line);border-radius:9px;background:var(--tb-solid);color:var(--tb-text);font-size:15px;font-weight:800;cursor:pointer}
 .tp2-step>b{min-width:46px;text-align:center;font-size:14px;font-variant-numeric:tabular-nums}
@@ -695,7 +703,7 @@ html[data-theme="dark"] .task-panel-scrim.tp2-scrim{background:rgba(0,0,0,.55)}
 .picked .tp2-type:not(.on):not(.within){flex-direction:row;align-items:center;gap:6px;padding:4px 10px;border-radius:999px;font-size:12px;color:var(--tb-text2)}
 .picked .tp2-type:not(.on):not(.within):hover{color:var(--tb-text)}
 .picked .tp2-type:not(.on):not(.within) small,.picked .tp2-type:not(.on):not(.within) .tp2-type-goal{display:none}
-.picked .tp2-types{align-items:flex-start}
+.picked .tp2-types{align-items:center}
 /* Add finished work (Admins and the Super Admin): a quieter button beside New task */
 .tb-new.ghost{background:var(--tb-panel);color:var(--tb-text);border:1px solid var(--tb-line);box-shadow:none}
 /* an admin's toolbar has Add finished work too: short of room, it's its icon
@@ -713,7 +721,7 @@ html[data-theme="dark"] .task-panel-scrim.tp2-scrim{background:rgba(0,0,0,.55)}
 .tp2-also{grid-column:1/-1;display:flex;flex-wrap:wrap;align-items:center;gap:6px;margin-top:-4px}
 .tp2-also>small{font-size:11.5px;font-weight:700;color:var(--tb-text3);margin-right:2px}
 .tp2-also>.tp2-pill{height:26px;padding:0 10px;font-size:11.5px}
-.tp2-also>small.tp2-faint{flex-basis:100%;font-weight:500}
+.tp2-also>small.tp2-faint{flex-basis:100%;font-weight:500;white-space:normal;line-height:1.45}
 /* the task window's rows: a note under the row's controls goes on its own line,
    never squeezed in beside them (Also post on's pills, Due's chips) */
 .tp2-props .tp-val:has(>.hint){flex-wrap:wrap}

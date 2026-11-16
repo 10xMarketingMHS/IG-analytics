@@ -13,10 +13,11 @@ import { monthName, tenths } from "@/lib/goal-periods";
 // gained, each review and the month, and opens to show them channel by channel. Below,
 // how each member's goals stand in a review, by Team goals' rule. Not part of
 // anyone's task score. Whoever sets the goals sets these; a Team Lead sees his
-// own and types in the numbers.
+// own and types in the numbers. A count can carry a value — what one is worth
+// in ₹ (an L1 Conversion, an L2 Conversion) — and Revenue adds them up: count × value.
 
 type Kind = "count" | "followers";
-type Goal = { id: string; editorId: string; name: string; kind: Kind; target: number; r1Actual: number | null; r2Actual: number | null };
+type Goal = { id: string; editorId: string; name: string; kind: Kind; target: number; value: number | null; r1Actual: number | null; r2Actual: number | null };
 type Lead = { id: string; name: string; imageUrl: string | null; designation: string | null };
 type Half = { target: number; done: number; pct: number | null; missed: number };
 type Member = { editorId: string; name: string; imageUrl: string | null; designation: string | null; h1: Half; h2: Half };
@@ -24,17 +25,19 @@ type Member = { editorId: string; name: string; imageUrl: string | null; designa
 type Channel = { id: string; provider: string; name: string; brand: string | null; now: number; r1: number; r2: number; month: number };
 type Followers = { accounts: number; now: number; r1: number; r2: number; month: number; list: Channel[] };
 type Resp = {
-  ready: boolean; error?: string; month: string; prevMonth?: string; canEdit: boolean; me: string | null;
+  ready: boolean; valueReady?: boolean; error?: string; month: string; prevMonth?: string; canEdit: boolean; me: string | null;
   leads: Lead[]; goals: Goal[]; followers: Followers; team: Member[];
 };
 // a key result being edited: numbers as typed
-type Row = { id: string | null; name: string; kind: Kind; target: string; r1: string; r2: string };
+type Row = { id: string | null; name: string; kind: Kind; target: string; value: string; r1: string; r2: string };
 
 const ymOf = (d: Date) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
 const initials = (n: string) => n.split(/\s+/).filter(Boolean).map((w) => w[0]).join("").slice(0, 2).toUpperCase();
 const n0 = (n: number) => n.toLocaleString("en-IN", { maximumFractionDigits: 1 });
 // a growth: +1,240 · −30 · 0
 const plus = (n: number) => (n > 0 ? `+${n0(n)}` : n < 0 ? `−${n0(-n)}` : "0");
+// rupees, Indian grouping: ₹5,80,000 · a crore and up: ₹1.2 Cr
+const inr = (n: number) => (n >= 1e7 ? `₹${(n / 1e7).toLocaleString("en-IN", { maximumFractionDigits: 2 })} Cr` : `₹${Math.round(n).toLocaleString("en-IN")}`);
 const PLATFORM: Record<string, string> = { instagram: "Instagram", facebook: "Facebook", youtube: "YouTube" };
 const sv = (d: ReactNode, size = 16) => (
   <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">{d}</svg>
@@ -46,9 +49,9 @@ const IC = {
   plus: sv(<path d="M12 5v14M5 12h14" />, 15),
   x: sv(<path d="M18 6 6 18M6 6l12 12" />, 14),
 };
-const SUGGEST: [string, Kind][] = [["L1 Conversions", "count"], ["Leads", "count"], ["Followers", "followers"]];
+const SUGGEST: [string, Kind][] = [["L1 Conversions", "count"], ["L2 Conversions", "count"], ["Leads", "count"], ["Followers", "followers"]];
 const rowsOf = (goals: Goal[], leadId: string): Row[] => goals.filter((g) => g.editorId === leadId).map((g) => ({
-  id: g.id, name: g.name, kind: g.kind, target: String(g.target), r1: g.r1Actual == null ? "" : String(g.r1Actual), r2: g.r2Actual == null ? "" : String(g.r2Actual),
+  id: g.id, name: g.name, kind: g.kind, target: String(g.target), value: g.value == null ? "" : String(g.value), r1: g.r1Actual == null ? "" : String(g.r1Actual), r2: g.r2Actual == null ? "" : String(g.r2Actual),
 }));
 const num = (v: string) => (v.trim() === "" ? null : Number(v));
 const badNum = (v: string) => v.trim() !== "" && (!Number.isFinite(Number(v)) || Number(v) < 0);
@@ -70,6 +73,7 @@ export function LeadGoals() {
   const [newName, setNewName] = useState("");
   const [newKind, setNewKind] = useState<Kind>("count");
   const [newTarget, setNewTarget] = useState("");
+  const [newValue, setNewValue] = useState("");
   const [half, setHalf] = useState<"h1" | "h2">(new Date().getDate() <= 15 ? "h1" : "h2");
   const [byChannel, setByChannel] = useState(false);
 
@@ -117,7 +121,18 @@ export function LeadGoals() {
   const lastDay = new Date(Number(month.slice(0, 4)), Number(month.slice(5, 7)), 0).getDate();
   const r1Over = day > 15, r2Over = day > lastDay;
   const elapsed = month < thisMonth ? 1 : month > thisMonth ? 0 : today.getDate() / lastDay;
+  // values (₹ each) and Revenue need the database update first
+  const withValue = !!data.valueReady;
 
+  // how a total stands against its target, as far along as the month is
+  const pace = (target: number, sum: number, fmt: (n: number) => string) => {
+    const pct = target ? sum / target : null;
+    const text = !target ? "—" : sum >= target ? "Met"
+      : elapsed === 0 ? "Not started" : elapsed === 1 ? `Short by ${fmt(target - sum)}`
+      : (pct ?? 0) >= elapsed - 0.05 ? "On pace" : `Behind by ${fmt(Math.ceil(target * elapsed - sum))}`;
+    const cls = !target ? "" : sum >= target ? "good" : elapsed === 1 ? "bad" : (pct ?? 0) >= elapsed - 0.05 ? "good" : "warn";
+    return { pct, text, cls };
+  };
   // a key result's standing: each review against half its target (Review 1 the first half), and the month
   const standing = (r: Row) => {
     const target = Number(r.target) || 0;
@@ -125,14 +140,23 @@ export function LeadGoals() {
     // Followers: the new followers each review brought (filled in); a count: as typed in
     const fol = r.kind === "followers";
     const a1 = fol ? f.r1 : num(r.r1) ?? 0, a2 = fol ? f.r2 : num(r.r2) ?? 0, sum = fol ? f.month : a1 + a2;
-    const pct = target ? sum / target : null;
-    const text = !target ? "—" : sum >= target ? "Met"
-      : elapsed === 0 ? "Not started" : elapsed === 1 ? `Short by ${n0(target - sum)}`
-      : (pct ?? 0) >= elapsed - 0.05 ? "On pace" : `Behind by ${n0(Math.ceil(target * elapsed - sum))}`;
-    const cls = !target ? "" : sum >= target ? "good" : elapsed === 1 ? "bad" : (pct ?? 0) >= elapsed - 0.05 ? "good" : "warn";
-    return { r1t, r2t, a1, a2, month: sum, pct, text, cls };
+    // ₹ for one: a count's, once the database has it
+    const value = withValue && !fol && !badNum(r.value) ? num(r.value) ?? 0 : 0;
+    return { target, r1t, r2t, a1, a2, month: sum, value, ...pace(target, sum, n0) };
   };
   const st = rows.map(standing);
+  // Revenue: every key result with a value, count × value — the target, each review and the month
+  const valued = rows.map((r, i) => ({ r, s: st[i] })).filter((x) => x.s.value > 0);
+  const rev = valued.length ? (() => {
+    const add = (k: (x: (typeof valued)[number]) => number) => valued.reduce((n, x) => n + k(x) * x.s.value, 0);
+    const target = add((x) => x.s.target), month = add((x) => x.s.month);
+    return {
+      target, month, r1t: add((x) => x.s.r1t), r2t: add((x) => x.s.r2t), a1: add((x) => x.s.a1), a2: add((x) => x.s.a2),
+      r1Typed: valued.some((x) => num(x.r.r1) != null), r2Typed: valued.some((x) => num(x.r.r2) != null),
+      names: valued.map((x) => x.r.name.trim() || "—").join(" + "),
+      ...pace(target, month, inr),
+    };
+  })() : null;
   // the usual key results not added yet, one tap each
   const missing = SUGGEST.filter(([n, k]) => !rows.some((r) => r.name.trim().toLowerCase() === n.toLowerCase() || (k === "followers" && r.kind === "followers")));
   const onTrack = st.filter((s) => s.cls === "good").length;
@@ -140,12 +164,16 @@ export function LeadGoals() {
   async function save() {
     if (!dirty || busy) return;
     if (rows.some((r) => !r.name.trim())) { toast.error("Each key result needs a name."); return; }
-    if (rows.some((r) => r.target.trim() === "" || badNum(r.target) || badNum(r.r1) || badNum(r.r2))) { toast.error("Targets and numbers are whole or decimal numbers, 0 or more."); return; }
+    if (rows.some((r) => r.target.trim() === "" || badNum(r.target) || badNum(r.value) || badNum(r.r1) || badNum(r.r2))) { toast.error("Targets, values and numbers are whole or decimal numbers, 0 or more."); return; }
     setBusy(true);
     try {
       await api("/lead-goals", { method: "PUT", body: JSON.stringify({
         month: `${month}-01`, editorId: sel.id,
-        goals: rows.map((r) => ({ id: r.id, name: r.name.trim(), kind: r.kind, target: Number(r.target), r1Actual: num(r.r1), r2Actual: num(r.r2) })),
+        goals: rows.map((r) => ({
+          id: r.id, name: r.name.trim(), kind: r.kind, target: Number(r.target),
+          ...(withValue ? { value: r.kind === "count" ? num(r.value) : null } : {}),
+          r1Actual: num(r.r1), r2Actual: num(r.r2),
+        })),
       }) });
       const fresh = await api<Resp>(`/lead-goals?month=${month}-01`);
       setData(fresh);
@@ -170,11 +198,11 @@ export function LeadGoals() {
       setBusy(false);
     }
   }
-  function add(name = newName, kind = newKind, target = newTarget) {
+  function add(name = newName, kind = newKind, target = newTarget, value = newValue) {
     if (!name.trim()) return;
     if (kind === "followers" && rows.some((r) => r.kind === "followers")) { toast.error("Followers is already a key result."); return; }
-    setRows([...rows, { id: null, name: name.trim(), kind, target: target.trim(), r1: "", r2: "" }]);
-    setNewName(""); setNewTarget(""); setNewKind("count");
+    setRows([...rows, { id: null, name: name.trim(), kind, target: target.trim(), value: kind === "count" ? value.trim() : "", r1: "", r2: "" }]);
+    setNewName(""); setNewTarget(""); setNewValue(""); setNewKind("count");
   }
 
   const team = data.team;
@@ -229,6 +257,7 @@ export function LeadGoals() {
               <div><b>{rows.length}</b><span>key results</span></div>
               <div><b>{onTrack}</b><span>on track</span></div>
               <div className="ac"><b>{team.length}</b><span>in the team</span></div>
+              {rev && <div><b>{inr(rev.month)}</b><span>revenue · of {inr(rev.target)}</span></div>}
             </div>
             <div className="gs-capline">
               <span className="gs-formula">
@@ -240,9 +269,9 @@ export function LeadGoals() {
 
           <section className="gl-card">
             <div className="gs-tscroll">
-              <div className="gs-table lg-table">
+              <div className={"gs-table lg-table" + (withValue ? " lg-v" : "")}>
                 <div className="gs-row lg-r gs-th">
-                  <span>Key result</span><span className="c">Target</span><span className="c">Review 1</span><span className="c">Review 2</span><span className="c">Month</span><span className="r">Standing</span>
+                  <span>Key result</span><span className="c">Target</span>{withValue && <span className="c" title="What one is worth, in ₹">Value each</span>}<span className="c">Review 1</span><span className="c">Review 2</span><span className="c">Month</span><span className="r">Standing</span>
                 </div>
                 {rows.length === 0 && (
                   <div className="gl-empty lg-empty">No key results for {first} in {monthName(month)} yet{canEdit ? " — add them below." : "."}</div>
@@ -261,9 +290,20 @@ export function LeadGoals() {
                           </button>
                         ) : <small>Typed in at the meetings</small>}
                       </span>
-                      {canEdit
-                        ? <input className="lg-in" type="number" min={0} value={r.target} placeholder="—" aria-label={`${r.name} target`} onChange={(e) => patch(i, { target: e.target.value })} />
-                        : <b className="c lg-num">{r.target ? n0(Number(r.target)) : "—"}</b>}
+                      <span className="c lg-cell">
+                        {canEdit
+                          ? <input className="lg-in" type="number" min={0} value={r.target} placeholder="—" aria-label={`${r.name} target`} onChange={(e) => patch(i, { target: e.target.value })} />
+                          : <b className="lg-num">{r.target ? n0(Number(r.target)) : "—"}</b>}
+                        <small>{s.value > 0 && s.target > 0 ? `worth ${inr(s.target * s.value)}` : "this month"}</small>
+                      </span>
+                      {withValue && (fol ? <span /> : (
+                        <span className="c lg-cell">
+                          {canEdit
+                            ? <span className="lg-money"><i aria-hidden="true">₹</i><input className="lg-in" type="number" min={0} value={r.value} placeholder="—" aria-label={`What one ${r.name} is worth, in ₹`} onChange={(e) => patch(i, { value: e.target.value })} /></span>
+                            : <b className="lg-num">{s.value > 0 ? inr(s.value) : "—"}</b>}
+                          <small className={s.value > 0 && s.month > 0 ? "met" : ""}>{s.value > 0 ? `${inr(s.month * s.value)} made` : "₹ for one"}</small>
+                        </span>
+                      ))}
                       {fol ? (
                         <>
                           <span className="c lg-auto"><b>{elapsed === 0 ? "—" : plus(f.r1)}</b><small className={s.r1t != null && f.r1 >= s.r1t && s.r1t > 0 ? "met" : ""}>of {s.r1t != null ? n0(s.r1t) : "—"}{!r1Over && elapsed > 0 ? " · so far" : ""}</small></span>
@@ -294,6 +334,7 @@ export function LeadGoals() {
                           <div key={c.id} className="gs-row lg-r lg-chanrow">
                             <span className="lg-name"><b>{c.brand ?? "—"}</b><small>{PLATFORM[c.provider] ?? c.provider} · {c.name}</small></span>
                             <span className="c lg-auto"><b>{n0(c.now)}</b><small>in all</small></span>
+                            {withValue && <span />}
                             <span className="c lg-auto"><b>{elapsed === 0 ? "—" : plus(c.r1)}</b><small>Review 1</small></span>
                             <span className="c lg-auto"><b>{r1Over ? plus(c.r2) : "—"}</b><small>Review 2</small></span>
                             <span className="c lg-auto"><b>{elapsed === 0 ? "—" : plus(c.month)}</b><small>this month</small></span>
@@ -305,11 +346,25 @@ export function LeadGoals() {
                     </Fragment>
                   );
                 })}
+                {rev && (
+                  <div className="gs-row lg-r lg-rev">
+                    <span className="lg-name"><b>Revenue</b><small title={rev.names}>{rev.names} · count × value</small></span>
+                    <span className="c lg-auto"><b>{inr(rev.target)}</b><small>this month</small></span>
+                    <span />
+                    <span className="c lg-auto"><b>{rev.r1Typed ? inr(rev.a1) : "—"}</b><small className={rev.r1Typed && rev.r1t > 0 && rev.a1 >= rev.r1t ? "met" : ""}>of {inr(rev.r1t)}</small></span>
+                    <span className="c lg-auto"><b>{rev.r2Typed ? inr(rev.a2) : "—"}</b><small className={rev.r2Typed && rev.r2t > 0 && rev.a2 >= rev.r2t ? "met" : ""}>of {inr(rev.r2t)}</small></span>
+                    <span className="c lg-auto"><b>{inr(rev.month)}</b><small>{rev.pct != null ? `${Math.floor(rev.pct * 100)}%` : "—"}</small></span>
+                    <span className="r lg-st"><em className={"gs-need " + rev.cls}>{rev.text}</em>{canEdit && <i className="lg-xgap" />}</span>
+                  </div>
+                )}
                 {canEdit && (
                   <div className="gs-row lg-r lg-add">
                     <span className="lg-name"><input className="lg-in name" value={newName} placeholder="Add a key result, e.g. Leads" aria-label="New key result" onChange={(e) => setNewName(e.target.value)}
                       onKeyDown={(e) => { if (e.key === "Enter") add(); }} /></span>
                     <input className="lg-in" type="number" min={0} value={newTarget} placeholder="Target" aria-label="New key result target" onChange={(e) => setNewTarget(e.target.value)} />
+                    {withValue && (newKind === "count"
+                      ? <span className="lg-money"><i aria-hidden="true">₹</i><input className="lg-in" type="number" min={0} value={newValue} placeholder="Value" aria-label="What one is worth, in ₹" onChange={(e) => setNewValue(e.target.value)} /></span>
+                      : <span />)}
                     <select className="lg-in" value={newKind} aria-label="Counted how" onChange={(e) => setNewKind(e.target.value as Kind)}>
                       <option value="count">Typed in</option>
                       <option value="followers">Followers</option>
@@ -321,15 +376,17 @@ export function LeadGoals() {
                 )}
                 {canEdit && missing.length > 0 && (
                   <div className="lg-sugg"><small>Quick add</small>{missing.map(([n, k]) => (
-                    <button key={n} type="button" className="gl-btn sm" onClick={() => add(n, k, "")}>{IC.plus}{n}</button>
+                    <button key={n} type="button" className="gl-btn sm" onClick={() => add(n, k, "", "")}>{IC.plus}{n}</button>
                   ))}</div>
                 )}
               </div>
             </div>
             <p className="gs-hint">
               A count's Review 1 target is half the month's, Review 2 the rest — type in what the team reached at each Tactical meeting. Followers adds up every
-              connected account's followers and fills itself in. These are the team's results, with the lead answering for them; they don't change anyone's task score.
+              connected account's followers and fills itself in.{withValue ? " Value each is what one is worth in ₹ (an L1 or L2 Conversion); Revenue adds up count × value, each review and the month." : ""} These
+              are the team's results, with the lead answering for them; they don't change anyone's task score.
             </p>
+            {!withValue && canEdit && <p className="gs-hint">Value each and Revenue need a database update first: 20261120120000_lead_goal_value.</p>}
           </section>
 
           <section className="gl-card">

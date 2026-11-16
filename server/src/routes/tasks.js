@@ -8,7 +8,7 @@ import { callerAccess } from "../page-access.js";
 import { reviewContext, routeReview, waitWords, withReview } from "../review-route.js";
 import { logActivity } from "../activity.js";
 import { postInGeneral } from "./chat.js";
-import { MAX_JOBS, jobsOf } from "../job-count.js";
+import { BRANDS_ONLY, MAX_JOBS, SEVERAL_ONLY, jobsOf, severalNamed } from "../job-count.js";
 import { canSeeTask, editorRanks, mayOpenTask, seesEditor, taskViewer } from "../hierarchy.js";
 import { callerScope } from "../attendance.js";
 import { closePendingHandovers } from "../handover.js";
@@ -295,6 +295,20 @@ async function cleanAlsoBrands(orgId, list, ownChannelId, taskType) {
   const { rows } = await pool.query("select id from workspace where org_id = $1 and id = any($2::uuid[])", [orgId, ids]);
   if (rows.length !== ids.length) return { error: "One of those brands wasn't found." };
   return { list: ids };
+}
+
+// Is this type Story or Post work (or a sub-type of one)? Only those come
+// several in one task, or go out on more brands than their own (../job-count.js).
+async function severalOkType(orgId, contentFormatId) {
+  if (!contentFormatId) return false;
+  const tree = await hasColumn("task_content_format", "parent_id");
+  const { rows: [t] } = await pool.query(
+    tree
+      ? `select f.name, p.name as parent from task_content_format f left join task_content_format p on p.id = f.parent_id where f.id = $1 and f.org_id = $2`
+      : `select name, null as parent from task_content_format where id = $1 and org_id = $2`,
+    [contentFormatId, orgId],
+  );
+  return !!t && severalNamed(t.name, t.parent);
 }
 
 // Social work posted on more brands than its own (meta.alsoBrands): once it's
@@ -639,6 +653,9 @@ tasksRouter.post("/tasks", requireEditor, requireActiveEod, async (req, res, nex
     }
     const also = await cleanAlsoBrands(req.orgId, d.alsoBrands, channelId, taskType);
     if (also.error) return res.status(400).json({ error: also.error });
+    // more brands, or several in one task: Story and Post work only
+    const several = (also.list.length || (d.count ?? 1) > 1) ? await severalOkType(req.orgId, contentFormatId) : true;
+    if (also.list.length && !several) return res.status(400).json({ error: BRANDS_ONLY });
     // A due date is today or later (past work is Add finished work's, below).
     if (d.dueDate && d.dueDate < todayYmdIst()) return res.status(400).json({ error: PAST_DUE });
     // Project: has a Start Date (defaults to today) and a Due Date bounded by the
@@ -667,8 +684,8 @@ tasksRouter.post("/tasks", requireEditor, requireActiveEod, async (req, res, nex
     // task given to someone else may come with the time it should take.
     // Bulk work: Social, Ads and Service work of a type, several in one task
     const jobs = d.count && d.count > 1 ? d.count : 1;
-    if (jobs > 1 && (isAdminTask || isProject || !contentFormatId)) {
-      return res.status(400).json({ error: "Only Social, Ads and Service work of a type comes several in one task." });
+    if (jobs > 1 && (isAdminTask || isProject || !contentFormatId || !several)) {
+      return res.status(400).json({ error: SEVERAL_ONLY });
     }
     // The time it should take: given (for all of them), else the type's time for each, times how many
     const perJob = isAdminTask || (d.budgetHours != null && !accepted) ? null : await resolveBudgetHours(req.orgId, assigneeId, contentFormatId);
@@ -923,10 +940,27 @@ tasksRouter.patch("/tasks/:id", requireEditor, requireActiveEod, async (req, res
       const kind = d.taskType ?? prior.task_type;
       const cf = d.contentFormatId !== undefined ? d.contentFormatId : prior.content_format_id;
       if (countNext > 1 && (kind === "admin" || kind === "project" || !cf)) {
-        return res.status(400).json({ error: "Only Social, Ads and Service work of a type comes several in one task." });
+        return res.status(400).json({ error: SEVERAL_ONLY });
       }
     }
     const jobsNext = countNext ?? priorJobs;
+    // several in one task, or another brand added: Story and Post work only. A
+    // task moving to another type takes them along only if it's one too.
+    {
+      const cfNext = d.contentFormatId !== undefined ? d.contentFormatId : prior.content_format_id;
+      const typeMoved = d.contentFormatId !== undefined && d.contentFormatId !== prior.content_format_id;
+      const priorAlso = prior.meta?.alsoBrands ?? [];
+      const addsBrand = alsoChanged && alsoNext.some((b) => !priorAlso.includes(b));
+      const keepsBrands = typeMoved && (alsoNext ?? priorAlso).filter((b) => b !== (d.channelId ?? prior.channel_id)).length > 0;
+      const wantsMany = (countNext !== undefined && countNext > 1) || (typeMoved && jobsNext > 1);
+      if ((addsBrand || keepsBrands || wantsMany) && !(await severalOkType(req.orgId, cfNext))) {
+        return res.status(400).json({
+          error: wantsMany
+            ? (typeMoved && countNext === undefined ? `${SEVERAL_ONLY} Set How many to 1 first.` : SEVERAL_ONLY)
+            : (typeMoved && !addsBrand ? `${BRANDS_ONLY} Take off the other brands first.` : BRANDS_ONLY),
+        });
+      }
+    }
 
     // a task already on a main type keeps it, but none moves onto one (../type-tree.js)
     if (d.contentFormatId && d.contentFormatId !== prior.content_format_id) {

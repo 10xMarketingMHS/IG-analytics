@@ -410,8 +410,24 @@ html:not([data-theme="dark"]) .gl-stars button{color:rgba(30,20,80,.18)}
 .gs-leftout{margin:0;padding:8px 14px 12px;border-top:1px solid var(--gl-line2);font-size:11.5px;line-height:1.45;color:var(--gl-text3)}
 
 /* Goals › Lead goals (goals-lead.tsx): a Team Lead's key results, and his team per review */
-.gs-row.lg-r{grid-template-columns:minmax(150px,1.5fr) minmax(70px,96px) minmax(80px,110px) minmax(80px,110px) minmax(70px,100px) minmax(110px,1fr);gap:10px}
-.lg-table{min-width:680px}
+.gs-row.lg-r{grid-template-columns:minmax(150px,1.5fr) repeat(4,minmax(88px,116px)) minmax(110px,1fr);gap:10px}
+.lg-table{min-width:720px}
+/* with Value each: one more box-wide column */
+.lg-v .gs-row.lg-r{grid-template-columns:minmax(150px,1.5fr) repeat(5,minmax(88px,116px)) minmax(110px,1fr)}
+.lg-table.lg-v{min-width:830px}
+/* every box (and the number in its place) sits on one 32px line, the note under it on the next */
+.gs-row.lg-r{align-items:start}
+.gs-row.lg-r.gs-th,.gs-row.lg-r.lg-chanrow,.gs-row.lg-r.lg-add{align-items:center}
+.lg-r:not(.lg-chanrow) :is(.lg-name,.lg-cell,.lg-auto)>b{line-height:32px}
+.lg-r:not(.lg-chanrow) .lg-st{min-height:32px}
+.lg-money{position:relative;display:block;width:100%}
+.lg-money>i{position:absolute;left:9px;top:50%;translate:0 -50%;font:600 12px 'Geist Mono',monospace;font-style:normal;color:var(--gl-text3);pointer-events:none}
+.lg-money>.lg-in{padding-left:20px}
+.lg-rev{background:color-mix(in srgb,var(--gl-acSoft) 70%,transparent)}
+.lg-rev .lg-name b{font-size:13.5px;font-weight:800}
+.lg-rev .lg-name small{overflow:hidden;text-overflow:ellipsis}
+.lg-auto small.met{color:var(--gl-good)}
+.lg-xgap{flex:none;width:24px}
 .lg-name{min-width:0;display:flex;flex-direction:column;gap:2px}
 .lg-name b{font-size:13px;font-weight:700}
 .lg-name small,.lg-cell small,.lg-auto small{font-size:10.5px;font-weight:600;color:var(--gl-text3);white-space:nowrap}

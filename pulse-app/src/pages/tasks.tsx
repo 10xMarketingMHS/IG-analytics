@@ -6,7 +6,7 @@ import {
   type DragStartEvent, type DragEndEvent,
 } from "@dnd-kit/core";
 import { useTasks } from "@/lib/use-tasks";
-import { JOB_PICKS, MAX_JOBS, jobsOf } from "@/lib/job-count";
+import { JOB_PICKS, MAX_JOBS, jobsOf, severalOk } from "@/lib/job-count";
 import { useEditors } from "@/lib/use-editors";
 import { useContentFormats } from "@/lib/use-content-formats";
 import { noteTaskSeen } from "@/lib/use-task-notify";
@@ -2510,9 +2510,12 @@ export function TaskPanel({ mode, task, canWrite, editors, channels: yourBrands,
     : !!task?.link_required);
   const projectDuration = isProject ? (selectedFormat?.duration_days ?? null) : null;
   const projectPoints = isProject ? (selectedFormat?.points ?? null) : null;
-  // Social work that goes to Scheduling can be posted on more brands than its own:
-  // one task, scored once; each other brand gets its posting step after approval.
-  const multiBrand = activeCategory === "social" && !adByTeam && !!selectedFormat?.to_scheduling && channels.length > 1;
+  // Story and Post work (lib/job-count.ts severalOk) — the only work that comes
+  // several in one task, or goes out on more brands than its own
+  const severalType = severalOk(selectedFormat, contentFormats);
+  // Story and Post work that goes to Scheduling can be posted on more brands than
+  // its own: one task, scored once; each other brand gets its posting step after approval.
+  const multiBrand = activeCategory === "social" && !adByTeam && !!selectedFormat?.to_scheduling && severalType && channels.length > 1;
   const [alsoBrands, setAlsoBrands] = useState<string[]>([]);
   // A Social job's post details (pillar, content type, format, avatar): a Manager,
   // Asst. Manager or Team Lead gives them (editors don't know them); they start
@@ -2549,7 +2552,7 @@ export function TaskPanel({ mode, task, canWrite, editors, channels: yourBrands,
   const [otherPick, setOtherPick] = useState(false);
   // bulk work: may this one be several in one task, and how many it is
   const bulkKind = (kind: string | null | undefined) => kind === "social" || kind === "ad" || kind === "service";
-  const bulkOk = creating ? bulkKind(activeCategory) && !!draft.content_format_id && !otherPick : bulkKind(task?.task_type) && !!task?.content_format_id && !task?.meta?.postsFor;
+  const bulkOk = severalType && (creating ? bulkKind(activeCategory) && !!draft.content_format_id && !otherPick : bulkKind(task?.task_type) && !!task?.content_format_id && !task?.meta?.postsFor);
   const jobsN = creating ? (bulkOk ? jobs : 1) : jobsOf(task?.meta);
   // the main type whose chip is open, to choose among its sub-types
   const [openMain, setOpenMain] = useState<string | null>(null);
@@ -2825,7 +2828,7 @@ export function TaskPanel({ mode, task, canWrite, editors, channels: yourBrands,
       </Row>
       {!creating && task && !task.meta?.postsFor && (multiBrand || alsoOn.length > 0) && (
         <Row label="Also post on" icon={ic(TB_ICON.tag)}>
-          {briefRo || task.status === "done" ? (
+          {briefRo || task.status === "done" || !multiBrand ? (
             <span className="tp2-faint">{alsoOn.length ? alsoOn.map(nameOfBrand).join(", ") : "No other brand"}</span>
           ) : (
             <div className="tp2-inline">
@@ -3285,6 +3288,18 @@ export function TaskPanel({ mode, task, canWrite, editors, channels: yourBrands,
                       {alsoBrands.some((b) => b !== draft.channel_id) && <small className="tp2-faint">{ALSO_ON_HINT}</small>}
                     </div>
                   )}
+                  {/* Story or Post work whose type doesn't go to Scheduling: the other
+                      brands' posts are made there, so say why there's no pick */}
+                  {!adminTask && !multiBrand && severalType && activeCategory === "social" && !adByTeam && channels.length > 1 && draft.channel_id && selectedFormat && !selectedFormat.to_scheduling && (
+                    <div className="tp2-also">
+                      <small>Also post on</small>
+                      <small className="tp2-faint">
+                        {selectedFormat.name} doesn't go to Scheduling, so it can't go out on other brands yet. {isAdmin
+                          ? `Turn on Scheduling for ${selectedFormat.name} in Settings › Tasks & time.`
+                          : "An admin can turn it on in Settings › Tasks & time."}
+                      </small>
+                    </div>
+                  )}
                   {isProject && (
                     <label className="tp2-ncell">
                       <span>Start date</span>
@@ -3455,7 +3470,7 @@ export function TaskPanel({ mode, task, canWrite, editors, channels: yourBrands,
             {typeRow}
             {(jobsN > 1 || (bulkOk && !briefRo && t.status !== "done")) && (
               <Row label="How many" icon={ic(TB_ICON.list)}>
-                {briefRo || t.status === "done" ? (
+                {briefRo || t.status === "done" || !bulkOk ? (
                   <span className="tp2-faint">{jobsN} in this task{t.meta?.pieces ? "" : jobsN > 1 && t.status === "done" ? " · split into its posts in Scheduling" : ""}</span>
                 ) : (
                   <span className="tp2-inline">
