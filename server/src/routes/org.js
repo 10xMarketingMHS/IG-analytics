@@ -18,12 +18,16 @@ import { HANDOFF_HOURS, REVIEW_DEFAULTS, handoffOrderError, normalizeReview } fr
 export const orgRouter = Router();
 
 const HHMM = z.string().regex(/^\d{2}:\d{2}$/);
+const BreakTimes = z.object({ morning: HHMM.nullable(), lunch: HHMM.nullable(), evening: HHMM.nullable() }).partial();
 const CalendarSchema = z.object({
   wdFrom: HHMM, wdTo: HHMM, satFrom: HHMM, satTo: HHMM,
   satOff: z.boolean(), satBreaks: z.boolean(),
   sickDays: z.number().int().min(0).max(10),
   adjustHours: z.number().int().min(-100).max(100),
   holidays: z.array(z.string().regex(/^\d{4}-\d{2}-\d{2}$/)).max(100).optional(),
+  // when each break is (work-calendar.js), for the "taking a break now?" pop-up
+  breakAt: BreakTimes.optional(),
+  satBreakAt: BreakTimes.optional(),
 });
 const AttendanceSchema = z.object({
   requireSod: z.boolean(),

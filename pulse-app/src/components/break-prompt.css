@@ -1,0 +1,31 @@
+/* "Are you taking a break now?" (break-prompt.tsx) — the break screen's
+   colours (index.css .brk-*), the same in light and dark. */
+.bp-scrim{position:fixed;inset:0;z-index:125;display:flex;overflow:hidden auto;padding:16px;
+  background:rgba(10,7,20,.5);backdrop-filter:blur(5px);animation:bp-scrim-in .3s ease both}
+@keyframes bp-scrim-in{from{opacity:0}to{opacity:1}}
+.bp-card{position:relative;margin:auto;width:400px;max-width:100%;padding:28px 26px 22px;border-radius:24px;text-align:center;
+  background:radial-gradient(120% 90% at 50% 0%, rgba(124,58,237,.22), transparent 60%),linear-gradient(180deg,#221a33,#1a1428);
+  border:1px solid rgba(168,85,247,.42);color:#fff;
+  box-shadow:0 0 0 1px rgba(168,85,247,.12),0 24px 70px rgba(0,0,0,.55),0 0 60px rgba(139,92,246,.3);
+  animation:bp-card-in .45s cubic-bezier(.2,.9,.25,1.15) both}
+@keyframes bp-card-in{from{opacity:0;transform:translateY(12px) scale(.95)}to{opacity:1;transform:none}}
+.bp-x{position:absolute;top:10px;right:12px;width:32px;height:32px;border:0;border-radius:10px;background:transparent;
+  color:#b3a7d4;font-size:22px;line-height:1;cursor:pointer}
+.bp-x:hover{background:rgba(168,85,247,.16);color:#fff}
+.bp-eyebrow{font-size:13px;font-weight:600;color:#b3a7d4;letter-spacing:.02em}
+.bp-title{margin:6px 0 14px;font-size:24px;line-height:1.2;font-weight:800;letter-spacing:-.01em;color:#fff}
+.bp-ring{position:relative;width:104px;height:104px;margin:0 auto}
+.bp-ring svg{width:100%;height:100%}
+.bp-track{fill:none;stroke:rgba(168,85,247,.18);stroke-width:7}
+.bp-arc{fill:none;stroke:#a855f7;stroke-width:7;stroke-linecap:round;transition:stroke-dasharray .5s linear;
+  filter:drop-shadow(0 0 6px rgba(168,85,247,.6))}
+.bp-ring b{position:absolute;inset:0;display:grid;place-items:center;font-size:34px;font-weight:800;font-variant-numeric:tabular-nums;color:#e6d5ff}
+.bp-note{margin:12px 0 18px;font-size:14px;line-height:1.5;color:#c4b5fd}
+.bp-actions{display:flex;gap:10px;flex-wrap:wrap}
+.bp-btn{flex:1 1 140px;min-height:44px;padding:10px 14px;border-radius:12px;font-family:inherit;font-size:14px;font-weight:600;line-height:1.2;cursor:pointer;
+  border:1px solid rgba(168,85,247,.42);background:rgba(255,255,255,.04);color:#e9e3ff}
+.bp-btn:hover{background:rgba(168,85,247,.14)}
+.bp-btn.pri{border-color:transparent;background:linear-gradient(135deg,#a855f7,#7c3aed);color:#fff;box-shadow:0 8px 24px rgba(124,58,237,.35)}
+.bp-btn.pri:hover{filter:brightness(1.08)}
+.bp-btn:focus-visible,.bp-x:focus-visible{outline:2px solid #c084fc;outline-offset:2px}
+@media (prefers-reduced-motion: reduce){.bp-scrim,.bp-card{animation:none}.bp-arc{transition:none}}

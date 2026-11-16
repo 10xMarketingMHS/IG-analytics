@@ -28,6 +28,7 @@ import { ViewAsBar, ViewAsModal } from "@/components/view-as";
 import { TaskPanel } from "@/pages/tasks";
 import { BreakWidget } from "@/components/break-widget";
 import { BreakOverlay } from "@/components/break-overlay";
+import { BreakPrompt } from "@/components/break-prompt";
 import { WidgetBar } from "@/components/widget-bar";
 import { WidgetsProvider } from "@/lib/widgets";
 import { useQuiet } from "@/lib/quiet-popups";
@@ -795,6 +796,8 @@ function AppShellInner() {
       )}
       <BreakWidget />
       <BreakOverlay />
+      {/* at each break time: "Are you taking a break now?" */}
+      <BreakPrompt />
       <SodModal />
       {viewAsOpen && <ViewAsModal onClose={() => setViewAsOpen(false)} />}
       {leaveOpen && <LeavePanel onClose={() => setLeaveOpen(false)} />}

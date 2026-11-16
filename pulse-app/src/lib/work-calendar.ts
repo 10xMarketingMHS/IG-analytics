@@ -8,15 +8,51 @@
 // Holidays (dates the office is shut) are closed days: they come out of the
 // weekdays or Saturdays they fall on, before the sick-leave buffer.
 
+// When each break is ("HH:MM", or null: not set).
+export type BreakSlot = "morning" | "lunch" | "evening";
+export type BreakTimes = Record<BreakSlot, string | null>;
 export type WorkCalendar = {
   wdFrom: string; wdTo: string; satFrom: string; satTo: string;
   satOff: boolean; satBreaks: boolean; sickDays: number; adjustHours: number;
   holidays?: string[]; // YYYY-MM-DD
+  // Monday to Friday, and Saturday (when breaks apply then): at each, the app
+  // asks anyone who has started their day "Are you taking a break now?"
+  breakAt?: BreakTimes; satBreakAt?: BreakTimes;
 };
+const NO_BREAK_TIMES: BreakTimes = { morning: null, lunch: null, evening: null };
 export const CALENDAR_DEFAULTS: WorkCalendar = {
   wdFrom: "09:00", wdTo: "18:00", satFrom: "09:00", satTo: "16:00",
   satOff: false, satBreaks: true, sickDays: 2, adjustHours: 0, holidays: [],
+  breakAt: NO_BREAK_TIMES, satBreakAt: NO_BREAK_TIMES,
 };
+// The day's breaks, in order, with how long each one is meant to be.
+export const BREAK_SLOTS: { k: BreakSlot; l: string; min: number }[] = [
+  { k: "morning", l: "Morning tea break", min: 15 },
+  { k: "lunch", l: "Lunch break", min: 45 },
+  { k: "evening", l: "Evening tea break", min: 15 },
+];
+// The question shows from the break's time for this long (Echo opened a little
+// later still asks; long after, it doesn't).
+export const BREAK_ASK_MINUTES = 10;
+// India time now: the date, minutes since midnight, the weekday (0 = Sunday).
+export function istClock(at = Date.now()) {
+  const t = new Date(at + 330 * 60_000);
+  return { ymd: t.toISOString().slice(0, 10), minutes: t.getUTCHours() * 60 + t.getUTCMinutes(), weekday: t.getUTCDay() };
+}
+// The breaks whose time it is right now, in the day's order: none on a Sunday,
+// a holiday, or a Saturday off or without breaks. key: one per break a day.
+export function dueBreaks(cal: WorkCalendar | null | undefined, now = istClock()) {
+  if (!cal || now.weekday === 0 || (cal.holidays ?? []).includes(now.ymd)) return [];
+  const sat = now.weekday === 6;
+  if (sat && (cal.satOff || !cal.satBreaks)) return [];
+  const times = (sat ? cal.satBreakAt : cal.breakAt) ?? NO_BREAK_TIMES;
+  return BREAK_SLOTS.flatMap((s) => {
+    const at = times[s.k];
+    if (!at) return [];
+    const m = minutesOf(at);
+    return now.minutes >= m && now.minutes < m + BREAK_ASK_MINUTES ? [{ ...s, at, key: `${now.ymd}:${s.k}` }] : [];
+  });
+}
 // Lunch and tea — the same 75 minutes as the daily break allowance.
 export const LUNCH_MIN = 45;
 export const TEA_MIN = 30;

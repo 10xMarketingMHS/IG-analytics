@@ -11,7 +11,17 @@
 export const CALENDAR_DEFAULTS = {
   wdFrom: "09:00", wdTo: "18:00", satFrom: "09:00", satTo: "16:00",
   satOff: false, satBreaks: true, sickDays: 2, adjustHours: 0, holidays: [],
+  // When each break is ("HH:MM", or null: not set) — Monday to Friday, and
+  // Saturday (when breaks apply then). At each one the app asks anyone who
+  // has started their day "Are you taking a break now?" (break-prompt.tsx).
+  breakAt: { morning: null, lunch: null, evening: null },
+  satBreakAt: { morning: null, lunch: null, evening: null },
 };
+export const BREAK_SLOTS = ["morning", "lunch", "evening"];
+const breakTimes = (t) => Object.fromEntries(BREAK_SLOTS.map((k) => {
+  const v = t && typeof t === "object" ? t[k] : null;
+  return [k, typeof v === "string" && /^\d{2}:\d{2}$/.test(v) ? v : null];
+}));
 // Lunch and tea — the same 75 minutes as the daily break allowance (breaks.js).
 export const LUNCH_MIN = 45;
 export const TEA_MIN = 30;
@@ -24,6 +34,8 @@ const minutesOf = (hhmm) => {
 export function normalizeCalendar(c) {
   const out = { ...CALENDAR_DEFAULTS, ...(c && typeof c === "object" ? c : {}) };
   out.holidays = [...new Set((Array.isArray(out.holidays) ? out.holidays : []).filter((d) => /^\d{4}-\d{2}-\d{2}$/.test(String(d))))].sort();
+  out.breakAt = breakTimes(out.breakAt);
+  out.satBreakAt = breakTimes(out.satBreakAt);
   return out;
 }
 // Is this date (YYYY-MM-DD) one of the calendar's holidays?

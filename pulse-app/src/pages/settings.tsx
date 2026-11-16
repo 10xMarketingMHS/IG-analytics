@@ -14,7 +14,7 @@ import { setWeekStart } from "@/lib/date-range";
 import { notifyOn, type NotifyKey } from "@/lib/notify-prefs";
 import { askDesktop, desktopState, type DesktopState } from "@/lib/chat-alerts";
 import { chatPing } from "@/lib/widget-audio";
-import { CALENDAR_DEFAULTS, LUNCH_MIN, TEA_MIN, capacityFor, storedCapacity, type WorkCalendar } from "@/lib/work-calendar";
+import { BREAK_SLOTS, CALENDAR_DEFAULTS, LUNCH_MIN, TEA_MIN, capacityFor, storedCapacity, type WorkCalendar } from "@/lib/work-calendar";
 import { ACCENTS, useTheme } from "@/components/theme-provider";
 import { SCORE_WEIGHTS } from "@/lib/score";
 import { DISCIPLINE_CRITERIA } from "@/lib/goal-points";
@@ -255,17 +255,31 @@ function GeneralSection({ onDirty, seesCalendar }: { onDirty: (dirty: boolean) =
               <span className="st-label"><b>Sunday</b><small>Never counted</small></span>
               <span className="st-chip">Off</span>
             </div>
-            <div className="st-row">
-              <span className="st-label"><b>Lunch break</b><small>The same for everyone — part of the 1h 15m daily break allowance</small></span>
-              <span className="st-value st-mono">{LUNCH_MIN}m</span>
-            </div>
-            <div className="st-row">
-              <span className="st-label"><b>Tea break</b><small>Two of 15 minutes</small></span>
-              <span className="st-value st-mono">{TEA_MIN}m</span>
-            </div>
+            {/* each break's time, Monday to Friday and Saturday: Echo asks then */}
+            {BREAK_SLOTS.map((s) => {
+              const wd = c.breakAt ?? CALENDAR_DEFAULTS.breakAt!, sat = c.satBreakAt ?? CALENDAR_DEFAULTS.satBreakAt!;
+              const satShut = c.satOff || !c.satBreaks;
+              return (
+                <div className="st-row" key={s.k}>
+                  <span className="st-label"><b>{s.l}</b><small>{s.k === "lunch" ? `${LUNCH_MIN} minutes — part of the 1h 15m daily break allowance` : `${TEA_MIN / 2} minutes`}</small></span>
+                  <span className="st-times">
+                    Mon – Fri
+                    <input type="time" className="st-in" value={wd[s.k] ?? ""} disabled={lockCal} aria-label={`${s.l}, Monday to Friday`}
+                      onChange={(e) => setC({ breakAt: { ...wd, [s.k]: e.target.value || null } })} />
+                    Sat
+                    <input type="time" className="st-in" value={satShut ? "" : sat[s.k] ?? ""} disabled={lockCal || satShut} aria-label={`${s.l}, Saturday`}
+                      title={satShut ? "No breaks on Saturday" : undefined}
+                      onChange={(e) => setC({ satBreakAt: { ...sat, [s.k]: e.target.value || null } })} />
+                  </span>
+                </div>
+              );
+            })}
             <div className="st-row">
               <span className="st-label"><b>Breaks on Saturday too</b></span>
               <Toggle on={c.satBreaks} onChange={(v) => setC({ satBreaks: v })} label="Breaks on Saturday too" disabled={lockCal || c.satOff} />
+            </div>
+            <div className="st-row">
+              <span className="st-summary">At each break time, Echo asks anyone who has started their day: “Are you taking a break now?” No answer in 30 seconds starts their break and pauses their task timers; closing it keeps them working. Leave a time empty for no question.</span>
             </div>
             <div className="st-row">
               <span className="st-label"><b>Holidays</b><small>Days the office is shut: nobody is late or absent, and they come out of capacity</small></span>
