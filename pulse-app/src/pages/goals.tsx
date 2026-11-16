@@ -125,6 +125,8 @@ type TypeJobs = { contentFormatId: string; name: string | null; jobs: number; ho
 type TimeOff = {
   leaveDays?: number; otherHours?: number; otherWork?: OtherTask[]; monthHours?: number;
   creditHours?: number; credit?: TypeJobs[]; carried?: TypeJobs[];
+  // each split or carried type: the team's goal for it, and what was done within everyone's own goals
+  teamNeed?: Record<string, { target: number; own: number }>;
   shortHours?: number; filledHours?: number; stillShortHours?: number; scorePct?: number | null;
 };
 
@@ -135,6 +137,9 @@ type TimeOff = {
 // green, team goal blue, company task purple.
 function TimeAway({ off, rows }: { off?: TimeOff; rows: PerfRow[] }) {
   const other = off?.otherWork ?? [], credit = off?.credit ?? [], carried = off?.carried ?? [];
+  // the team's need for each type split or carried (one line, so the split can be checked)
+  const need = [...new Map([...credit, ...carried].map((c) => [c.contentFormatId, c.name ?? "A type"])).entries()]
+    .filter(([cf]) => off?.teamNeed?.[cf]).map(([cf, name]) => ({ name, ...off!.teamNeed![cf] }));
   const team = off?.creditHours ?? 0, co = off?.otherHours ?? 0, fill = team + co;
   if (!off || (!fill && !(off.leaveDays ?? 0) && !carried.length)) return null;
   const set = rows.find((r) => r.goalJC > 0);
@@ -167,6 +172,11 @@ function TimeAway({ off, rows }: { off?: TimeOff; rows: PerfRow[] }) {
       {carried.length > 0 && (
         <span className="gl-awayline">
           <span>Carried to next month, as the team didn't need it: {carried.map((c) => `${c.name ?? "A type"} +${c.jobs}`).join(" · ")}</span>
+        </span>
+      )}
+      {need.length > 0 && (
+        <span className="gl-awayline">
+          <span>The team's need this month: {need.map((n) => `${n.name}: team goal ${n.target}, ${n.own} done within everyone's own goals, so ${Math.max(0, Math.round((n.target - n.own) * 10) / 10)} more needed`).join(" · ")}. Jobs past that are carried, first done first counted.</span>
         </span>
       )}
       {other.length > 0 && (
@@ -214,7 +224,7 @@ function TeamGoals({ month, isCurrent, focusId, selfOnly }: { month: string; isC
         setPerf(Object.fromEntries(active.map((e) => [e.id, d.people[e.id]?.rows ?? []])));
         setTimeOff(Object.fromEntries(Object.entries(d.people).map(([id, p]) => [id, {
           leaveDays: p.leaveDays, otherHours: p.otherHours, otherWork: p.otherWork, monthHours: p.monthHours,
-          creditHours: p.creditHours, credit: p.credit, carried: p.carried,
+          creditHours: p.creditHours, credit: p.credit, carried: p.carried, teamNeed: p.teamNeed,
           shortHours: p.shortHours, filledHours: p.filledHours, stillShortHours: p.stillShortHours, scorePct: p.scorePct,
         }])));
       })

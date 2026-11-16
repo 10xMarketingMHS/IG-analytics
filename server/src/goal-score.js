@@ -51,7 +51,8 @@ const byTime = (a, b) => (new Date(a.completedAt ?? 0) - new Date(b.completedAt 
 // the need is met; the rest is carried.
 // goalsBy / jobsBy: Map editorId → that person's goals / jobs (as scoreMonth).
 // Returns credit: Map editorId → { [contentFormatId]: { name, credited, carried } },
-// and team: { [contentFormatId]: { target, done, left } }.
+// and team: { [contentFormatId]: { target, own, done, left } } — own: done within
+// everyone's own goals (so target − own is what the team needed beyond them).
 export function teamCredit(goalsBy, jobsBy) {
   const target = new Map();
   for (const goals of goalsBy.values()) {
@@ -72,13 +73,14 @@ export function teamCredit(goalsBy, jobsBy) {
       else extra.push({ id, f, name: j.typeName ?? null, completedAt: j.completedAt, taskId: j.taskId });
     }
   }
+  const own = new Map(done);
   const credit = new Map();
   for (const x of extra.sort(byTime)) {
     if (!credit.has(x.id)) credit.set(x.id, {});
     const c = (credit.get(x.id)[x.f] ??= { name: x.name, credited: 0, carried: 0 });
     if (done.get(x.f) < target.get(x.f)) { done.set(x.f, done.get(x.f) + 1); c.credited++; } else c.carried++;
   }
-  const team = Object.fromEntries([...target].map(([f, t]) => [f, { target: t, done: done.get(f), left: Math.max(0, t - done.get(f)) }]));
+  const team = Object.fromEntries([...target].map(([f, t]) => [f, { target: t, own: own.get(f), done: done.get(f), left: Math.max(0, t - done.get(f)) }]));
   return { credit, team };
 }
 

@@ -409,6 +409,11 @@ goalsRouter.get("/goals/performance-all", goalView, async (req, res, next) => {
       if (!s) continue;
       p.leaveDays = s.leaveDays; p.otherHours = s.otherHours; p.otherWork = s.otherWork;
       p.creditHours = s.creditHours; p.credit = s.credit; p.carried = s.carried;
+      // the team's need for each type split or carried: its goal (everyone's added
+      // up) and what was done within everyone's own goals, so the card can show why
+      p.teamNeed = Object.fromEntries([...new Set([...(s.credit ?? []), ...(s.carried ?? [])].map((c) => c.contentFormatId))]
+        .filter((cf) => s.team?.[cf])
+        .map((cf) => { const n = s.team[cf]; return [cf, { target: Math.round(n.target * 10) / 10, own: Math.round((n.own ?? 0) * 10) / 10 }]; }));
       p.shortHours = s.shortHours; p.filledHours = s.filledHours; p.stillShortHours = s.stillShortHours;
       // the month's score with all that counted (the adjusted goal card), as the Leaderboard has it
       p.scorePct = s.pct == null ? null : Math.round(s.pct * 10) / 10;
