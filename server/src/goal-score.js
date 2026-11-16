@@ -69,8 +69,11 @@ export function teamCredit(goalsBy, jobsBy) {
       if (j.source === "covered") { done.set(f, done.get(f) + 1); continue; }
       const n = (used.get(f) ?? 0) + 1;
       used.set(f, n);
-      if (n <= (own.get(f) ?? 0)) done.set(f, done.get(f) + 1);
-      else extra.push({ id, f, name: j.typeName ?? null, completedAt: j.completedAt, taskId: j.taskId });
+      // the part of this job inside their own goal (a review's goal can be half a
+      // job: 3.5 — the 4th job is half theirs, half beyond it)
+      const within = Math.max(0, Math.min(1, (own.get(f) ?? 0) - (n - 1)));
+      if (within > 0) done.set(f, done.get(f) + within);
+      if (within < 1) extra.push({ id, f, part: 1 - within, name: j.typeName ?? null, completedAt: j.completedAt, taskId: j.taskId });
     }
   }
   const own = new Map(done);
@@ -78,7 +81,10 @@ export function teamCredit(goalsBy, jobsBy) {
   for (const x of extra.sort(byTime)) {
     if (!credit.has(x.id)) credit.set(x.id, {});
     const c = (credit.get(x.id)[x.f] ??= { name: x.name, credited: 0, carried: 0 });
-    if (done.get(x.f) < target.get(x.f)) { done.set(x.f, done.get(x.f) + 1); c.credited++; } else c.carried++;
+    const take = Math.max(0, Math.min(x.part, target.get(x.f) - done.get(x.f)));
+    done.set(x.f, done.get(x.f) + take);
+    c.credited = tenth(c.credited + take);
+    c.carried = tenth(c.carried + x.part - take);
   }
   const team = Object.fromEntries([...target].map(([f, t]) => [f, { target: t, own: own.get(f), done: done.get(f), left: Math.max(0, t - done.get(f)) }]));
   return { credit, team };
@@ -235,21 +241,35 @@ export async function loadMonth(orgId, monthFirst, editorId = null) {
     pool.query("select content_format_id, editor_id, hours::float as hours from task_time_rule where org_id = $1", [orgId]),
   ]);
   const { cal } = await readSettings(orgId);
-  return { editorId, goalRes, jobRes, leaveRes, capRes, orgCap, ruleRes, cal };
+  return { editorId, monthFirst, goalRes, jobRes, leaveRes, capRes, orgCap, ruleRes, cal };
 }
+
+// A review period's share of a month's goal: Review 1 (1st–15th) half of it,
+// Review 2 (16th–month end) the rest.
+export const halfOf = (jc, half) => (half === "h1" ? tenth(jc / 2) : half === "h2" ? tenth(jc - tenth(jc / 2)) : jc);
+// Where Review 2 starts: the 16th, India time.
+export const reviewTwoStart = (monthFirst) => new Date(`${String(monthFirst).slice(0, 7)}-16T00:00:00+05:30`);
 
 // A loaded month (loadMonth), scored. until (a Date): only work finished
 // before it counts, and leave as it stood (Progress Path, as each day closed).
-export function scoreLoaded(data, { until = null } = {}) {
+// half ("h1" | "h2"): one review period scored as a month of its own — half of
+// each goal (halfOf), only the work finished in those days, and the team's need,
+// team goal credit, Other work and the time filling the goals all within it.
+export function scoreLoaded(data, { until = null, half = null } = {}) {
   const { editorId, goalRes, leaveRes, capRes, orgCap, ruleRes, cal } = data;
-  const jobRes = until ? { rows: data.jobRes.rows.filter((t) => new Date(t.completed_at) < until) } : data.jobRes;
+  const split = half ? reviewTwoStart(data.monthFirst) : null;
+  const inside = (t) => {
+    const at = new Date(t.completed_at);
+    return (!until || at < until) && (half !== "h1" || at < split) && (half !== "h2" || at >= split);
+  };
+  const jobRes = until || half ? { rows: data.jobRes.rows.filter(inside) } : data.jobRes;
   const fallbackDays = Number(orgCap.working_days) || 0;
   const fallbackHours = Number(orgCap.hours_per_day) || 8;
 
   const goals = new Map(), jobs = new Map(), kinds = new Map();
   for (const g of goalRes.rows) {
     if (!goals.has(g.editor_id)) goals.set(g.editor_id, []);
-    goals.get(g.editor_id).push({ contentFormatId: g.content_format_id, name: g.name, icon: g.icon, goalJC: Number(g.jc), points: Number(g.pts ?? 0), jph: Number(g.jph) || 0 });
+    goals.get(g.editor_id).push({ contentFormatId: g.content_format_id, name: g.name, icon: g.icon, goalJC: halfOf(Number(g.jc), half), points: Number(g.pts ?? 0), jph: Number(g.jph) || 0 });
     kinds.set(g.content_format_id, g);
   }
   for (const t of jobRes.rows) {

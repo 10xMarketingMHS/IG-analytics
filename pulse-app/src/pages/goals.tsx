@@ -1,18 +1,18 @@
-import { useEffect, useMemo, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import { toast } from "sonner";
 import { api, API_BASE, getActiveWorkspaceId, ApiError } from "@/lib/api";
 import { useWorkspaces } from "@/lib/workspaces-context";
 import { useAuth } from "@/lib/auth-context";
 import { useEditors } from "@/lib/use-editors";
-import { useTasks } from "@/lib/use-tasks";
 import { useResource } from "@/lib/use-resource";
 import { gradFor } from "@/lib/editor-visuals";
 import { ymd } from "@/lib/task-points";
+import { onTasksChanged } from "@/lib/task-events";
 import { byPosition } from "@/lib/home-role";
 import { DEFAULT_SHARES, DISCIPLINE_CRITERIA, disciplineParts, goalBreakdown, RATER_LABEL, RATER_ROLES, type ByRole, type RaterRole, type Ratings, type Shares } from "@/lib/goal-points";
 import {
-  achievement, bandOf, currentPeriod, doneByType, goalLines, monthName, pctText, periodBounds, periodLabel, tenths,
+  achievement, bandOf, currentPeriod, goalLines, monthName, pctText, periodBounds, periodLabel, tenths,
   type GoalLine, type PerfRow, type Period,
 } from "@/lib/goal-periods";
 import type { Editor } from "@/lib/types";
@@ -115,11 +115,12 @@ export function GoalsPage() {
 }
 
 type Person = { editor: Editor; rows: PerfRow[]; lines: GoalLine[]; target: number; done: number; x: number; missed: number };
-// The month's time away from the goal (server/src/goal-score.js): approved
+// A period's time away from the goal (server/src/goal-score.js): approved
 // leave shrinks it; team goal credit (work beyond their goal that the team still
 // needed) and Other work (tasks outside the team's goals, given to them or their
 // own once approved, at the time they took) fill the goals they missed; work the
-// team didn't need is carried to next month.
+// team didn't need is carried to next month (in a review: not counted in it).
+// The full month and each review are worked out on their own.
 type OtherTask = { taskId: string | null; title: string | null; typeName: string | null; requestedBy: string | null; hours: number; completedAt: string | null; selfMade?: boolean };
 type TypeJobs = { contentFormatId: string; name: string | null; jobs: number; hours?: number };
 type TimeOff = {
@@ -130,12 +131,12 @@ type TimeOff = {
   shortHours?: number; filledHours?: number; stillShortHours?: number; scorePct?: number | null;
 };
 
-// Time away from the goal this month: leave, then the hours check (how short
+// Time away from the goal in the period: leave, then the hours check (how short
 // the goals were, what team goal credit and company tasks — Other work —
 // filled), the credited and carried jobs, and the company tasks themselves (who
 // asked, how long each took). Colours as the tactical meeting's: own goal work
 // green, team goal blue, company task purple.
-function TimeAway({ off, rows }: { off?: TimeOff; rows: PerfRow[] }) {
+function TimeAway({ off, rows, review }: { off?: TimeOff; rows: PerfRow[]; review: string | null }) {
   const other = off?.otherWork ?? [], credit = off?.credit ?? [], carried = off?.carried ?? [];
   // the team's need for each type split or carried (one line, so the split can be checked)
   const need = [...new Map([...credit, ...carried].map((c) => [c.contentFormatId, c.name ?? "A type"])).entries()]
@@ -171,12 +172,12 @@ function TimeAway({ off, rows }: { off?: TimeOff; rows: PerfRow[] }) {
       )}
       {carried.length > 0 && (
         <span className="gl-awayline">
-          <span>Carried to next month, as the team didn't need it: {carried.map((c) => `${c.name ?? "A type"} +${c.jobs}`).join(" · ")}</span>
+          <span>{review ? `Past what the team needed in ${review}, so not counted in this review` : "Carried to next month, as the team didn't need it"}: {carried.map((c) => `${c.name ?? "A type"} +${c.jobs}`).join(" · ")}</span>
         </span>
       )}
       {need.length > 0 && (
         <span className="gl-awayline">
-          <span>The team's need this month: {need.map((n) => `${n.name}: team goal ${n.target}, ${n.own} done within everyone's own goals, so ${Math.max(0, Math.round((n.target - n.own) * 10) / 10)} more needed`).join(" · ")}. Jobs past that are carried, first done first counted.</span>
+          <span>The team's need {review ? `in ${review}` : "this month"}: {need.map((n) => `${n.name}: team goal ${n.target}, ${n.own} done within everyone's own goals, so ${Math.max(0, Math.round((n.target - n.own) * 10) / 10)} more needed`).join(" · ")}. {review ? "Jobs past that don't count in this review" : "Jobs past that are carried"}, first done first counted.</span>
         </span>
       )}
       {other.length > 0 && (
@@ -198,14 +199,19 @@ function TeamGoals({ month, isCurrent, focusId, selfOnly }: { month: string; isC
   const { isAdmin, hasPermission } = useWorkspaces();
   const { user } = useAuth();
   const { editors } = useEditors();
-  const { tasks } = useTasks();
   const navigate = useNavigate();
   const [per, setPer] = useState<Period>(() => (isCurrent ? currentPeriod() : "m"));
   useEffect(() => { setPer(isCurrent ? currentPeriod() : "m"); }, [month, isCurrent]);
   const [view, setView] = useState<"people" | "types">("people");
   const [selId, setSelId] = useState<string | null>(focusId);
-  const [perf, setPerf] = useState<Record<string, PerfRow[]> | null>(null);
-  const [timeOff, setTimeOff] = useState<Record<string, TimeOff>>({});
+  // each period's rows and time away, by person: the full month and both reviews
+  const [perfBy, setPerfBy] = useState<Record<Period, Record<string, PerfRow[]>> | null>(null);
+  const [offBy, setOffBy] = useState<Record<Period, Record<string, TimeOff>>>({ m: {}, h1: {}, h2: {} });
+  const perf = perfBy?.[per] ?? null, timeOff = offBy[per];
+  // reload when a task changes (done, approved, deleted), without blanking the page
+  const [changed, setChanged] = useState(0);
+  useEffect(() => onTasksChanged(() => setChanged((n) => n + 1)), []);
+  const shown = useRef<string | null>(null);
   const [exporting, setExporting] = useState(false);
 
   // Each person's goals and the month's done counts, in one request — only
@@ -215,36 +221,43 @@ function TeamGoals({ month, isCurrent, focusId, selfOnly }: { month: string; isC
     [editors, selfOnly, user?.editorId],
   );
   useEffect(() => {
-    if (!active.length) { if (editors) setPerf({}); return; }
+    const blank = (): Record<Period, Record<string, PerfRow[]>> => {
+      const none = Object.fromEntries(active.map((e) => [e.id, [] as PerfRow[]]));
+      return { m: none, h1: none, h2: none };
+    };
+    if (!active.length) { if (editors) setPerfBy(blank()); return; }
     let live = true;
-    setPerf(null);
-    api<{ people: Record<string, { rows: PerfRow[] } & TimeOff> }>(`/goals/performance-all?month=${month}-01`)
+    if (shown.current !== month) { setPerfBy(null); shown.current = month; }
+    type Card = Record<string, { rows: PerfRow[] } & TimeOff>;
+    api<{ people: Card; periods?: { h1: Card; h2: Card } }>(`/goals/performance-all?month=${month}-01`)
       .then((d) => {
         if (!live) return;
-        setPerf(Object.fromEntries(active.map((e) => [e.id, d.people[e.id]?.rows ?? []])));
-        setTimeOff(Object.fromEntries(Object.entries(d.people).map(([id, p]) => [id, {
+        const all: Record<Period, Card> = { m: d.people, h1: d.periods?.h1 ?? {}, h2: d.periods?.h2 ?? {} };
+        const rowsOf = (c: Card) => Object.fromEntries(active.map((e) => [e.id, c[e.id]?.rows ?? []]));
+        const offOf = (c: Card) => Object.fromEntries(Object.entries(c).map(([id, p]) => [id, {
           leaveDays: p.leaveDays, otherHours: p.otherHours, otherWork: p.otherWork, monthHours: p.monthHours,
           creditHours: p.creditHours, credit: p.credit, carried: p.carried, teamNeed: p.teamNeed,
           shortHours: p.shortHours, filledHours: p.filledHours, stillShortHours: p.stillShortHours, scorePct: p.scorePct,
-        }])));
+        }]));
+        setPerfBy({ m: rowsOf(all.m), h1: rowsOf(all.h1), h2: rowsOf(all.h2) });
+        setOffBy({ m: offOf(all.m), h1: offOf(all.h1), h2: offOf(all.h2) });
       })
-      .catch(() => { if (live) setPerf(Object.fromEntries(active.map((e) => [e.id, [] as PerfRow[]]))); });
+      .catch(() => { if (live) setPerfBy(blank()); });
     return () => { live = false; };
-  }, [active, month, editors]);
+  }, [active, month, editors, changed]);
 
-  const [from, to] = periodBounds(month, per);
   const people = useMemo((): Person[] => {
     if (!perf) return [];
     return active
       .filter((e) => (perf[e.id] ?? []).length > 0)
       .map((e) => {
         const rows = perf[e.id];
-        const lines = goalLines(rows, per, per === "m" ? undefined : doneByType(tasks ?? [], e.id, from, to));
+        const lines = goalLines(rows, per);
         const a = achievement(lines);
         return { editor: e, rows, lines, target: a.target, done: a.done, x: a.x, missed: a.missed };
       })
       .filter((p) => p.target > 0);
-  }, [perf, active, per, tasks, from, to]);
+  }, [perf, active, per]);
   const noGoals = perf ? active.filter((e) => !(perf[e.id] ?? []).length) : [];
 
   const sorted = [...people].sort((a, b) => b.x - a.x || a.editor.name.localeCompare(b.editor.name));
@@ -358,11 +371,12 @@ function TeamGoals({ month, isCurrent, focusId, selfOnly }: { month: string; isC
               {sel && (() => {
                 const b = bandOf(sel.x);
                 const lines = [...sel.lines].sort((a, z) => a.done / a.target - z.done / z.target);
-                // the full month with time filling its goals (server/src/goal-score.js rule 6):
-                // the tactical meeting's goal card → adjusted goal card, goal by goal
+                // the period with time filling its goals (server/src/goal-score.js rule 6):
+                // the tactical meeting's goal card → adjusted goal card, goal by goal —
+                // the full month, or a review on its own
                 const off = timeOff[sel.editor.id];
                 const fillTime = (off?.creditHours ?? 0) + (off?.otherHours ?? 0);
-                const adjusted = per === "m" && fillTime > 0;
+                const adjusted = fillTime > 0;
                 const adjPct = off?.scorePct ?? null;
                 // the time fills every missed goal evenly, so each goal's credit splits the same way
                 const teamShare = fillTime > 0 ? (off?.creditHours ?? 0) / fillTime : 0;
@@ -377,7 +391,7 @@ function TeamGoals({ month, isCurrent, focusId, selfOnly }: { month: string; isC
                       {adjusted && adjPct != null && (
                         <>
                           <span className="gl-darrow" aria-hidden>→</span>
-                          <span className="gl-dpct adj" title="With team goal credit and Other work filling the missed goals, as the Leaderboard counts it">
+                          <span className="gl-dpct adj" title={per === "m" ? "With team goal credit and company tasks filling the missed goals, as the Leaderboard counts it" : `With team goal credit and company tasks done in ${label} filling this review's missed goals`}>
                             <b className={bandOf(adjPct / 100).tone}>{Math.round(adjPct)}%</b><em>Adjusted goal card</em>
                           </span>
                         </>
@@ -388,7 +402,7 @@ function TeamGoals({ month, isCurrent, focusId, selfOnly }: { month: string; isC
                       <span>{monthName(month, "short")} goal</span>
                       {sel.rows.map((r) => <span key={r.contentFormatId} className="gl-mchip">{r.name}<b>{r.goalJC}</b></span>)}
                     </div>
-                    <TimeAway off={timeOff[sel.editor.id]} rows={sel.rows} />
+                    <TimeAway off={timeOff[sel.editor.id]} rows={sel.rows} review={per === "m" ? null : label} />
                     <div className="gl-tablewrap">
                       {adjusted ? (
                         <>

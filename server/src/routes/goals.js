@@ -11,7 +11,7 @@ import { capacityFor } from "../work-calendar.js";
 import { monthPenalties, readSettings } from "../attendance.js";
 import { isSuperHere } from "../super-admin.js";
 import { editorRanks, seesEditor, taskViewer } from "../hierarchy.js";
-import { scoreMonthAll } from "../goal-score.js";
+import { halfOf, loadMonth, scoreLoaded, scoreMonthAll } from "../goal-score.js";
 import { monthFrozen } from "../leave-math.js";
 import { brandNeedByType } from "./brand-goals.js";
 import { headingError, headingTypes, notHeadingSql } from "../type-tree.js";
@@ -346,6 +346,10 @@ goalsRouter.get("/goals/set-all", requirePermission("edit_goals"), async (req, r
 
 // GET /goals/performance-all?month= — Team goals for everyone at once: each
 // person's GET /goals/performance rows. Only your own unless you oversee goals.
+// people: the full month; periods.h1 / periods.h2: Review 1 (1st–15th) and
+// Review 2 (16th–end), each scored as a month of its own (../goal-score.js
+// scoreLoaded half): half of each goal (periodGoal), the work done in those
+// days, and the time filling the goals within them.
 goalsRouter.get("/goals/performance-all", goalView, async (req, res, next) => {
   const monthIn = req.query.month;
   if (!monthIn) return res.status(400).json({ error: "month is required." });
@@ -353,12 +357,13 @@ goalsRouter.get("/goals/performance-all", goalView, async (req, res, next) => {
     const g0 = req.viaGrant;
     const overseer = !g0?.goal_setting_access || g0.edit_goals || g0.discipline;
     const self = overseer ? null : await scopedEditorId(req, null);
-    if (!overseer && !self) return res.json({ month: monthIn, people: {} });
+    if (!overseer && !self) return res.json({ month: monthIn, people: {}, periods: { h1: {}, h2: {} } });
     const month = monthStart(monthIn);
     if (!month) return res.status(400).json({ error: "That month couldn't be read." });
     const one = self ? " and g.editor_id = $3" : "";
     const P = self ? [req.orgId, month, self] : [req.orgId, month];
-    const [goals, actuals, scores, capOf] = await Promise.all([
+    const first = String(month).slice(0, 10);
+    const [goals, actuals, loaded, capOf] = await Promise.all([
       pool.query(
         `select g.editor_id, g.content_format_id, g.jc, g.jph, cf.name, cf.icon, cf.category, cf.sort_order, cf.duration_days,
                 coalesce((to_jsonb(g)->>'points')::numeric, cf.points) as points
@@ -368,58 +373,79 @@ goalsRouter.get("/goals/performance-all", goalView, async (req, res, next) => {
           order by cf.category, cf.sort_order, cf.name`,
         P,
       ),
+      // done per type, split by review: finished from the 16th (India time) is Review 2's
       pool.query(
-        `select editor_id, content_format_id, sum(case when coalesce(meta->>'postsFor', '') <> '' then 0 else ${jobCount("task")} end)::int actual -- bulk work: its jobs; posting copies: its original's
+        `select editor_id, content_format_id,
+                (completed_at >= ($2::date + 15)::timestamp at time zone 'Asia/Kolkata') as second,
+                sum(case when coalesce(meta->>'postsFor', '') <> '' then 0 else ${jobCount("task")} end)::int actual -- bulk work: its jobs; posting copies: its original's
            from task
           where org_id=$1 and status='done' and content_format_id is not null
             and completed_at >= ($2::date)::timestamp at time zone 'Asia/Kolkata' and completed_at < ($2::date + interval '1 month')::timestamp at time zone 'Asia/Kolkata'${self ? " and editor_id = $3" : ""}
-          group by editor_id, content_format_id`,
+          group by 1, 2, 3`,
         P,
       ),
-      scoreMonthAll(req.orgId, String(month).slice(0, 10), self),
+      loadMonth(req.orgId, first, self),
       capacityLookup(req.orgId, month),
     ]);
-    const actualBy = new Map(actuals.rows.map((a) => [`${a.editor_id}:${a.content_format_id}`, a.actual]));
-    const people = {};
-    for (const g of goals.rows) {
-      const scored = scores.get(g.editor_id);
-      const t = (scored?.types ?? []).find((x) => x.contentFormatId === g.content_format_id);
-      const goalJC = Number(g.jc), jph = jobHours(g, g.jph, capOf(g.editor_id).hours_per_day);
-      const actualJC = actualBy.get(`${g.editor_id}:${g.content_format_id}`) ?? 0;
-      (people[g.editor_id] ??= { rows: [] }).rows.push({
-        contentFormatId: g.content_format_id, name: g.name, icon: g.icon, category: g.category,
-        goalJC, actualJC, jph, points: Number(g.points),
-        goalHours: goalJC * jph, actualHours: actualJC * jph,
-        balance: goalJC * jph - actualJC * jph,
-        achievement: goalJC > 0 ? (actualJC / goalJC) * 100 : null,
-        goalAdjusted: t ? Math.round(t.goal * 10) / 10 : goalJC,
-        covered: scored?.coveredByType?.[g.content_format_id] ?? 0,
-        // the time made up for missed jobs (../goal-score.js rule 6): the jobs, their
-        // hours, and the count with them; and the hours of the jobs done toward the goal
-        filled: t ? Math.round(t.filled * 1000) / 1000 : 0,
-        creditHours: t ? Math.round(t.filled * t.jobHours * 10) / 10 : 0,
-        counted: t ? Math.round(t.counted * 1000) / 1000 : 0,
-        ownHours: t ? Math.round(t.own * t.jobHours * 10) / 10 : 0,
-      });
+    const actualBy = { m: new Map(), h1: new Map(), h2: new Map() };
+    for (const a of actuals.rows) {
+      const k = `${a.editor_id}:${a.content_format_id}`;
+      for (const per of ["m", a.second ? "h2" : "h1"]) actualBy[per].set(k, (actualBy[per].get(k) ?? 0) + a.actual);
     }
-    // approved leave (../goal-score.js rule 4), and the time that fills the
-    // goals: team goal credit and Other work (rules 3, 5, 6), with what was carried
-    for (const [id, p] of Object.entries(people)) {
-      const s = scores.get(id);
-      if (!s) continue;
-      p.leaveDays = s.leaveDays; p.otherHours = s.otherHours; p.otherWork = s.otherWork;
-      p.creditHours = s.creditHours; p.credit = s.credit; p.carried = s.carried;
-      // the team's need for each type split or carried: its goal (everyone's added
-      // up) and what was done within everyone's own goals, so the card can show why
-      p.teamNeed = Object.fromEntries([...new Set([...(s.credit ?? []), ...(s.carried ?? [])].map((c) => c.contentFormatId))]
-        .filter((cf) => s.team?.[cf])
-        .map((cf) => { const n = s.team[cf]; return [cf, { target: Math.round(n.target * 10) / 10, own: Math.round((n.own ?? 0) * 10) / 10 }]; }));
-      p.shortHours = s.shortHours; p.filledHours = s.filledHours; p.stillShortHours = s.stillShortHours;
-      // the month's score with all that counted (the adjusted goal card), as the Leaderboard has it
-      p.scorePct = s.pct == null ? null : Math.round(s.pct * 10) / 10;
-      p.monthHours = Math.round(s.workingDays * s.hoursPerDay * 10) / 10;
-    }
-    res.json({ month, people });
+    const month0 = scoreLoaded(loaded);
+    const r1 = (n) => Math.round(n * 10) / 10;
+    // one period's cards: each goal row, then the time away from the goal
+    const cards = (scores, per) => {
+      const people = {};
+      for (const g of goals.rows) {
+        const scored = scores.get(g.editor_id);
+        const t = (scored?.types ?? []).find((x) => x.contentFormatId === g.content_format_id);
+        // the goal after approved leave is the month's (a review takes its share of it)
+        const tm = (month0.get(g.editor_id)?.types ?? []).find((x) => x.contentFormatId === g.content_format_id);
+        const goalJC = Number(g.jc), jph = jobHours(g, g.jph, capOf(g.editor_id).hours_per_day);
+        const actualJC = actualBy[per].get(`${g.editor_id}:${g.content_format_id}`) ?? 0;
+        (people[g.editor_id] ??= { rows: [] }).rows.push({
+          contentFormatId: g.content_format_id, name: g.name, icon: g.icon, category: g.category,
+          goalJC, actualJC, jph, points: Number(g.points),
+          goalHours: goalJC * jph, actualHours: actualJC * jph,
+          balance: goalJC * jph - actualJC * jph,
+          achievement: goalJC > 0 ? (actualJC / goalJC) * 100 : null,
+          goalAdjusted: tm ? r1(tm.goal) : goalJC,
+          // this period's goal: the month's, or a review's share of it
+          periodGoal: t ? r1(t.goal) : r1(halfOf(goalJC, per === "m" ? null : per)),
+          covered: scored?.coveredByType?.[g.content_format_id] ?? 0,
+          // the time made up for missed jobs (../goal-score.js rule 6): the jobs, their
+          // hours, and the count with them; and the hours of the jobs done toward the goal
+          filled: t ? Math.round(t.filled * 1000) / 1000 : 0,
+          creditHours: t ? r1(t.filled * t.jobHours) : 0,
+          counted: t ? Math.round(t.counted * 1000) / 1000 : 0,
+          ownHours: t ? r1(t.own * t.jobHours) : 0,
+        });
+      }
+      // approved leave (../goal-score.js rule 4), and the time that fills the
+      // goals: team goal credit and Other work (rules 3, 5, 6), with what was carried
+      for (const [id, p] of Object.entries(people)) {
+        const s = scores.get(id);
+        if (!s) continue;
+        p.leaveDays = s.leaveDays; p.otherHours = s.otherHours; p.otherWork = s.otherWork;
+        p.creditHours = s.creditHours; p.credit = s.credit; p.carried = s.carried;
+        // the team's need for each type split or carried: its goal (everyone's added
+        // up) and what was done within everyone's own goals, so the card can show why
+        p.teamNeed = Object.fromEntries([...new Set([...(s.credit ?? []), ...(s.carried ?? [])].map((c) => c.contentFormatId))]
+          .filter((cf) => s.team?.[cf])
+          .map((cf) => { const n = s.team[cf]; return [cf, { target: r1(n.target), own: r1(n.own ?? 0) }]; }));
+        p.shortHours = s.shortHours; p.filledHours = s.filledHours; p.stillShortHours = s.stillShortHours;
+        // the score with all that counted (the adjusted goal card), as the Leaderboard has it for the month
+        p.scorePct = s.pct == null ? null : r1(s.pct);
+        p.monthHours = r1(s.workingDays * s.hoursPerDay);
+      }
+      return people;
+    };
+    res.json({
+      month,
+      people: cards(month0, "m"),
+      periods: { h1: cards(scoreLoaded(loaded, { half: "h1" }), "h1"), h2: cards(scoreLoaded(loaded, { half: "h2" }), "h2") },
+    });
   } catch (err) {
     next(err);
   }
