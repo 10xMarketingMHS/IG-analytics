@@ -2,13 +2,14 @@ import { useCallback, useEffect, useState } from "react";
 import { api, ApiError } from "@/lib/api";
 import { whileVisible } from "@/lib/visible-poll";
 import type { HomeRole } from "@/lib/home-role";
+import { clockTime } from "@/lib/time-format";
 import type { LeaveBalance } from "@/lib/use-leave";
 
 // Attendance (server/src/routes/attendance.js): your own day, for the Start
 // day card, and — for team leads and managers — your people's, for the Team
 // today widget. Re-reads every minute and whenever the day changes.
 
-// half_absent: not in by the half-day time (half the absence penalty).
+// half_absent: not in by the half-day time (no points, like absent).
 export type AttStatus = "on_time" | "late" | "no_sod" | "absent" | "leave" | "half_day" | "half_absent";
 export type AttRow = {
   id: string; editorId: string; date: string;
@@ -33,11 +34,34 @@ export type AttSettings = {
   halfDayAt?: string;
   // permissions a month (morning: come in late; evening: leave early)
   permissionsPerMonth?: number;
-  requireEodNote: boolean; allowCorrections: boolean; latePenaltyPts: number; absentPenaltyPts: number; deductCapacity: boolean;
+  requireEodNote: boolean; allowCorrections: boolean; deductCapacity: boolean;
+  // late points by how late, off the overall score (Super Admin only)
+  lateBands?: LateBand[];
   // Who besides admins sees the whole team's attendance, by position.
   teamView?: TeamView;
 };
 export type TeamView = { manager: boolean; asstManager: boolean; teamLead: boolean };
+
+// Late points (server/src/attendance.js lateBands): by minutes late after
+// opening, each band up to its minutes, the last until the half-day time. They
+// come off the overall score; a morning permission or a lead's excuse clears
+// them. Half-day absent and absent cost none.
+export type LateBand = { upTo: number | null; pts: number };
+export const DEFAULT_LATE_BANDS: LateBand[] = [{ upTo: 30, pts: 3 }, { upTo: 90, pts: 5 }, { upTo: null, pts: 6 }];
+const hm = (hhmm: string) => { const [h, m] = hhmm.split(":").map(Number); return (h || 0) * 60 + (m || 0); };
+// "HH:MM" that many minutes after opening
+export const bandTime = (opening: string, minutes: number) => {
+  const t = hm(opening) + minutes;
+  return `${String(Math.floor(t / 60) % 24).padStart(2, "0")}:${String(t % 60).padStart(2, "0")}`;
+};
+export const bandMinutes = (opening: string, hhmm: string) => hm(hhmm) - hm(opening);
+const clockOf = (hhmm: string) => { const d = new Date(); d.setHours(Math.floor(hm(hhmm) / 60), hm(hhmm) % 60, 0, 0); return clockTime(d); };
+// "−3 until 9:30 AM · −5 until 10:30 AM · −6 until 11:00 AM"
+export function lateBandWords(bands: LateBand[] | undefined, opening: string, halfDayAt: string) {
+  return (bands?.length ? bands : DEFAULT_LATE_BANDS)
+    .map((b) => `−${b.pts} until ${clockOf(b.upTo == null ? halfDayAt : bandTime(opening, b.upTo))}`).join(" · ");
+}
+
 // What a person shows as in Team today ("waiting" = not in yet; "permission" =
 // came in late with a morning permission).
 export type ShownStatus = AttStatus | "waiting" | "permission";

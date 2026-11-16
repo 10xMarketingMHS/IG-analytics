@@ -17,8 +17,8 @@ export const ATTENDANCE_DEFAULTS = {
   requireSod: true,
   graceMinutes: 10,
   noSodAlertAt: "09:30",
-  // Not in by halfDayAt: a half-day absence (half the absence penalty); still
-  // not in by autoAbsentAt: absent. A morning permission covers being late up
+  // Not in by halfDayAt: a half-day absence; still not in by autoAbsentAt:
+  // absent (neither costs points). A morning permission covers being late up
   // to halfDayAt.
   halfDayAt: "11:30",
   autoAbsentAt: "13:30",
@@ -27,8 +27,12 @@ export const ATTENDANCE_DEFAULTS = {
   permissionsPerMonth: 2,
   requireEodNote: true,
   allowCorrections: true,
-  latePenaltyPts: 1,
-  absentPenaltyPts: 3,
+  // Late points by how late (minutes after opening): each band up to its
+  // minutes, the last until the half-day time. With the office opening at 9:00
+  // and 10 minutes' grace: 9:11–9:30 AM 3 points, to 10:30 AM 5, to the
+  // half-day time 6. They come off the overall score (Earned + Discipline);
+  // half-day absent and absent cost none. Only a Super Admin changes them.
+  lateBands: [{ upTo: 30, pts: 3 }, { upTo: 90, pts: 5 }, { upTo: null, pts: 6 }],
   deductCapacity: true,
   // Who besides admins sees the whole team's attendance (Team today, Team ›
   // Attendance, the lead actions), by position. Only a Super Admin changes it.
@@ -49,7 +53,31 @@ export function normalizeAttendance(a) {
   if (src.halfDayAt == null) { s.halfDayAt = ATTENDANCE_DEFAULTS.halfDayAt; s.autoAbsentAt = ATTENDANCE_DEFAULTS.autoAbsentAt; }
   delete s.since;
   delete s.penaltyLog;
+  // the one late and one absence penalty before the late bands
+  delete s.latePenaltyPts;
+  delete s.absentPenaltyPts;
+  s.lateBands = validBands(src.lateBands) ?? ATTENDANCE_DEFAULTS.lateBands;
   return s;
+}
+
+// Late bands as saved: minutes rising, the last open-ended; else null.
+export function validBands(b) {
+  if (!Array.isArray(b) || !b.length || b.length > 5) return null;
+  let prev = 0;
+  for (const [i, x] of b.entries()) {
+    const last = i === b.length - 1;
+    if (!x || typeof x !== "object" || !(Number(x.pts) >= 0)) return null;
+    if (last ? x.upTo != null : !(Number(x.upTo) > prev)) return null;
+    if (!last) prev = Number(x.upTo);
+  }
+  return b.map((x) => ({ upTo: x.upTo == null ? null : Number(x.upTo), pts: Number(x.pts) }));
+}
+
+// A late start's points: the band its minutes late fall in.
+export function latePointsFor(lateMinutes, bands) {
+  const list = validBands(bands) ?? ATTENDANCE_DEFAULTS.lateBands;
+  const m = Math.max(1, Number(lateMinutes) || 0);
+  return (list.find((b) => b.upTo == null || m <= b.upTo) ?? list[list.length - 1]).pts;
 }
 
 // Senior Editor, Editor and Junior Editor: one level (Team › Roster); only the
@@ -223,18 +251,18 @@ export function classify(checkInAt, ymd, cal, att) {
   return { status: "late", lateMinutes: late };
 }
 
-// Penalty points a day's row costs, under the current settings. A half day of
-// leave is judged on the half they work: missed (auto_marked) is half an
-// absence, late (late_minutes) a late mark.
+// Late points a day's row costs, under the late bands: a late start not
+// excused (a permission or a lead excuses it), by how late. Half-day absent
+// and absent cost none. A half day of leave is judged on the half they work:
+// late into it (late_minutes, from that half's start) is a late start; missing
+// it costs none.
 export function penaltyOf(row, att) {
-  if (!row) return 0;
-  if (row.status === "late" && !row.excused) return att.latePenaltyPts;
-  if (row.status === "absent") return att.absentPenaltyPts;
-  if (row.status === "half_absent") return att.absentPenaltyPts / 2;
+  if (!row || row.excused) return 0;
+  const late = row.late_minutes ?? row.lateMinutes;
+  if (row.status === "late") return latePointsFor(late, att.lateBands);
   // (a half day from a leave request; an older lead mark has no half to judge)
-  if (row.status === "half_day" && (row.leave_request_id ?? row.leaveRequestId)) {
-    if (row.auto_marked ?? row.autoMarked) return att.absentPenaltyPts / 2;
-    if ((row.late_minutes ?? row.lateMinutes) > 0 && !row.excused) return att.latePenaltyPts;
+  if (row.status === "half_day" && (row.leave_request_id ?? row.leaveRequestId) && !(row.auto_marked ?? row.autoMarked) && late > 0) {
+    return latePointsFor(late, att.lateBands);
   }
   return 0;
 }
@@ -337,18 +365,22 @@ export async function applyEveningPermission(orgId, editorId, ymd, cal, att, act
   return !!(await usePermission(orgId, editorId, ymd, "evening", att, actorId, "left early"));
 }
 
-// Points lost per person in a month ("YYYY-MM") — fed into the discipline
-// score (Goals, Management Performance).
-// The penalty points a month is charged at: the settings it had, not today's.
+// The late bands a month is charged at: the ones it had, not today's.
 // Settings › Attendance keeps a log of changes (penaltyLog: [{ from: "YYYY-MM",
-// late, absent }]); a month uses the last entry from on or before it.
+// bands }]); a month uses the last entry from on or before it. (Entries
+// without bands are from the single late penalty before the bands, and no
+// longer count: the bands apply to every month not yet frozen.)
 export function penaltiesFor(att, raw, month) {
   const log = Array.isArray(raw?.attendance?.penaltyLog) ? raw.attendance.penaltyLog : [];
-  const entry = log.filter((e) => e && String(e.from) <= month).sort((a, b) => String(a.from).localeCompare(String(b.from))).pop();
-  return entry ? { ...att, latePenaltyPts: Number(entry.late), absentPenaltyPts: Number(entry.absent) } : att;
+  const entry = log.filter((e) => e && validBands(e.bands) && String(e.from) <= month).sort((a, b) => String(a.from).localeCompare(String(b.from))).pop();
+  return entry ? { ...att, lateBands: validBands(entry.bands) } : att;
 }
+// Points lost per person in a month ("YYYY-MM"), two kinds:
+//   late  — late starts (the late bands), off the overall score
+//   leave — approved leave's short-notice and unpaid-day points, off Discipline
+// (Goals › Discipline, Management Performance.)
 export async function monthPenalties(orgId, month) {
-  if (!(await attendanceReady())) return new Map();
+  if (!(await attendanceReady())) return { late: new Map(), leave: new Map() };
   const { att: now, raw } = await readSettings(orgId);
   const att = penaltiesFor(now, raw, month);
   const [{ rows }, leave] = await Promise.all([
@@ -359,9 +391,12 @@ export async function monthPenalties(orgId, month) {
     ),
     leavePenalties(orgId, month),
   ]);
-  const m = new Map(leave);
-  for (const r of rows) m.set(r.editor_id, (m.get(r.editor_id) ?? 0) + penaltyOf(r, att));
-  return m;
+  const late = new Map();
+  for (const r of rows) {
+    const p = penaltyOf(r, att);
+    if (p) late.set(r.editor_id, (late.get(r.editor_id) ?? 0) + p);
+  }
+  return { late, leave };
 }
 // Approved leave's points (short notice, unpaid days), in the month it starts —
 // fixed when it was asked for (leave-math.js).

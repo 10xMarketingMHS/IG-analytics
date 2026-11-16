@@ -12,9 +12,11 @@ import { isOrgAdmin } from "./permissions.js";
 // the others' are editor_discipline_review, one row per rater (two Team Leads
 // are averaged, criterion by criterion). A criterion nobody in a role has rated
 // counts as full marks (5), so no one loses marks before the month-end review.
-// The month's attendance points lost (late, absent) come off the total, never
-// below 0. One rule for Goals › Discipline and Management Performance (and the
-// app's lib/goal-points.ts, which takes the same parts from the server).
+// The month's leave points (short notice, unpaid days) come off the total,
+// never below 0; late starts come off the overall score instead
+// (attendance.js monthPenalties). One rule for Goals › Discipline and
+// Management Performance (and the app's lib/goal-points.ts, which takes the
+// same parts from the server).
 
 export const CRITERIA = ["punctuality", "quality_responsibility", "behaviour", "attendance_availability", "deadline_adherence"];
 export const ROLES = ["manager", "asst_manager", "lead"];
@@ -90,7 +92,7 @@ export async function disciplineByEditor(orgId, month, editorId = null) {
 }
 
 // The Discipline points for a month: each role's stars (unrated criteria as 5)
-// over 25, times its share of the goal points; less the attendance points lost.
+// over 25, times its share of the goal points; less the leave points.
 //   parts: { role: { share, stars, rated } } — stars out of 25, rated: all 5 given
 export function disciplinePoints(goalPoints, byRole, shares, penalty = 0) {
   const parts = {};

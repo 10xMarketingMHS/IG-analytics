@@ -906,8 +906,8 @@ goalsRouter.get("/goals/discipline", disciplineRater, async (req, res, next) => 
     // Each person's month, scored by the one rule (goal-score.js): goals cut for
     // approved leave, each type up to its goal, time filling missed goals,
     // covered work on top; their ratings;
-    // and the attendance points lost this month (late, absent), which come off
-    // discipline. All read together.
+    // and the points lost this month: leave's, which come off discipline, and
+    // late starts', which come off the Overall. All read together.
     const { role, editorId: me } = req.rater;
     const [{ rows: editors }, scores, { rows: disc }, penalties, byEditor, shares, viewer, ranks, superHere] = await Promise.all([
       pool.query("select id, name from editor where org_id=$1 and active order by name", [req.orgId]),
@@ -940,7 +940,9 @@ goalsRouter.get("/goals/discipline", disciplineRater, async (req, res, next) => 
           leaveDays: scores.get(e.id)?.leaveDays ?? 0,
           ratings: own,
           byRole: Object.fromEntries(sees.map((k) => [k, role !== "manager" && k === role ? mine?.ratings ?? null : b?.[k] ?? null])),
-          attendancePenalty: penalties.get(e.id) ?? 0,
+          // leave points come off Discipline, late starts off the Overall
+          leavePoints: penalties.leave.get(e.id) ?? 0,
+          latePoints: penalties.late.get(e.id) ?? 0,
           note: role === "manager" ? d?.note ?? null : mine?.note ?? null,
           updatedAt: role === "manager" ? d?.updated_at ?? null : mine?.updatedAt ?? null,
         };

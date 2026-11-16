@@ -14,6 +14,8 @@ type BoardRow = {
   editorId: string; name: string | null; designation: string | null; imageUrl: string | null;
   hasGoal: boolean;
   totalGoalPoints: number; earnedPoints: number; potentialPoints: number; disciplinePoints: number;
+  // late starts' points, off the total (Settings › Attendance)
+  latePoints?: number;
   totalPoints: number; goalTargetNumber: number; achievedNumber: number;
   performancePct: number | null; level: Level | null; reviewed: boolean;
   thresholdsUsed: Partial<Thresholds>;
@@ -211,7 +213,8 @@ function PerformanceDetailInline({ editorId, month }: { editorId: string; month:
         <div className="mp-pt"><span>Earned</span><b>{pts(d.earnedPoints)}</b><i>80% bucket</i></div>
         <div className="mp-pt muted"><span>Potential</span><b>{pts(d.potentialPoints)}</b><i>ceiling · not summed</i></div>
         <div className="mp-pt"><span>Discipline</span><b>{pts(d.disciplinePoints)}{!d.reviewed ? "*" : ""}</b><i>20% bucket</i></div>
-        <div className="mp-pt accent"><span>Total Points</span><b>{pts(d.totalPoints)}</b><i>Earned + Discipline</i></div>
+        {(d.latePoints ?? 0) > 0 && <div className="mp-pt"><span>Late starts</span><b>−{pts(d.latePoints!)}</b><i>off the total</i></div>}
+        <div className="mp-pt accent"><span>Total Points</span><b>{pts(d.totalPoints)}</b><i>{(d.latePoints ?? 0) > 0 ? "Earned + Discipline − Late" : "Earned + Discipline"}</i></div>
         <div className="mp-pt"><span>Goal Target</span><b>{d.goalTargetNumber}</b><i>tasks</i></div>
         <div className="mp-pt"><span>Achieved</span><b>{d.achievedNumber}</b><i>tasks</i></div>
         <div className="mp-pt big"><span>Overall Performance</span><b>{d.performancePct}%</b><LevelCell level={d.level} /></div>

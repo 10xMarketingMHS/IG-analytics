@@ -4,20 +4,20 @@ import { toast } from "sonner";
 import { api, ApiError } from "@/lib/api";
 import { useOrg } from "@/lib/use-org";
 import { clockTime } from "@/lib/time-format";
-import type { AttSettings } from "@/lib/use-attendance";
+import { bandMinutes, bandTime, DEFAULT_LATE_BANDS, type AttSettings, type LateBand } from "@/lib/use-attendance";
 import { LookOnly, SI, Stepper, Toggle } from "@/pages/settings-ui";
 import { useWorkspaces } from "@/lib/workspaces-context";
 
 // Settings › Attendance (Pulse Redesign v7) — admins. Start of day (require it,
 // the grace period, the no-SOD alert, auto-absent, the end-of-day wrap-up,
-// correction requests) and the penalties taken from the discipline score.
+// correction requests) and the late points taken off the overall score.
 // Admins change the rules; the penalties and who sees the team's attendance
 // only the Super Admin changes (admins see them).
 // Office hours come from General › Work calendar. Kept as a draft until Save.
 
 const DEFAULTS: AttSettings = {
   requireSod: true, graceMinutes: 10, noSodAlertAt: "09:30", halfDayAt: "11:30", autoAbsentAt: "13:30", autoAbsentEnabled: true, permissionsPerMonth: 2,
-  requireEodNote: true, allowCorrections: true, latePenaltyPts: 1, absentPenaltyPts: 3, deductCapacity: true,
+  requireEodNote: true, allowCorrections: true, lateBands: DEFAULT_LATE_BANDS, deductCapacity: true,
   teamView: { manager: true, asstManager: true, teamLead: true },
 };
 const at = (hhmm: string) => { const d = new Date(); const [h, m] = hhmm.split(":").map(Number); d.setHours(h || 0, m || 0, 0, 0); return d; };
@@ -38,6 +38,13 @@ export function AttendanceSection({ onDirty }: { onDirty: (d: boolean) => void }
   const set = <K extends keyof AttSettings>(k: K, v: AttSettings[K]) => setDraft({ ...a, [k]: v });
   const cal = org?.calendar;
   const hours = cal ? `${clockTime(at(cal.wdFrom))} – ${clockTime(at(cal.wdTo))}` : "";
+  // Late bands: minutes after opening, shown as times of day
+  const opening = cal?.wdFrom ?? "09:00";
+  const bands: LateBand[] = a.lateBands?.length ? a.lateBands : DEFAULT_LATE_BANDS;
+  const setBand = (i: number, b: Partial<LateBand>) => set("lateBands", bands.map((x, j) => (j === i ? { ...x, ...b } : x)));
+  // each band ends after the one before (the first after the grace period)
+  const bandsOk = bands.every((b, i) => b.upTo == null || b.upTo > (i ? bands[i - 1].upTo ?? 0 : a.graceMinutes));
+  const fromOf = (i: number) => clockTime(plus(opening, (i ? bands[i - 1].upTo ?? 0 : a.graceMinutes) + 1));
 
   async function save() {
     if (!draft) return;
@@ -76,14 +83,14 @@ export function AttendanceSection({ onDirty }: { onDirty: (d: boolean) => void }
           <input type="time" className="st-in st-time" value={a.noSodAlertAt} onChange={(e) => e.target.value && set("noSodAlertAt", e.target.value)} aria-label="No-SOD alert time" />
         </div>
         <div className="st-row">
-          <span className="st-label"><b>Half day absent</b><small>Not in by this time: a half-day absence, half the absence penalty. A morning permission covers being late until then</small></span>
+          <span className="st-label"><b>Half day absent</b><small>Not in by this time: a half-day absence (no points). A morning permission covers being late until then</small></span>
           <span className="st-inline">
             <input type="time" className="st-in st-time" value={a.halfDayAt ?? "11:30"} onChange={(e) => e.target.value && set("halfDayAt", e.target.value)} aria-label="Half-day time" disabled={!a.autoAbsentEnabled} />
             <Toggle on={a.autoAbsentEnabled} onChange={(v) => set("autoAbsentEnabled", v)} label="Mark half day and absent automatically" />
           </span>
         </div>
         <div className="st-row">
-          <span className="st-label"><b>Absent</b><small>Still not in by this time: absent for the day. A lead can undo either mark</small></span>
+          <span className="st-label"><b>Absent</b><small>Still not in by this time: absent for the day (no points). A lead can undo either mark</small></span>
           <input type="time" className="st-in st-time" value={a.autoAbsentAt} onChange={(e) => e.target.value && set("autoAbsentAt", e.target.value)} aria-label="Absent time" disabled={!a.autoAbsentEnabled} />
         </div>
         <div className="st-row">
@@ -105,17 +112,30 @@ export function AttendanceSection({ onDirty }: { onDirty: (d: boolean) => void }
       </section>
 
       <section className="st-card">
-        <div className="st-cardhead"><b>Penalties</b><span>Taken from the discipline score on Goals and Management Performance.{isSuper ? "" : " Only a Super Admin can change these."}</span></div>
-        <div className="st-row">
-          <span className="st-label"><b>Late check-in</b><small>Per late day, unless a lead excuses it</small></span>
-          <Stepper label="late penalty" value={`−${a.latePenaltyPts} pt${a.latePenaltyPts === 1 ? "" : "s"}`} onDec={() => set("latePenaltyPts", Math.max(0, a.latePenaltyPts - 1))} onInc={() => set("latePenaltyPts", Math.min(10, a.latePenaltyPts + 1))}
-            decDisabled={!isSuper || a.latePenaltyPts <= 0} incDisabled={!isSuper || a.latePenaltyPts >= 10} />
-        </div>
-        <div className="st-row">
-          <span className="st-label"><b>Unplanned absence</b><small>Absent without approved leave</small></span>
-          <Stepper label="absence penalty" value={`−${a.absentPenaltyPts} pt${a.absentPenaltyPts === 1 ? "" : "s"}`} onDec={() => set("absentPenaltyPts", Math.max(0, a.absentPenaltyPts - 1))} onInc={() => set("absentPenaltyPts", Math.min(10, a.absentPenaltyPts + 1))}
-            decDisabled={!isSuper || a.absentPenaltyPts <= 0} incDisabled={!isSuper || a.absentPenaltyPts >= 10} />
-        </div>
+        <div className="st-cardhead"><b>Penalties</b><span>Late starts come off the overall score (Earned + Discipline) on Goals and Management Performance, by how late. A morning permission or a lead's excuse clears them. Half-day absent and absent cost no points.{isSuper ? "" : " Only a Super Admin can change these."}</span></div>
+        {bands.map((b, i) => {
+          const last = b.upTo == null;
+          return (
+            <div className="st-row" key={i}>
+              {/* (a time and points side by side: the label gives them room) */}
+              <span className="st-label" style={last ? undefined : { flexBasis: 150 }}>
+                <b>{last ? "Late, until half day" : "Late, until"}</b>
+                <small>{last
+                  ? `In from ${fromOf(i)} to ${clockTime(at(a.halfDayAt ?? "11:30"))}, the half-day time`
+                  : `In from ${fromOf(i)}${bandsOk ? "" : " · each time must be later than the one before"}`}</small>
+              </span>
+              <span className="st-inline">
+                {!last && (
+                  <input type="time" className="st-in st-time" value={bandTime(opening, b.upTo!)} disabled={!isSuper}
+                    onChange={(e) => e.target.value && setBand(i, { upTo: bandMinutes(opening, e.target.value) })} aria-label={`Late band ${i + 1} ends at`} />
+                )}
+                <Stepper label={`late points, band ${i + 1}`} value={`−${b.pts} pt${b.pts === 1 ? "" : "s"}`}
+                  onDec={() => setBand(i, { pts: Math.max(0, b.pts - 1) })} onInc={() => setBand(i, { pts: Math.min(50, b.pts + 1) })}
+                  decDisabled={!isSuper || b.pts <= 0} incDisabled={!isSuper || b.pts >= 50} />
+              </span>
+            </div>
+          );
+        })}
         <div className="st-row">
           <span className="st-label"><b>Leave (CL / SL)</b><small>Notice, the short-notice and unpaid-day cuts, and everyone's allowance are on My Team › Leave › Allowances &amp; rules</small></span>
           <Link className="st-link" to="/my-team?tab=leave&view=settings">Open</Link>
@@ -141,7 +161,7 @@ export function AttendanceSection({ onDirty }: { onDirty: (d: boolean) => void }
           <span><i />Unsaved changes</span>
           <span className="st-grow" />
           <button type="button" className="st-btn" onClick={() => setDraft(null)} disabled={saving}>Discard</button>
-          <button type="button" className="st-btn grad" onClick={save} disabled={saving}>{SI.check}{saving ? "Saving…" : "Save changes"}</button>
+          <button type="button" className="st-btn grad" onClick={save} disabled={saving || !bandsOk} title={bandsOk ? undefined : "Each late band must end later than the one before"}>{SI.check}{saving ? "Saving…" : "Save changes"}</button>
         </div>
       )}
     </LookOnly>

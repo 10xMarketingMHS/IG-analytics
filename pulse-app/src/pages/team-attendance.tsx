@@ -4,7 +4,7 @@ import { toast } from "sonner";
 import { api, ApiError } from "@/lib/api";
 import { Avatar } from "@/lib/editor-visuals";
 import { clockTime } from "@/lib/time-format";
-import { attendanceAction, type AttSettings, type ShownStatus } from "@/lib/use-attendance";
+import { attendanceAction, lateBandWords, type AttSettings, type LateBand, type ShownStatus } from "@/lib/use-attendance";
 import { useOrg } from "@/lib/use-org";
 import type { Editor } from "@/lib/types";
 import { PositionMark } from "@/components/position-mark";
@@ -37,7 +37,7 @@ type Month = {
   canMarkLeave?: boolean;
   days: { date: string; weekday: number; working: boolean; future: boolean; today: boolean }[];
   rows: Row[];
-  footer: { absences: number; capacityLostMinutes: number; latePts: number; absentPts: number };
+  footer: { absences: number; capacityLostMinutes: number; lateBands?: LateBand[]; opening?: string };
 };
 
 const LABEL: Record<ShownStatus, string> = {
@@ -138,7 +138,7 @@ function TeamMonth({ editors }: { editors: Editor[] | null }) {
           <footer className="ta-foot">
             {data.footer.absences} unplanned absence{data.footer.absences === 1 ? "" : "s"} this month
             {data.settings.deductCapacity ? ` · ${fmtHM(data.footer.capacityLostMinutes)} of capacity lost` : ""}
-            {` · late −${data.footer.latePts} pt, absent −${data.footer.absentPts} pts each`}
+            {` · late points: ${lateBandWords(data.footer.lateBands, data.footer.opening ?? "09:00", data.settings.halfDayAt ?? "11:30")} · absences cost no points`}
           </footer>
         </>
       )}

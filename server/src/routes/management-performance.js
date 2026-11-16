@@ -71,27 +71,31 @@ function classify(pct, thr) {
 // of what was reached, Discipline up to 20% of the goal points. Can pass 100%.
 // The app's goalBreakdown() (goal-points.ts) takes the same counted numbers.
 // Returns null when there are no goal points (no goals — no score to band).
-// `penalty`: the month's attendance points lost (late, absent), taken off the
-// discipline points, never below 0.
+// `pen`: the month's points lost (../attendance.js monthPenalties) — `leave`
+// (short notice, unpaid days) off the discipline points, never below 0;
+// `late` (late starts, by the late bands) off the overall score, never below 0.
 // `disc`: the person's stars by role, and `shares` each role's share of the 20%
 // (../discipline.js — Manager 15 · Team Lead 5, or 10 · 7 · 3 with an Asst. Manager).
-function computeScore(scored, disc, penalty = 0, shares = { manager: 15, asst_manager: 0, lead: 5 }) {
+function computeScore(scored, disc, pen = {}, shares = { manager: 15, asst_manager: 0, lead: 5 }) {
   const total = scored?.goalPoints ?? 0;
   if (total <= 0) return null;
   const earned = 0.8 * scored.reached;
   const potential = 0.8 * total;               // Earned ceiling — reference, not summed
-  const d = disciplinePoints(total, disc, shares, penalty);
+  const d = disciplinePoints(total, disc, shares, pen.leave ?? 0);
   const reviewed = d.reviewed;
   const discipline = d.points;
-  const totalPoints = earned + discipline;
+  const late = pen.late ?? 0;
+  const totalPoints = Math.max(0, earned + discipline - late);
   const goalTarget = Math.round(scored.goalTarget * 10) / 10;
   const achieved = scored.achieved;
   return {
-    total, earned, potential, discipline, totalPoints, reviewed,
+    total, earned, potential, discipline, late, totalPoints, reviewed,
     goalTarget, achieved,
     pct: total > 0 ? (totalPoints / total) * 100 : 0,
   };
 }
+// One person's points lost from monthPenalties' two maps.
+const penOf = (p, id) => ({ late: p.late.get(id) ?? 0, leave: p.leave.get(id) ?? 0 });
 
 // ---- Per-editor data for the board (goals and jobs: ../goal-score.js) — SEPARATE simple queries, run in parallel.
 // Counter-intuitively this beats one big combined query here: the remote session
@@ -131,7 +135,7 @@ function scoreToRow(editor, score, thr) {
   if (!score) {
     return {
       editorId: editor.id, name: editor.name, designation: editor.designation, imageUrl: editor.image_url,
-      hasGoal: false, totalGoalPoints: 0, earnedPoints: 0, potentialPoints: 0, disciplinePoints: 0,
+      hasGoal: false, totalGoalPoints: 0, earnedPoints: 0, potentialPoints: 0, disciplinePoints: 0, latePoints: 0,
       totalPoints: 0, goalTargetNumber: 0, achievedNumber: 0, performancePct: null, level: null,
       reviewed: false, thresholdsUsed: { epiMinPct: thr.epiMinPct, mpiMinPct: thr.mpiMinPct },
     };
@@ -144,6 +148,7 @@ function scoreToRow(editor, score, thr) {
     earnedPoints: round2(score.earned),
     potentialPoints: round2(score.potential),
     disciplinePoints: round2(score.discipline),
+    latePoints: round2(score.late ?? 0),
     totalPoints: round2(score.totalPoints),
     goalTargetNumber: score.goalTarget,
     achievedNumber: score.achieved,
@@ -163,6 +168,8 @@ function rowFromStored(editor, s) {
     earnedPoints: round2(Number(s.earned_points)),
     potentialPoints: round2(Number(s.potential_points)),
     disciplinePoints: round2(Number(s.discipline_points)),
+    // (not stored: what the total is short of Earned + Discipline)
+    latePoints: ((x) => (x >= 0.05 ? round2(x) : 0))(Number(s.earned_points) + Number(s.discipline_points) - Number(s.total_points)),
     totalPoints: round2(Number(s.total_points)),
     goalTargetNumber: Number(s.goal_target_number),
     achievedNumber: Number(s.achieved_number),
@@ -222,7 +229,7 @@ async function scoreForEditor(orgId, editorId, monthFirst) {
     disciplineByEditor(orgId, monthFirst, editorId),
     disciplineShares(orgId),
   ]);
-  const pen = (await monthPenalties(orgId, String(monthFirst).slice(0, 7))).get(editorId) ?? 0;
+  const pen = penOf(await monthPenalties(orgId, String(monthFirst).slice(0, 7)), editorId);
   return computeScore(scores.get(editorId), disc.get(editorId), pen, shares);
 }
 
@@ -335,7 +342,7 @@ async function computeBoard(orgId, monthFirst, isCurrent) {
     if (!isCurrent && stored.has(e.id)) {
       rows.push(rowFromStored(e, stored.get(e.id)));
     } else {
-      const row = scoreToRow(e, computeScore(scores.get(e.id), ratingMap.get(e.id), penalties.get(e.id) ?? 0, shares), thr);
+      const row = scoreToRow(e, computeScore(scores.get(e.id), ratingMap.get(e.id), penOf(penalties, e.id), shares), thr);
       rows.push(row);
       if (!isCurrent) toSnapshot.push(row); // freeze past months only
     }
@@ -492,7 +499,7 @@ async function computeDetail(orgId, editorId, monthFirst, isCurrent) {
     if (!isCurrent && storedRes.rows[0]) {
       current = rowFromStored(editor, storedRes.rows[0]);
     } else {
-      const pen = (await monthPenalties(orgId, String(monthFirst).slice(0, 7))).get(editor.id) ?? 0;
+      const pen = penOf(await monthPenalties(orgId, String(monthFirst).slice(0, 7)), editor.id);
       current = scoreToRow(editor, computeScore(scored, ratingRes.get(editorId), pen, await disciplineShares(orgId)), thr);
       if (!isCurrent) bgSnapshot(orgId, monthFirst, [current], thr); // freeze past months only
     }

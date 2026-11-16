@@ -7,7 +7,7 @@ import { capacityFor, LUNCH_MIN, TEA_MIN, normalizeCalendar } from "../work-cale
 import { startSession, endSession, pauseDayTimers } from "./eod.js";
 import {
   afterHoursOf, applyEveningPermission, applyMorningPermission, attendancePeople, giveBackPermission, attendanceReady, callerScope, canSee, classify, closingFor, judgeHalfDay,
-  istAt, istNow, lateNoteNeeded, lateNoteReady, leavePenalties, minutesOf, openingFor, outsideHoursNow, penaltyOf, permissionsReady, permissionsThisMonth, readSettings,
+  istAt, istNow, lateNoteNeeded, lateNoteReady, leavePenalties, minutesOf, openingFor, outsideHoursNow, penaltiesFor, penaltyOf, permissionsReady, permissionsThisMonth, readSettings,
   syncAttendance, weekdayOf,
 } from "../attendance.js";
 import {
@@ -828,7 +828,9 @@ attendanceRouter.get("/attendance/month", async (req, res, next) => {
     const today = istNow();
     const month = /^\d{4}-\d{2}$/.test(String(req.query.month || "")) ? String(req.query.month) : today.ymd.slice(0, 7);
     const caller = await callerScope(req);
-    const { cal, att } = await readSettings(req.orgId);
+    // the late bands the month is charged at (a past month keeps its own)
+    const { cal, att: attNow, raw } = await readSettings(req.orgId);
+    const att = penaltiesFor(attNow, raw, month);
     const people = await attendancePeople(req.orgId);
     // ?self=1 (My profile): just your own row, whatever you can see.
     const shown = req.query.self === "1" || caller.scope === "self" ? people.filter((p) => p.id === caller.editorId) : people;
@@ -891,7 +893,7 @@ attendanceRouter.get("/attendance/month", async (req, res, next) => {
       month, days, rows: out, settings: att, scope: caller.scope,
       // a manager marks leave (CL / SL from the person's balance)
       canMarkLeave: (await leaveReady()) && isApprover(caller) && !!leaveRules(att).countingSince,
-      footer: { absences, capacityLostMinutes: att.deductCapacity ? absences * dayMin : 0, latePts: att.latePenaltyPts, absentPts: att.absentPenaltyPts },
+      footer: { absences, capacityLostMinutes: att.deductCapacity ? absences * dayMin : 0, lateBands: att.lateBands, opening: c.wdFrom },
       capacity: cap,
     });
   } catch (err) { next(err); }

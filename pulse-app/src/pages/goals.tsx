@@ -504,7 +504,9 @@ type DiscEditor = {
   coveredPoints?: number; leaveDays?: number;
   // everyone's stars by role (two Team Leads averaged); `ratings` is the caller's own
   byRole?: ByRole;
-  ratings: Ratings; note: string | null; updatedAt: string | null; attendancePenalty?: number;
+  ratings: Ratings; note: string | null; updatedAt: string | null;
+  // leave points (off Disc.) and late points (off the Overall)
+  leavePoints?: number; latePoints?: number;
 };
 
 function Discipline({ month }: { month: string }) {
@@ -585,8 +587,8 @@ function Discipline({ month }: { month: string }) {
               const ed = editors?.find((x) => x.id === e.editorId);
               // everyone's stars, with yours as you set them
               const byRole: ByRole = { ...(e.byRole ?? {}), [myRole]: draft[e.editorId] ? r : e.byRole?.[myRole] ?? r };
-              // the attendance points lost come off the total, so only with it
-              const bd = goalBreakdown(e.rows, byRole, shown, full ? e.attendancePenalty ?? 0 : 0, e.coveredPoints ?? 0);
+              // leave points come off Disc. and late points off the Overall, so only with the total
+              const bd = goalBreakdown(e.rows, byRole, shown, full ? e.leavePoints ?? 0 : 0, e.coveredPoints ?? 0, full ? e.latePoints ?? 0 : 0);
               const parts = bd?.parts ?? disciplineParts(100, byRole, shown).parts;
               const rated = Object.values(parts).some((p) => p?.any);
               const discX = bd ? (bd.discipline / bd.total) * 100 : disciplineParts(100, byRole, shown).points;
@@ -604,11 +606,11 @@ function Discipline({ month }: { month: string }) {
                       ))}
                     </span>
                   ))}
-                  <span className="num gl-disc-n" title={full && e.attendancePenalty ? `Includes −${e.attendancePenalty} attendance pt${e.attendancePenalty === 1 ? "" : "s"} (late, absent)` : undefined}>
+                  <span className="num gl-disc-n" title={full && e.leavePoints ? `Includes −${e.leavePoints} leave pt${e.leavePoints === 1 ? "" : "s"} (short notice, unpaid days)` : undefined}>
                     <b>{disc}/{full ? 20 : myShare}</b>
                     <small>{RATER_ROLES.filter((k) => parts[k]).map((k) => `${k === "manager" ? "M" : k === "lead" ? "TL" : "AM"} ${parts[k]!.any ? `${parts[k]!.stars}/25` : "—"}`).join(" · ")}</small>
                   </span>
-                  {full && <b className="num lg">{overall ?? "–"}</b>}
+                  {full && <b className="num lg" title={e.latePoints ? `Includes −${e.latePoints} late pt${e.latePoints === 1 ? "" : "s"} (late starts)` : undefined}>{overall ?? "–"}</b>}
                   {full && <span>{<span className={"gl-tag " + st.t}>{st.l}</span>}</span>}
                 </div>
               );

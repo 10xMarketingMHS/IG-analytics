@@ -46,8 +46,9 @@ export type ByRole = Partial<Record<RaterRole, Ratings | null>>;
 //   Discipline points = for each rater (Manager, Asst. Manager, Team Lead):
 //                       (Σ their 5 criterion ratings ÷ 25) × their share of the
 //                       goal points; each unrated criterion counts as 5 (full).
-//   Overall Score     = Earned + Discipline, which can pass the total (extra
-//                       and covered work).
+//   Overall Score     = Earned + Discipline − late points (late starts,
+//                       Settings › Attendance), never below 0; it can pass
+//                       the total (extra and covered work).
 // Returns null when Total Goal Points is 0 (no goals) — nothing to split.
 // Mirrors computeScore() in server/src/routes/management-performance.js.
 export const TYPE_CAP = 1;
@@ -56,11 +57,11 @@ export const TOTAL_CAP = 1.5;
 export type BreakdownRow = { goalJC: number; actualJC: number; points: number; countedJC?: number };
 export type GoalBreakdown = {
   total: number; earned: number; ceiling: number;
-  discipline: number; reviewed: boolean; overall: number;
+  discipline: number; reviewed: boolean; overall: number; late: number;
   // each rater's stars out of 25 (unrated criteria as 5), and whether they rated any / all
   parts: Partial<Record<RaterRole, { share: number; stars: number; any: boolean; rated: boolean }>>;
 };
-// Each rater's part of the Discipline points, before the attendance penalty.
+// Each rater's part of the Discipline points, before the leave points.
 export function disciplineParts(total: number, byRole: ByRole, shares: Shares) {
   const parts: GoalBreakdown["parts"] = {};
   let points = 0;
@@ -74,10 +75,11 @@ export function disciplineParts(total: number, byRole: ByRole, shares: Shares) {
   }
   return { parts, points };
 }
-// `penalty`: the month's attendance points lost (late, absent — Settings ›
-// Attendance), taken off the discipline points, never below 0.
+// `penalty`: the month's leave points (short notice, unpaid days), taken off
+// the discipline points, never below 0.
 // `coveredPoints`: covered work, counted on top.
-export function goalBreakdown(rows: BreakdownRow[], byRole: ByRole, shares: Shares, penalty = 0, coveredPoints = 0): GoalBreakdown | null {
+// `late`: the month's late points, taken off the Overall, never below 0.
+export function goalBreakdown(rows: BreakdownRow[], byRole: ByRole, shares: Shares, penalty = 0, coveredPoints = 0, late = 0): GoalBreakdown | null {
   const total = goalPointsTotal(rows.map((r) => ({ jc: r.goalJC, points: r.points })));
   if (total <= 0) return null;
   // countedJC from the server; without it, the per-type limit alone
@@ -88,5 +90,5 @@ export function goalBreakdown(rows: BreakdownRow[], byRole: ByRole, shares: Shar
   const { parts, points } = disciplineParts(total, byRole, shares);
   const reviewed = Object.values(parts).every((p) => p?.rated);
   const discipline = Math.max(0, points - (penalty || 0));
-  return { total, earned, ceiling, discipline, reviewed, overall: earned + discipline, parts };
+  return { total, earned, ceiling, discipline, reviewed, overall: Math.max(0, earned + discipline - (late || 0)), late: late || 0, parts };
 }

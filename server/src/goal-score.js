@@ -22,7 +22,7 @@ import { jobCount } from "./job-count.js";
 //     month: shown, not counted.
 //  4. Approved leave (a lead's Leave or Half day in Attendance) shrinks the
 //     goal for scoring by days off ÷ working days; the goal as set stays. An
-//     unexcused absence doesn't shrink it (its penalty comes off discipline).
+//     unexcused absence doesn't shrink it (and costs no points).
 //  5. Other work: a task of a type that isn't in the team's goals this month
 //     (another team's videos, packaging, a camp…), given to you or added by
 //     you — it counts once it's done, which for your own means your lead
