@@ -13,7 +13,8 @@
 //      covered: work taken over from someone who had started it.
 //    Jobs the team didn't need are carried to next month: not counted now.
 //  Points kept = the points their work earned ÷ the points the same work earns
-//    on time and without much rework (lateness and send-backs cut it) — it
+//    on time, within its time and without much rework (lateness, going past
+//    the time given, and send-backs cut it) — it
 //    compares a person only with themselves, so a type's points don't matter.
 //  Score, out of 1000 for everyone = Hours filled (counted up to 100%) ×
 //    Points kept × 1000: the whole working time filled, all on time, is 1000.

@@ -686,14 +686,15 @@ function ScoringSection() {
       <section className="st-card">
         <div className="st-cardhead">
           <b>Work score · task points</b>
-          <span>Ranks the team on My Team and the Leaderboard. A finished task earns its type's points, less if it was late.</span>
+          <span>Ranks the team on My Team and the Leaderboard. A finished task earns its type's points, less if it was late or took longer than its time.</span>
         </div>
         {([
           ["On or before the due date", "Full points"],
           ["1 day late", "Half the points"],
           ["2 days late", "No points"],
           ["3 or more days late", "Points taken back"],
-          ["Waiting for a reviewer", "Doesn't count as late"],
+          ["Took longer than its time", "Time given ÷ time taken (4 hours done in 5 keeps 80%)"],
+          ["Waiting for a reviewer", "Doesn't count as late, and the timer stops"],
         ] as const).map(([l, v]) => (
           <div className="st-row" key={l}><span className="st-label"><b>{l}</b></span><span className="st-value">{v}</span></div>
         ))}

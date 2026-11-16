@@ -491,6 +491,7 @@ export function MetricsPage() {
           onClose={() => { setOpenId(null); refetch().catch(() => {}); }}
           onChanged={() => { refetch().catch(() => {}); }}
           onCreated={() => {}}
+          onDelete={isSuper ? (t) => { setOpenId(null); setAlsoPosts(true); setToDelete(t); } : undefined}
         />
       )}
 

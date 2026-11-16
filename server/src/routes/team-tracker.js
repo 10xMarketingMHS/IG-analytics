@@ -167,7 +167,7 @@ teamTrackerRouter.get("/team-tracker/:editorId", async (req, res, next) => {
       // each with who approved it (or that its person closed it), and its trips back and forth
       pool.query(
         `select t.id, ${REF} as ref, t.title, t.status, t.task_type as "taskType", t.on_hold as "onHold", t.revision,
-                t.editor_id, t.assigned_by, t.content_format_id, t.review_started_at,
+                t.editor_id, t.assigned_by, t.created_by as "createdBy", t.content_format_id, t.review_started_at,
                 t.due_date::text as due, t.completed_at as "completedAt", t.created_at as "createdAt",
                 cf.name as "typeName", cf.icon as "typeIcon",
                 coalesce(w.name${teams ? ", (select a.name from ad_team a where a.id = (to_jsonb(t)->>'ad_team_id')::uuid)" : ""}) as brand,

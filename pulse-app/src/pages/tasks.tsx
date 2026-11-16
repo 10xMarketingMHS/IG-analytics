@@ -38,6 +38,7 @@ import { placeOf, useAdTeams } from "@/lib/ad-teams";
 import { clockTime, clockTimeShort, dateTime } from "@/lib/time-format";
 import { PositionMark } from "@/components/position-mark";
 import { FinishedWorkDialog } from "@/pages/finished-work";
+import { useTaskDelete } from "@/lib/task-delete";
 
 function relTime(iso: string) {
   const mins = Math.round((Date.now() - new Date(iso).getTime()) / 60000);
@@ -496,14 +497,10 @@ export function TasksPage() {
   // who assigned it, or for a task its owner made a Team Lead or Manager. The
   // server says so on each task (can_review); never anyone's own task.
   const canHoldAny = isAdmin || hasPermission("hold_tasks");    // hold/resume anyone's task
-  const canAssign = isAdmin || hasPermission("assign_tasks");   // set work up for other people
   // the server says who may (can_review): never your own task, unless you're its type's reviewer
   const canResolveTask = (t: Task) => t.status === "review" && !!t.can_review;
-  // Deleting erases the work and its points: a completed task is the Super
-  // Admin's call; anything else an admin's or assigner's — or yours, if you
-  // created it for yourself. The server enforces the same rule.
-  const canDeleteTask = (t: Task) => t.status === "done" ? isSuper
-    : isAdmin || (canWrite && (canAssign || (isOwner(t) && !!user && t.created_by === user.id)));
+  // Who may delete what: one rule wherever a task shows (lib/task-delete.ts)
+  const { canDelete: canDeleteTask, del: deleteTask } = useTaskDelete();
   // Viewers are read-only (the backend already 403s their writes); hide the
   // status-move controls from them so the affordance matches the permission.
   const canWrite = active?.role !== "viewer";
@@ -951,14 +948,7 @@ export function TasksPage() {
   }
   const activeTask = activeId ? effective.find((t) => t.id === activeId) : null;
   async function del(t: Task) {
-    if (!window.confirm(`Delete "${t.title}"? This can't be undone.`)) return;
-    try {
-      await api(`/tasks/${t.id}`, { method: "DELETE" });
-      toast.success("Task deleted.");
-      refetch();
-    } catch (err) {
-      toast.error(err instanceof ApiError ? err.message : "Could not delete task.");
-    }
+    await deleteTask(t, refetch);
   }
 
   async function acceptTask(t: Task, startAt: Date) {
@@ -2336,6 +2326,12 @@ export function TaskPanel({ mode, task, canWrite, editors, channels: yourBrands,
   onDelete?: (t: Task) => void;
 }) {
   const creating = mode === "create";
+  // Delete, wherever the window opens: the page's own (the Task Board's), else
+  // the shared rule (lib/task-delete.ts), closing the window once it's gone
+  const deleter = useTaskDelete();
+  const deleteHere = onDelete ?? (task && !creating && deleter.canDelete(task)
+    ? (t: Task) => { deleter.del(t, () => { onChanged(); onClose(); }); }
+    : undefined);
   // Every brand of the team (GET /brands), not only the ones you're on: any of
   // them can be a task's brand. Until it comes in, the ones you're on.
   const { data: brandData } = useResource<{ brands: { id: string; name: string }[] }>("/brands");
@@ -3408,7 +3404,7 @@ export function TaskPanel({ mode, task, canWrite, editors, channels: yourBrands,
             {editCategory && <span className="tp2-tag">{CATEGORY_LABEL[editCategory]}</span>}
             {t.self_created && <span className="self-chip" title="The assignee created this task for themselves">🙋 Self-created</span>}
           </span>
-          {!ro && onDelete && <button type="button" className="tp2-hbtn" onClick={() => onDelete(t)}>🗑 Delete</button>}
+          {!ro && deleteHere && <button type="button" className="tp2-hbtn" onClick={() => deleteHere(t)}>🗑 Delete</button>}
           <button type="button" className="tp2-x" onClick={close} aria-label="Close">{TB_ICON.close}</button>
         </div>
         <div className="tp-body tp2-body">

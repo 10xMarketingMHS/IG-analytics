@@ -26,9 +26,9 @@ type GoalType = { contentFormatId: string; name: string; icon: string | null; go
 // approved leave) × Quality (Points kept: their points against the same work's best).
 type Hours = { available: number; availableMonth: number; earned: number; own: number; team: number; company: number; covered: number; pct: number | null; workingDays: number; hoursPerDay: number; leaveDays: number; leaveSoFar: number };
 type HouseRow = { editor: Editor; points: number; completed: number; goal: number; goalPct: number | null; byType: GoalType[]; coveredJobs: number; leaveDays: number; otherHours: number; creditHours: number; carriedJobs: number; split: Split | null;
-  hours: Hours | null; keptPct: number | null; fullPoints: number; score: number | null; lateJobs: number; reworkJobs: number };
+  hours: Hours | null; keptPct: number | null; fullPoints: number; score: number | null; lateJobs: number; overJobs: number; reworkJobs: number };
 type HouseApiRow = { editorId: string; points: number; completed: number; goalPoints: number; goalPct: number | null; byType: GoalType[]; coveredJobs?: number; leaveDays?: number; otherHours?: number; creditHours?: number; carriedJobs?: number; split?: Split | null;
-  hours?: Hours; keptPct?: number | null; fullPoints?: number; score?: number | null; lateJobs?: number; reworkJobs?: number };
+  hours?: Hours; keptPct?: number | null; fullPoints?: number; score?: number | null; lateJobs?: number; overJobs?: number; reworkJobs?: number };
 type SoFar = { workingDaysGone: number; workingDays: number };
 
 // Weighted engagement across an editor's reels & carousels.
@@ -256,8 +256,9 @@ const BAND_WORD: Record<ReturnType<typeof bandOf>, string> = { low: "Under 70%",
 const fmtH = (n: number) => `${Number.isInteger(n) ? n : n.toFixed(1)}h`;
 // what the On time % means for one person, in words
 const onTimeWords = (r: HouseRow) => r.keptPct == null ? "Nothing finished yet"
-  : r.lateJobs === 0 && r.reworkJobs === 0 ? "Everything finished on time, none sent back more than 3 times"
-  : [r.lateJobs > 0 ? `${r.lateJobs} finished late` : "", r.reworkJobs > 0 ? `${r.reworkJobs} sent back more than 3 times` : ""].filter(Boolean).join(", ") + ": those lose points";
+  : r.lateJobs === 0 && r.overJobs === 0 && r.reworkJobs === 0 ? "Everything finished on time and within its time, none sent back more than 3 times"
+  : [r.lateJobs > 0 ? `${r.lateJobs} finished late` : "", r.overJobs > 0 ? `${r.overJobs} took longer than their time` : "",
+    r.reworkJobs > 0 ? `${r.reworkJobs} sent back more than 3 times` : ""].filter(Boolean).join(", ") + ": those lose points";
 
 function HoursCell({ r, soFar, cap, scoreMax }: { r: HouseRow; soFar: SoFar | null; cap: number; scoreMax: number }) {
   const [card, setCard] = useState<DOMRect | null>(null);
@@ -404,7 +405,7 @@ export function LeaderboardPage() {
     return houseData.rows.flatMap((r) => {
       const editor = byId.get(r.editorId);
       return editor ? [{ editor, points: r.points, completed: r.completed, goal: r.goalPoints, goalPct: r.goalPct, byType: r.byType, coveredJobs: r.coveredJobs ?? 0, leaveDays: r.leaveDays ?? 0, otherHours: r.otherHours ?? 0, creditHours: r.creditHours ?? 0, carriedJobs: r.carriedJobs ?? 0, split: r.split ?? null,
-        hours: r.hours ?? null, keptPct: r.keptPct ?? null, fullPoints: r.fullPoints ?? 0, score: r.score ?? null, lateJobs: r.lateJobs ?? 0, reworkJobs: r.reworkJobs ?? 0 }] : [];
+        hours: r.hours ?? null, keptPct: r.keptPct ?? null, fullPoints: r.fullPoints ?? 0, score: r.score ?? null, lateJobs: r.lateJobs ?? 0, overJobs: r.overJobs ?? 0, reworkJobs: r.reworkJobs ?? 0 }] : [];
     });
   }, [editors, houseData]);
 
@@ -599,7 +600,7 @@ export function LeaderboardPage() {
                     <summary>How it's scored</summary>
                     <div className="lb-how-body">
                       <p><b>Hours filled</b>: each finished job is worth its type's time (a company task, the time it took). Added up, out of the same working time for everyone so far this month, less approved leave. Aim for 85–95%.</p>
-                      <p><b>On time</b>: how much of their work was on time and right first time, by its points. A job 1 day late keeps half its points, 2 days late none; one sent back more than 3 times keeps less. 100% = all on time.</p>
+                      <p><b>On time</b>: how much of their work was on time, within its time and right first time, by its points. A job 1 day late keeps half its points, 2 days late none. One that took longer than its time keeps time given ÷ time taken (a 4-hour job done in 5 keeps 80%). One sent back more than 3 times keeps less. 100% = all on time and within time.</p>
                       <p><b>Score</b> (out of {scoreMax}) = Hours filled, up to 100% × On time × {scoreMax}. Ties go to points.</p>
                     </div>
                   </details>
@@ -631,7 +632,7 @@ export function LeaderboardPage() {
                     <div className="lb-cell lb-c-hours lb-hidesm"><HoursCell r={r} soFar={houseData?.soFar ?? null} cap={houseData?.hoursCap ?? 100} scoreMax={scoreMax} /></div>
                     <div className="lb-cell lb-c-num lb-hidesm lb-hidemd2" title={onTimeWords(r)}>
                       {r.keptPct == null ? "—" : `${Math.round(r.keptPct)}%`}
-                      {(r.lateJobs > 0 || r.reworkJobs > 0) && <small className="lb-ontime-why">{[r.lateJobs > 0 ? `${r.lateJobs} late` : "", r.reworkJobs > 0 ? `${r.reworkJobs} redone` : ""].filter(Boolean).join(" · ")}</small>}
+                      {(r.lateJobs > 0 || r.overJobs > 0 || r.reworkJobs > 0) && <small className="lb-ontime-why">{[r.lateJobs > 0 ? `${r.lateJobs} late` : "", r.overJobs > 0 ? `${r.overJobs} over time` : "", r.reworkJobs > 0 ? `${r.reworkJobs} redone` : ""].filter(Boolean).join(" · ")}</small>}
                     </div>
                     <div className="lb-points lb-c-score" aria-label={r.score == null ? "No score yet" : `Score ${r.score} out of ${scoreMax}`}>{r.score == null ? "—" : r.score}</div>
                   </div>

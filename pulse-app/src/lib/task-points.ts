@@ -17,7 +17,7 @@ export const countsInTaskScore = (e: Pick<Editor, "in_task_score">): boolean => 
 // see Settings → Task Settings → Points per format), independent of that
 // format's time budget; tasks with no resolved format fall back to 1.
 //
-//   Final = base_points × timelinessMultiplier × reworkMultiplier
+//   Final = base_points × timelinessMultiplier × reworkMultiplier × timeMultiplier
 //
 // TIMELINESS (how late it was finished):
 //   on/before due date -> +100% · 1 day late -> +50% · 2 days late -> 0%
@@ -27,9 +27,14 @@ export const countsInTaskScore = (e: Pick<Editor, "in_task_score">): boolean => 
 //   workedUntil() — approval time minus every review wait.
 // REWORK (how many review send-backs it took — the task.revision count):
 //   see reworkMultiplier below.
+// TIME (how long its timer ran against the time it was given — budget_hours):
+//   within its time -> 100% · past it -> time given ÷ time taken (a 4-hour task
+//   done in 5 keeps 80%). The timer runs only while it's worked on (not in
+//   review, on hold, on a break or after hours). No time given, or work covered
+//   for someone else (its clock carries their time): 100%. See timeMultiplier.
 //
-// Rework only scales earned (positive) points down; it never softens the
-// 3+-days-late penalty, so a late task with many send-backs can't lose less
+// Rework and time only scale earned (positive) points down; they never soften
+// the 3+-days-late penalty, so a late task with many send-backs can't lose less
 // than one with none. Evaluated at completion using the revision count then.
 //
 // Shared by the Media House Leaders board, Progress Path, and My Day's "your
@@ -76,13 +81,29 @@ export function lateDays(t: Task, now?: Date): number {
   return t.due_date ? daysBetween(t.due_date, ymd(workedUntil(t, now))) : 0;
 }
 
+// Hours a finished task's timer ran, up to approval (as the server reads it).
+export function hoursTaken(t: Task): number {
+  const ran = t.budget_started_at && t.completed_at && new Date(t.completed_at) > new Date(t.budget_started_at)
+    ? (new Date(t.completed_at).getTime() - new Date(t.budget_started_at).getTime()) / 1000 : 0;
+  return (Number(t.budget_used_seconds ?? 0) + ran) / 3600;
+}
+
+// Past the time it was given: time given ÷ time taken (4h done in 5h: 0.8).
+// Within its time, no time given, or covered for someone else: 1.
+export function timeMultiplier(t: Task): number {
+  const given = Number(t.budget_hours);
+  if (!(given > 0) || t.covered_from_editor_id) return 1;
+  const taken = hoursTaken(t);
+  return taken > given ? given / taken : 1;
+}
+
 export function taskPoints(t: Task): number {
   const base = t.content_format_points != null ? Number(t.content_format_points) : 1;
   if (!t.completed_at) return 0;
-  const rework = reworkMultiplier(t.revision);
+  const kept = reworkMultiplier(t.revision) * timeMultiplier(t);
   const daysLate = lateDays(t);
-  if (daysLate <= 0) return base * rework;
-  if (daysLate === 1) return base * 0.5 * rework;
+  if (daysLate <= 0) return base * kept;
+  if (daysLate === 1) return base * 0.5 * kept;
   if (daysLate === 2) return 0;
   return -base;
 }

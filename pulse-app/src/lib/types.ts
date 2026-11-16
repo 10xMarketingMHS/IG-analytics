@@ -276,6 +276,8 @@ export type Task = {
   budget_started_at: string | null;
   // Time banked while the clock waits (on hold, or the day closed).
   budget_used_seconds?: number | null;
+  // taken over from someone (covered work): its points aren't cut for time
+  covered_from_editor_id?: string | null;
   // Time spent waiting for a reviewer, which never counts against the assignee:
   // when it last went into Review (null while it isn't there), and every
   // finished wait added up. See workedUntil() in task-points.ts.

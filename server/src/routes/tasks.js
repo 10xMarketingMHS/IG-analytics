@@ -185,6 +185,8 @@ const SELECT = `
          cf.review_link_required as content_format_link_required,
          (${LINK_ALWAYS_SQL} or coalesce(t.review_link_required, cf.review_link_required, false)) as link_required,
          t.budget_hours, t.budget_started_at, t.budget_used_seconds, t.accepted, t.on_hold, t.held_by, t.created_at, t.completed_at, t.created_by, t.assigned_by,
+         -- taken over from someone (covered work): its points aren't cut for time
+         (to_jsonb(t)->>'covered_from_editor_id')::uuid as covered_from_editor_id,
          -- Time spent waiting for a reviewer, taken off lateness when scoring.
          t.review_started_at, t.review_wait_seconds::float as review_wait_seconds,
          -- The assignee made this task for themselves (marked in the UI, so
@@ -1918,23 +1920,34 @@ async function spawnNextOccurrence(taskId, recurrence) {
   }
 }
 
-// Deleting erases the work, its history and its points. A completed task
-// (approved, scheduled, live or uploaded): the Super Admin only. Anything else:
-// an admin or an assign_tasks grantee — or the person who created the task for
+// Deleting erases the work, its history and its points (goals and scores are
+// worked out from the tasks, so it comes off them at once). A completed task
+// (approved, scheduled, live or uploaded): the Super Admin; or an admin, when it
+// was finished this month (earlier months are closed), isn't their own and isn't
+// the work of someone above them — as Add finished work. Anything else: an admin
+// or an assign_tasks grantee — or the person who created the task for
 // themselves. ?posts=1 (the Super Admin, from the Social pipeline) also deletes
 // the posts it made, or the post it was made from. Every deletion is written to
 // the feed.
 tasksRouter.delete("/tasks/:id", requireEditor, async (req, res, next) => {
   try {
     const t = (await pool.query(
-      "select title, tid, status, editor_id, channel_id, created_by, assigned_by, post_id from task where id = $1 and org_id = $2",
+      "select title, tid, status, editor_id, channel_id, created_by, assigned_by, post_id, completed_at from task where id = $1 and org_id = $2",
       [req.params.id, req.orgId],
     )).rows[0];
     if (!t) return res.status(404).json({ error: "Task not found" });
     const withPosts = req.query.posts === "1";
     const isSuper = (t.status === "done" || withPosts) && (await isSuperHere(req));
     if (t.status === "done" && !isSuper) {
-      return res.status(403).json({ error: "This task is completed — only the Super Admin can delete it." });
+      if (req.role !== "admin") return res.status(403).json({ error: "This task is finished — only an admin or the Super Admin can delete it." });
+      const istMonth = (d) => new Date(new Date(d).getTime() + 330 * 60_000).toISOString().slice(0, 7);
+      if (!t.completed_at || istMonth(t.completed_at) !== istMonth(Date.now())) {
+        return res.status(403).json({ error: "Only work finished this month can be deleted. Earlier months are closed — the Super Admin can delete it." });
+      }
+      if (t.editor_id && t.editor_id === (await callerEditorId(req))) {
+        return res.status(403).json({ error: "You can't delete your own finished work. Another admin can." });
+      }
+      if (await aboveYouError(req, t.editor_id)) return res.status(403).json({ error: "You can't delete the work of someone above you." });
     }
     if (withPosts && !isSuper) return res.status(403).json({ error: "Only the Super Admin can delete a task's posts with it." });
     if (req.role !== "admin") {
@@ -1970,7 +1983,7 @@ tasksRouter.delete("/tasks/:id", requireEditor, async (req, res, next) => {
     await logActivity({
       orgId: req.orgId, actorId: req.user.sub, verb: "deleted",
       entityType: "task", entityId: req.params.id, channelId: t.channel_id,
-      summary: `Deleted task “${t.title}”${posts ? ` and its post${posts === 1 ? "" : "s"}` : ""}`,
+      summary: `Deleted ${t.status === "done" ? "finished " : ""}task “${t.title}”${posts ? ` and its post${posts === 1 ? "" : "s"}` : ""}${t.status === "done" ? ". It no longer counts in goals or scores" : ""}`,
       // The task row is gone — keep who it belonged to, so they still see this.
       meta: { tid: t.tid, editorId: t.editor_id, ...(posts ? { posts } : {}) },
     });

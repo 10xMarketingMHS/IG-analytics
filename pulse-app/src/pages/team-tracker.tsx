@@ -8,6 +8,8 @@ import { clockTime } from "@/lib/time-format";
 import { useEditors } from "@/lib/use-editors";
 import { useWorkspaces } from "@/lib/workspaces-context";
 import { TaskPanel } from "@/pages/tasks";
+import { useTaskDelete } from "@/lib/task-delete";
+import { onTasksChanged } from "@/lib/task-events";
 import type { Task } from "@/lib/types";
 import "./team-tracker.css";
 
@@ -34,6 +36,7 @@ type TrackTask = {
   due: string | null; completedAt: string | null; createdAt: string; typeName: string | null; typeIcon: string | null; brand: string | null;
   points: number | null; jobs: number; budgetHours: number | null; hoursUsed: number; deliveryLink: string | null; late: boolean; given: boolean;
   approvedBy: string | null; closedBySelf: boolean; approvedAt: string | null; sentBacks: number; submissions: number; waitingFor: string | null;
+  createdBy?: string | null;
 };
 type Detail = {
   from: string; to: string; month: string; dates: boolean; live: boolean;
@@ -90,13 +93,16 @@ export function TeamTracker({ embedded = false }: { embedded?: boolean } = {}) {
   const [error, setError] = useState<string | null>(null);
   const [q, setQ] = useState("");
   const pq = periodQuery(period);
+  // a task changed anywhere (deleted, approved, moved…): everyone's counts load again
+  const [changed, setChanged] = useState(0);
+  useEffect(() => onTasksChanged(() => setChanged((n) => n + 1)), []);
   useEffect(() => {
     let live = true;
     api<{ people: Person[] }>(`/team-tracker?${pq}`)
       .then((r) => { if (live) { setPeople(r.people); setError(null); } })
       .catch((e) => { if (live) setError(e instanceof ApiError ? e.message : "Couldn't load your team."); });
     return () => { live = false; };
-  }, [pq]);
+  }, [pq, changed]);
   const set = (next: Record<string, string | null>) => {
     const p = new URLSearchParams(params);
     for (const [k, v] of Object.entries(next)) { if (v) p.set(k, v); else p.delete(k); }
@@ -222,6 +228,9 @@ function PersonView({ id, period }: { id: string; period: Period }) {
   const [show, setShow] = useState<"all" | "done" | "open" | "late" | "rework">("all");
   const [openTask, setOpenTask] = useState<Task | null>(null);
   const [loadingTask, setLoadingTask] = useState<string | null>(null);
+  // Delete on each row, by the one rule (lib/task-delete.ts); finished work comes off their goal at once
+  const deleter = useTaskDelete();
+  const asDeletable = (x: TrackTask) => ({ id: x.id, title: x.title, status: x.status, editor_id: id, completed_at: x.completedAt, created_by: x.createdBy ?? null });
   const pq = periodQuery(period);
   async function load() {
     try {
@@ -231,6 +240,8 @@ function PersonView({ id, period }: { id: string; period: Period }) {
     }
   }
   useEffect(() => { load(); }, [id, pq]); // eslint-disable-line react-hooks/exhaustive-deps
+  // …and theirs, when a task changed somewhere else (another window, the bell)
+  useEffect(() => onTasksChanged(() => { load(); }), [id, pq]); // eslint-disable-line react-hooks/exhaustive-deps
   // a task opens here, in its window, over the tracker
   async function open(taskId: string) {
     setLoadingTask(taskId);
@@ -331,9 +342,11 @@ function PersonView({ id, period }: { id: string; period: Period }) {
           <div className="trk-empty">{show === "all" ? "No tasks in these dates." : "None here."}</div>
         ) : (
           <div className="trk-trows">
-            <div className="trk-thead" aria-hidden="true"><span>Task</span><span>When</span><span>Review</span><span>Time</span><span /></div>
+            <div className="trk-thead" aria-hidden="true"><span>Task</span><span>When</span><span>Review</span><span>Time</span><span /><span /></div>
             {tasks.map((x) => (
-              <button key={x.id} type="button" className={"trk-trow st-" + x.status + (openTask?.id === x.id ? " on" : "")} disabled={loadingTask === x.id} onClick={() => open(x.id)}>
+              <div key={x.id} role="button" tabIndex={0} className={"trk-trow st-" + x.status + (openTask?.id === x.id ? " on" : "")} aria-disabled={loadingTask === x.id}
+                onClick={() => { if (loadingTask !== x.id) open(x.id); }}
+                onKeyDown={(e) => { if ((e.key === "Enter" || e.key === " ") && e.target === e.currentTarget) { e.preventDefault(); open(x.id); } }}>
                 <span className="trk-tmain">
                   <b>{x.ref && <span className="trk-ref">{x.ref}</span>}{x.title}{x.jobs > 1 && <span className="trk-jobs">×{x.jobs}</span>}</b>
                   <small>{[x.typeName ? `${x.typeIcon ?? ""} ${x.typeName}`.trim() : null, x.brand, x.given ? "given" : "own"].filter(Boolean).join(" · ")}</small>
@@ -358,7 +371,17 @@ function PersonView({ id, period }: { id: string; period: Period }) {
                   {x.late && <i className="trk-tag bad">Late</i>}
                   <i className={"trk-tag st " + x.status}>{x.onHold && x.status === "in_progress" ? "On hold" : STATUS_WORDS[x.status]}</i>
                 </span>
-              </button>
+                <span className="trk-tdelcell">
+                  {deleter.canDelete(asDeletable(x)) && (
+                    <button type="button" className="trk-tdel" title="Delete task" aria-label={`Delete ${x.title}`}
+                      onClick={(e) => { e.stopPropagation(); deleter.del(asDeletable(x), () => { if (openTask?.id === x.id) setOpenTask(null); }); }}>
+                      <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                        <path d="M4 7h16M10 11v6M14 11v6M6 7l1 12a2 2 0 0 0 2 2h6a2 2 0 0 0 2-2l1-12M9 7V4h6v3" />
+                      </svg>
+                    </button>
+                  )}
+                </span>
+              </div>
             ))}
           </div>
         )}

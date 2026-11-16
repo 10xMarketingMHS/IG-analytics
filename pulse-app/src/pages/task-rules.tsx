@@ -416,8 +416,8 @@ export function TaskRulesSection() {
       )}
       {tab === "types" && (
         <span className="st-note">
-          Points — on or before the due date earns them in full, 1 day late half, 2 days none, 3 or more costs them back. Time — how long the timer
-          gives a task of the type. Removing a type doesn't touch tasks already using it.
+          Points — on or before the due date earns them in full, 1 day late half, 2 days none, 3 or more costs them back; taking longer than
+          its time keeps time given ÷ time taken (4 hours done in 5 keeps 80%). Time — how long the timer gives a task of the type. Removing a type doesn't touch tasks already using it.
         </span>
       )}
 
