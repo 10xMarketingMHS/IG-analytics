@@ -2524,8 +2524,11 @@ export function TaskPanel({ mode, task, canWrite, editors, channels: yourBrands,
   useEffect(() => { if (creating) setPostDetails({}); }, [creating, draft.channel_id]);
   // Bulk work (lib/job-count.ts): Social, Ads and Service work of a type, several in one task
   const [jobs, setJobs] = useState(1);
-  // a due date is today or later (a project's, not before its start either)
-  const dueMin = isProject && cur.start_date && cur.start_date > today() ? cur.start_date : today();
+  // a due date is today or later (a project's, not before its start either);
+  // on a task already made, an Admin or the Super Admin may move it back up to
+  // a year (the server's PAST_DUE_DAYS)
+  const dueFloor = !creating && isAdmin ? ymd(addDays(new Date(), -365)) : today();
+  const dueMin = isProject && cur.start_date && cur.start_date > dueFloor ? cur.start_date : dueFloor;
   const pastDue = creating && !!draft.due_date && draft.due_date < today();
   const dueMax = isProject && cur.start_date != null && projectDuration != null
     ? ymd(addDays(new Date(`${cur.start_date}T00:00:00`), projectDuration))
@@ -2786,9 +2789,10 @@ export function TaskPanel({ mode, task, canWrite, editors, channels: yourBrands,
           min={dueMin} max={dueMax}
           onChange={(e) => {
             const v = e.target.value || null;
-            // never a past date (the server holds the same); part-typed years read
-            // as long-past dates too, so only a real choice saves
-            if (v && v < today()) return;
+            // never a past date — an admin's, not over a year back (the server
+            // holds the same); part-typed years read as long-past dates too, so
+            // only a real choice saves
+            if (v && v < dueFloor) return;
             if (canFillDue && !v) return;
             set("due_date", "dueDate", v);
           }} />

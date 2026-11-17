@@ -50,6 +50,8 @@ function todayYmdIst() {
   return new Date().toLocaleDateString("en-CA", { timeZone: "Asia/Kolkata" });
 }
 const PAST_DUE = "The due date can't be in the past. Pick today or a later date.";
+// how far back an Admin or the Super Admin may move a task's due date (PATCH)
+const PAST_DUE_DAYS = 365;
 function addDaysYmd(ymd, n) {
   const d = new Date(`${ymd}T00:00:00Z`);
   d.setUTCDate(d.getUTCDate() + n);
@@ -919,9 +921,14 @@ tasksRouter.patch("/tasks/:id", requireEditor, requireActiveEod, async (req, res
     )).rows[0];
     if (!prior) return res.status(404).json({ error: "Task not found" });
     // A new due date is today or later. One already set stays as it is (an
-    // overdue task keeps its date when something else on it changes).
+    // overdue task keeps its date when something else on it changes). An
+    // Admin or the Super Admin may move it back, up to a year (to put a date
+    // right); a slip of the year beyond that is refused.
     if (d.dueDate && d.dueDate !== prior.due_date && d.dueDate < todayYmdIst()) {
-      return res.status(400).json({ error: PAST_DUE });
+      if (req.role !== "admin") return res.status(400).json({ error: PAST_DUE });
+      if (d.dueDate < addDaysYmd(todayYmdIst(), -PAST_DUE_DAYS)) {
+        return res.status(400).json({ error: "A due date can go back at most a year." });
+      }
     }
     // the other brands it's posted on (its own brand never among them)
     let alsoNext;
