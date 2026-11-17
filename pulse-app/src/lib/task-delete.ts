@@ -48,5 +48,35 @@ export function useTaskDelete() {
     }
   }
 
-  return { canDelete, del };
+  // Several at once (My Team's Delete selected): one question for all of them,
+  // then the server takes each by the same rule. Says how many went, and why
+  // any couldn't. The ids that went; after: what to do then.
+  async function delMany(list: Deletable[], after?: (deleted: string[]) => void): Promise<string[]> {
+    if (!list.length) return [];
+    if (list.length === 1) return (await del(list[0], () => after?.([list[0].id]))) ? [list[0].id] : [];
+    const done = list.filter((t) => t.status === "done");
+    const owners = [...new Set(done.map((t) => t.editor_id))];
+    const who = owners.length === 1 ? (editors ?? []).find((e) => e.id === owners[0])?.name : undefined;
+    if (!window.confirm(`Delete these ${list.length} tasks?${done.length
+      ? ` ${done.length === list.length ? "They're" : `${done.length} of them are`} finished, so ${done.length === 1 ? "it comes" : "they come"} off ${who ? `${who}'s` : "their"} goals and scores too.`
+      : ""} This can't be undone.`)) return [];
+    try {
+      const r = await api<{ deleted: string[]; failed: { id: string; error: string }[] }>("/tasks/delete-many", {
+        method: "POST", body: JSON.stringify({ ids: list.map((t) => t.id) }),
+      });
+      if (r.deleted.length) toast.success(`${r.deleted.length} task${r.deleted.length === 1 ? "" : "s"} deleted.`);
+      if (r.failed.length) {
+        const title = list.find((t) => t.id === r.failed[0].id)?.title;
+        toast.error(`${r.failed.length} couldn't be deleted${title ? ` ("${title}"${r.failed.length > 1 ? " and others" : ""})` : ""}: ${r.failed[0].error}`);
+      }
+      after?.(r.deleted);
+      if (r.deleted.length) notifyTasksChanged();
+      return r.deleted;
+    } catch (err) {
+      toast.error(err instanceof ApiError ? err.message : "Could not delete the tasks.");
+      return [];
+    }
+  }
+
+  return { canDelete, del, delMany };
 }

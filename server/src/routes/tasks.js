@@ -1929,65 +1929,93 @@ async function spawnNextOccurrence(taskId, recurrence) {
 // themselves. ?posts=1 (the Super Admin, from the Social pipeline) also deletes
 // the posts it made, or the post it was made from. Every deletion is written to
 // the feed.
+// One task's deletion, by the rule above: { status: 204 } once it's gone, or
+// { status, error } when it can't be. withPosts: its posts go too (Super Admin).
+async function deleteOne(req, id, withPosts) {
+  const t = (await pool.query(
+    "select title, tid, status, editor_id, channel_id, created_by, assigned_by, post_id, completed_at from task where id = $1 and org_id = $2",
+    [id, req.orgId],
+  )).rows[0];
+  if (!t) return { status: 404, error: "Task not found" };
+  const isSuper = (t.status === "done" || withPosts) && (await isSuperHere(req));
+  if (t.status === "done" && !isSuper) {
+    if (req.role !== "admin") return { status: 403, error: "This task is finished — only an admin or the Super Admin can delete it." };
+    const istMonth = (d) => new Date(new Date(d).getTime() + 330 * 60_000).toISOString().slice(0, 7);
+    if (!t.completed_at || istMonth(t.completed_at) !== istMonth(Date.now())) {
+      return { status: 403, error: "Only work finished this month can be deleted. Earlier months are closed — the Super Admin can delete it." };
+    }
+    if (t.editor_id && t.editor_id === (await callerEditorId(req))) {
+      return { status: 403, error: "You can't delete your own finished work. Another admin can." };
+    }
+    if (await aboveYouError(req, t.editor_id)) return { status: 403, error: "You can't delete the work of someone above you." };
+  }
+  if (withPosts && !isSuper) return { status: 403, error: "Only the Super Admin can delete a task's posts with it." };
+  if (req.role !== "admin") {
+    // Yours, made for yourself; or, with Assign tasks, one you set up.
+    const myEid = await callerEditorId(req);
+    const ownCreation = t.created_by === req.user.sub && !!myEid && t.editor_id === myEid;
+    const setUp = setUpBy(t, req.user.sub) && (await hasActiveGrant(req.orgId, req.user.sub, "assign_tasks"));
+    if (!ownCreation && !setUp) return { status: 403, error: "You can delete only tasks you made for yourself or assigned." };
+  }
+  const db = await pool.connect();
+  let posts = 0;
+  try {
+    await db.query("begin");
+    // its posting copies on other brands go with it
+    const copies = (await db.query("select id from task where org_id = $1 and meta->>'postsFor' = $2", [req.orgId, id])).rows.map((r) => r.id);
+    if (withPosts) {
+      posts = (await db.query(
+        `delete from post p using workspace w
+          where w.id = p.workspace_id and w.org_id = $2 and (p.from_task_id = $1 or p.id = $3 or p.from_task_id = any($4::uuid[]))`,
+        [id, req.orgId, t.post_id, copies],
+      )).rowCount;
+    }
+    if (copies.length) await db.query("delete from task where id = any($1::uuid[])", [copies]);
+    const { rowCount } = await db.query("delete from task where id = $1 and org_id = $2", [id, req.orgId]);
+    if (!rowCount) { await db.query("rollback"); return { status: 404, error: "Task not found" }; }
+    await db.query("commit");
+  } catch (err) {
+    await db.query("rollback").catch(() => {});
+    throw err;
+  } finally {
+    db.release();
+  }
+  await logActivity({
+    orgId: req.orgId, actorId: req.user.sub, verb: "deleted",
+    entityType: "task", entityId: id, channelId: t.channel_id,
+    summary: `Deleted ${t.status === "done" ? "finished " : ""}task “${t.title}”${posts ? ` and its post${posts === 1 ? "" : "s"}` : ""}${t.status === "done" ? ". It no longer counts in goals or scores" : ""}`,
+    // The task row is gone — keep who it belonged to, so they still see this.
+    meta: { tid: t.tid, editorId: t.editor_id, ...(posts ? { posts } : {}) },
+  });
+  return { status: 204 };
+}
 tasksRouter.delete("/tasks/:id", requireEditor, async (req, res, next) => {
   try {
-    const t = (await pool.query(
-      "select title, tid, status, editor_id, channel_id, created_by, assigned_by, post_id, completed_at from task where id = $1 and org_id = $2",
-      [req.params.id, req.orgId],
-    )).rows[0];
-    if (!t) return res.status(404).json({ error: "Task not found" });
-    const withPosts = req.query.posts === "1";
-    const isSuper = (t.status === "done" || withPosts) && (await isSuperHere(req));
-    if (t.status === "done" && !isSuper) {
-      if (req.role !== "admin") return res.status(403).json({ error: "This task is finished — only an admin or the Super Admin can delete it." });
-      const istMonth = (d) => new Date(new Date(d).getTime() + 330 * 60_000).toISOString().slice(0, 7);
-      if (!t.completed_at || istMonth(t.completed_at) !== istMonth(Date.now())) {
-        return res.status(403).json({ error: "Only work finished this month can be deleted. Earlier months are closed — the Super Admin can delete it." });
-      }
-      if (t.editor_id && t.editor_id === (await callerEditorId(req))) {
-        return res.status(403).json({ error: "You can't delete your own finished work. Another admin can." });
-      }
-      if (await aboveYouError(req, t.editor_id)) return res.status(403).json({ error: "You can't delete the work of someone above you." });
-    }
-    if (withPosts && !isSuper) return res.status(403).json({ error: "Only the Super Admin can delete a task's posts with it." });
-    if (req.role !== "admin") {
-      // Yours, made for yourself; or, with Assign tasks, one you set up.
-      const myEid = await callerEditorId(req);
-      const ownCreation = t.created_by === req.user.sub && !!myEid && t.editor_id === myEid;
-      const setUp = setUpBy(t, req.user.sub) && (await hasActiveGrant(req.orgId, req.user.sub, "assign_tasks"));
-      if (!ownCreation && !setUp) return res.status(403).json({ error: "You can delete only tasks you made for yourself or assigned." });
-    }
-    const db = await pool.connect();
-    let posts = 0;
-    try {
-      await db.query("begin");
-      // its posting copies on other brands go with it
-      const copies = (await db.query("select id from task where org_id = $1 and meta->>'postsFor' = $2", [req.orgId, req.params.id])).rows.map((r) => r.id);
-      if (withPosts) {
-        posts = (await db.query(
-          `delete from post p using workspace w
-            where w.id = p.workspace_id and w.org_id = $2 and (p.from_task_id = $1 or p.id = $3 or p.from_task_id = any($4::uuid[]))`,
-          [req.params.id, req.orgId, t.post_id, copies],
-        )).rowCount;
-      }
-      if (copies.length) await db.query("delete from task where id = any($1::uuid[])", [copies]);
-      const { rowCount } = await db.query("delete from task where id = $1 and org_id = $2", [req.params.id, req.orgId]);
-      if (!rowCount) { await db.query("rollback"); return res.status(404).json({ error: "Task not found" }); }
-      await db.query("commit");
-    } catch (err) {
-      await db.query("rollback").catch(() => {});
-      throw err;
-    } finally {
-      db.release();
-    }
-    await logActivity({
-      orgId: req.orgId, actorId: req.user.sub, verb: "deleted",
-      entityType: "task", entityId: req.params.id, channelId: t.channel_id,
-      summary: `Deleted ${t.status === "done" ? "finished " : ""}task “${t.title}”${posts ? ` and its post${posts === 1 ? "" : "s"}` : ""}${t.status === "done" ? ". It no longer counts in goals or scores" : ""}`,
-      // The task row is gone — keep who it belonged to, so they still see this.
-      meta: { tid: t.tid, editorId: t.editor_id, ...(posts ? { posts } : {}) },
-    });
+    const r = await deleteOne(req, req.params.id, req.query.posts === "1");
+    if (r.error) return res.status(r.status).json({ error: r.error });
     res.status(204).end();
+  } catch (err) {
+    next(err);
+  }
+});
+// POST /tasks/delete-many { ids } — several at once (My Team's Delete
+// selected), each by the same rule as one at a time, one after another. Says
+// which went and which couldn't, and why.
+tasksRouter.post("/tasks/delete-many", requireEditor, async (req, res, next) => {
+  const parsed = z.object({ ids: z.array(z.string().uuid()).min(1).max(200) }).safeParse(req.body ?? {});
+  if (!parsed.success) return res.status(400).json({ error: "Pick up to 200 tasks to delete." });
+  try {
+    const deleted = [], failed = [];
+    for (const id of [...new Set(parsed.data.ids)]) {
+      try {
+        const r = await deleteOne(req, id, false);
+        if (r.error) failed.push({ id, error: r.error }); else deleted.push(id);
+      } catch (err) {
+        console.error("delete-many:", err.message);
+        failed.push({ id, error: "Couldn't delete it." });
+      }
+    }
+    res.json({ deleted, failed });
   } catch (err) {
     next(err);
   }

@@ -231,6 +231,9 @@ function PersonView({ id, period }: { id: string; period: Period }) {
   // Delete on each row, by the one rule (lib/task-delete.ts); finished work comes off their goal at once
   const deleter = useTaskDelete();
   const asDeletable = (x: TrackTask) => ({ id: x.id, title: x.title, status: x.status, editor_id: id, completed_at: x.completedAt, created_by: x.createdBy ?? null });
+  // …or several: the ones ticked (of those you can delete), cleared when the person, dates or filter change
+  const [picked, setPicked] = useState<Set<string>>(() => new Set());
+  const [deleting, setDeleting] = useState(false);
   const pq = periodQuery(period);
   async function load() {
     try {
@@ -240,6 +243,7 @@ function PersonView({ id, period }: { id: string; period: Period }) {
     }
   }
   useEffect(() => { load(); }, [id, pq]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => { setPicked(new Set()); }, [id, pq, show]);
   // …and theirs, when a task changed somewhere else (another window, the bell)
   useEffect(() => onTasksChanged(() => { load(); }), [id, pq]); // eslint-disable-line react-hooks/exhaustive-deps
   // a task opens here, in its window, over the tracker
@@ -263,6 +267,24 @@ function PersonView({ id, period }: { id: string; period: Period }) {
   const p = d.profile, t = d.totals, s = d.score;
   const tasks = d.tasks.filter((x) => show === "all"
     || (show === "done" ? x.status === "done" : show === "open" ? x.status !== "done" : show === "late" ? x.late : x.sentBacks > 0));
+  // the shown tasks you can delete, and those ticked
+  const deletable = tasks.filter((x) => deleter.canDelete(asDeletable(x)));
+  const canDel = new Set(deletable.map((x) => x.id));
+  const ticked = deletable.filter((x) => picked.has(x.id));
+  const allTicked = deletable.length > 0 && ticked.length === deletable.length;
+  const tick = (taskId: string, on: boolean) => setPicked((was) => { const n = new Set(was); if (on) n.add(taskId); else n.delete(taskId); return n; });
+  const tickAll = (on: boolean) => setPicked(on ? new Set(deletable.map((x) => x.id)) : new Set());
+  async function deleteTicked() {
+    setDeleting(true);
+    try {
+      await deleter.delMany(ticked.map(asDeletable), (gone) => {
+        setPicked((was) => { const n = new Set(was); gone.forEach((g) => n.delete(g)); return n; });
+        if (openTask && gone.includes(openTask.id)) setOpenTask(null);
+      });
+    } finally {
+      setDeleting(false);
+    }
+  }
   const att = ATT_WORDS.filter(([k]) => (t.attendance[k] ?? 0) > 0);
   const today = istToday();
   const words = periodWords(period);
@@ -338,15 +360,43 @@ function PersonView({ id, period }: { id: string; period: Period }) {
             ))}
           </div>
         </div>
+        {ticked.length > 0 && (
+          <div className="trk-selbar" role="region" aria-label="Selected tasks">
+            <b>{ticked.length} selected</b>
+            {!allTicked && <button type="button" className="trk-sellink" onClick={() => tickAll(true)}>Select all {deletable.length}</button>}
+            <button type="button" className="trk-sellink" onClick={() => tickAll(false)}>Clear</button>
+            <span className="trk-grow" />
+            <button type="button" className="trk-seldel" disabled={deleting} onClick={deleteTicked}>
+              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                  <path d="M4 7h16M10 11v6M14 11v6M6 7l1 12a2 2 0 0 0 2 2h6a2 2 0 0 0 2-2l1-12M9 7V4h6v3" />
+                </svg>
+              {deleting ? "Deleting…" : `Delete ${ticked.length}`}
+            </button>
+          </div>
+        )}
         {tasks.length === 0 ? (
           <div className="trk-empty">{show === "all" ? "No tasks in these dates." : "None here."}</div>
         ) : (
           <div className="trk-trows">
-            <div className="trk-thead" aria-hidden="true"><span>Task</span><span>When</span><span>Review</span><span>Time</span><span /><span /></div>
+            <div className="trk-thead">
+              <span className="trk-tpick">
+                {deletable.length > 0 && (
+                  <input type="checkbox" className="trk-check" checked={allTicked} aria-label="Select all the tasks you can delete"
+                    ref={(el) => { if (el) el.indeterminate = ticked.length > 0 && !allTicked; }} onChange={(e) => tickAll(e.target.checked)} />
+                )}
+              </span>
+              <span aria-hidden="true">Task</span><span aria-hidden="true">When</span><span aria-hidden="true">Review</span><span aria-hidden="true">Time</span><span /><span />
+            </div>
             {tasks.map((x) => (
-              <div key={x.id} role="button" tabIndex={0} className={"trk-trow st-" + x.status + (openTask?.id === x.id ? " on" : "")} aria-disabled={loadingTask === x.id}
+              <div key={x.id} role="button" tabIndex={0} className={"trk-trow st-" + x.status + (openTask?.id === x.id ? " on" : "") + (picked.has(x.id) ? " picked" : "")} aria-disabled={loadingTask === x.id}
                 onClick={() => { if (loadingTask !== x.id) open(x.id); }}
                 onKeyDown={(e) => { if ((e.key === "Enter" || e.key === " ") && e.target === e.currentTarget) { e.preventDefault(); open(x.id); } }}>
+                {/* ticking it doesn't open it */}
+                <span className="trk-tpick" onClick={(e) => e.stopPropagation()}>
+                  {canDel.has(x.id) && (
+                    <input type="checkbox" className="trk-check" checked={picked.has(x.id)} onChange={(e) => tick(x.id, e.target.checked)} aria-label={`Select ${x.title}`} />
+                  )}
+                </span>
                 <span className="trk-tmain">
                   <b>{x.ref && <span className="trk-ref">{x.ref}</span>}{x.title}{x.jobs > 1 && <span className="trk-jobs">×{x.jobs}</span>}</b>
                   <small>{[x.typeName ? `${x.typeIcon ?? ""} ${x.typeName}`.trim() : null, x.brand, x.given ? "given" : "own"].filter(Boolean).join(" · ")}</small>
@@ -372,7 +422,7 @@ function PersonView({ id, period }: { id: string; period: Period }) {
                   <i className={"trk-tag st " + x.status}>{x.onHold && x.status === "in_progress" ? "On hold" : STATUS_WORDS[x.status]}</i>
                 </span>
                 <span className="trk-tdelcell">
-                  {deleter.canDelete(asDeletable(x)) && (
+                  {canDel.has(x.id) && (
                     <button type="button" className="trk-tdel" title="Delete task" aria-label={`Delete ${x.title}`}
                       onClick={(e) => { e.stopPropagation(); deleter.del(asDeletable(x), () => { if (openTask?.id === x.id) setOpenTask(null); }); }}>
                       <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
