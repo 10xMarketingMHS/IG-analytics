@@ -60,15 +60,17 @@ app.set("trust proxy", 1);
 
 // Safety headers on every answer: don't guess file types, don't let another
 // site show Echo inside a frame (a click-trick), send only the site name on
-// links out, no camera / microphone / location, and — when it's live, over
-// HTTPS — always HTTPS from now on. No "X-Powered-By: Express" either.
+// links out, no camera or location, the microphone only for Echo's own pages
+// (Team Chat's voice messages; no other site, not even inside a frame), and —
+// when it's live, over HTTPS — always HTTPS from now on. No "X-Powered-By:
+// Express" either.
 app.disable("x-powered-by");
 app.use((_req, res, next) => {
   res.setHeader("X-Content-Type-Options", "nosniff");
   res.setHeader("X-Frame-Options", "DENY");
   res.setHeader("Content-Security-Policy", "frame-ancestors 'none'");
   res.setHeader("Referrer-Policy", "strict-origin-when-cross-origin");
-  res.setHeader("Permissions-Policy", "camera=(), microphone=(), geolocation=()");
+  res.setHeader("Permissions-Policy", "camera=(), microphone=(self), geolocation=()");
   if (config.NODE_ENV === "production") res.setHeader("Strict-Transport-Security", "max-age=15552000");
   next();
 });
