@@ -18,6 +18,7 @@ import type { Task } from "@/lib/types";
 import "./chat.css";
 import { clockTime, dateTime } from "@/lib/time-format";
 import { PositionMark } from "@/components/position-mark";
+import { MIC_ICON, VoicePlayer, VoiceRecorder, canRecord } from "./chat-voice";
 
 // Team Chat — Slack-style: conversations on the left, the open one in the
 // middle, a thread on the right. The open conversation and thread live in the
@@ -285,7 +286,7 @@ const BROADCASTS: ChatPerson[] = [
   { id: "!here", name: "here", image_url: null, color: null, designation: "Notify everyone here who's online" },
 ];
 
-function Composer({ people, me, placeholder, initialText = "", initialPicked, autoFocus, onSubmit, onCancel, compact, draftKey, onTyping, broadcast }: {
+function Composer({ people, me, placeholder, initialText = "", initialPicked, autoFocus, onSubmit, onVoice, onCancel, compact, draftKey, onTyping, broadcast }: {
   people: ChatPerson[];
   me: string;
   placeholder: string;
@@ -293,6 +294,8 @@ function Composer({ people, me, placeholder, initialText = "", initialPicked, au
   initialPicked?: Map<string, string>;
   autoFocus?: boolean;
   onSubmit: (body: string) => Promise<void>;
+  // send a voice message (the mic button, where this browser can record)
+  onVoice?: (audio: Blob, ms: number) => Promise<void>;
   onCancel?: () => void;
   // The edit box inside a message: no formatting bar or footer extras.
   compact?: boolean;
@@ -308,6 +311,8 @@ function Composer({ people, me, placeholder, initialText = "", initialPicked, au
   const [busy, setBusy] = useState(false);
   const [suggest, setSuggest] = useState<Suggest | null>(null);
   const [emojiOpen, setEmojiOpen] = useState(false);
+  // recording a voice message: the box shows the recorder (the typed text waits)
+  const [recording, setRecording] = useState(false);
   const picked = useRef(new Map(draft?.p ?? initialPicked ?? []));
   // the draft is written a moment after the last keystroke
   const draftTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
@@ -325,7 +330,7 @@ function Composer({ people, me, placeholder, initialText = "", initialPicked, au
     if (!el) return;
     el.style.height = "auto";
     el.style.height = Math.min(el.scrollHeight, 220) + "px";
-  }, [text]);
+  }, [text, recording]);
 
   useEffect(() => {
     if (!autoFocus) return;
@@ -512,6 +517,9 @@ function Composer({ people, me, placeholder, initialText = "", initialPicked, au
         </div>
       )}
       <div className="cp-box">
+        {recording && onVoice ? (
+          <VoiceRecorder onSend={onVoice} onClose={() => { setRecording(false); requestAnimationFrame(() => ref.current?.focus()); }} />
+        ) : (<>
         {!compact && (
           <div className="cp-tools" role="toolbar" aria-label="Formatting">
             <button type="button" title="Bold (Ctrl+B)" aria-label="Bold" onMouseDown={keep} onClick={() => wrap("*")}><b>B</b></button>
@@ -544,6 +552,12 @@ function Composer({ people, me, placeholder, initialText = "", initialPicked, au
           )}
           <span className="cp-hint">{compact ? "Enter to save · Esc to cancel" : `@ mention${broadcast ? " (@channel, @here)" : ""} · # link a task · Shift+Enter new line`}</span>
           {onCancel && <button type="button" className="tc-btn" onClick={onCancel}>Cancel</button>}
+          {!compact && onVoice && canRecord() && (
+            <button type="button" className="cp-mic" title="Record a voice message" aria-label="Record a voice message" disabled={busy}
+              onClick={() => { setSuggest(null); setEmojiOpen(false); setRecording(true); }}>
+              {MIC_ICON}
+            </button>
+          )}
           <button type="button" className={"cp-send" + (text.trim() ? " ready" : "")} disabled={busy || !text.trim()} onClick={submit} aria-label={compact ? "Save" : "Send"} title={compact ? "Save" : "Send"}>
             {compact ? "Save" : I.send}
           </button>
@@ -555,6 +569,7 @@ function Composer({ people, me, placeholder, initialText = "", initialPicked, au
             ))}
           </div>
         )}
+        </>)}
       </div>
     </div>
   );
@@ -640,7 +655,7 @@ function MessageItem({ m, compact, ctx, onReply, inThread }: {
     setConfirmDelete(false);
     try {
       await api(`/chat/messages/${m.id}`, { method: "DELETE" });
-      ctx.onUpdated({ ...m, deleted: true, body: "", reactions: [], mentions: [] });
+      ctx.onUpdated({ ...m, deleted: true, body: "", reactions: [], mentions: [], voice: null });
     } catch (err) {
       toast.error(errText(err));
     }
@@ -684,6 +699,8 @@ function MessageItem({ m, compact, ctx, onReply, inThread }: {
             onSubmit={saveEdit}
             onCancel={() => setEditing(false)}
           />
+        ) : m.voice ? (
+          <div className="msg-voice"><VoicePlayer id={m.id} voice={m.voice} /></div>
         ) : (
           <div className="msg-body">
             <MessageText body={m.body} people={people} tasks={tasks} me={me} onOpenTask={onOpenTask} />
@@ -739,7 +756,7 @@ function MessageItem({ m, compact, ctx, onReply, inThread }: {
               {ctx.extras && ctx.joined && (
                 <button type="button" className={m.pinnedAt ? "on" : undefined} title={m.pinnedAt ? "Unpin" : "Pin to this conversation"} aria-label={m.pinnedAt ? "Unpin" : "Pin to this conversation"} aria-pressed={!!m.pinnedAt} onClick={() => pin(!m.pinnedAt)}>{I.pin}</button>
               )}
-              {mine && <button type="button" title="Edit" aria-label="Edit" onClick={() => setEditing(true)}>{I.edit}</button>}
+              {mine && !m.voice && <button type="button" title="Edit" aria-label="Edit" onClick={() => setEditing(true)}>{I.edit}</button>}
               {(mine || canModerate) && <button type="button" title="Delete" aria-label="Delete" className="danger" onClick={() => setConfirmDelete(true)}>{I.trash}</button>}
             </>
           )}
@@ -956,9 +973,16 @@ function Conversation({ channel, ctx, threadId, focusId, onOpenThread, onInfo, o
   }, [messages, scroll.ref]);
 
   async function send(body: string) {
-    const out = await api<{ message: ChatMessage; tasks: Record<string, ChatTask> }>(`/chat/channels/${channel.id}/messages`, {
+    sent(await api<{ message: ChatMessage; tasks: Record<string, ChatTask> }>(`/chat/channels/${channel.id}/messages`, {
       method: "POST", body: JSON.stringify({ body }),
-    });
+    }));
+  }
+  async function sendVoice(audio: Blob, ms: number) {
+    sent(await api<{ message: ChatMessage; tasks: Record<string, ChatTask> }>(`/chat/channels/${channel.id}/voice?ms=${ms}`, {
+      method: "POST", body: audio, headers: { "Content-Type": audio.type || "audio/webm" },
+    }));
+  }
+  function sent(out: { message: ChatMessage; tasks: Record<string, ChatTask> }) {
     mergeTasks(out.tasks);
     // sent from an older stretch: back to the latest, where it is
     if (hasNewerRef.current) { onLatest(); return; }
@@ -1086,6 +1110,7 @@ function Conversation({ channel, ctx, threadId, focusId, onOpenThread, onInfo, o
           placeholder={channel.kind === "dm" ? `Message ${title}` : `Message #${channel.name}`}
           autoFocus={!focusId}
           onSubmit={send}
+          onVoice={sendVoice}
           draftKey={draftKeyFor(me, channel.id)}
           onTyping={typingNow}
           broadcast={channel.kind === "channel" || channel.member_ids.length > 2}
@@ -1145,9 +1170,16 @@ function ThreadPanel({ channel, parentId, focusId, ctx, onClose }: {
   }, [lastReply, channel.mentions, channel.id, chat]);
 
   async function send(body: string) {
-    const out = await api<{ message: ChatMessage; tasks: Record<string, ChatTask> }>(`/chat/channels/${channel.id}/messages`, {
+    sent(await api<{ message: ChatMessage; tasks: Record<string, ChatTask> }>(`/chat/channels/${channel.id}/messages`, {
       method: "POST", body: JSON.stringify({ body, parentId }),
-    });
+    }));
+  }
+  async function sendVoice(audio: Blob, ms: number) {
+    sent(await api<{ message: ChatMessage; tasks: Record<string, ChatTask> }>(`/chat/channels/${channel.id}/voice?ms=${ms}&parentId=${parentId}`, {
+      method: "POST", body: audio, headers: { "Content-Type": audio.type || "audio/webm" },
+    }));
+  }
+  function sent(out: { message: ChatMessage; tasks: Record<string, ChatTask> }) {
     mergeTasks(out.tasks);
     scroll.atBottom.current = true;
     setReplies((prev) => (prev ? upsert(prev, out.message) : [out.message]));
@@ -1203,7 +1235,7 @@ function ThreadPanel({ channel, parentId, focusId, ctx, onClose }: {
       </div>
       <div className="cv-typing" aria-live="polite">{typers}</div>
       {channel.joined && parent && !parent.deleted && (
-        <Composer key={parentId} people={[...ctx.people.values()]} me={ctx.me} placeholder="Reply…" autoFocus={!focusId} onSubmit={send}
+        <Composer key={parentId} people={[...ctx.people.values()]} me={ctx.me} placeholder="Reply…" autoFocus={!focusId} onSubmit={send} onVoice={sendVoice}
           draftKey={draftKeyFor(ctx.me, channel.id, parentId)} onTyping={typingNow}
           broadcast={channel.kind === "channel" || channel.member_ids.length > 2} />
       )}
@@ -1598,7 +1630,9 @@ function MessageList({ messages, tasks, empty, action, onJump }: {
                 <b>{author?.name ?? "Former member"}</b>
                 <span className="chat-faint">{ch ? channelTitle(ch, people, me) : "a conversation"}{m.parentId ? " · in a thread" : ""} · {dayLabel(m.createdAt)} {timeOf(m.createdAt)}</span>
               </div>
-              <div className="chat-hit-body"><MessageText body={m.body} people={people} tasks={tasks} me={me} onOpenTask={() => onJump(m)} /></div>
+              <div className="chat-hit-body">
+                {m.voice ? <VoicePlayer id={m.id} voice={m.voice} compact /> : <MessageText body={m.body} people={people} tasks={tasks} me={me} onOpenTask={() => onJump(m)} />}
+              </div>
             </div>
             <div className="chat-hit-acts">
               {action?.(m)}

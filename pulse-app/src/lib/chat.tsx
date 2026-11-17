@@ -61,7 +61,16 @@ export type ChatMessage = {
   // pinned to the conversation, and by whom
   pinnedAt?: string | null;
   pinnedBy?: string | null;
+  // a voice message (its body is empty): its length, and whether its sound
+  // was cleared after 30 days. The sound comes on play (pages/chat-voice.tsx).
+  voice?: { ms: number; expired: boolean } | null;
 };
+
+// A recording's length as people say it: 0:07, 1:45.
+export function clipLength(ms: number) {
+  const s = Math.max(0, Math.round(ms / 1000));
+  return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`;
+}
 
 export type ChatTask = {
   id: string;
@@ -308,7 +317,7 @@ export function ChatProvider({ children }: { children: ReactNode }) {
       const author = peopleRef.current.get(m.authorId ?? "");
       const who = author?.name ?? "Someone";
       const where = m.parentId ? "replied in a thread" : isDm ? "" : `in #${ch?.name ?? e.channel?.name ?? "a channel"}`;
-      const text = toPlain(m.body, peopleRef.current, e.tasks);
+      const text = m.voice ? `🎤 Voice message (${clipLength(m.voice.ms)})` : toPlain(m.body, peopleRef.current, e.tasks);
       const openIt = () => navigate(`/chat?c=${m.channelId}${m.parentId ? `&t=${m.parentId}` : ""}`);
       // the ping and the desktop pop-up (lib/chat-alerts.ts, Settings ›
       // Notifications): a message meant for you, or (unless switched to only

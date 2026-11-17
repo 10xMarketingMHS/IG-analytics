@@ -1,4 +1,4 @@
-import { Router } from "express";
+import express, { Router } from "express";
 import { z } from "zod";
 import { pool } from "../db.js";
 import { isOrgAdmin } from "../permissions.js";
@@ -27,6 +27,16 @@ const DM_MAX_PEOPLE = 8;
 // until it's in, chat works as before and those parts answer 409.
 const extrasReady = () => hasColumn("chat_member", "starred");
 const NEEDS_EXTRAS = "This needs a database update first — ask whoever runs the database to apply 20261103120000_chat_extras.";
+// Voice messages need 20261117120000_chat_voice (their recordings' table).
+const voiceReady = () => hasColumn("chat_voice", "audio");
+const NEEDS_VOICE = "Voice messages need a database update first — ask whoever runs the database to apply 20261117120000_chat_voice.";
+// Up to 2 minutes each (a little over, for the recorder's own timing), at most
+// 1.5 MB. The sound is cleared after 30 days to keep the database small.
+const VOICE_MAX_MS = 120_000;
+const VOICE_MAX_BYTES = 1_500_000;
+const VOICE_KEEP_DAYS = 30;
+// what browsers record: Chrome, Edge and Firefox WebM/Ogg (Opus), Safari MP4 (AAC)
+const VOICE_TYPE_RE = /^audio\/(webm|ogg|mp4|mpeg|aac|x-m4a)(;\s*codecs="?[\w.]+"?)?$/i;
 
 // ---------------------------------------------------------------------------
 // People
@@ -605,6 +615,17 @@ async function hydrate(orgId, rows) {
     for (const r of rep) repliersOf.set(r.parent_id, r.ids.slice(0, 3));
   }
   const tasks = await taskSummaries(orgId, [...new Set(rows.flatMap((r) => (r.deleted_at ? [] : r.task_ids)))]);
+  // A voice message is one with no words: its length, and whether its sound is
+  // still kept (cleared after VOICE_KEEP_DAYS). The sound itself comes on play.
+  const voiceOf = new Map();
+  const wordless = rows.filter((r) => !r.deleted_at && r.body === "").map((r) => r.id);
+  if (wordless.length && (await voiceReady())) {
+    const { rows: vs } = await pool.query(
+      "select message_id, duration_ms, audio is null as expired from chat_voice where message_id = any($1::uuid[])",
+      [wordless],
+    );
+    for (const v of vs) voiceOf.set(v.message_id, { ms: v.duration_ms, expired: v.expired });
+  }
   const messages = rows.map((r) => {
     const deleted = !!r.deleted_at;
     return {
@@ -624,6 +645,7 @@ async function hydrate(orgId, rows) {
       // pinned to the conversation (once the database has pins)
       pinnedAt: deleted ? null : r.pinned_at ?? null,
       pinnedBy: deleted ? null : r.pinned_by ?? null,
+      voice: voiceOf.get(r.id) ?? null,
     };
   });
   return { messages, tasks };
@@ -797,66 +819,152 @@ const NewMessage = z.object({
   parentId: Uuid.optional(),
 });
 
+// The conversation a new message goes into, with its thread checked: { c } or
+// { status, error }.
+async function postableIn(req, channelId, parentId) {
+  const c = await visibleChannel(req, channelId);
+  if (!c) return { status: 404, error: "Conversation not found" };
+  if (c.archived_at) return { status: 400, error: "This channel is archived." };
+  if (parentId) {
+    const parent = await messageRow(parentId);
+    if (!parent || parent.channel_id !== c.id || parent.parent_id) {
+      return { status: 400, error: "That thread isn't in this conversation." };
+    }
+  }
+  return { c };
+}
+
+// Post a message (words, or a voice message's recording) and tell everyone it
+// concerns. Returns what the sender's screen needs.
+async function postMessage(req, c, { body, parentId, mentions = [], taskIds = [], voice = null }) {
+  const client = await pool.connect();
+  let row;
+  try {
+    await client.query("begin");
+    // Posting in a public channel you're only browsing joins it.
+    await client.query(
+      "insert into chat_member (channel_id, user_id) values ($1, $2) on conflict do nothing",
+      [c.id, req.user.sub],
+    );
+    ({ rows: [row] } = await client.query(
+      `insert into chat_message (org_id, channel_id, parent_id, author_id, body, mentions, task_ids)
+       values ($1, $2, $3, $4, $5, $6::uuid[], $7::uuid[]) returning *`,
+      [req.orgId, c.id, parentId ?? null, req.user.sub, body, mentions, taskIds],
+    ));
+    if (voice) {
+      await client.query(
+        "insert into chat_voice (message_id, org_id, mime, duration_ms, size_bytes, audio) values ($1, $2, $3, $4, $5, $6)",
+        [row.id, req.orgId, voice.mime, voice.ms, voice.audio.length, voice.audio],
+      );
+    }
+    if (parentId) {
+      await client.query(
+        "update chat_message set reply_count = reply_count + 1, last_reply_at = $2 where id = $1",
+        [parentId, row.created_at],
+      );
+    } else {
+      await client.query("update chat_channel set last_message_at = $2 where id = $1", [c.id, row.created_at]);
+      // Your own message is read by you.
+      await client.query(
+        `update chat_member set last_read_at = greatest(coalesce(last_read_at, '-infinity'), $3)
+          where channel_id = $1 and user_id = $2`,
+        [c.id, req.user.sub, row.created_at],
+      );
+    }
+    await client.query("commit");
+  } catch (err) {
+    await client.query("rollback");
+    throw err;
+  } finally {
+    client.release();
+  }
+
+  if (!c.joined) await notifyChannel(c.id, { type: "channels" });
+  const out = await broadcastMessage(req.orgId, row, { isNew: true, extra: mentionedOutsiders(c, mentions) });
+  if (parentId) await broadcastMessage(req.orgId, await messageRow(parentId));
+  return out;
+}
+
 chatRouter.post("/chat/channels/:id/messages", async (req, res, next) => {
   const parsed = NewMessage.safeParse(req.body);
   if (!parsed.success) return res.status(400).json({ error: parsed.error.issues[0]?.message ?? "Invalid message" });
   const { body, parentId } = parsed.data;
   try {
-    const c = await visibleChannel(req, req.params.id);
-    if (!c) return res.status(404).json({ error: "Conversation not found" });
-    if (c.archived_at) return res.status(400).json({ error: "This channel is archived." });
-    if (parentId) {
-      const parent = await messageRow(parentId);
-      if (!parent || parent.channel_id !== c.id || parent.parent_id) {
-        return res.status(400).json({ error: "That thread isn't in this conversation." });
-      }
-    }
+    const { c, status, error } = await postableIn(req, req.params.id, parentId);
+    if (!c) return res.status(status).json({ error });
     const { mentions, taskIds } = await refsIn(req.orgId, body, c, req.user.sub);
-
-    const client = await pool.connect();
-    let row;
-    try {
-      await client.query("begin");
-      // Posting in a public channel you're only browsing joins it.
-      await client.query(
-        "insert into chat_member (channel_id, user_id) values ($1, $2) on conflict do nothing",
-        [c.id, req.user.sub],
-      );
-      ({ rows: [row] } = await client.query(
-        `insert into chat_message (org_id, channel_id, parent_id, author_id, body, mentions, task_ids)
-         values ($1, $2, $3, $4, $5, $6::uuid[], $7::uuid[]) returning *`,
-        [req.orgId, c.id, parentId ?? null, req.user.sub, body, mentions, taskIds],
-      ));
-      if (parentId) {
-        await client.query(
-          "update chat_message set reply_count = reply_count + 1, last_reply_at = $2 where id = $1",
-          [parentId, row.created_at],
-        );
-      } else {
-        await client.query("update chat_channel set last_message_at = $2 where id = $1", [c.id, row.created_at]);
-        // Your own message is read by you.
-        await client.query(
-          `update chat_member set last_read_at = greatest(coalesce(last_read_at, '-infinity'), $3)
-            where channel_id = $1 and user_id = $2`,
-          [c.id, req.user.sub, row.created_at],
-        );
-      }
-      await client.query("commit");
-    } catch (err) {
-      await client.query("rollback");
-      throw err;
-    } finally {
-      client.release();
-    }
-
-    if (!c.joined) await notifyChannel(c.id, { type: "channels" });
-    const out = await broadcastMessage(req.orgId, row, { isNew: true, extra: mentionedOutsiders(c, mentions) });
-    if (parentId) await broadcastMessage(req.orgId, await messageRow(parentId));
-    res.status(201).json(out);
+    res.status(201).json(await postMessage(req, c, { body, parentId, mentions, taskIds }));
   } catch (err) {
     next(err);
   }
 });
+
+// A voice message: the recording itself is the request's body (its type, say
+// audio/webm), with ?ms= its length and &parentId= for a thread reply.
+const rawVoice = express.raw({ type: "audio/*", limit: VOICE_MAX_BYTES });
+function takeVoice(req, res, next) {
+  rawVoice(req, res, (err) => {
+    if (!err) return next();
+    if (err.status === 413 || err.type === "entity.too.large") return res.status(413).json({ error: "That recording is too big to send. Keep it under 2 minutes." });
+    res.status(400).json({ error: "Couldn't read that recording." });
+  });
+}
+chatRouter.post("/chat/channels/:id/voice", takeVoice, async (req, res, next) => {
+  const mime = String(req.headers["content-type"] ?? "").trim();
+  const audio = req.body;
+  if (!VOICE_TYPE_RE.test(mime) || !Buffer.isBuffer(audio) || !audio.length) {
+    return res.status(400).json({ error: "That isn't a recording Echo can keep." });
+  }
+  const ms = Math.round(Number(req.query.ms));
+  if (!Number.isFinite(ms) || ms < 500) return res.status(400).json({ error: "That recording is too short." });
+  if (ms > VOICE_MAX_MS + 5000) return res.status(400).json({ error: "Keep voice messages under 2 minutes." });
+  const parentId = req.query.parentId ? String(req.query.parentId) : undefined;
+  if (parentId && !Uuid.safeParse(parentId).success) return res.status(400).json({ error: "That thread isn't in this conversation." });
+  try {
+    if (!(await voiceReady())) return res.status(409).json({ error: NEEDS_VOICE });
+    const { c, status, error } = await postableIn(req, req.params.id, parentId);
+    if (!c) return res.status(status).json({ error });
+    const voice = { mime, ms: Math.min(ms, VOICE_MAX_MS), audio };
+    res.status(201).json(await postMessage(req, c, { body: "", parentId, voice }));
+  } catch (err) {
+    next(err);
+  }
+});
+
+// A voice message's sound, for whoever can read its conversation. It never
+// changes, so the browser may keep it.
+chatRouter.get("/chat/messages/:id/voice", async (req, res, next) => {
+  try {
+    const row = await messageRow(req.params.id);
+    if (!row || row.deleted_at || !(await visibleChannel(req, row.channel_id)) || !(await voiceReady())) {
+      return res.status(404).json({ error: "Voice message not found" });
+    }
+    const { rows: [v] } = await pool.query("select mime, audio from chat_voice where message_id = $1", [row.id]);
+    if (!v) return res.status(404).json({ error: "Voice message not found" });
+    if (!v.audio) return res.status(410).json({ error: `Voice messages are kept for ${VOICE_KEEP_DAYS} days; this one has expired.` });
+    res.set({ "Content-Type": v.mime, "Content-Length": String(v.audio.length), "Cache-Control": "private, max-age=31536000, immutable" });
+    res.end(v.audio);
+  } catch (err) {
+    next(err);
+  }
+});
+
+// Clear the sound of voice messages older than VOICE_KEEP_DAYS (the message
+// stays, saying it has expired): a few minutes after start, then every 6 hours.
+async function clearOldVoices() {
+  try {
+    if (!(await voiceReady())) return;
+    const { rowCount } = await pool.query(
+      `update chat_voice set audio = null where audio is not null and created_at < now() - make_interval(days => $1)`,
+      [VOICE_KEEP_DAYS],
+    );
+    if (rowCount) console.log(`[chat] cleared ${rowCount} voice message(s) older than ${VOICE_KEEP_DAYS} days`);
+  } catch (err) {
+    console.error("[chat] couldn't clear old voice messages:", err.message);
+  }
+}
+setTimeout(clearOldVoices, 3 * 60_000).unref();
+setInterval(clearOldVoices, 6 * 60 * 60_000).unref();
 
 chatRouter.patch("/chat/messages/:id", async (req, res, next) => {
   const parsed = NewMessage.pick({ body: true }).safeParse(req.body);
@@ -866,6 +974,10 @@ chatRouter.patch("/chat/messages/:id", async (req, res, next) => {
     const c = row && !row.deleted_at && (await visibleChannel(req, row.channel_id));
     if (!c) return res.status(404).json({ error: "Message not found" });
     if (row.author_id !== req.user.sub) return res.status(403).json({ error: "You can only edit your own messages." });
+    if (row.body === "" && (await voiceReady())) {
+      const { rowCount } = await pool.query("select 1 from chat_voice where message_id = $1", [row.id]);
+      if (rowCount) return res.status(400).json({ error: "A voice message can't be edited. Delete it and record a new one." });
+    }
     const { mentions, taskIds } = await refsIn(req.orgId, parsed.data.body, c, req.user.sub);
     const { rows: [updated] } = await pool.query(
       `update chat_message set body = $2, mentions = $3::uuid[], task_ids = $4::uuid[], edited_at = now()
@@ -890,6 +1002,8 @@ chatRouter.delete("/chat/messages/:id", async (req, res, next) => {
       return res.status(403).json({ error: "You can only delete your own messages." });
     }
     await pool.query("delete from chat_reaction where message_id = $1", [row.id]);
+    // a voice message's recording goes with it
+    if (await voiceReady()) await pool.query("delete from chat_voice where message_id = $1", [row.id]);
     const extras = await extrasReady();
     if (extras) await pool.query("delete from chat_saved where message_id = $1", [row.id]);
     const { rows: [deleted] } = await pool.query(
