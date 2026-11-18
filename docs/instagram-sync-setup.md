@@ -1,11 +1,11 @@
 # Instagram Live Sync — Setup Guide
 
-This connects Pulse to the **Instagram Graph API (Meta)** so the **Sync now** button on
+This connects Echo to the **Instagram Graph API (Meta)** so the **Sync now** button on
 the Integrations page pulls real views / reach / likes / comments / shares / saves onto
-your posts. It matches each Pulse post to its real Instagram post by the **Link** you
+your posts. It matches each Echo post to its real Instagram post by the **Link** you
 paste in, so **always fill the Link field** when you log a post.
 
-You do the Meta-portal steps below **once**. Nothing here needs the Pulse codebase — it's
+You do the Meta-portal steps below **once**. Nothing here needs the Echo codebase — it's
 all account setup plus four environment variables.
 
 ---
@@ -28,7 +28,7 @@ all account setup plus four environment variables.
 
 1. Go to **https://developers.facebook.com/apps** → **Create app**.
 2. Use case: choose **Other** → app type **Business** → Next.
-3. Name it e.g. `Media House Pulse`, add your email, create.
+3. Name it e.g. `Media House Echo`, add your email, create.
 
 ## 2. Add the products
 
@@ -50,7 +50,7 @@ Facebook Login → **Settings**:
 - **Client OAuth login** and **Web OAuth login**: ON.
 - Save changes.
 
-> The path must be `/api/integrations/instagram/callback` — that's the endpoint Pulse
+> The path must be `/api/integrations/instagram/callback` — that's the endpoint Echo
 > listens on. It must be **https** and match `APP_BASE_URL` below.
 
 ## 4. Grab your credentials
@@ -94,23 +94,23 @@ have a **role** on the app:
 This is enough to sync **your own** accounts. You only need Meta **App Review + Business
 Verification** later if you want to sync accounts owned by people outside your app roles.
 
-The permissions Pulse requests (granted automatically for admins/testers in Dev mode):
+The permissions Echo requests (granted automatically for admins/testers in Dev mode):
 `instagram_basic`, `instagram_manage_insights`, `pages_show_list`,
 `pages_read_engagement`, `business_management`.
 
 ---
 
-## 7. Connect & sync inside Pulse
+## 7. Connect & sync inside Echo
 
-1. Reload Pulse → **Integrations**. The yellow "not switched on" banner should be gone and
+1. Reload Echo → **Integrations**. The yellow "not switched on" banner should be gone and
    show **app keys ✅ · encryption ✅**.
 2. In **Channels**, make sure each Instagram account's **handle** matches the real IG
-   username (e.g. `@doctorfarmer`). This is how Pulse picks the right account if your
+   username (e.g. `@doctorfarmer`). This is how Echo picks the right account if your
    Facebook login manages several.
 3. On **Integrations**, click **Connect Instagram** on a channel → approve the Facebook
-   dialog (select the Page + Instagram account) → you're returned to Pulse showing
+   dialog (select the Page + Instagram account) → you're returned to Echo showing
    **● Connected**.
-4. Click **🔄 Sync now**. Pulse matches every post that has a **Link** to its Instagram
+4. Click **🔄 Sync now**. Echo matches every post that has a **Link** to its Instagram
    media and refreshes the metrics. The toast reports how many were updated / not matched.
 
 ## Notes

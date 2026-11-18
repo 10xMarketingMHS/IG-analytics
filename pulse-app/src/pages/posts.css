@@ -1,0 +1,101 @@
+/* Posts — the Analytics design (analytics.css supplies the .an tokens, bar,
+   buttons, date picker, tabs and panel). The table sits in one panel; rows
+   only tint on hover, nothing lifts. */
+
+/* search */
+.pst-search{flex:1 1 260px;min-width:200px;display:flex;align-items:center;gap:8px;height:34px;padding:0 6px 0 11px;border:1px solid var(--an-line);border-radius:10px;
+  background:var(--an-panel);color:var(--an-text3);cursor:text}
+.pst-search:focus-within{border-color:var(--an-ac);box-shadow:0 0 0 3px var(--an-acGlow)}
+.pst-search input{flex:1;min-width:0;height:100%;border:0;outline:0;background:transparent;color:var(--an-text);font:500 12.5px 'Plus Jakarta Sans',sans-serif}
+.pst-search input::placeholder{color:var(--an-text3)}
+.pst-x{width:24px;height:24px;display:grid;place-items:center;padding:0;border:0;border-radius:7px;background:transparent;color:var(--an-text3);cursor:pointer}
+.pst-x:hover{background:var(--an-hover);color:var(--an-text)}
+
+/* columns menu */
+.pst-menuwrap{position:relative}
+.pst-menu{position:absolute;top:calc(100% + 8px);right:0;z-index:60;width:250px;max-width:calc(100vw - 32px);max-height:380px;overflow:auto;padding:8px;
+  border:1px solid var(--an-line);border-radius:16px;background:var(--an-solid);box-shadow:var(--an-sh2)}
+.pst-menuhead{display:flex;align-items:center;justify-content:space-between;padding:4px 6px 8px;font-size:12.5px}
+.pst-menuhead button{border:0;background:transparent;color:var(--an-acText);font:700 12px 'Plus Jakarta Sans',sans-serif;cursor:pointer}
+.pst-colrow{display:flex;align-items:center;gap:8px;padding:3px 6px;border-radius:8px}
+.pst-colrow:hover{background:var(--an-hover)}
+.pst-colrow label{flex:1;min-width:0;display:flex;align-items:center;gap:9px;height:28px;font-weight:600;color:var(--an-text2);cursor:pointer}
+.pst-colrow input{width:15px;height:15px;accent-color:var(--an-ac);cursor:pointer}
+.pst-move{display:flex;gap:3px}
+.pst-move button{width:24px;height:24px;display:grid;place-items:center;padding:0;border:1px solid var(--an-line);border-radius:7px;background:var(--an-panel);
+  color:var(--an-text3);font-size:12px;cursor:pointer}
+.pst-move button:hover:not(:disabled){color:var(--an-text);border-color:var(--an-text3)}
+.pst-move button:disabled{opacity:.35;cursor:default}
+
+/* status tabs and the other filters */
+.pst-count{min-width:20px;height:18px;padding:0 6px;border-radius:999px;background:var(--an-sunk2);color:var(--an-text2);font-size:11px;font-weight:800;
+  display:inline-grid;place-items:center;font-variant-numeric:tabular-nums}
+.an-tabs button.on .pst-count{background:var(--an-acSoft);color:var(--an-acText)}
+.pst-filters{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:6px}
+.pst .msel-btn{height:34px;padding:0 12px;gap:7px;border:1px solid var(--an-line);border-radius:10px;background:var(--an-panel);color:var(--an-text);
+  font:600 12.5px 'Plus Jakarta Sans',sans-serif;transition:border-color .15s,background-color .15s}
+.pst .msel-btn:hover{border-color:var(--an-text3)}
+.pst .msel-btn.on{border-color:var(--an-ac);background:var(--an-acSoft);color:var(--an-acText)}
+.pst .msel-btn svg{color:var(--an-text3)}
+.pst .msel-btn.on svg{color:inherit}
+.pst .msel-count{background:var(--an-ac)}
+.pst .msel-btn:not(.on) .msel-count{background:var(--an-sunk2);color:var(--an-text2)}
+.pst .msel-cv{color:var(--an-text3)}
+.pst .msel-menu{left:auto;right:0;padding:6px;border:1px solid var(--an-line);border-radius:14px;background:var(--an-solid);box-shadow:var(--an-sh2)}
+.pst .msel-opt{font-size:12.5px;font-weight:600;color:var(--an-text2)}
+.pst .msel-opt:hover{background:var(--an-hover)}
+.pst .msel-opt.sel{background:var(--an-acSoft);color:var(--an-acText)}
+.pst .msel-opt input{accent-color:var(--an-ac)}
+.pst .msel-opt-n{color:var(--an-text3)}
+@container (max-width:720px){.pst .msel-menu{left:0;right:auto}}
+
+/* the panel and its table */
+.pst-head{display:flex;align-items:center;gap:10px;padding:14px 18px 12px}
+.pst-table{width:100%;border-collapse:collapse;font-size:12.5px;font-variant-numeric:tabular-nums}
+.pst-table th{padding:9px 12px;text-align:left;font-size:11px;font-weight:800;letter-spacing:.06em;text-transform:uppercase;color:var(--an-text3);
+  white-space:nowrap;border-top:1px solid var(--an-line2)}
+.pst-table td{padding:10px 12px;border-top:1px solid var(--an-line2);white-space:nowrap;vertical-align:middle}
+.pst-table th:first-child,.pst-table td:first-child{padding-left:18px}
+.pst-table th:last-child,.pst-table td:last-child{padding-right:12px}
+.pst-table .num{text-align:right}
+.pst-row{cursor:pointer}
+.pst-row td{transition:background-color .12s}
+.pst-row:hover td{background:var(--an-hover)}
+.pst-row:focus-visible{outline:2px solid var(--an-ac);outline-offset:-2px}
+.pst-date{color:var(--an-text2)}
+.pst-none{color:var(--an-text3)}
+.pst-ch{display:inline-flex;align-items:center;gap:8px;font-weight:600}
+.pst-tile{flex:none;width:22px;height:22px;border-radius:7px;display:grid;place-items:center;color:#fff;font-size:9px;font-weight:800;letter-spacing:.02em}
+.pst-title{display:flex;flex-direction:column;gap:1px;max-width:360px}
+.pst-title b{font-weight:700;overflow:hidden;text-overflow:ellipsis}
+.pst-title>span{font-size:11.5px;color:var(--an-text3)}
+.pst-collab{margin-left:7px;padding:1px 7px;border-radius:999px;background:var(--an-sunk2);color:var(--an-text2);font-size:10.5px;font-weight:700;vertical-align:1px}
+.pst-tag{display:inline-flex;padding:2px 9px;border-radius:999px;background:var(--an-acSoft);color:var(--an-acText);font-size:11.5px;font-weight:700}
+.pst-tag.alt{background:var(--an-sunk2);color:var(--an-text2)}
+.pst-st{display:inline-flex;align-items:center;gap:6px;padding:3px 10px 3px 8px;border-radius:999px;font-size:11.5px;font-weight:700}
+.pst-st i{width:6px;height:6px;border-radius:50%;background:currentColor}
+.pst-st.planned{background:oklch(0.95 0.05 85);color:oklch(0.48 0.11 65)}
+.pst-st.published{background:var(--an-goodSoft);color:var(--an-good)}
+html[data-theme="dark"] .pst-st.planned{background:oklch(0.3 0.06 75);color:oklch(0.86 0.13 85)}
+.pst-score{font-weight:800}
+.pst-link{display:inline-flex;align-items:center;gap:4px;color:var(--an-acText);font-weight:700;text-decoration:none}
+.pst-link:hover{text-decoration:underline}
+.pst-act{width:1%}
+.pst-del{width:28px;height:28px;display:grid;place-items:center;padding:0;border:0;border-radius:8px;background:transparent;color:var(--an-text3);cursor:pointer}
+.pst-del:hover,.pst-del:focus-visible{background:var(--an-badSoft);color:var(--an-bad)}
+.pst-empty td{padding:28px 18px;text-align:center;color:var(--an-text3)}
+
+/* the channels (they were in the sidebar): a chip per brand, its platforms as dots */
+.pst-chans{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.pst-chan{display:inline-flex;align-items:center;gap:8px;height:36px;padding:0 10px 0 7px;border:1px solid var(--an-line);border-radius:11px;background:var(--an-panel);
+  color:var(--an-text);font-family:'Plus Jakarta Sans',sans-serif;font-size:13px;font-weight:600;cursor:pointer;transition:border-color .15s,background-color .15s}
+.pst-chan.all{padding-left:12px}
+.pst-chan:hover{border-color:var(--an-text3)}
+.pst-chan.on{border-color:var(--an-ac);background:var(--an-acSoft);color:var(--an-acText)}
+.pst-chan.on .pst-count{background:var(--an-solid);color:var(--an-acText)}
+.pst-chan .pst-tile{overflow:hidden}
+.pst-chan .pst-tile img{width:100%;height:100%;object-fit:cover}
+.pst-chan-plats{display:inline-flex;gap:3px}
+.pst-chan-plats i{width:6px;height:6px;border-radius:50%}
+.pst-chan-edit{margin-left:2px;padding:0 4px;border:0;background:none;color:var(--an-acText);font-family:'Plus Jakarta Sans',sans-serif;font-size:12.5px;font-weight:600;cursor:pointer}
+.pst-chan-edit:hover{text-decoration:underline}

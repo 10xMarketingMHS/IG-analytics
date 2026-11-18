@@ -5,12 +5,19 @@ import type { Editor, Task } from "@/lib/types";
 // Excluded (not scored as zero) at every aggregation, here and in leaderboard.tsx.
 export const isScorableTask = (t: Task): boolean => t.task_type !== "admin";
 
+// Who takes part in the Task Points rankings. Everyone does until a Super
+// Admin switches them out on Team › Roster (editor.in_task_score = false) —
+// say a Manager or Team Lead — and they can be switched back in any time.
+// People left out keep their tasks; they just aren't ranked. Applied at every
+// ranking: here and in leaderboard.tsx.
+export const countsInTaskScore = (e: Pick<Editor, "in_task_score">): boolean => e.in_task_score !== false;
+
 // ---- Points Formula (locked spec) ----
 // base_points is an admin-set value per content format (Reels/Poster/etc. —
 // see Settings → Task Settings → Points per format), independent of that
 // format's time budget; tasks with no resolved format fall back to 1.
 //
-//   Final = base_points × timelinessMultiplier × reworkMultiplier
+//   Final = base_points × timelinessMultiplier × reworkMultiplier × timeMultiplier
 //
 // TIMELINESS (how late it was finished):
 //   on/before due date -> +100% · 1 day late -> +50% · 2 days late -> 0%
@@ -20,9 +27,14 @@ export const isScorableTask = (t: Task): boolean => t.task_type !== "admin";
 //   workedUntil() — approval time minus every review wait.
 // REWORK (how many review send-backs it took — the task.revision count):
 //   see reworkMultiplier below.
+// TIME (how long its timer ran against the time it was given — budget_hours):
+//   within its time -> 100% · past it -> time given ÷ time taken (a 4-hour task
+//   done in 5 keeps 80%). The timer runs only while it's worked on (not in
+//   review, on hold, on a break or after hours). No time given, or work covered
+//   for someone else (its clock carries their time): 100%. See timeMultiplier.
 //
-// Rework only scales earned (positive) points down; it never softens the
-// 3+-days-late penalty, so a late task with many send-backs can't lose less
+// Rework and time only scale earned (positive) points down; they never soften
+// the 3+-days-late penalty, so a late task with many send-backs can't lose less
 // than one with none. Evaluated at completion using the revision count then.
 //
 // Shared by the Media House Leaders board, Progress Path, and My Day's "your
@@ -69,13 +81,29 @@ export function lateDays(t: Task, now?: Date): number {
   return t.due_date ? daysBetween(t.due_date, ymd(workedUntil(t, now))) : 0;
 }
 
+// Hours a finished task's timer ran, up to approval (as the server reads it).
+export function hoursTaken(t: Task): number {
+  const ran = t.budget_started_at && t.completed_at && new Date(t.completed_at) > new Date(t.budget_started_at)
+    ? (new Date(t.completed_at).getTime() - new Date(t.budget_started_at).getTime()) / 1000 : 0;
+  return (Number(t.budget_used_seconds ?? 0) + ran) / 3600;
+}
+
+// Past the time it was given: time given ÷ time taken (4h done in 5h: 0.8).
+// Within its time, no time given, or covered for someone else: 1.
+export function timeMultiplier(t: Task): number {
+  const given = Number(t.budget_hours);
+  if (!(given > 0) || t.covered_from_editor_id) return 1;
+  const taken = hoursTaken(t);
+  return taken > given ? given / taken : 1;
+}
+
 export function taskPoints(t: Task): number {
   const base = t.content_format_points != null ? Number(t.content_format_points) : 1;
   if (!t.completed_at) return 0;
-  const rework = reworkMultiplier(t.revision);
+  const kept = reworkMultiplier(t.revision) * timeMultiplier(t);
   const daysLate = lateDays(t);
-  if (daysLate <= 0) return base * rework;
-  if (daysLate === 1) return base * 0.5 * rework;
+  if (daysLate <= 0) return base * kept;
+  if (daysLate === 1) return base * 0.5 * kept;
   if (daysLate === 2) return 0;
   return -base;
 }
@@ -87,16 +115,19 @@ export function taskPoints(t: Task): number {
 // volume completed (more tasks finished for the same score ranks higher).
 type RankRow = { editorId: string; points: number; completed: number };
 
+function rowInRange(editorId: string, tasks: Task[], fromYmd: string, toYmd: string): RankRow {
+  const own = tasks.filter((t) => {
+    if (t.editor_id !== editorId || !t.completed_at || !isScorableTask(t)) return false;
+    const day = ymd(new Date(t.completed_at));
+    return day >= fromYmd && day <= toYmd;
+  });
+  return { editorId, points: own.reduce((s, t) => s + taskPoints(t), 0), completed: own.length };
+}
+
 function rankRowsInRange(editors: Editor[], tasks: Task[], fromYmd: string, toYmd: string): RankRow[] {
   return editors
-    .map((e) => {
-      const own = tasks.filter((t) => {
-        if (t.editor_id !== e.id || !t.completed_at || !isScorableTask(t)) return false;
-        const day = ymd(new Date(t.completed_at));
-        return day >= fromYmd && day <= toYmd;
-      });
-      return { editorId: e.id, points: own.reduce((s, t) => s + taskPoints(t), 0), completed: own.length };
-    })
+    .filter(countsInTaskScore)
+    .map((e) => rowInRange(e.id, tasks, fromYmd, toYmd))
     .sort((a, b) => b.points - a.points || b.completed - a.completed);
 }
 
@@ -121,16 +152,20 @@ export function topEditorsInRange(
 // back (even at 0), but `rank` is null until they've actually completed
 // something in that window — matching how the Media House Leaders board
 // itself only ranks editors with completed work, everyone else sits unranked.
+// Someone left out of the task score (countsInTaskScore) still sees their own
+// points, with `counted` false and never a rank.
 export function myRankInRange(
   editors: Editor[],
   tasks: Task[],
   fromYmd: string,
   toYmd: string,
   editorId: string | null,
-): { points: number; completed: number; rank: number | null; totalRanked: number } {
+): { points: number; completed: number; rank: number | null; totalRanked: number; counted: boolean } {
   const rows = rankRowsInRange(editors, tasks, fromYmd, toYmd);
   const ranked = rows.filter((r) => r.completed > 0);
-  const mine = editorId ? rows.find((r) => r.editorId === editorId) : undefined;
-  const rank = mine && mine.completed > 0 ? ranked.findIndex((r) => r.editorId === editorId) + 1 : null;
-  return { points: mine?.points ?? 0, completed: mine?.completed ?? 0, rank, totalRanked: ranked.length };
+  const me = editorId ? editors.find((e) => e.id === editorId) : undefined;
+  const counted = !me || countsInTaskScore(me);
+  const mine = editorId ? (counted ? rows.find((r) => r.editorId === editorId) : rowInRange(editorId, tasks, fromYmd, toYmd)) : undefined;
+  const rank = counted && mine && mine.completed > 0 ? ranked.findIndex((r) => r.editorId === editorId) + 1 : null;
+  return { points: mine?.points ?? 0, completed: mine?.completed ?? 0, rank, totalRanked: ranked.length, counted };
 }

@@ -4,6 +4,7 @@ import { api, ApiError } from "@/lib/api";
 import { useAuth } from "@/lib/auth-context";
 import { fileToSquareDataUrl } from "@/lib/image";
 import { Modal } from "@/components/modal";
+import { TeamAttendance } from "@/pages/team-attendance";
 
 // Same gradient-string convention used for editor/avatar chips elsewhere
 // (see leaderboard.tsx's AV_GRADIENTS) — stored as-is in app_user.color.
@@ -63,7 +64,8 @@ const AVATAR_PRESETS = AVATAR_EMOJI.map((emoji, i) => ({
 // Deliberately separate from the admin Settings hub: no admin access needed,
 // and it never touches the org-wide "Team" roster (a different record you
 // may or may not be linked to).
-export function MyProfileModal({ onClose }: { onClose: () => void }) {
+// onViewAs: a Super Admin's way into View as (test mode), beside Cancel.
+export function MyProfileModal({ onClose, onViewAs }: { onClose: () => void; onViewAs?: () => void }) {
   const { user, refreshUser } = useAuth();
   const fileRef = useRef<HTMLInputElement>(null);
   const [name, setName] = useState(user?.name ?? "");
@@ -138,7 +140,7 @@ export function MyProfileModal({ onClose }: { onClose: () => void }) {
   const initial = (name || user?.email || "?").charAt(0).toUpperCase();
 
   return (
-    <Modal title="My Profile" onClose={onClose}>
+    <Modal title="My Profile" onClose={onClose} wide={!!user?.editorId}>
       <div className="profile-photo-row">
         <div
           className="profile-photo-preview"
@@ -237,7 +239,19 @@ export function MyProfileModal({ onClose }: { onClose: () => void }) {
         )}
       </div>
 
+      {/* Your own Start of day record this month (Team › Attendance, your row). */}
+      {user?.editorId && (
+        <div className="field" style={{ marginTop: 16 }}>
+          <label className="f">My attendance</label>
+          <TeamAttendance editors={null} self />
+        </div>
+      )}
+
       <div className="mfoot" style={{ marginTop: 18 }}>
+        {onViewAs && (
+          <button type="button" className="btn" style={{ marginRight: "auto" }} onClick={onViewAs}
+            title="See Echo exactly as someone else does: read-only, for up to two hours">View Echo as someone (test)</button>
+        )}
         <button type="button" className="btn" onClick={onClose}>Cancel</button>
         <button type="button" className="btn btn-primary" disabled={saving} onClick={save}>
           {saving ? "Saving…" : "Save changes"}

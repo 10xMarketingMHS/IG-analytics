@@ -14,6 +14,16 @@ const AV_GRADIENTS = [
   "linear-gradient(135deg,#f59e0b,#a855f7)",
 ];
 
+// A channel without a logo gets a coloured tile with its initials — the same
+// colour wherever it shows (the sidebar, Settings › Channels).
+const CHANNEL_TILES = ["#7c3aed", "#16a34a", "#2563eb", "#d97706", "#db2777", "#0891b2"];
+export function channelTile(id: string) {
+  let h = 0;
+  for (const c of id) h = (h * 31 + c.charCodeAt(0)) >>> 0;
+  return CHANNEL_TILES[h % CHANNEL_TILES.length];
+}
+export const initialsOf = (name: string) => name.split(/\s+/).map((w) => w[0]).join("").slice(0, 2).toUpperCase();
+
 // Stable gradient per name — same person always gets the same fallback avatar.
 export function gradFor(name: string) {
   let h = 0;

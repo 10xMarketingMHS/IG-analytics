@@ -1,6 +1,6 @@
 # Product Requirements Document
 ## Instagram Content Analytics Platform
-**Working name:** *Pulse* (placeholder — rename freely)
+**Working name:** *Echo* (placeholder — rename freely)
 
 | | |
 |---|---|
@@ -40,7 +40,7 @@
 
 DF Foods currently tracks Instagram content performance by **manually typing into a Google Sheet**, whose formulas compute scores and leaderboards, which a separate **HTML dashboard** then visualizes. It works but is fragile: it depends on public sharing of the sheet, brittle formulas that sometimes fail to recalculate, no input validation, and two disconnected artifacts.
 
-**Pulse replaces the entire stack with one secure, centralized web app** where a small team **enters** content data and **instantly sees** dashboards, reports, and insights. The spreadsheet is retired.
+**Echo replaces the entire stack with one secure, centralized web app** where a small team **enters** content data and **instantly sees** dashboards, reports, and insights. The spreadsheet is retired.
 
 Four decisions shape this product:
 - **Small team (2–5)** with role-based access (Admin / Editor / Viewer).
@@ -82,7 +82,7 @@ The existing dashboard's **visual language and analytics methodology** (weighted
 
 ### 3.2 Non-goals (v1)
 - **AI-written insights/narratives** (insights are computed/rule-based only for now).
-- A **post scheduler / publisher** (Pulse does not publish to Instagram).
+- A **post scheduler / publisher** (Echo does not publish to Instagram).
 - A full **social-media-management suite** (inbox, DMs, ads).
 - A **multi-tenant commercial SaaS** (architecture won't preclude it, but it's not a v1 goal).
 
@@ -252,7 +252,7 @@ Priorities: **M**ust / **S**hould / **C**ould. (Phase in parentheses.)
 
 ```mermaid
 stateDiagram-v2
-  [*] --> Planned: 1. Create record in Pulse (content details, no metrics)
+  [*] --> Planned: 1. Create record in Echo (content details, no metrics)
   Planned --> Published: 2. Publish on Instagram, then log metrics
   Published --> Published: 3. Update metrics over time as the post grows
 ```
@@ -447,7 +447,7 @@ A clickable prototype exists — see `app-mockup.html` (sidebar shell, guided ma
 **Remaining decisions**
 1. **Budget / hosting** — free-tier only, or is a small monthly cost acceptable? *(Recommend starting on Vercel + Supabase free tiers.)*
 2. **Timeline** — target date to retire the sheet (MVP)?
-3. **Product name & branding** — keep "Pulse" placeholder, or a specific name/logo?
+3. **Product name & branding** — keep "Echo" placeholder, or a specific name/logo?
 4. **Instagram scope** — is a **planned/scheduled date** field (distinct from publish date) and a **content-calendar** view wanted in P2, or later?
 
 ---
@@ -473,7 +473,7 @@ AI-written insights; post scheduling/publishing; ad analytics; competitor benchm
 
 **Status:** *Planned* (created, pre-publish, no metrics) → *Published* (live, metrics logged & updatable).
 
-**Retired constraints:** the sheet's 500-post / 60-week / 30-month caps do **not** carry over — Pulse is unbounded.
+**Retired constraints:** the sheet's 500-post / 60-week / 30-month caps do **not** carry over — Echo is unbounded.
 
 ---
 

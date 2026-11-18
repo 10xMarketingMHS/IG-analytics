@@ -29,6 +29,15 @@ export function breakOffsetMs(t: Task, nowMs: number): number {
   return (used + extra) * 1000;
 }
 
+// Closing the day stops a task's clock (server/src/routes/eod.js): it stays In
+// Progress and accepted, not on hold, with no start time and its time banked.
+// It runs on when the person starts their day again.
+export function isDayPaused(t: Task): boolean {
+  return t.status === "in_progress" && t.accepted && !t.on_hold && t.budget_hours != null && !t.budget_started_at;
+}
+// Time banked on a task whose clock is stopped (on hold, or the day closed).
+export const bankedMs = (t: Task): number => Math.max(0, Number(t.budget_used_seconds ?? 0)) * 1000;
+
 // True once a task's time budget has actually run out — accepted, has a
 // budget, its clock has started, break time already netted out, and it
 // isn't done.

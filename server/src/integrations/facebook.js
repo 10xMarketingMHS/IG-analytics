@@ -134,9 +134,10 @@ async function graphBatch(requests, token) {
 // Batched getPostMetrics for many posts at once — one HTTP call per 50 posts
 // instead of one per post. Returns { metrics: Map(postId -> {likes,comments,
 // shares}), usage }. A post whose subrequest fails keeps its zero defaults.
+// A post whose read was refused (rate-limited, say) is left out of the map, so
+// the sync keeps the numbers it already had instead of writing 0 over them.
 export async function getPostMetricsBatch(postIds, token) {
   const out = new Map();
-  for (const id of postIds) out.set(id, { likes: 0, comments: 0, shares: 0 });
   let usage = null;
   const fields = "reactions.summary(total_count).limit(0),comments.summary(total_count).limit(0),shares";
   for (let i = 0; i < postIds.length; i += 50) {

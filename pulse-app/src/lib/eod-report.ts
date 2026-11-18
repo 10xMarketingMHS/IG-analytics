@@ -1,8 +1,9 @@
 import { fmtDuration, type EodDayTask, type EodSummary } from "@/lib/use-eod";
+import { clockTime } from "@/lib/time-format";
 
 export function eodTime(iso: string | null): string {
   if (!iso) return "—";
-  return new Date(iso).toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" });
+  return clockTime(iso);
 }
 function fmtDay(date: string): string {
   return new Date(date + "T00:00:00").toLocaleDateString(undefined, { weekday: "long", day: "numeric", month: "long", year: "numeric" });
@@ -32,6 +33,15 @@ export function workedLine(s: EodSummary): string | null {
   if (s.workedSeconds == null) return null;
   const n = s.sessionCount ?? 1;
   return `Time worked: ${fmtDuration(s.workedSeconds)}${n > 1 ? ` (${n} sessions)` : ""}`;
+}
+// A scheduler's day: what they scheduled today (by brand), what went live, and the desk's counts
+export function schedulingLines(s: EodSummary): string[] {
+  const x = s.scheduling;
+  if (!x) return [];
+  const lines = [`Scheduled today: ${x.scheduled.total}${x.scheduled.brands.length ? ` (${x.scheduled.brands.map((b) => `${b.brand} ${b.n}`).join(", ")})` : ""}`];
+  if (x.live) lines.push(`Gone live (links added): ${x.live}`);
+  if (x.desk) lines.push(`Negative comments cleaned: ${x.comments} · Leads sent to sales: ${x.leads}`);
+  return lines;
 }
 export const AUTO_CLOSED = "End Work wasn't pressed — the day was closed automatically at 6 PM.";
 
@@ -64,6 +74,11 @@ export function buildReport(name: string, s: EodSummary): string {
   } else {
     lines.push(`Completed today: ${s.completedCount} ${s.completedCount === 1 ? "task" : "tasks"}`);
     for (const g of s.groups) lines.push(`- Completed ${g.n} ${g.label}`);
+  }
+  const sched = schedulingLines(s);
+  if (sched.length) {
+    lines.push("");
+    lines.push(...sched);
   }
   const plan = planLines(s);
   if (plan.length) {

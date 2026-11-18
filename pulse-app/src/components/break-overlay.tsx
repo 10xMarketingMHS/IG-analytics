@@ -2,6 +2,9 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { useAuth } from "@/lib/auth-context";
 import { useBreakState } from "@/lib/break-context";
 import { randomQuote } from "@/lib/quotes";
+import { Switch, WidgetPanel } from "@/components/widget-panels";
+import { mmss, useWidgets, WIDGETS, type WidgetKey } from "@/lib/widgets";
+import { SOUNDS } from "@/lib/widget-audio";
 
 // A full-screen celebratory card that appears whenever the user is on a break —
 // mirrors the same break state the corner widget uses (useBreak) and counts the
@@ -16,7 +19,7 @@ const GLYPHS: [string, string, number, number, number, number, number][] = [
   ["♫", "#f472b6", 80, 10, 10, 0.4, 24],
   ["✦", "#22d3ee", 92, 64, -8, 0.8, 18],
   ["✓", "#34d399", 6, 60, 14, 1.2, 20],
-  ["♪", "#fb923c", 18, 86, -16, 1.6, 22],
+  ["♪", "#fb923c", 3, 84, -16, 1.6, 22],
   ["❯", "#60a5fa", 86, 88, 8, 2.0, 20],
   ["✧", "#a855f7", 50, 4, 0, 2.4, 22],
   ["♫", "#f472b6", 3, 38, -10, 0.6, 21],
@@ -47,6 +50,10 @@ export function BreakOverlay() {
   // resumes the paused task timers (existing end-break logic).
   const [closing, setClosing] = useState(false);
   const endingRef = useRef(false);
+  // Widgets: the ones this person picked, in a row. One opens where the cup is, so
+  // the time left stays in sight; "add" is where they choose.
+  const w = useWidgets();
+  const [panel, setPanel] = useState<WidgetKey | "add" | null>(null);
   async function startWork() {
     if (endingRef.current) return;
     endingRef.current = true;
@@ -63,7 +70,7 @@ export function BreakOverlay() {
   }
 
   // A fresh break re-opens the card (reset the closed state on a new break).
-  useEffect(() => { if (onBreak) setClosing(false); }, [onBreak]);
+  useEffect(() => { if (onBreak) { setClosing(false); setPanel(null); } }, [onBreak]);
   // One quote per break session, stable while it's shown.
   const quote = useMemo(() => randomQuote(), [onBreak]);
 
@@ -85,6 +92,18 @@ export function BreakOverlay() {
   const [ex, ey] = pt(-90 + frac * 360);
   const arcD = `M ${sx} ${sy} A ${R} ${R} 0 ${frac > 0.5 ? 1 : 0} 1 ${ex} ${ey}`;
 
+  const open = WIDGETS.find((x) => x.key === panel);
+  const tileWord = (k: WidgetKey) => {
+    switch (k) {
+      case "water": return `${w.water.count} of ${w.water.target} today`;
+      case "stretch": return "One minute";
+      case "chime": return w.chime ? mmss(w.chime.endAt - w.now) : "Set a time";
+      case "note": return w.note ? "Saved" : "Jot it down";
+      case "sounds": return SOUNDS.find((s) => s.key === w.sound?.kind)?.label ?? "Off";
+      case "game": return "Play a round";
+    }
+  };
+
   return (
     <div className="brk-scrim">
       <div className="brk-card">
@@ -98,6 +117,24 @@ export function BreakOverlay() {
           ))}
         </div>
 
+        {/* Landscape: the cup and a quote on the left, the time and the way back on the right */}
+        <div className="brk-side">
+        {panel ? (
+          <div className="brk-panel">
+            <div className="brk-panel-head">
+              <span>{open ? `${open.icon} ${open.name}` : "Your break widgets"}</span>
+              <button type="button" className="wg-btn" onClick={() => setPanel(null)}>Close</button>
+            </div>
+            <div className="brk-panel-body">
+              {panel === "add" ? (
+                <div className="brk-picks">
+                  {WIDGETS.map((x) => <Switch key={x.key} on={w.picks.includes(x.key)} label={`${x.icon} ${x.name}`} onChange={() => w.togglePick(x.key)} />)}
+                </div>
+              ) : <WidgetPanel k={panel} />}
+            </div>
+          </div>
+        ) : (
+        <>
         <div className="brk-ring">
           <svg className="brk-ringsvg" viewBox="0 0 220 220" aria-hidden>
             <defs>
@@ -162,22 +199,42 @@ export function BreakOverlay() {
           </div>
         </div>
 
-        <div className="brk-eyebrow">Take a moment for yourself ✨</div>
-        <h2 className="brk-title"><span className="spark">‹</span>It's <span className="g">Break</span> Time!<span className="spark">›</span></h2>
-        <div className="brk-sub">Step away, relax, and recharge.<br />You've got this! 💜</div>
-
-        <div className="brk-div" />
-
-        <div className="brk-remlabel">Break time remaining</div>
-        <div className="brk-clock">
-          <div className="brk-unit"><span className="brk-num">{mm}</span><small>min</small></div>
-          <span className="brk-colon">:</span>
-          <div className="brk-unit"><span className="brk-num">{ss}</span><small>sec</small></div>
+        <div className="brk-quote"><span className="qm l">“</span>{quote}<span className="qm r">”</span></div>
+        </>
+        )}
         </div>
 
-        <div className="brk-quote"><span className="qm l">“</span>{quote}<span className="qm r">”</span></div>
+        <div className="brk-main">
+          <div className="brk-eyebrow">Take a moment for yourself ✨</div>
+          <h2 className="brk-title"><span className="spark">‹</span>It's <span className="g">Break</span> Time!<span className="spark">›</span></h2>
+          <div className="brk-sub">Step away, relax, and recharge.<br />You've got this! 💜</div>
 
-        <button type="button" className="brk-startwork" onClick={startWork}>▶ Resume Work</button>
+          <div className="brk-div" />
+
+          <div className="brk-remlabel">Break time remaining</div>
+          <div className="brk-clock">
+            <div className="brk-unit"><span className="brk-num">{mm}</span><small>min</small></div>
+            <span className="brk-colon">:</span>
+            <div className="brk-unit"><span className="brk-num">{ss}</span><small>sec</small></div>
+          </div>
+
+          <button type="button" className="brk-startwork" onClick={startWork}>▶ Resume Work</button>
+        </div>
+
+        <div className="brk-widgets">
+          {w.picks.map((k) => {
+            const x = WIDGETS.find((y) => y.key === k)!;
+            return (
+              <button key={k} type="button" className={"brk-tile" + (panel === k ? " on" : "")} aria-pressed={panel === k} onClick={() => setPanel(panel === k ? null : k)}>
+                <span aria-hidden="true">{x.icon}</span>
+                <span>{x.name}<small>{tileWord(k)}</small></span>
+              </button>
+            );
+          })}
+          <button type="button" className={"brk-tile add" + (w.picks.length ? " small" : "") + (panel === "add" ? " on" : "")} aria-pressed={panel === "add"} aria-label="Choose your break widgets" title="Choose your break widgets" onClick={() => setPanel(panel === "add" ? null : "add")}>
+            {w.picks.length ? "＋" : <span>＋ Add widgets<small>Water, stretch, sounds and more</small></span>}
+          </button>
+        </div>
       </div>
     </div>
   );
